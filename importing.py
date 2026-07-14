@@ -70,12 +70,44 @@ def outfit_row_key(row: dict) -> str:
     return row.get("ST") or row.get("Item/UI Folder Name") or row.get("Flavour") or "?"
 
 def outfit_display_label(row: dict) -> str:
+    import re
     flavour = row.get("Flavour") or row.get("ST") or "(unnamed)"
+
     st = row.get("ST", "")
-    st_suffix = st[len("ID_PLAYERSKIN_"):].title() if st.upper().startswith("ID_PLAYERSKIN_") else ""
-    folder = (row.get("Item/UI Folder Name") or row.get("Model Folder Name") or "").replace("; ", "/")
-    paren = "/".join(p for p in (st_suffix, folder) if p)
-    return f"{flavour}({paren})" if paren else flavour
+    st_suffix = ""
+    if st.upper().startswith("ID_PLAYERSKIN_"):
+        st_suffix = st[len("ID_PLAYERSKIN_"):]
+    st_suffix = re.sub(r'[^a-zA-Z0-9]', '', st_suffix).title()
+
+    model_folder = (row.get("Model Folder Name") or "").strip().split(";")[0].strip()
+    ui_folder = (row.get("Item/UI Folder Name") or "").strip().split(";")[0].strip()
+
+    seen = {flavour.lower().replace("_", "")}
+    parts = []
+
+    def add_part(name):
+        key = name.lower().replace("_", "")
+        if key and key not in seen:
+            seen.add(key)
+            parts.append(name)
+
+    if model_folder and ui_folder:
+        if model_folder.lower() == ui_folder.lower():
+            add_part(model_folder)
+        else:
+            add_part(model_folder)
+            add_part(ui_folder)
+    elif model_folder:
+        add_part(model_folder)
+    elif ui_folder:
+        add_part(ui_folder)
+
+    add_part(st_suffix)
+
+    if not parts:
+        return flavour
+
+    return f"{flavour}({'/'.join(parts)})"
 
 def find_outfit_row(rows: list, key: str) -> dict:
     for row in rows:
@@ -94,8 +126,27 @@ def get_outfit_folder(character_name: str) -> str:
     direct = utils.find_relative_dir(root, ["Items", "Characters", "Skins", "Outfit", character_name])
     if direct:
         return direct
+    csv_folder = _outfit_folder_from_csv(character_name)
+    if csv_folder:
+        outfit_root = utils.find_relative_dir(root, ["Items", "Characters", "Skins", "Outfit"])
+        if outfit_root:
+            candidate = os.path.join(outfit_root, csv_folder)
+            if os.path.isdir(candidate):
+                return candidate
     char_map = build_outfit_character_map(root)
     return char_map.get(utils.normalize_folder_name(character_name), "")
+
+def _outfit_folder_from_csv(character_name: str) -> str:
+    try:
+        from .properties import _csv_model_to_ui_folder, rebuild_csv_outfit_map
+    except ImportError:
+        return ""
+    if not _csv_model_to_ui_folder:
+        try:
+            rebuild_csv_outfit_map()
+        except Exception:
+            return ""
+    return _csv_model_to_ui_folder.get(utils.normalize_folder_name(character_name), "")
 
 def build_outfit_character_map(root: str) -> dict:
     if root in utils._OUTFIT_CHAR_MAP_CACHE:
@@ -324,19 +375,45 @@ def populate_outfit_selections(context) -> int:
     prior = {s.json_path: s.selected for s in sels}
     sels.clear()
     manual_folder = getattr(context.scene, 'arc_manual_outfit_folder', '')
-    character_name = ""
-    for entry in context.scene.arc_psk_entries:
-        character_name = get_character_name(bpy.path.abspath(entry.psk_path))
-        if character_name:
-            break
-    if not character_name and not manual_folder:
+    if manual_folder and os.path.isdir(bpy.path.abspath(manual_folder)):
+        presets = scan_outfit_presets_in_folder(bpy.path.abspath(manual_folder))
+        for preset_name, json_path in presets:
+            s = sels.add()
+            s.preset_name = preset_name
+            s.json_path = json_path
+            s.selected = prior.get(json_path, False)
+        return len(sels)
+    root = utils.get_pioneer_root()
+    if not root:
         return 0
-    for preset_name, json_path in scan_outfit_presets(character_name, manual_folder):
-        s = sels.add()
-        s.preset_name = preset_name
-        s.json_path = json_path
-        s.selected = prior.get(json_path, False)
-    return len(sels)
+    outfit_root = utils.find_relative_dir(root, ["Items", "Characters", "Skins", "Outfit"])
+    if not outfit_root:
+        return 0
+    from .properties import _csv_model_to_ui_folder, rebuild_csv_outfit_map
+    if not _csv_model_to_ui_folder:
+        rebuild_csv_outfit_map()
+    char_names = set()
+    for entry in context.scene.arc_psk_entries:
+        cn = get_character_name(bpy.path.abspath(entry.psk_path))
+        if cn:
+            char_names.add(cn)
+    for cn in char_names:
+        folder_name = _csv_model_to_ui_folder.get(utils.normalize_folder_name(cn), "")
+        if not folder_name:
+            continue
+        candidate = os.path.join(outfit_root, folder_name)
+        if not os.path.isdir(candidate):
+            continue
+        presets = scan_outfit_presets_in_folder(candidate)
+        if not presets:
+            continue
+        for preset_name, json_path in presets:
+            s = sels.add()
+            s.preset_name = preset_name
+            s.json_path = json_path
+            s.selected = prior.get(json_path, False)
+        return len(sels)
+    return 0
 
 def get_character_name(psk_path: str) -> str:
     norm = bpy.path.abspath(psk_path).replace("\\", "/")

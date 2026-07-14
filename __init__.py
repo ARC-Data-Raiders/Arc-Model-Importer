@@ -6,7 +6,7 @@ Import Arc Raiders models by selecting an outfit folder.
 bl_info = {
     "name": "PSKImporter_SIL_AI",
     "author": "Naryun / Zebulon / (Silarious Tests)",
-    "version": (2, 1, 5),
+    "version": (2, 2, 3),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Arc Raiders",
     "description": "Import Arc Raiders models by selecting an outfit folder.",
@@ -30,6 +30,20 @@ from . import materials
 from . import textures
 from . import utils
 
+_last_search_value = [""]
+
+def _search_poll():
+    try:
+        current = bpy.context.scene.arc_outfit_search
+        if current != _last_search_value[0]:
+            _last_search_value[0] = current
+            for area in bpy.context.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+    except Exception:
+        pass
+    return 0.05
+
 def register():
     """Register all modules and properties"""
     # Register properties first
@@ -45,6 +59,8 @@ def register():
     
     # Ensure PSK addon is installed
     utils.ensure_psk_addon()
+    
+    bpy.app.timers.register(_search_poll, first_interval=0.5, persistent=True)
     
     print("Arc Raiders PSK Importer registered successfully.")
 

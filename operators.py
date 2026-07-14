@@ -5,6 +5,7 @@ Processing logic for PSK imports and model texturing
 import os
 import bpy
 import bpy_extras
+import mathutils
 from bpy.props import StringProperty
 from bpy.types import Operator
 
@@ -157,7 +158,7 @@ def batch_import_instances(context, selected_presets) -> tuple:
             if o.type != 'MESH':
                 continue
             for corner in o.bound_box:
-                wx = (o.matrix_world @ bpy.mathutils.Vector(corner)).x
+                wx = (o.matrix_world @ mathutils.Vector(corner)).x
                 minx = wx if minx is None else min(minx, wx)
                 maxx = wx if maxx is None else max(maxx, wx)
         
@@ -379,9 +380,10 @@ class ARC_OT_PickOutfitCSV(Operator, bpy_extras.io_utils.ImportHelper):
             self.report({'ERROR'}, f"Not a valid file: {path}")
             return {'CANCELLED'}
         context.scene.arc_outfit_csv_path = path
+        from .properties import rebuild_csv_outfit_map
+        rebuild_csv_outfit_map(path)
         rows = importing.load_outfit_csv(path)
         self.report({'INFO'}, f"Loaded {len(rows)} row(s) from '{os.path.basename(path)}'.")
-        bpy.ops.arc.open_outfit_selector('INVOKE_DEFAULT')
         return {'FINISHED'}
 
 
@@ -392,34 +394,16 @@ class ARC_OT_ClearOutfitCSV(Operator):
 
     def execute(self, context):
         context.scene.arc_outfit_csv_path = ""
+        from .properties import rebuild_csv_outfit_map
+        rebuild_csv_outfit_map("")
         return {'FINISHED'}
 
 
-class ARC_OT_OpenOutfitSelector(Operator):
-    """Pick an outfit by its Flavour name and import all its parts."""
-    bl_idname = "arc.open_outfit_selector"
-    bl_label = "Outfit Selector"
+class ARC_OT_LoadOutfit(Operator):
+    """Load all PSK parts for the selected outfit from the dropdown."""
+    bl_idname = "arc.load_outfit"
+    bl_label = "Load Outfit"
     bl_options = {'REGISTER', 'UNDO'}
-
-    def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=420)
-
-    def draw(self, context):
-        layout = self.layout
-        scene = context.scene
-        csv_path = importing.get_outfit_csv_path(context)
-        box = layout.box()
-        if scene.arc_outfit_csv_path:
-            box.label(text=f"CSV: {os.path.basename(scene.arc_outfit_csv_path)}", icon='FILE')
-            box.operator("arc.clear_outfit_csv", icon='LOOP_BACK')
-        else:
-            name = os.path.basename(csv_path) if csv_path else "(not found)"
-            box.label(text=f"CSV: {name} (bundled)", icon='FILE')
-        box.operator("arc.pick_outfit_csv", text="Browse for a different CSV...", icon='FILEBROWSER')
-        if not csv_path:
-            layout.label(text="No outfit_reference.csv found — browse for one above.", icon='ERROR')
-            return
-        layout.prop(scene, "arc_outfit_selector_choice", text="Outfit")
 
     def execute(self, context):
         scene = context.scene
@@ -427,8 +411,12 @@ class ARC_OT_OpenOutfitSelector(Operator):
         if not root:
             self.report({'ERROR'}, "Set the PioneerGame root folder first.")
             return {'CANCELLED'}
+        choice = scene.arc_selected_outfit
+        if not choice:
+            self.report({'ERROR'}, "No outfit selected — click one in the list first.")
+            return {'CANCELLED'}
         rows = importing.load_outfit_csv(importing.get_outfit_csv_path(context))
-        row = importing.find_outfit_row(rows, scene.arc_outfit_selector_choice)
+        row = importing.find_outfit_row(rows, choice)
         if not row:
             self.report({'ERROR'}, "No outfit selected.")
             return {'CANCELLED'}
@@ -447,6 +435,28 @@ class ARC_OT_OpenOutfitSelector(Operator):
             entry.display_name = os.path.basename(psk_path)
         self.report({'INFO'}, f"Queued {len(psks)} part(s) for '{row.get('Flavour') or row.get('ST')}'.")
         bpy.ops.arc.confirm_psk_import('INVOKE_DEFAULT')
+        return {'FINISHED'}
+
+
+class ARC_OT_SelectOutfit(Operator):
+    """Select an outfit from the searchable list."""
+    bl_idname = "arc.select_outfit"
+    bl_label = "Select Outfit"
+    outfit_key: StringProperty(options={'HIDDEN'})
+
+    def execute(self, context):
+        context.scene.arc_selected_outfit = self.outfit_key
+        context.scene.arc_selected_outfit_browse = self.outfit_key
+        return {'FINISHED'}
+
+
+class ARC_OT_ClearOutfitSearch(Operator):
+    """Clear the outfit search filter."""
+    bl_idname = "arc.clear_outfit_search"
+    bl_label = "Clear Search"
+
+    def execute(self, context):
+        context.scene.arc_outfit_search = ""
         return {'FINISHED'}
 
 
@@ -698,7 +708,9 @@ classes = (
     ARC_OT_ImportOutfitFolder,
     ARC_OT_PickOutfitCSV,
     ARC_OT_ClearOutfitCSV,
-    ARC_OT_OpenOutfitSelector,
+    ARC_OT_LoadOutfit,
+    ARC_OT_SelectOutfit,
+    ARC_OT_ClearOutfitSearch,
     ARC_OT_MergeSelectedArmatures,
     ARC_OT_ApplyOutfitPreset,
     ARC_OT_PickManualSkinsFolder,
