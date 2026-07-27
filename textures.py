@@ -520,6 +520,8 @@ def detect_model_type(psk_path: str) -> str:
         return "hair"
     if is_weapon(psk_path) or is_enemy(psk_path):
         return "weapon"
+    if is_visor(psk_path):
+        return "visor"
     if folder_has_occlusion_png(folder):
         return "clothing"
     if is_misc(psk_path):
@@ -540,6 +542,16 @@ def is_weapon(psk_path: str) -> bool:
 def is_enemy(psk_path: str) -> bool:
     norm = psk_path.replace("\\", "/").lower()
     return "/enemies/" in norm
+
+def is_visor(psk_path: str, mat_slot_name: str = "") -> bool:
+    """Return True if this part is a visor/glass/screen overlay."""
+    norm = psk_path.replace("\\", "/").lower()
+    basename = os.path.basename(psk_path).lower()
+    if "visor" in norm or "visor" in basename:
+        return True
+    if mat_slot_name and any(k in mat_slot_name.lower() for k in ("visor", "glass", "screen")):
+        return True
+    return False
 
 def is_misc(psk_path: str) -> bool:
     folder = os.path.dirname(psk_path)

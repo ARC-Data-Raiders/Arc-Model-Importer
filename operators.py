@@ -84,9 +84,15 @@ def process_entry(entry) -> tuple:
                 manual_skins_folder=entry.manual_skins_folder,
                 mi_data=mi_data, main_pngs=main_pngs, base_pngs=base_pngs,
             )
+            materials.apply_embedded_visor_slots(obj, psk_path)
         label = "with skin colours" if colours else "default skin"
         return True, f"Imported ({label}): {os.path.basename(psk_path)}", new_objects
     
+    elif model_type == "visor":
+        for obj in mesh_objects:
+            materials.setup_visor_material(obj, psk_path)
+        return True, f"Imported (visor): {os.path.basename(psk_path)}", new_objects
+
     elif model_type == "misc":
         for obj in mesh_objects:
             materials.setup_misc_material(obj, psk_path)

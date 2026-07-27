@@ -1215,16 +1215,60 @@ def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
     """Find MI_*.json beside the PSK, in shared weapon mats, or via ObjectPath."""
     if not mi_stem:
         return ""
-    for search_folder in [psk_folder, utils.get_weapon_shared_folder()]:
-        if not search_folder:
-            continue
-        candidate = os.path.join(search_folder, mi_stem + ".json")
-        if os.path.isfile(candidate):
-            return candidate
-    if obj_path:
-        found = textures.find_asset_from_object_path(obj_path, ".json")
-        if found:
-            return found
+
+    mi_stem = mi_stem.strip()
+    # UE asset ObjectPaths frequently include redundant dot segments (e.g.
+    # "MI_X.MI_X.0"). Those may flow into mi_stem and break local filename
+    # matching, so try both the raw stem and the "first token" stem.
+    stem_candidates = [mi_stem]
+    if "." in mi_stem:
+        stem0 = mi_stem.split(".", 1)[0]
+        if stem0 and stem0 not in stem_candidates:
+            stem_candidates.append(stem0)
+
+    for stem in stem_candidates:
+        for search_folder in [psk_folder, utils.get_weapon_shared_folder()]:
+            if not search_folder:
+                continue
+            candidate = os.path.join(search_folder, stem + ".json")
+            if os.path.isfile(candidate):
+                return candidate
+
+        if obj_path:
+            found = textures.find_asset_from_object_path(obj_path, ".json")
+            if found:
+                return found
+
+            # Extra defensive tries for instance-suffixed ObjectPaths.
+            alt = obj_path
+            if alt.endswith(".0"):
+                found = textures.find_asset_from_object_path(alt[:-2], ".json")
+                if found:
+                    return found
+            else:
+                found = textures.find_asset_from_object_path(alt + ".0", ".json")
+                if found:
+                    return found
+
+        # Last-resort: scan the known enemy MI folder inside the Pioneer content root.
+        try:
+            pioneer_root = utils.get_pioneer_root()
+            content_dir = utils.find_content_dir(pioneer_root) if pioneer_root else ""
+            if content_dir:
+                for folder_name in ("Enemies", "Decals"):
+                    inst_folder = os.path.join(
+                        content_dir,
+                        "Pioneer",
+                        "MaterialLibrary",
+                        "Material_Instances",
+                        folder_name,
+                    )
+                    candidate = os.path.join(inst_folder, stem + ".json")
+                    if os.path.isfile(candidate):
+                        return candidate
+        except Exception:
+            pass
+
     return ""
 
 
@@ -1275,6 +1319,9 @@ def _parse_sk_material_slots(psk_path: str) -> list:
                     obj_path = mat_ref.get('ObjectPath', '') or ""
                     mi_stem = textures.mi_stem_from_material_ref(mat_ref)
                     if not mi_stem:
+                        # Keep a placeholder so later slots don't shift left and
+                        # get matched against the wrong Blender material slot index.
+                        result.append((slot_name, "", ""))
                         continue
                     mi_json = _resolve_mi_json_path(mi_stem, obj_path, folder)
                     result.append((slot_name, mi_stem, mi_json))
@@ -1773,7 +1820,8 @@ def _setup_weapon_main_material(mat, mi_path: str, psk_path: str):
             pass
         links.new(nm_in, nm_node.inputs["Color"])
         links.new(nm_node.outputs["Normal"], principled.inputs["Normal"])
-        links.new(normal_node.outputs["Alpha"], principled.inputs["Metallic"])
+        if normal_type != "nom":
+            links.new(normal_node.outputs["Alpha"], principled.inputs["Metallic"])
 
         if normal_type in ("nom", "nem", "nam"):
             sep_node = nodes.new("ShaderNodeSeparateColor")
@@ -1789,6 +1837,15 @@ def _setup_weapon_main_material(mat, mi_path: str, psk_path: str):
                     links.new(cr_node.outputs["Color"], mul_node.inputs[6])
                 links.new(sep_node.outputs["Blue"], mul_node.inputs[7])
                 links.new(mul_node.outputs[2], principled.inputs["Base Color"])
+
+                metal_mix = nodes.new("ShaderNodeMix")
+                metal_mix.data_type = 'FLOAT'
+                metal_mix.blend_type = 'MIX'
+                metal_mix.label = "NOM Alpha → Metallic (Blue)"
+                metal_mix.location = (COL_MIX, Y_N - 180)
+                links.new(normal_node.outputs["Alpha"], metal_mix.inputs["Factor"])
+                links.new(sep_node.outputs["Blue"], metal_mix.inputs[3])
+                links.new(metal_mix.outputs[0], principled.inputs["Metallic"])
             elif normal_type == "nem":
                 links.new(sep_node.outputs["Blue"], principled.inputs["Emission Strength"])
                 if cr_node:
@@ -2233,13 +2290,7 @@ def _setup_enemy_scan_display_material(mat, mi_path: str):
 
     # UV edge fade: smoothstep in V so lines fade at top/bottom — reduces stripy look
     # on meshes where the scan display UV wraps across unrelated polygons.
-    v_fade_lo = nodes.new("ShaderNodeMath")
-    v_fade_lo.operation = 'SMOOTHMIN' if hasattr(bpy.types.ShaderNodeMath, 'operation') else 'MULTIPLY'
-    try:
-        v_fade_lo.operation = 'SMOOTH_MIN'
-    except Exception:
-        pass
-    # Simpler: clamp(V * 4, 0, 1) * clamp((1-V) * 4, 0, 1)
+    # Implemented as clamp(V * 4, 0, 1) * clamp((1-V) * 4, 0, 1)
     v_lo = nodes.new("ShaderNodeMath")
     v_lo.operation = 'MULTIPLY'
     v_lo.label = "V fade lo"
@@ -2427,22 +2478,33 @@ def setup_weapon_material(obj, psk_path: str):
             print(f"Arc Raiders PSK Importer: MI JSON not found for slot '{slot_name}' ({mi_stem})")
             continue
 
-        if 'emissive' in mi_stem_lower or 'light' in mi_stem_lower:
-            _setup_weapon_emissive_material(mat, mi_path)
-        elif (
-            'scandisplay' in mi_stem_lower
-            or 'scandisplay' in slot_lower
-            or 'screen' in mi_stem_lower
-        ):
-            _setup_enemy_scan_display_material(mat, mi_path)
-        elif 'decal' in mi_stem_lower or slot_lower == 'decals' or 'decal' in slot_lower:
+        try:
+            _dispatch_weapon_slot_material(mat, mi_path, psk_path, mi_stem_lower, slot_lower)
+        except Exception as e:
+            print(
+                "Arc Raiders PSK Importer: Failed to set up material for slot "
+                f"'{slot_name}' (index {idx}, MI '{mi_stem}', path '{mi_path}'): {e}"
+            )
+
+
+def _dispatch_weapon_slot_material(mat, mi_path: str, psk_path: str, mi_stem_lower: str, slot_lower: str):
+    """Route a single weapon/enemy SK material slot to its setup function."""
+    if 'emissive' in mi_stem_lower or 'light' in mi_stem_lower:
+        _setup_weapon_emissive_material(mat, mi_path)
+    elif (
+        'scandisplay' in mi_stem_lower
+        or 'scandisplay' in slot_lower
+        or 'screen' in mi_stem_lower
+    ):
+        _setup_enemy_scan_display_material(mat, mi_path)
+    elif 'decal' in mi_stem_lower or slot_lower == 'decals' or 'decal' in slot_lower:
+        _setup_enemy_decal_material(mat, mi_path, psk_path)
+    else:
+        # Flat MIs that still use the NAO+Height decal preset
+        mi_probe = _parse_flat_mi_json(mi_path)
+        if _is_enemy_decal_mi(mi_probe):
             _setup_enemy_decal_material(mat, mi_path, psk_path)
         else:
-            # Flat MIs that still use the NAO+Height decal preset
-            mi_probe = _parse_flat_mi_json(mi_path)
-            if _is_enemy_decal_mi(mi_probe):
-                _setup_enemy_decal_material(mat, mi_path, psk_path)
-            else:
                 _setup_weapon_main_material(mat, mi_path, psk_path)
 
 
@@ -2526,9 +2588,10 @@ def setup_misc_material(obj, psk_path: str):
             pass
         links.new(nm_in, nm_node.inputs["Color"])
         links.new(nm_node.outputs["Normal"], principled.inputs["Normal"])
-        links.new(normal_node.outputs["Alpha"], principled.inputs["Metallic"])
-
         ntype = texs['normal_type']
+        if ntype != 'nom':
+            links.new(normal_node.outputs["Alpha"], principled.inputs["Metallic"])
+
         if ntype in ('nom', 'nem', 'nam'):
             sep_node = nodes.new("ShaderNodeSeparateColor")
             sep_node.location = (-400, -450)
@@ -2544,6 +2607,15 @@ def setup_misc_material(obj, psk_path: str):
                     links.new(cr_node.outputs["Color"], mul_node.inputs[6])
                 links.new(sep_node.outputs["Blue"], mul_node.inputs[7])
                 links.new(mul_node.outputs[2], principled.inputs["Base Color"])
+
+                metal_mix = nodes.new("ShaderNodeMix")
+                metal_mix.data_type = 'FLOAT'
+                metal_mix.blend_type = 'MIX'
+                metal_mix.label = "NOM Alpha → Metallic (Blue)"
+                metal_mix.location = (100, -80)
+                links.new(normal_node.outputs["Alpha"], metal_mix.inputs["Factor"])
+                links.new(sep_node.outputs["Blue"], metal_mix.inputs[3])
+                links.new(metal_mix.outputs[0], principled.inputs["Metallic"])
 
             elif ntype == 'nem':
                 links.new(sep_node.outputs["Blue"], principled.inputs["Emission Strength"])
@@ -2562,3 +2634,286 @@ def setup_misc_material(obj, psk_path: str):
 
     elif cr_node:
         links.new(cr_node.outputs["Color"], principled.inputs["Base Color"])
+
+
+# ---------------------------------------------------------------------------
+# Visor / Glass material setup
+# ---------------------------------------------------------------------------
+
+def _find_visor_textures(folder: str) -> dict:
+    """Scan folder for visor-specific texture files."""
+    result = {
+        'basecolor': None,
+        'normal': None,
+        'colormask': None,
+        'occlusion': None,
+    }
+    try:
+        for fname in os.listdir(folder):
+            fl = fname.lower()
+            fpath = os.path.join(folder, fname)
+            if not fl.endswith('.png'):
+                continue
+            if fl.endswith('_basecolor.png') or fl.endswith('_basecolour.png'):
+                result['basecolor'] = fpath
+            elif fl.endswith('_normal.png') or fl.endswith('_normals.png'):
+                result['normal'] = fpath
+            elif fl.endswith('_colormask.png') or fl.endswith('_colourmask.png'):
+                result['colormask'] = fpath
+            elif fl.endswith('occlusioncurvaturematerialid.png'):
+                result['occlusion'] = fpath
+    except OSError:
+        pass
+    return result
+
+
+def _parse_visor_mi_scalars(mi_path: str) -> dict:
+    """Extract visor-relevant scalar/vector params from an MI JSON."""
+    result = {
+        'roughness': None,
+        'metallic': None,
+        'opacity': None,
+        'ior': None,
+        'color_a': None,
+        'color_b': None,
+    }
+    if not mi_path or not os.path.isfile(mi_path):
+        return result
+    try:
+        with open(mi_path, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+        entry = utils.first_ue_export(data, "MaterialInstanceConstant")
+        props = entry.get("Properties", {}) if entry else {}
+        for sp in props.get("ScalarParameterValues", []):
+            name = sp.get("ParameterInfo", {}).get("Name", "").lower()
+            val = float(sp.get("ParameterValue", 0))
+            if "roughness" in name and "modifier" in name:
+                result['roughness'] = val
+            elif name == "roughnessmodifier":
+                result['roughness'] = val
+            elif name == "metallic":
+                result['metallic'] = val
+            elif name == "opacity":
+                result['opacity'] = val
+            elif "ior" in name:
+                result['ior'] = val
+        for vp in props.get("VectorParameterValues", []):
+            name = vp.get("ParameterInfo", {}).get("Name", "").lower()
+            pv = vp.get("ParameterValue", {})
+            rgba = (
+                float(pv.get("R", 1.0)),
+                float(pv.get("G", 1.0)),
+                float(pv.get("B", 1.0)),
+                float(pv.get("A", 1.0)),
+            )
+            if name == "colora":
+                result['color_a'] = rgba
+            elif name == "colorb":
+                result['color_b'] = rgba
+    except Exception as e:
+        print(f"Arc Raiders PSK Importer: Could not parse visor MI '{mi_path}': {e}")
+    return result
+
+
+_VISOR_SLOT_KEYWORDS = ("visor", "glass", "helmet_glass")
+
+
+def apply_embedded_visor_slots(obj, psk_path: str):
+    """After ArcTexturer is set up on *obj*, replace any visor/glass material
+    slots with the glass shader.  Works for clothing PSKs that contain a
+    Visor/Glass slot alongside the main body material."""
+    if not obj.material_slots:
+        return
+
+    try:
+        sk_slots = _parse_sk_material_slots(psk_path)
+    except Exception:
+        sk_slots = []
+
+    psk_folder = os.path.dirname(psk_path) if psk_path else ""
+
+    for i, slot in enumerate(obj.material_slots):
+        sk_name = sk_slots[i][0] if i < len(sk_slots) else ""
+        mat_name = slot.material.name if slot.material else ""
+
+        is_visor_slot = any(
+            kw in name.lower()
+            for name in (sk_name, mat_name)
+            for kw in _VISOR_SLOT_KEYWORDS
+        )
+        if not is_visor_slot:
+            continue
+
+        mi_path = ""
+        if i < len(sk_slots):
+            _, mi_stem, mi_json = sk_slots[i]
+            if mi_json and os.path.isfile(mi_json):
+                mi_path = mi_json
+            elif mi_stem:
+                mi_path = _resolve_mi_json_path(mi_stem, "", psk_folder)
+
+        if not slot.material:
+            slot.material = bpy.data.materials.new(name=obj.name + f"_VisorSlot{i}")
+
+        _setup_visor_material(slot.material, mi_path=mi_path, psk_path=psk_path)
+        print(
+            f"Arc Raiders: Applied glass shader to embedded visor slot "
+            f"'{sk_name or mat_name}' (index {i}) on '{obj.name}'"
+        )
+
+
+def _setup_visor_material(mat, mi_path: str = "", psk_path: str = ""):
+    """Configure a glass/visor Principled BSDF material with texture + MI data."""
+    folder = os.path.dirname(psk_path) if psk_path else ""
+
+    # Determine blend mode from MI BasePropertyOverrides
+    blend_method = 'BLEND'
+    try:
+        if mi_path and os.path.isfile(mi_path):
+            with open(mi_path, 'r', encoding='utf-8') as fh:
+                raw = json.load(fh)
+            entry = utils.first_ue_export(raw, "MaterialInstanceConstant")
+            if entry:
+                bpo = entry.get("Properties", {}).get("BasePropertyOverrides", {})
+                if bpo.get("BlendMode") == "BLEND_Masked":
+                    blend_method = 'HASHED'
+    except Exception:
+        pass
+
+    mat.blend_method = blend_method
+    mat.use_backface_culling = True
+    mat.use_nodes = True
+
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+
+    # --- Output and Principled BSDF ---
+    out_node = nodes.new("ShaderNodeOutputMaterial")
+    out_node.location = (800, 0)
+
+    principled = nodes.new("ShaderNodeBsdfPrincipled")
+    principled.location = (400, 0)
+    links.new(principled.outputs["BSDF"], out_node.inputs["Surface"])
+
+    # --- Parse MI scalars ---
+    mi_params = _parse_visor_mi_scalars(mi_path)
+
+    # Default glass look
+    roughness_val = mi_params['roughness'] if mi_params['roughness'] is not None else 0.05
+    metallic_val  = mi_params['metallic']  if mi_params['metallic']  is not None else 0.35
+    ior_val       = mi_params['ior']        if mi_params['ior']        is not None else 1.45
+
+    try:
+        principled.inputs["Roughness"].default_value = roughness_val
+        principled.inputs["Metallic"].default_value = metallic_val
+        principled.inputs["IOR"].default_value = ior_val
+        principled.inputs["Transmission Weight"].default_value = 0.85
+    except KeyError:
+        pass
+
+    # --- Visor Opacity control node ---
+    opacity_val_node = nodes.new("ShaderNodeValue")
+    opacity_val_node.label = "Visor Opacity"
+    opacity_val_node.outputs[0].default_value = 0.25
+    opacity_val_node.location = (-200, -400)
+    try:
+        links.new(opacity_val_node.outputs[0], principled.inputs["Alpha"])
+    except KeyError:
+        pass
+
+    # --- Tint colour (from MI ColorB — the brighter highlight tone) ---
+    tint = mi_params['color_b'] or (0.651, 0.678, 0.823, 1.0)  # blue-grey default
+    try:
+        principled.inputs["Base Color"].default_value = (
+            tint[0] * 0.08,
+            tint[1] * 0.08,
+            tint[2] * 0.10,
+            1.0,
+        )
+    except KeyError:
+        pass
+
+    # --- Textures ---
+    texs = _find_visor_textures(folder) if folder else {
+        'basecolor': None, 'normal': None, 'colormask': None, 'occlusion': None,
+    }
+
+    has_any_tex = any(v for v in texs.values())
+
+    if texs['basecolor']:
+        img = bpy.data.images.load(texs['basecolor'], check_existing=True)
+        bc_node = nodes.new("ShaderNodeTexImage")
+        bc_node.image = img
+        bc_node.label = "BaseColor"
+        bc_node.interpolation = "Cubic"
+        bc_node.location = (-900, 400)
+        try:
+            links.new(bc_node.outputs["Color"], principled.inputs["Base Color"])
+            links.new(bc_node.outputs["Alpha"], opacity_val_node.inputs[0] if False else principled.inputs["Alpha"])
+        except KeyError:
+            pass
+
+    if texs['normal']:
+        img = bpy.data.images.load(texs['normal'], check_existing=True)
+        img.colorspace_settings.name = "Non-Color"
+        norm_node = nodes.new("ShaderNodeTexImage")
+        norm_node.image = img
+        norm_node.label = "Normal"
+        norm_node.interpolation = "Cubic"
+        norm_node.location = (-900, 0)
+
+        if utils.ensure_node_group("NormalFlipper"):
+            flipper = nodes.new("ShaderNodeGroup")
+            flipper.node_tree = bpy.data.node_groups["NormalFlipper"]
+            flipper.location = (-400, 0)
+            links.new(norm_node.outputs["Color"], flipper.inputs[0])
+            nm_src = flipper.outputs[0]
+        else:
+            nm_src = norm_node.outputs["Color"]
+
+        nm_node = nodes.new("ShaderNodeNormalMap")
+        nm_node.location = (-100, 0)
+        try:
+            nm_node.convention = 'DIRECTX'
+        except Exception:
+            pass
+        links.new(nm_src, nm_node.inputs["Color"])
+        try:
+            links.new(nm_node.outputs["Normal"], principled.inputs["Normal"])
+        except KeyError:
+            pass
+
+    if not has_any_tex:
+        # Pure default visor — dark blue-grey glass, no textures
+        try:
+            principled.inputs["Base Color"].default_value = (0.04, 0.045, 0.065, 1.0)
+            principled.inputs["Roughness"].default_value = 0.05
+            principled.inputs["Metallic"].default_value = 0.35
+            principled.inputs["IOR"].default_value = 1.45
+            principled.inputs["Transmission Weight"].default_value = 0.85
+        except KeyError:
+            pass
+
+
+def setup_visor_material(obj, psk_path: str, mi_path: str = ""):
+    """Public entry point: find MI json and call _setup_visor_material."""
+    folder = os.path.dirname(psk_path) if psk_path else ""
+
+    # Auto-discover MI json in folder if not provided
+    if not mi_path and folder and os.path.isdir(folder):
+        for fname in sorted(os.listdir(folder)):
+            fl = fname.lower()
+            if fl.startswith("mi_") and fl.endswith(".json") and "visor" in fl:
+                mi_path = os.path.join(folder, fname)
+                break
+        if not mi_path:
+            for fname in sorted(os.listdir(folder)):
+                fl = fname.lower()
+                if fl.startswith("mi_") and fl.endswith(".json"):
+                    mi_path = os.path.join(folder, fname)
+                    break
+
+    mat = bpy.data.materials.new(name=obj.name + "_Visor_Mat")
+    obj.active_material = mat
+    _setup_visor_material(mat, mi_path=mi_path, psk_path=psk_path)
