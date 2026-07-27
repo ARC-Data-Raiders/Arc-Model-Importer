@@ -216,7 +216,7 @@ def texture_existing_model(obj, model_name: str, manual_folder: str = "") -> boo
 def find_psk_for_model(model_name: str, manual_folder: str = "") -> str:
     """Find a PSK file matching the model name."""
     if manual_folder and os.path.isdir(manual_folder):
-        psks = utils.find_psks_in_folder(manual_folder)
+        psks, _ = utils.find_psks_in_folder(manual_folder)
         for psk in psks:
             if model_name.lower() in os.path.basename(psk).lower():
                 return psk
@@ -239,7 +239,7 @@ def find_psk_for_model(model_name: str, manual_folder: str = "") -> str:
                         for part_dir in os.listdir(char_path):
                             part_path = os.path.join(char_path, part_dir)
                             if os.path.isdir(part_path):
-                                psks = utils.find_psks_in_folder(part_path)
+                                psks, _ = utils.find_psks_in_folder(part_path)
                                 for psk in psks:
                                     if model_name.lower() in os.path.basename(psk).lower():
                                         return psk
@@ -254,7 +254,7 @@ def find_psk_for_model(model_name: str, manual_folder: str = "") -> str:
                 for subdir in os.listdir(weapons_path):
                     sub_path = os.path.join(weapons_path, subdir)
                     if os.path.isdir(sub_path):
-                        psks = utils.find_psks_in_folder(sub_path)
+                        psks, _ = utils.find_psks_in_folder(sub_path)
                         for psk in psks:
                             if model_name.lower() in os.path.basename(psk).lower():
                                 return psk
@@ -370,7 +370,7 @@ class ARC_OT_ImportOutfitFolder(Operator):
         if not os.path.isdir(folder):
             self.report({'ERROR'}, f"Not a valid folder: {folder}")
             return {'CANCELLED'}
-        psks = utils.find_psks_in_folder(folder)
+        psks, skipped_pskx = utils.find_psks_in_folder(folder)
         if not psks:
             self.report({'ERROR'}, f"No .psk/.pskx files found in folder (or its subfolders): {folder}")
             return {'CANCELLED'}
@@ -380,6 +380,15 @@ class ARC_OT_ImportOutfitFolder(Operator):
             entry = scene.arc_psk_entries.add()
             entry.psk_path = psk_path
             entry.display_name = os.path.basename(psk_path)
+        if skipped_pskx:
+            names = ", ".join(
+                f"{name} ({os.path.splitext(name)[0]}.psk preferred \u2014 has bones)"
+                for name in skipped_pskx
+            )
+            self.report(
+                {'INFO'},
+                f"Skipped {names}. To import a static mesh, use 'Import Single Model'.",
+            )
         self.report({'INFO'}, f"Found {len(psks)} PSK(s).")
         bpy.ops.arc.confirm_psk_import('INVOKE_DEFAULT')
         return {'FINISHED'}

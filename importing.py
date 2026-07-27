@@ -336,7 +336,8 @@ def collect_psks_from_model_folder(root: str, model_folder_name: str) -> list:
     char_dir = utils.find_relative_dir(root, ["Characters", "Assets", model_folder_name])
     if not char_dir:
         return []
-    return utils.find_psks_in_folder(char_dir)
+    paths, _ = utils.find_psks_in_folder(char_dir)
+    return paths
 
 def read_oi_parts_asset_paths(root: str, outfit_folder_name: str) -> list:
     outfit_root = utils.find_relative_dir(root, ["Items", "Characters", "Skins", "Outfit"])

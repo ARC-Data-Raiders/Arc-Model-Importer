@@ -19,12 +19,21 @@ _COLORMASK_GROUP = "ColorMask_XYZ"
 # Folder scanning
 # ---------------------------------------------------------------------------
 
-def find_psks_in_folder(folder: str) -> list:
+def find_psks_in_folder(folder: str) -> tuple:
     """Scan a folder (and subfolders) for PSK/PSKX files.
 
     Includes meshes in the selected folder itself (needed for firearms that
     keep SK_/SM_ files at the root). When several LODs share a stem, prefers
     LOD0. Distinct meshes in the same folder are all returned.
+
+    When both a .psk and a .pskx share the exact same stem (case-insensitive),
+    the .pskx is silently dropped — a .psk is a skeletal mesh with bones and
+    is always preferred over the boneless .pskx static mesh.
+
+    Returns:
+        (paths, skipped_pskx) — paths is the deduplicated sorted list;
+        skipped_pskx is a list of .pskx basenames that were dropped because
+        a matching .psk existed.
     """
     results = []
 
@@ -66,7 +75,32 @@ def find_psks_in_folder(folder: str) -> list:
 
     if folder and os.path.isdir(folder):
         scan(folder)
-    return results
+
+    # Dedup: when a .psk and .pskx share the same body (ignoring SK_/SM_ prefix),
+    # drop the .pskx — a .psk is a skeletal mesh with bones and is always preferred.
+    def _mesh_body(p):
+        """Stem with SK_/SM_ prefix and LOD suffix stripped, lowercased."""
+        stem = os.path.splitext(os.path.basename(p))[0]
+        stem = re.sub(r'^(SK|SM)_', '', stem, flags=re.IGNORECASE)
+        stem = re.sub(r'_lod\d+$', '', stem, flags=re.IGNORECASE)
+        return stem.lower()
+
+    by_body = {}
+    for p in results:
+        by_body.setdefault(_mesh_body(p), []).append(p)
+
+    filtered = []
+    skipped_pskx = []
+    for paths in by_body.values():
+        has_psk = any(p.lower().endswith(".psk") for p in paths)
+        pskx_paths = [p for p in paths if p.lower().endswith(".pskx")]
+        if has_psk and pskx_paths:
+            filtered.extend(p for p in paths if not p.lower().endswith(".pskx"))
+            skipped_pskx.extend(os.path.basename(p) for p in pskx_paths)
+        else:
+            filtered.extend(paths)
+
+    return sorted(filtered), skipped_pskx
 
 def normalize_folder_name(name: str) -> str:
     """Normalize a folder/file name for fuzzy comparison."""
