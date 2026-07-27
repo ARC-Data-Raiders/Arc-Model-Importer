@@ -4,9 +4,9 @@ Import Arc Raiders models by selecting an outfit folder.
 """
 
 bl_info = {
-    "name": "PSKImporter_SIL_AI",
-    "author": "Naryun / Zebulon / (Silarious Tests)",
-    "version": (2, 2, 3),
+    "name": "Arc Raiders Model Importer",
+    "author": "Silarious (Ai Vibe Code)/ Naryun & Zebulon Core Functions",
+    "version": (2, 6, 0),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Arc Raiders",
     "description": "Import Arc Raiders models by selecting an outfit folder.",

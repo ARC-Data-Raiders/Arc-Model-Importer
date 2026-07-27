@@ -246,24 +246,35 @@ def folder_has_occlusion_png(folder: str) -> bool:
     return False
 
 def find_texture_from_object_path(obj_path: str) -> str:
+    return find_asset_from_object_path(obj_path, ".png")
+
+
+def find_asset_from_object_path(obj_path: str, extension: str) -> str:
+    """Resolve a /Game/... ObjectPath to a file under the Pioneer content root."""
     utils.invalidate_dir_caches_if_root_changed()
     root = utils.get_pioneer_root()
     if not root or not obj_path:
         return ""
-    clean = obj_path.rsplit('.', 1)[0] if '.' in obj_path.split('/')[-1] else obj_path
+    # UE dumps often use AssetName.AssetName — strip trailing instance suffix
+    leaf = obj_path.split("/")[-1]
+    if "." in leaf:
+        obj_path = obj_path[: -len(leaf)] + leaf.split(".")[0]
+    clean = obj_path
     if clean.startswith('/Game/'):
         rel = clean[len('/Game/'):]
     else:
         rel = clean.lstrip('/')
+    if not extension.startswith('.'):
+        extension = '.' + extension
     content_dir = utils.find_content_dir(root)
     if content_dir:
-        candidate = os.path.join(content_dir, rel.replace('/', os.sep)) + '.png'
+        candidate = os.path.join(content_dir, rel.replace('/', os.sep)) + extension
         if os.path.isfile(candidate):
             return candidate
     rel_parts = rel.split('/')
     if len(rel_parts) > 1:
         dir_parts = rel_parts[:-1]
-        filename = rel_parts[-1] + '.png'
+        filename = rel_parts[-1] + extension
         found_dir = utils.find_relative_dir(root, dir_parts)
         if found_dir:
             candidate = os.path.join(found_dir, filename)
@@ -271,58 +282,196 @@ def find_texture_from_object_path(obj_path: str) -> str:
                 return candidate
     return ""
 
+
+def mi_stem_from_material_ref(material_ref: dict) -> str:
+    """Extract MI stem from a UE Material soft reference (ObjectPath / ObjectName)."""
+    if not material_ref:
+        return ""
+    obj_path = material_ref.get("ObjectPath", "") or ""
+    if obj_path:
+        leaf = obj_path.split("/")[-1]
+        return os.path.splitext(leaf)[0]
+    obj_name = material_ref.get("ObjectName", "") or ""
+    m = re.search(r"'([^']+)'", obj_name)
+    return m.group(1) if m else ""
+
+
 # ---------------------------------------------------------------------------
 # Skin JSON parsing
 # ---------------------------------------------------------------------------
 
-def parse_skin_colours(json_path: str) -> dict:
-    colour_names = set(get_colour_keys())
-    result = {}
+_TA_ID_SUFFIXES = (
+    'BaseNormalID', 'EdgeNormalID', 'CreaseNormalID',
+    'BaseRoughnessID', 'EdgeRoughnessID', 'CreaseRoughnessID',
+    'CreaseMaskID', 'EdgeMaskID', 'ColorTextureID', 'PatternID',
+)
+_MI_KEEP_TOKENS = ("Roughness", "Metallic", "Specular")
+
+
+def load_mi_properties(json_path: str) -> dict:
+    """Load an MI JSON once and return its Properties dict (or {})."""
     if not json_path or not os.path.isfile(json_path):
-        return result
+        return {}
     try:
         with open(json_path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        entry = data[0] if isinstance(data, list) else data
-        vec_params = entry.get("Properties", {}).get("VectorParameterValues", [])
-        for param in vec_params:
-            name = param.get("ParameterInfo", {}).get("Name", "")
-            if name in colour_names:
-                pv = param.get("ParameterValue", {})
-                result[name] = (
-                    float(pv.get("R", 1.0)),
-                    float(pv.get("G", 1.0)),
-                    float(pv.get("B", 1.0)),
-                    float(pv.get("A", 1.0)),
-                )
+        entry = utils.first_ue_export(data, "MaterialInstanceConstant")
+        return entry.get("Properties", {}) if entry else {}
     except Exception as e:
-        print(f"Arc Raiders PSK Importer: Failed to parse JSON '{json_path}': {e}")
+        print(f"Arc Raiders PSK Importer: Failed to load MI JSON '{json_path}': {e}")
+        return {}
+
+
+def _colours_from_props(props: dict) -> dict:
+    colour_names = set(get_colour_keys())
+    result = {}
+    for param in props.get("VectorParameterValues", []):
+        name = param.get("ParameterInfo", {}).get("Name", "")
+        if name not in colour_names:
+            continue
+        pv = param.get("ParameterValue", {})
+        result[name] = (
+            float(pv.get("R", 1.0)),
+            float(pv.get("G", 1.0)),
+            float(pv.get("B", 1.0)),
+            float(pv.get("A", 1.0)),
+        )
     return result
 
-def parse_texture_array_ids(json_path: str) -> dict:
+
+def _ta_ids_from_props(props: dict) -> dict:
     result = {}
-    if not json_path or not os.path.isfile(json_path):
-        return result
-    ID_SUFFIXES = [
-        'BaseNormalID', 'EdgeNormalID', 'CreaseNormalID',
-        'BaseRoughnessID', 'EdgeRoughnessID', 'CreaseRoughnessID',
-        'CreaseMaskID', 'EdgeMaskID', 'ColorTextureID', 'PatternID',
-    ]
-    try:
-        with open(json_path, 'r', encoding='utf-8') as fh:
-            data = json.load(fh)
-        entry = data[0] if isinstance(data, list) else data
-        props = entry.get('Properties', {})
-        for param in props.get('ScalarParameterValues', []):
-            name = param.get('ParameterInfo', {}).get('Name', '')
-            for suffix in ID_SUFFIXES:
-                m = re.match(r'^(\d+)_' + re.escape(suffix) + r'$', name)
-                if m:
-                    result[(m.group(1), suffix)] = int(float(param.get('ParameterValue', 0)))
-                    break
-    except Exception as e:
-        print(f"Arc Raiders PSK Importer: Failed to parse texture array IDs: {e}")
+    for param in props.get("ScalarParameterValues", []):
+        name = param.get("ParameterInfo", {}).get("Name", "")
+        for suffix in _TA_ID_SUFFIXES:
+            m = re.match(r'^(\d+)_' + re.escape(suffix) + r'$', name)
+            if m:
+                result[(m.group(1), suffix)] = int(float(param.get("ParameterValue", 0)))
+                break
     return result
+
+
+def _mi_params_from_props(props: dict, known_colour_names: set) -> dict:
+    result = {"scalars": [], "vectors": []}
+    seen_scalar_names = set()
+    for param in props.get("ScalarParameterValues", []):
+        name = param.get("ParameterInfo", {}).get("Name", "")
+        if not name or name in seen_scalar_names or name.endswith("ID"):
+            continue
+        if not any(tok in name for tok in _MI_KEEP_TOKENS):
+            continue
+        try:
+            value = float(param.get("ParameterValue", 0))
+        except (TypeError, ValueError):
+            continue
+        seen_scalar_names.add(name)
+        result["scalars"].append((name, value))
+    seen_vector_names = set()
+    for param in props.get("VectorParameterValues", []):
+        name = param.get("ParameterInfo", {}).get("Name", "")
+        if not name or name in seen_vector_names or name in known_colour_names:
+            continue
+        if not any(tok in name for tok in _MI_KEEP_TOKENS):
+            continue
+        pv = param.get("ParameterValue", {})
+        try:
+            rgba = (
+                float(pv.get("R", 1.0)),
+                float(pv.get("G", 1.0)),
+                float(pv.get("B", 1.0)),
+                float(pv.get("A", 1.0)),
+            )
+        except (TypeError, ValueError):
+            continue
+        seen_vector_names.add(name)
+        result["vectors"].append((name, rgba))
+    return result
+
+
+def _decals_from_props(props: dict) -> list:
+    active_slots = set()
+    for sw in props.get("StaticParametersRuntime", {}).get("StaticSwitchParameters", []):
+        name = sw.get("ParameterInfo", {}).get("Name", "")
+        m = re.match(r"(\d+)_UseDecal$", name)
+        if m and sw.get("Value", False):
+            active_slots.add(int(m.group(1)))
+    if not active_slots:
+        return []
+    scalar_lookup = {}
+    for sp in props.get("ScalarParameterValues", []):
+        n = sp.get("ParameterInfo", {}).get("Name", "")
+        scalar_lookup[n] = float(sp.get("ParameterValue", 0.0))
+    tex_lookup = {}
+    for tp in props.get("TextureParameterValues", []):
+        n = tp.get("ParameterInfo", {}).get("Name", "")
+        pv = tp.get("ParameterValue", {})
+        ov = pv.get("ObjectName", "")
+        op = pv.get("ObjectPath", "")
+        m2 = re.search(r"'([^']+)'", ov)
+        if m2:
+            tex_lookup[n] = (m2.group(1), op)
+    vec_lookup = {}
+    for vp in props.get("VectorParameterValues", []):
+        n = vp.get("ParameterInfo", {}).get("Name", "")
+        pv = vp.get("ParameterValue", {})
+        vec_lookup[n] = (
+            float(pv.get("R", 0.0)),
+            float(pv.get("G", 0.0)),
+            float(pv.get("B", 0.0)),
+            float(pv.get("A", 0.0)),
+        )
+    results = []
+    for idx in sorted(active_slots):
+        tex_stem, tex_objpath = tex_lookup.get(f"{idx}_DecalColor", ("", ""))
+        data_stem, data_objpath = tex_lookup.get(f"{idx}_DecalData", ("", ""))
+        if not tex_stem:
+            continue
+        placement = vec_lookup.get(f"{idx}_DecalPlacement", (0.0, 0.0, 1.0, 0.0))
+        results.append({
+            "index": idx,
+            "texture": tex_stem,
+            "texture_path": tex_objpath,
+            "data_texture": data_stem,
+            "data_texture_path": data_objpath,
+            "color_a": vec_lookup.get(f"{idx}_ColorA"),
+            "color_b": vec_lookup.get(f"{idx}_ColorB"),
+            "uv_u": placement[0],
+            "uv_v": placement[1],
+            "scale": placement[2],
+            "rotation": placement[3],
+            "width_ratio": scalar_lookup.get(f"{idx}_WidthRatio", 1.0),
+            "layer_mask": scalar_lookup.get(f"{idx}_LayerMask", 255.0),
+            "color_override": scalar_lookup.get(f"{idx}_ColorOverride", 1.0),
+        })
+    return results
+
+
+def parse_clothing_mi(json_path: str) -> dict:
+    """Parse colours, texture-array IDs, MI params, and decals from one MI load."""
+    props = load_mi_properties(json_path)
+    if not props:
+        return {
+            "colours": {},
+            "ta_ids": {},
+            "mi_params": {"scalars": [], "vectors": []},
+            "decals": [],
+        }
+    colours = _colours_from_props(props)
+    return {
+        "colours": colours,
+        "ta_ids": _ta_ids_from_props(props),
+        "mi_params": _mi_params_from_props(props, set(colours.keys())),
+        "decals": _decals_from_props(props),
+    }
+
+
+def parse_skin_colours(json_path: str) -> dict:
+    return parse_clothing_mi(json_path)["colours"] if json_path else {}
+
+
+def parse_texture_array_ids(json_path: str) -> dict:
+    return _ta_ids_from_props(load_mi_properties(json_path))
+
 
 def find_slice_png(png_list: list, slice_idx: int) -> str:
     for fpath in png_list:
@@ -331,125 +480,27 @@ def find_slice_png(png_list: list, slice_idx: int) -> str:
             return fpath
     return ''
 
-def parse_all_mi_parameters(json_path: str, known_colour_names: set) -> dict:
-    result = {'scalars': [], 'vectors': []}
-    if not json_path or not os.path.isfile(json_path):
-        return result
-    _KEEP_TOKENS = ("Roughness", "Metallic", "Specular")
-    try:
-        with open(json_path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        entry = data[0] if isinstance(data, list) else data
-        props = entry.get("Properties", {})
-        seen_scalar_names = set()
-        for param in props.get("ScalarParameterValues", []):
-            name = param.get("ParameterInfo", {}).get("Name", "")
-            if not name or name in seen_scalar_names:
-                continue
-            if name.endswith("ID"):
-                continue
-            if not any(tok in name for tok in _KEEP_TOKENS):
-                continue
-            try:
-                value = float(param.get("ParameterValue", 0))
-            except (TypeError, ValueError):
-                continue
-            seen_scalar_names.add(name)
-            result['scalars'].append((name, value))
-        seen_vector_names = set()
-        for param in props.get("VectorParameterValues", []):
-            name = param.get("ParameterInfo", {}).get("Name", "")
-            if not name or name in seen_vector_names:
-                continue
-            if name in known_colour_names:
-                continue
-            if not any(tok in name for tok in _KEEP_TOKENS):
-                continue
-            pv = param.get("ParameterValue", {})
-            try:
-                rgba = (
-                    float(pv.get("R", 1.0)),
-                    float(pv.get("G", 1.0)),
-                    float(pv.get("B", 1.0)),
-                    float(pv.get("A", 1.0)),
-                )
-            except (TypeError, ValueError):
-                continue
-            seen_vector_names.add(name)
-            result['vectors'].append((name, rgba))
-    except Exception as e:
-        print(f"Arc Raiders PSK Importer: Failed to parse MI parameters '{json_path}': {e}")
+
+def build_slice_png_map(png_list: list) -> dict:
+    """Map trailing _N slice index -> png path for O(1) lookups."""
+    result = {}
+    for fpath in png_list:
+        stem = os.path.splitext(os.path.basename(fpath))[0]
+        m = re.search(r'_(\d+)$', stem)
+        if m:
+            result[int(m.group(1))] = fpath
     return result
 
-# ---------------------------------------------------------------------------
-# Decal parsing
-# ---------------------------------------------------------------------------
+
+def parse_all_mi_parameters(json_path: str, known_colour_names: set) -> dict:
+    return _mi_params_from_props(load_mi_properties(json_path), known_colour_names)
+
 
 def parse_decals(json_path: str) -> list:
-    if not json_path or not os.path.isfile(json_path):
+    if not json_path:
         return []
     try:
-        with open(json_path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        entry = data[0] if isinstance(data, list) else data
-        props = entry.get("Properties", {})
-        active_slots = set()
-        for sw in props.get("StaticParametersRuntime", {}).get("StaticSwitchParameters", []):
-            name = sw.get("ParameterInfo", {}).get("Name", "")
-            m = re.match(r"(\d+)_UseDecal$", name)
-            if m and sw.get("Value", False):
-                active_slots.add(int(m.group(1)))
-        if not active_slots:
-            return []
-        scalar_lookup = {}
-        for sp in props.get("ScalarParameterValues", []):
-            n = sp.get("ParameterInfo", {}).get("Name", "")
-            scalar_lookup[n] = float(sp.get("ParameterValue", 0.0))
-        tex_lookup = {}
-        for tp in props.get("TextureParameterValues", []):
-            n = tp.get("ParameterInfo", {}).get("Name", "")
-            pv = tp.get("ParameterValue", {})
-            ov = pv.get("ObjectName", "")
-            op = pv.get("ObjectPath", "")
-            m2 = re.search(r"'([^']+)'", ov)
-            if m2:
-                tex_lookup[n] = (m2.group(1), op)
-        vec_lookup = {}
-        for vp in props.get("VectorParameterValues", []):
-            n = vp.get("ParameterInfo", {}).get("Name", "")
-            pv = vp.get("ParameterValue", {})
-            vec_lookup[n] = (
-                float(pv.get("R", 0.0)),
-                float(pv.get("G", 0.0)),
-                float(pv.get("B", 0.0)),
-                float(pv.get("A", 0.0)),
-            )
-        results = []
-        for idx in sorted(active_slots):
-            tex_stem, tex_objpath = tex_lookup.get(f"{idx}_DecalColor", ("", ""))
-            data_stem, data_objpath = tex_lookup.get(f"{idx}_DecalData", ("", ""))
-            if not tex_stem:
-                continue
-            color_a = vec_lookup.get(f"{idx}_ColorA")
-            color_b = vec_lookup.get(f"{idx}_ColorB")
-            placement = vec_lookup.get(f"{idx}_DecalPlacement", (0.0, 0.0, 1.0, 0.0))
-            results.append({
-                "index": idx,
-                "texture": tex_stem,
-                "texture_path": tex_objpath,
-                "data_texture": data_stem,
-                "data_texture_path": data_objpath,
-                "color_a": color_a,
-                "color_b": color_b,
-                "uv_u": placement[0],
-                "uv_v": placement[1],
-                "scale": placement[2],
-                "rotation": placement[3],
-                "width_ratio": scalar_lookup.get(f"{idx}_WidthRatio", 1.0),
-                "layer_mask": scalar_lookup.get(f"{idx}_LayerMask", 255.0),
-                "color_override": scalar_lookup.get(f"{idx}_ColorOverride", 1.0),
-            })
-        return results
+        return _decals_from_props(load_mi_properties(json_path))
     except Exception as e:
         print(f"Arc Raiders PSK Importer: Failed to parse decals from '{json_path}': {e}")
         return []
@@ -467,7 +518,7 @@ def detect_model_type(psk_path: str) -> str:
         return "body"
     if is_hair(psk_path):
         return "hair"
-    if is_weapon(psk_path):
+    if is_weapon(psk_path) or is_enemy(psk_path):
         return "weapon"
     if folder_has_occlusion_png(folder):
         return "clothing"
@@ -485,6 +536,10 @@ def is_hair(psk_path: str) -> bool:
 def is_weapon(psk_path: str) -> bool:
     norm = psk_path.replace("\\", "/").lower()
     return "/firearms/" in norm
+
+def is_enemy(psk_path: str) -> bool:
+    norm = psk_path.replace("\\", "/").lower()
+    return "/enemies/" in norm
 
 def is_misc(psk_path: str) -> bool:
     folder = os.path.dirname(psk_path)

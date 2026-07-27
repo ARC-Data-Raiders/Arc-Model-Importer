@@ -5,6 +5,7 @@ Utility functions for the Arc Raiders Importer
 import os
 import re
 import json
+from collections import deque
 import bpy
 import mathutils
 from mathutils import Vector
@@ -19,32 +20,52 @@ _COLORMASK_GROUP = "ColorMask_XYZ"
 # ---------------------------------------------------------------------------
 
 def find_psks_in_folder(folder: str) -> list:
-    """Recursively scan subfolders for PSK files. Prefers LOD0."""
+    """Scan a folder (and subfolders) for PSK/PSKX files.
+
+    Includes meshes in the selected folder itself (needed for firearms that
+    keep SK_/SM_ files at the root). When several LODs share a stem, prefers
+    LOD0. Distinct meshes in the same folder are all returned.
+    """
     results = []
-    def scan(path):
+
+    def list_psks(path):
         try:
             entries = sorted(os.listdir(path))
         except OSError:
-            return
-        psks = sorted(
+            return []
+        return [
             os.path.join(path, f) for f in entries
             if f.lower().endswith(".psk") or f.lower().endswith(".pskx")
-        )
+        ]
+
+    def pick_preferred(psks):
+        groups = {}
+        for p in psks:
+            stem = os.path.splitext(os.path.basename(p))[0]
+            base = re.sub(r'_lod\d+$', '', stem, flags=re.IGNORECASE).lower()
+            groups.setdefault(base, []).append(p)
+        picked = []
+        for paths in groups.values():
+            lod0 = [p for p in paths if "lod0" in os.path.basename(p).lower()]
+            picked.append(lod0[0] if lod0 else sorted(paths)[0])
+        return sorted(picked)
+
+    def scan(path):
+        psks = list_psks(path)
         if psks:
-            lod0 = [p for p in psks if "lod0" in p.lower() and (p.lower().endswith(".psk") or p.lower().endswith(".pskx"))]
-            results.append(lod0[0] if lod0 else psks[0])
+            results.extend(pick_preferred(psks))
+            return
+        try:
+            entries = sorted(os.listdir(path))
+        except OSError:
             return
         for entry in entries:
             sub = os.path.join(path, entry)
             if os.path.isdir(sub):
                 scan(sub)
-    try:
-        for sub in sorted(os.listdir(folder)):
-            sub_path = os.path.join(folder, sub)
-            if os.path.isdir(sub_path):
-                scan(sub_path)
-    except OSError:
-        pass
+
+    if folder and os.path.isdir(folder):
+        scan(folder)
     return results
 
 def normalize_folder_name(name: str) -> str:
@@ -54,6 +75,42 @@ def normalize_folder_name(name: str) -> str:
 def normalize_part_key(key: str) -> str:
     """Normalize a '<Character>/<Part>' key for fuzzy comparison."""
     return re.sub(r'[^a-z0-9/]', '', key.lower())
+
+# ---------------------------------------------------------------------------
+# UE JSON dump helpers
+# ---------------------------------------------------------------------------
+
+def ue_export_entries(data):
+    """Normalize UE asset JSON into a list of export objects.
+
+    Supports:
+      - legacy bare list of export objects
+      - legacy single export object
+      - newer {Exports: [...], Metadata: ...} wrappers from current dumps
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        exports = data.get("Exports")
+        if isinstance(exports, list):
+            return exports
+        return [data]
+    return []
+
+def first_ue_export(data, type_name: str = ""):
+    """Return the first export matching Type, else first export, else {}."""
+    entries = ue_export_entries(data)
+    if not entries:
+        return {}
+    if not type_name:
+        return entries[0]
+    fallback = None
+    for entry in entries:
+        if entry.get("Type") == type_name:
+            return entry
+        if fallback is None:
+            fallback = entry
+    return fallback or {}
 
 # ---------------------------------------------------------------------------
 # Cache management
@@ -91,9 +148,9 @@ def find_content_dir(root: str) -> str:
         MAX_DEPTH = 6
         MAX_VISITED = 20000
         visited = 0
-        queue = [(root, 0)]
+        queue = deque([(root, 0)])
         while queue:
-            current, depth = queue.pop(0)
+            current, depth = queue.popleft()
             visited += 1
             if visited > MAX_VISITED:
                 break
@@ -107,7 +164,7 @@ def find_content_dir(root: str) -> str:
                     continue
                 if entry.lower() == "content":
                     found = full
-                    queue = []
+                    queue.clear()
                     break
                 if depth < MAX_DEPTH:
                     queue.append((full, depth + 1))
@@ -136,9 +193,9 @@ def find_relative_dir(root: str, rel_parts: list) -> str:
                 return ""
             target_leaf_norm = normalize_folder_name(suffix_parts[-1])
             visited = 0
-            queue = [(root, 0)]
+            queue = deque([(root, 0)])
             while queue:
-                current, depth = queue.pop(0)
+                current, depth = queue.popleft()
                 visited += 1
                 if visited > MAX_VISITED:
                     break

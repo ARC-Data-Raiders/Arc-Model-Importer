@@ -94,6 +94,9 @@ def make_outfit_preset_items(self, context):
     """Dynamic EnumProperty items callback for outfit preset dropdown."""
     if not context:
         return [('NONE', '— Select Outfit —', '')]
+    from .importing import queue_supports_outfit_batch
+    if not queue_supports_outfit_batch(context):
+        return [('NONE', '— Select Outfit —', '')]
     manual_folder = getattr(context.scene, 'arc_manual_outfit_folder', '')
     entries = context.scene.arc_psk_entries
     character_name = ""

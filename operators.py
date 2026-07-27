@@ -56,21 +56,33 @@ def process_entry(entry) -> tuple:
     elif model_type == "weapon":
         for obj in mesh_objects:
             materials.setup_weapon_material(obj, psk_path)
-        return True, f"Imported (weapon): {os.path.basename(psk_path)}", new_objects
+        kind = "enemy" if textures.is_enemy(psk_path) else "weapon"
+        return True, f"Imported ({kind}): {os.path.basename(psk_path)}", new_objects
     
     elif model_type == "clothing":
         decal_folder = utils.get_decal_folder()
-        colours = textures.parse_skin_colours(json_path) if json_path else {}
+        mi_data = textures.parse_clothing_mi(json_path) if json_path else {
+            "colours": {}, "ta_ids": {}, "mi_params": {"scalars": [], "vectors": []}, "decals": [],
+        }
+        colours = mi_data["colours"]
         selected_skin_name = ""
         if entry.skin_choice and entry.skin_choice != "NONE":
             skin_dir_name = os.path.basename(os.path.dirname(bpy.path.abspath(entry.skin_choice)))
             selected_skin_name = skin_dir_name
+        try:
+            main_pngs = sorted(f for f in os.listdir(folder) if f.lower().endswith(".png"))
+        except OSError:
+            main_pngs = []
+        base_pngs = textures.scan_base_skin_textures(
+            psk_path, selected_skin_name, entry.manual_skins_folder
+        ) if psk_path else []
         for obj in mesh_objects:
             materials.setup_arc_texturer_material(
                 obj, folder, colours, psk_path,
                 json_path=json_path, decal_folder=decal_folder,
                 selected_skin_name=selected_skin_name,
-                manual_skins_folder=entry.manual_skins_folder
+                manual_skins_folder=entry.manual_skins_folder,
+                mi_data=mi_data, main_pngs=main_pngs, base_pngs=base_pngs,
             )
         label = "with skin colours" if colours else "default skin"
         return True, f"Imported ({label}): {os.path.basename(psk_path)}", new_objects
@@ -354,7 +366,7 @@ class ARC_OT_ImportOutfitFolder(Operator):
             return {'CANCELLED'}
         psks = utils.find_psks_in_folder(folder)
         if not psks:
-            self.report({'ERROR'}, f"No .psk/.pskx files found in folder or immediate subfolders of: {folder}")
+            self.report({'ERROR'}, f"No .psk/.pskx files found in folder (or its subfolders): {folder}")
             return {'CANCELLED'}
         scene = context.scene
         scene.arc_psk_entries.clear()
@@ -426,7 +438,10 @@ class ARC_OT_LoadOutfit(Operator):
             return {'CANCELLED'}
         psks = importing.collect_psks_for_outfit_row(root, item_ui_folders)
         if not psks:
-            self.report({'ERROR'}, "No PSK files found for this outfit's DA_OI parts.")
+            model_folder = (row.get("Model Folder Name") or "").strip()
+            psks = importing.collect_psks_from_model_folder(root, model_folder)
+        if not psks:
+            self.report({'ERROR'}, "No PSK files found for this outfit's parts.")
             return {'CANCELLED'}
         scene.arc_psk_entries.clear()
         for psk_path in psks:
@@ -544,6 +559,12 @@ class ARC_OT_ConfirmPSKImport(Operator):
         return False
 
     def invoke(self, context, event):
+        # Skin/colourway review UI is only for layered outfit/clothing queues.
+        # Weapons, misc, face/body/hair-only, etc. import immediately.
+        if not importing.queue_supports_outfit_batch(context):
+            context.scene.arc_outfit_selections.clear()
+            return self.execute(context)
+
         importing.populate_outfit_selections(context)
         has_batch = len(context.scene.arc_outfit_selections) > 0
         if not self._has_any_choices(context) and not has_batch:
@@ -559,40 +580,42 @@ class ARC_OT_ConfirmPSKImport(Operator):
 
         layout.label(text=f"{len(entries)} part(s) — assign skins then click OK:", icon='IMPORT')
 
-        from .properties import make_outfit_preset_items
-        outfit_items = make_outfit_preset_items(self, context)
-        if len(outfit_items) > 1:
-            preset_box = layout.box()
-            row = preset_box.row(align=True)
-            row.prop(context.scene, "arc_outfit_preset", text="Outfit")
-            row.operator("arc.apply_outfit_preset", text="Apply", icon='CHECKMARK')
+        is_outfit_queue = importing.queue_supports_outfit_batch(context)
+        if is_outfit_queue:
+            from .properties import make_outfit_preset_items
+            outfit_items = make_outfit_preset_items(self, context)
+            if len(outfit_items) > 1:
+                preset_box = layout.box()
+                row = preset_box.row(align=True)
+                row.prop(context.scene, "arc_outfit_preset", text="Outfit")
+                row.operator("arc.apply_outfit_preset", text="Apply", icon='CHECKMARK')
 
-        sels = context.scene.arc_outfit_selections
-        manual_outfit = getattr(context.scene, 'arc_manual_outfit_folder', '')
-        bbox = layout.box()
-        bbox.label(text="Batch import colourways — each becomes a separate model:", icon='DUPLICATE')
+            sels = context.scene.arc_outfit_selections
+            manual_outfit = getattr(context.scene, 'arc_manual_outfit_folder', '')
+            bbox = layout.box()
+            bbox.label(text="Batch import colourways — each becomes a separate model:", icon='DUPLICATE')
 
-        if manual_outfit:
-            mrow = bbox.row()
-            mrow.label(text=f"Outfit source: {manual_outfit}", icon='FILE_FOLDER')
-            mrow.operator("arc.pick_manual_outfit_folder", text="Change...", icon='FILEBROWSER')
-            mrow.operator("arc.clear_manual_outfit_folder", text="", icon='X')
+            if manual_outfit:
+                mrow = bbox.row()
+                mrow.label(text=f"Outfit source: {manual_outfit}", icon='FILE_FOLDER')
+                mrow.operator("arc.pick_manual_outfit_folder", text="Change...", icon='FILEBROWSER')
+                mrow.operator("arc.clear_manual_outfit_folder", text="", icon='X')
 
-        if len(sels) > 0:
-            grid = bbox.grid_flow(row_major=True, columns=3, even_columns=True)
-            for s in sels:
-                grid.prop(s, "selected", text=s.preset_name)
-            n_sel = sum(1 for s in sels if s.selected)
-            if n_sel:
-                bbox.label(text=f"{n_sel} selected → {n_sel} separate instance(s)", icon='INFO')
+            if len(sels) > 0:
+                grid = bbox.grid_flow(row_major=True, columns=3, even_columns=True)
+                for s in sels:
+                    grid.prop(s, "selected", text=s.preset_name)
+                n_sel = sum(1 for s in sels if s.selected)
+                if n_sel:
+                    bbox.label(text=f"{n_sel} selected → {n_sel} separate instance(s)", icon='INFO')
+                else:
+                    bbox.label(text="None ticked → single import using the choices below", icon='INFO')
             else:
-                bbox.label(text="None ticked → single import using the choices below", icon='INFO')
-        else:
-            bbox.label(text="No outfit colourway data detected automatically.", icon='ERROR')
-            bbox.label(text="The DA_OI_Outfit folder name may not match the character — pick it manually:")
-            bbox.operator("arc.pick_manual_outfit_folder", text="Browse for DA_OI_Outfit Folder...", icon='FILEBROWSER')
+                bbox.label(text="No outfit colourway data detected automatically.", icon='ERROR')
+                bbox.label(text="The DA_OI_Outfit folder name may not match the character — pick it manually:")
+                bbox.operator("arc.pick_manual_outfit_folder", text="Browse for DA_OI_Outfit Folder...", icon='FILEBROWSER')
 
-        layout.separator()
+            layout.separator()
 
         for idx, entry in enumerate(entries):
             skins = textures.scan_skins(entry.psk_path, entry.manual_skins_folder)
@@ -634,10 +657,10 @@ class ARC_OT_ConfirmPSKImport(Operator):
                     op.mi_path = mi_path
 
     def execute(self, context):
-        from .properties import make_outfit_preset_items
-
-        selected = [(s.preset_name, bpy.path.abspath(s.json_path))
-                    for s in context.scene.arc_outfit_selections if s.selected]
+        selected = []
+        if importing.queue_supports_outfit_batch(context):
+            selected = [(s.preset_name, bpy.path.abspath(s.json_path))
+                        for s in context.scene.arc_outfit_selections if s.selected]
         if selected:
             instances, parts = batch_import_instances(context, selected)
             self.report({'INFO'}, f"Arc Raiders: batch imported {instances} instance(s) ({parts} part(s) total).")

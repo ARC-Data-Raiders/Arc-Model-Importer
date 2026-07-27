@@ -172,8 +172,8 @@ def build_outfit_character_map(root: str) -> dict:
                         data = json.load(fh)
                 except Exception:
                     continue
-                entry = data[0] if isinstance(data, list) else data
-                if entry.get("Type") != "CharacterVisualSkinOnlineItemDataAsset":
+                entry = utils.first_ue_export(data, "CharacterVisualSkinOnlineItemDataAsset")
+                if not entry:
                     continue
                 parts = entry.get("Properties", {}).get("Parts", [])
                 for p in parts:
@@ -275,7 +275,7 @@ def parse_outfit_preset(json_path: str) -> dict:
     try:
         with open(json_path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        for entry in data if isinstance(data, list) else [data]:
+        for entry in utils.ue_export_entries(data):
             if entry.get("Type") not in _VALID_TYPES:
                 continue
             props = entry.get("Properties", {})
@@ -329,6 +329,15 @@ def collect_psks_for_outfit_row(root: str, item_ui_folders: list) -> list:
                 psks.append(psk)
     return psks
 
+def collect_psks_from_model_folder(root: str, model_folder_name: str) -> list:
+    model_folder_name = (model_folder_name or "").strip()
+    if not model_folder_name:
+        return []
+    char_dir = utils.find_relative_dir(root, ["Characters", "Assets", model_folder_name])
+    if not char_dir:
+        return []
+    return utils.find_psks_in_folder(char_dir)
+
 def read_oi_parts_asset_paths(root: str, outfit_folder_name: str) -> list:
     outfit_root = utils.find_relative_dir(root, ["Items", "Characters", "Skins", "Outfit"])
     if not outfit_root:
@@ -346,8 +355,8 @@ def read_oi_parts_asset_paths(root: str, outfit_folder_name: str) -> list:
                 data = json.load(fh)
         except Exception:
             continue
-        entry = data[0] if isinstance(data, list) else data
-        if entry.get("Type") != "CharacterVisualSkinOnlineItemDataAsset":
+        entry = utils.first_ue_export(data, "CharacterVisualSkinOnlineItemDataAsset")
+        if not entry:
             continue
         return [p.get("AssetPathName", "") for p in entry.get("Properties", {}).get("Parts", [])]
     return []
@@ -370,10 +379,28 @@ def find_psk_in_specific_folder(folder: str):
 # Populate outfit selections
 # ---------------------------------------------------------------------------
 
+def queue_supports_outfit_batch(context) -> bool:
+    """True only when the queued PSKs should scan DA_OI_Outfit colourways.
+
+    Outfit batching is for layered character clothing (and explicit manual
+    overrides). Weapons, misc, face/body/hair-only, etc. must skip the
+    expensive Outfit-folder / CSV searches.
+    """
+    manual_folder = getattr(context.scene, "arc_manual_outfit_folder", "")
+    if manual_folder and os.path.isdir(bpy.path.abspath(manual_folder)):
+        return True
+    for entry in context.scene.arc_psk_entries:
+        psk_path = bpy.path.abspath(entry.psk_path)
+        if textures.detect_model_type(psk_path) == "clothing":
+            return True
+    return False
+
 def populate_outfit_selections(context) -> int:
     sels = context.scene.arc_outfit_selections
     prior = {s.json_path: s.selected for s in sels}
     sels.clear()
+    if not queue_supports_outfit_batch(context):
+        return 0
     manual_folder = getattr(context.scene, 'arc_manual_outfit_folder', '')
     if manual_folder and os.path.isdir(bpy.path.abspath(manual_folder)):
         presets = scan_outfit_presets_in_folder(bpy.path.abspath(manual_folder))

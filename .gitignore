@@ -1,1 +1,5 @@
 *.pyc
+outfit_toggles.txt
+*.log
+*.tmp
+__pycache__/
