@@ -4213,11 +4213,20 @@ _METAL_PACKED_NORMALS = frozenset({
 })
 
 _SIMPLE_ALBEDO_KEYS = (
-    "BaseColor", "CA", "1. CA", "CR", "CR Texture", "PM_Diffuse", "BC", "C",
+    # Hero/character flat MIs use Color (+ _Color suffix); env packs use CR/CA/C.
+    "BaseColor", "Color", "CA", "1. CA", "CR", "CR Texture", "PM_Diffuse", "BC", "C",
 )
 _SIMPLE_NORMAL_KEYS = (
     "Normals", "Normal", "NormalMap", "NOH", "1. NTR", "NTR",
     "NXX/NMX Texture", "NOM", "NXM", "NMX", "NXX", "PM_Normals",
+)
+# Hero packed ORM-like map: R = Roughness, G = Metallic (B unused / cavity).
+_SIMPLE_ROUGHNESS_METAL_KEYS = (
+    "RoughnessMetal", "roughnessmetal",
+)
+# Optional colourway tint mask (often empty / stub on base skins).
+_SIMPLE_TINTMASK_KEYS = (
+    "TintMask", "tintmask",
 )
 
 FAMILY_EMISSIVE = "emissive"
@@ -4711,7 +4720,7 @@ def _is_metal_prop_mi(mi: dict, mi_stem_lower: str = "") -> bool:
 
 
 def _is_simple_surface_mi(mi: dict) -> bool:
-    """BaseColor+Normal (or CR+Normal) without layered env / weapon packs."""
+    """BaseColor/Color+Normal (or CR+Normal / hero RoughnessMetal) without layered packs."""
     params = _mi_tex_params(mi)
     if not params:
         return False
@@ -4721,7 +4730,8 @@ def _is_simple_surface_mi(mi: dict) -> bool:
         return False
     has_albedo = bool(params & set(_SIMPLE_ALBEDO_KEYS))
     has_normal = bool(params & set(_SIMPLE_NORMAL_KEYS))
-    return has_albedo or has_normal
+    has_rm = bool(params & {"RoughnessMetal"})
+    return has_albedo or has_normal or has_rm
 
 
 def _is_graphic_atlas_mi(mi: dict, mi_stem_lower: str = "") -> bool:
@@ -5596,7 +5606,8 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             continue
         # Skip duplicate texture-name aliases (T_Concrete_Wall_05_CR etc.)
         if param.startswith("T_") and any(
-            param.endswith(suf) for suf in ("_CR", "_NOH", "_C", "_A", "_X", "_GRM", "_NOM", "_NXX", "_NMX", "_NAO")
+            param.endswith(suf) for suf in ("_CR", "_NOH", "_C", "_A", "_X", "_GRM", "_NOM", "_NXX", "_NMX", "_NAO",
+                                           "_Color", "_Normal", "_Roughnessmetal", "_Tintmask")
         ):
             continue
         node = nodes.new("ShaderNodeTexImage")
@@ -5617,6 +5628,7 @@ def _dump_unconnected_tex(nodes, tex_lookup, handled_paths, loc_x, loc_y):
             param.endswith(suf) for suf in (
                 "_CR", "_NOH", "_C", "_A", "_X", "_GRM", "_NOM", "_NXX", "_NMX",
                 "_CA", "_CS", "_NTR", "_NX", "_EXX",
+                "_Color", "_Normal", "_Roughnessmetal", "_Tintmask",
             )
         ):
             continue
@@ -8394,6 +8406,8 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
 
     _, albedo_img = _find_env_tex(tex_lookup, *_SIMPLE_ALBEDO_KEYS)
     _, normal_img = _find_env_tex(tex_lookup, *_SIMPLE_NORMAL_KEYS)
+    _, rm_img = _find_env_tex(tex_lookup, *_SIMPLE_ROUGHNESS_METAL_KEYS)
+    _, tintmask_img = _find_env_tex(tex_lookup, *_SIMPLE_TINTMASK_KEYS)
 
     # Tree trunks that fall through to simple with missing maps — infer vegetation textures
     stem_l = os.path.splitext(os.path.basename(mi_path or ""))[0].lower()
@@ -8428,14 +8442,17 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
         albedo_param = next((p for p, (_fp, im) in tex_lookup.items() if im == albedo_img), "")
         a_node = _new_tex_image(nodes, albedo_img, f"Albedo ({albedo_param})", (COL_TEX, 300))
         links.new(a_node.outputs["Color"], principled.inputs["Base Color"])
-        # CR alpha → roughness; CA/BaseColor alpha → opacity when masked
+        # CR alpha → roughness; CA/BaseColor/Color alpha → opacity when masked
         pl = albedo_param.lower()
         stem = os.path.splitext(os.path.basename(
             next((fp for _p, (fp, im) in tex_lookup.items() if im == albedo_img), "")
         ))[0].lower()
         if stem.endswith("_cr") or pl in ("cr", "cr texture", "bc"):
             links.new(a_node.outputs["Alpha"], principled.inputs["Roughness"])
-        elif stem.endswith(("_ca", "_c")) or pl in ("ca", "1. ca", "basecolor", "coloralpha"):
+        elif (
+            stem.endswith(("_ca", "_color", "_c"))
+            or pl in ("ca", "1. ca", "basecolor", "coloralpha", "color")
+        ):
             if _is_masked_blend(mi) or mi.get("two_sided"):
                 links.new(a_node.outputs["Alpha"], principled.inputs["Alpha"])
                 _set_material_alpha_mode(
@@ -8464,6 +8481,26 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
         ))[0].lower()
         if any(stem.endswith(s) for s in ("_nxm", "_nmx", "_nom")):
             links.new(n_node.outputs["Alpha"], principled.inputs["Metallic"])
+
+    if rm_img is not None:
+        # Hero RoughnessMetal: R → Roughness, G → Metallic (name order; channel stats agree).
+        rm_node = _new_tex_image(
+            nodes, rm_img, "RoughnessMetal", (COL_TEX, -350), non_color=True,
+        )
+        sep = nodes.new("ShaderNodeSeparateColor")
+        sep.label = "Rough / Metal"
+        sep.location = (COL_MIX - 80, -350)
+        links.new(rm_node.outputs["Color"], sep.inputs["Color"])
+        if not principled.inputs["Roughness"].links:
+            links.new(sep.outputs["Red"], principled.inputs["Roughness"])
+        if not principled.inputs["Metallic"].links:
+            links.new(sep.outputs["Green"], principled.inputs["Metallic"])
+
+    if tintmask_img is not None:
+        # Colourway tint mask — keep as inspectable Image when no tint vectors present.
+        _new_tex_image(
+            nodes, tintmask_img, "TintMask", (COL_TEX - 280, -650), non_color=True,
+        )
 
     if not principled.inputs["Roughness"].links:
         principled.inputs["Roughness"].default_value = _mi_scalar(
