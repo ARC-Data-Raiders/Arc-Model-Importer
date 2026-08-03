@@ -123,6 +123,7 @@ class _FakeObj:
 
 def main() -> int:
     mats = _load_materials()
+    utils = sys.modules["arc_verify_white.utils"]
     fails = 0
 
     # Actor -> MI hint
@@ -228,6 +229,78 @@ def main() -> int:
             ok = fam == mats.FAMILY_WATER
             print(f"{'OK' if ok else 'FAIL'} family={fam}")
             fails += 0 if ok else 1
+
+    # Dam-style MapPlacements layout uses Game/Pioneer/... (no Content segment).
+    # Remap must still land on PioneerGame/Content for SM/MI JSON + textures.
+    dam_psk = os.path.join(
+        PIONEER,
+        r"MapPlacements\TheDam_02_P\Game\Pioneer\Environment\Props\_Generic"
+        r"\AirconUnit_01\SM_AirconUnit_01_A.uemodel",
+    )
+    dam_sm_json = os.path.join(
+        PIONEER,
+        r"PioneerGame\Content\Pioneer\Environment\Props\_Generic"
+        r"\AirconUnit_01\SM_AirconUnit_01_A.json",
+    )
+    dam_mi = os.path.join(
+        PIONEER,
+        r"PioneerGame\Content\Pioneer\Environment\Props\_Generic"
+        r"\AirconUnit_01\MI_AirconUnit_01_A.json",
+    )
+    print(
+        "--- dam_game_layout exists",
+        os.path.isfile(dam_psk),
+        "sm",
+        os.path.isfile(dam_sm_json),
+        "mi",
+        os.path.isfile(dam_mi),
+    )
+    if os.path.isfile(dam_psk) and os.path.isfile(dam_sm_json):
+        remapped = utils.remap_path_into_content_dirs(dam_psk)
+        expect = os.path.normcase(
+            os.path.normpath(
+                os.path.join(
+                    PIONEER,
+                    r"PioneerGame\Content\Pioneer\Environment\Props\_Generic"
+                    r"\AirconUnit_01\SM_AirconUnit_01_A.uemodel",
+                )
+            )
+        )
+        hit = any(os.path.normcase(os.path.normpath(p)) == expect for p in remapped)
+        print(f"{'OK' if hit else 'FAIL'} Game/ → Content remap ({remapped[:2]})")
+        fails += 0 if hit else 1
+        mats.clear_material_session_caches()
+        slots = mats._parse_sk_material_slots(dam_psk)
+        # Remap must surface the Content SM JSON (slot MI paths may still be bad dump data).
+        ok = bool(slots)
+        print(
+            f"{'OK' if ok else 'FAIL'} Dam Aircon SM JSON via Game/ remap "
+            f"slots={[(a, b, os.path.basename(c) if c else '') for a, b, c in slots]}"
+        )
+        fails += 0 if ok else 1
+        if os.path.isfile(dam_mi):
+            id_ok = mats._mi_json_matches_requested_stem(dam_mi, "MI_AirconUnit_01_A")
+            # Current Desktop dump often has wrong bodies under prop MI filenames.
+            print(
+                f"INFO Aircon MI identity match={id_ok} "
+                f"(False => dump body mismatch; Stage 2 should reject)"
+            )
+            resolved = mats._resolve_mi_json_path(
+                "MI_AirconUnit_01_A", "", os.path.dirname(dam_sm_json)
+            )
+            if not id_ok:
+                ok = resolved == ""
+                print(
+                    f"{'OK' if ok else 'FAIL'} reject mismatched Aircon MI "
+                    f"resolved={resolved!r}"
+                )
+                fails += 0 if ok else 1
+            else:
+                ok = bool(resolved) and os.path.isfile(resolved)
+                print(f"{'OK' if ok else 'FAIL'} accept matching Aircon MI")
+                fails += 0 if ok else 1
+    else:
+        print("SKIP Dam Game/ Aircon layout (missing on disk)")
 
     # White detection
     white = _FakeMat("Material", rgb=(0.8, 0.8, 0.8))

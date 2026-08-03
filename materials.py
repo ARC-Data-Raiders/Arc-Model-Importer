@@ -2567,6 +2567,54 @@ def _character_layout_search_folders(*paths: str) -> list[str]:
     return out
 
 
+def _mi_json_matches_requested_stem(json_path: str, requested_stem: str) -> bool:
+    """True when MI JSON body looks like the stem we asked for.
+
+    Some FModel dumps write the wrong asset under an MI_*.json filename
+    (Package/Name point at a different MI). Accept when Name/Package are
+    missing (legacy wrappers) or match; reject clear mismatches so Stage 2
+    does not paint Aircon with Awning / Concrete with Rock.
+    """
+    stem = (requested_stem or "").strip()
+    if "." in stem:
+        stem = stem.split(".", 1)[0]
+    if not stem or not json_path or not os.path.isfile(json_path):
+        return False
+    stem_l = stem.lower()
+    # Filename is a weak signal — still verify body when Name/Package exist.
+    try:
+        with open(json_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return False
+    entry = None
+    for e in utils.ue_export_entries(data):
+        if not isinstance(e, dict):
+            continue
+        if e.get("Type") in ("MaterialInstanceConstant", "MaterialInstance"):
+            entry = e
+            break
+        if entry is None:
+            entry = e
+    if not isinstance(entry, dict):
+        return False
+    name = (entry.get("Name") or "").strip()
+    if "." in name:
+        name = name.split(".", 1)[0]
+    package = (entry.get("Package") or "").replace("\\", "/").strip()
+    pkg_leaf = package.rsplit("/", 1)[-1] if package else ""
+    if "." in pkg_leaf:
+        pkg_leaf = pkg_leaf.split(".", 1)[0]
+    # No identity fields — cannot prove mismatch (older / odd wrappers).
+    if not name and not pkg_leaf:
+        return True
+    if name and name.lower() != stem_l:
+        return False
+    if pkg_leaf and pkg_leaf.lower() != stem_l:
+        return False
+    return True
+
+
 def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
     """Find MI_*.json beside the PSK, in shared weapon mats, or via ObjectPath."""
     if not mi_stem:
@@ -2584,6 +2632,20 @@ def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
     def _remember(path: str) -> str:
         _MI_JSON_PATH_CACHE[cache_key] = path or ""
         return path or ""
+
+    def _accept(path: str) -> str:
+        """Cache + return path only when body identity matches the requested stem."""
+        if not path or not os.path.isfile(path):
+            return ""
+        if not _mi_json_matches_requested_stem(path, mi_stem):
+            try:
+                utils.get_logger().debug(
+                    "reject MI JSON identity mismatch for '%s': %s", mi_stem, path
+                )
+            except Exception:
+                pass
+            return ""
+        return _remember(path)
 
     # UE asset ObjectPaths frequently include redundant dot segments (e.g.
     # "MI_X.MI_X.0"). Those may flow into mi_stem and break local filename
@@ -2617,31 +2679,36 @@ def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
                 continue
             seen_sf.add(key)
             candidate = os.path.join(search_folder, stem + ".json")
-            if os.path.isfile(candidate):
-                return _remember(candidate)
+            hit = _accept(candidate)
+            if hit:
+                return hit
 
         # ObjectPath is O(1) path join — prefer before FMDex (basename keys may walk).
         if obj_path:
             found = textures.find_asset_from_object_path(obj_path, ".json")
-            if found:
-                return _remember(found)
+            hit = _accept(found) if found else ""
+            if hit:
+                return hit
 
             # Extra defensive tries for instance-suffixed ObjectPaths.
             alt = obj_path
             if alt.endswith(".0"):
                 found = textures.find_asset_from_object_path(alt[:-2], ".json")
-                if found:
-                    return _remember(found)
+                hit = _accept(found) if found else ""
+                if hit:
+                    return hit
             else:
                 found = textures.find_asset_from_object_path(alt + ".0", ".json")
-                if found:
-                    return _remember(found)
+                hit = _accept(found) if found else ""
+                if hit:
+                    return hit
 
         try:
             from . import fmdex
             found = fmdex.resolve_export_file(stem, ".json")
-            if found:
-                return _remember(found)
+            hit = _accept(found) if found else ""
+            if hit:
+                return hit
         except Exception:
             pass
 
@@ -2661,7 +2728,9 @@ def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
                         for walk_root, _dirs, files in os.walk(shared_art):
                             for fname in files:
                                 if fname.lower() == target_l:
-                                    return _remember(os.path.join(walk_root, fname))
+                                    hit = _accept(os.path.join(walk_root, fname))
+                                    if hit:
+                                        return hit
                     except OSError:
                         pass
 
@@ -2678,15 +2747,18 @@ def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
                 ):
                     inst_folder = os.path.join(inst_root, folder_name)
                     candidate = os.path.join(inst_folder, stem + ".json")
-                    if os.path.isfile(candidate):
-                        return _remember(candidate)
+                    hit = _accept(candidate)
+                    if hit:
+                        return hit
                 if os.path.isdir(inst_root):
                     target_l = (stem + ".json").lower()
                     walked = 0
                     for walk_root, _dirs, files in os.walk(inst_root):
                         for fname in files:
                             if fname.lower() == target_l:
-                                return _remember(os.path.join(walk_root, fname))
+                                hit = _accept(os.path.join(walk_root, fname))
+                                if hit:
+                                    return hit
                         walked += 1
                         if walked > 4000:
                             break
@@ -2697,8 +2769,9 @@ def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
                         os.path.join(psk_folder, stem + ".json"),
                         [content_dir],
                     ):
-                        if os.path.isfile(alt):
-                            return _remember(alt)
+                        hit = _accept(alt)
+                        if hit:
+                            return hit
         except Exception:
             pass
 
@@ -10284,13 +10357,26 @@ def fix_white_unassigned_materials(obj, psk_path: str = "") -> dict:
 
 
 def _setup_map_material_from_slots(obj, psk_path: str) -> int:
-    """Assign from SM/SK JSON + preferred BP MI + MI-named slots (no fuzzy)."""
+    """Assign from MI-named slots + SM/SK JSON + preferred BP MI (no fuzzy)."""
     if not obj or obj.type != "MESH":
         return 0
 
     folder = os.path.dirname(psk_path) if psk_path else ""
+    # Prefer remapped Content folder when MapPlacements only has .uemodel.
+    for alt in utils.remap_path_into_content_dirs(
+        os.path.join(folder, "__probe__") if folder else ""
+    ):
+        alt_dir = os.path.dirname(alt)
+        if alt_dir and os.path.isdir(alt_dir):
+            folder = alt_dir
+            break
+
+    # UEModel often embeds the real MI_* names while SM StaticMaterials point at
+    # shared PropTrim / wrong refs. Resolve MI-named Blender slots first (with
+    # MapPlacements → Content remap), then fill leftovers from SM JSON.
+    fixed_named = fix_object_materials_from_mi_slots(obj, folder)
     slots = _parse_sk_material_slots(psk_path) if psk_path else []
-    fixed = 0
+    fixed = fixed_named
     force_rebuild = bool(obj.get("arc_force_material_rebuild"))
 
     preferred = str(obj.get("arc_preferred_mi") or "").strip()
@@ -10363,6 +10449,14 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
         # Keep BP water/decal preferred on slot 0 when it already won above.
         if fixed and preferred and _preferred_mi_is_single_slot_override(preferred):
             used_indices.add(0)
+        # UEModel MI_* slot names are authoritative when present — do not
+        # index-clobber them with unrelated SM StaticMaterials (PropTrim atlas,
+        # StreetSign refs on Aircon packages, etc.).
+        has_mi_named = any(
+            _mi_stem_from_blender_name(s.material.name)
+            for s in (obj.material_slots or [])
+            if s.material
+        )
         for idx, (slot_name, mi_stem, mi_path) in enumerate(slots):
             if not mi_stem or not mi_path:
                 continue
@@ -10372,6 +10466,8 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
                 obj, slot_name, idx, used_indices, mi_stem,
             )
             if target_slot is None:
+                if has_mi_named:
+                    continue
                 if idx < len(obj.material_slots) and idx not in used_indices:
                     target_slot = obj.material_slots[idx]
                     slot_i = idx
@@ -10447,7 +10543,7 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
         if fixed:
             return fixed
 
-    return fix_object_materials_from_mi_slots(obj, folder)
+    return fixed if fixed else fix_object_materials_from_mi_slots(obj, folder)
 
 
 def setup_map_material(obj, psk_path: str) -> int:

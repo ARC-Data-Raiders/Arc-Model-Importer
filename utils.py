@@ -396,9 +396,16 @@ def get_content_dirs(extra_roots: list[str] | None = None) -> list[str]:
 def remap_path_into_content_dirs(file_path: str, content_dirs: list[str] | None = None) -> list[str]:
     """Map a MapPlacements (or any Content-relative) file into alternate Content trees.
 
-    Example:
+    Examples:
       .../MapPlacements/RivenTides_01_P/PioneerGame/Content/Pioneer/Environment/.../SM_X.uemodel
       → .../PioneerGame/Content/Pioneer/Environment/.../SM_X.uemodel
+
+      .../MapPlacements/TheDam_02_P/Game/Pioneer/Environment/.../SM_X.uemodel
+      → .../PioneerGame/Content/Pioneer/Environment/.../SM_X.uemodel
+
+    FModel Map + Meshes may write uemodels under either ``PioneerGame/Content/...``
+    or a shorter ``Game/...`` mirror. Stage 2 needs the full dump (SM/MI JSON + PNG)
+    which usually lives only under the sibling ``PioneerGame/Content`` tree.
     """
     if not file_path:
         return []
@@ -409,6 +416,12 @@ def remap_path_into_content_dirs(file_path: str, content_dirs: list[str] | None 
         if part.lower() == "content" and i + 1 < len(parts):
             rel = os.sep.join(parts[i + 1 :])
             break
+    # Literal ``Game/`` folder (not PioneerGame): same relative payload as Content/.
+    if not rel:
+        for i, part in enumerate(parts):
+            if part.lower() == "game" and i + 1 < len(parts):
+                rel = os.sep.join(parts[i + 1 :])
+                break
     if not rel:
         return []
 
