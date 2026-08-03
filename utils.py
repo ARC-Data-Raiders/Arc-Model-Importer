@@ -5,6 +5,7 @@ Utility functions for the Arc Raiders Importer
 import os
 import re
 import json
+import logging
 from collections import deque
 import bpy
 import mathutils
@@ -14,6 +15,38 @@ _ADDON_DIR = os.path.dirname(__file__)
 _BLEND_PATH = os.path.join(_ADDON_DIR, "ArcTexturer.blend")
 _NODE_GROUP = "Arc Texturer"
 _COLORMASK_GROUP = "ColorMask_XYZ"
+_DEBUG_LOG_PATH = os.path.join(_ADDON_DIR, "arc_raiders_debug.log")
+_LOGGER = None
+
+
+def get_logger() -> logging.Logger:
+    """Logger that writes to the addon debug file and stderr (System Console)."""
+    global _LOGGER
+    if _LOGGER is not None:
+        return _LOGGER
+    log = logging.getLogger("arc_raiders")
+    log.setLevel(logging.DEBUG)
+    if not log.handlers:
+        fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S")
+        try:
+            fh = logging.FileHandler(_DEBUG_LOG_PATH, encoding="utf-8")
+            fh.setLevel(logging.DEBUG)
+            fh.setFormatter(fmt)
+            log.addHandler(fh)
+        except OSError:
+            pass
+        sh = logging.StreamHandler()
+        sh.setLevel(logging.DEBUG)
+        sh.setFormatter(fmt)
+        log.addHandler(sh)
+    log.propagate = False
+    _LOGGER = log
+    return log
+
+
+def debug_log_path() -> str:
+    return _DEBUG_LOG_PATH
+
 
 # ---------------------------------------------------------------------------
 # Folder scanning
@@ -76,7 +109,7 @@ def find_psks_in_folder(folder: str) -> tuple:
     if folder and os.path.isdir(folder):
         scan(folder)
 
-    # Dedup: when a .psk and .pskx share the same body (ignoring SK_/SM_ prefix),
+    # Dedup: when a .psk and a .pskx share the same body (ignoring SK_/SM_ prefix),
     # drop the .pskx — a .psk is a skeletal mesh with bones and is always preferred.
     def _mesh_body(p):
         """Stem with SK_/SM_ prefix and LOD suffix stripped, lowercased."""
@@ -169,6 +202,28 @@ def invalidate_dir_caches_if_root_changed():
         _RELATIVE_DIR_CACHE.clear()
         _OUTFIT_CHAR_MAP_CACHE.clear()
         _CACHE_ROOT_SEEN[0] = root
+        try:
+            from . import materials as _mats
+            _mats.clear_material_session_caches()
+        except Exception:
+            pass
+
+def _content_dir_score(content_dir: str) -> int:
+    """Prefer PioneerGame Content over Engine/plugin Content under FModel dumps."""
+    parent = os.path.basename(os.path.dirname(os.path.normpath(content_dir))).lower()
+    score = 0
+    if parent in ("pioneergame", "pioneer"):
+        score += 100
+    if os.path.isdir(os.path.join(content_dir, "Pioneer")):
+        score += 50
+    if os.path.isdir(os.path.join(content_dir, "Pioneer", "MaterialLibrary")):
+        score += 25
+    if parent == "engine":
+        score -= 100
+    if "plugin" in parent or parent == "engine":
+        score -= 50
+    return score
+
 
 def find_content_dir(root: str) -> str:
     if not root or not os.path.isdir(root):
@@ -176,36 +231,198 @@ def find_content_dir(root: str) -> str:
     if root in _CONTENT_DIR_CACHE:
         return _CONTENT_DIR_CACHE[root]
     found = ""
-    if os.path.basename(os.path.normpath(root)).lower() == "content":
+    base = os.path.basename(os.path.normpath(root)).lower()
+    if base == "content":
         found = root
-    else:
-        MAX_DEPTH = 6
-        MAX_VISITED = 20000
-        visited = 0
-        queue = deque([(root, 0)])
-        while queue:
-            current, depth = queue.popleft()
-            visited += 1
-            if visited > MAX_VISITED:
-                break
-            try:
-                entries = os.listdir(current)
-            except OSError:
-                continue
-            for entry in entries:
-                full = os.path.join(current, entry)
-                if not os.path.isdir(full):
-                    continue
-                if entry.lower() == "content":
-                    found = full
-                    queue.clear()
+    elif base == "pioneergame":
+        # Root is already PioneerGame — Content is a direct child.
+        direct_pg = os.path.join(root, "Content")
+        if os.path.isdir(direct_pg):
+            found = direct_pg
+    if not found:
+        # FModel output roots often contain both Engine/Content and PioneerGame/Content.
+        # Prefer the game package Content so /Game/Pioneer/... ObjectPaths resolve.
+        direct = os.path.join(root, "PioneerGame", "Content")
+        if os.path.isdir(direct):
+            found = direct
+        else:
+            MAX_DEPTH = 6
+            MAX_VISITED = 20000
+            visited = 0
+            candidates = []
+            queue = deque([(root, 0)])
+            while queue:
+                current, depth = queue.popleft()
+                visited += 1
+                if visited > MAX_VISITED:
                     break
-                if depth < MAX_DEPTH:
-                    queue.append((full, depth + 1))
-            if found:
-                break
+                try:
+                    entries = os.listdir(current)
+                except OSError:
+                    continue
+                for entry in entries:
+                    full = os.path.join(current, entry)
+                    if not os.path.isdir(full):
+                        continue
+                    if entry.lower() == "content":
+                        candidates.append(full)
+                    if depth < MAX_DEPTH:
+                        queue.append((full, depth + 1))
+            if candidates:
+                found = max(candidates, key=_content_dir_score)
     _CONTENT_DIR_CACHE[root] = found
     return found
+
+
+def _content_dir_has_mi_jsons(content_dir: str, *, sample_dirs: int = 80) -> bool:
+    """Cheap probe: does this Content tree hold exported MI_*.json (not mesh-only)?"""
+    if not content_dir or not os.path.isdir(content_dir):
+        return False
+    pioneer = os.path.join(content_dir, "Pioneer")
+    if not os.path.isdir(pioneer):
+        return False
+    # Prefer MaterialLibrary / Environment which hold most map MIs.
+    for rel in (
+        ("MaterialLibrary", "Material_Instances"),
+        ("Environment",),
+        ("Characters",),
+    ):
+        start = os.path.join(pioneer, *rel)
+        if not os.path.isdir(start):
+            continue
+        seen = 0
+        try:
+            for walk_root, _dirs, files in os.walk(start):
+                for fname in files:
+                    if fname.startswith("MI_") and fname.lower().endswith(".json"):
+                        return True
+                seen += 1
+                if seen >= sample_dirs:
+                    break
+        except OSError:
+            pass
+    return False
+
+
+def guess_full_fmodel_content_dirs(seed_content_dir: str = "") -> list[str]:
+    """When seed is a MapPlacements mesh tree, find the sibling full FModel Content dump.
+
+    Map + Meshes writes uemodels under ``MapPlacements/{Map}/PioneerGame/Content`` with
+    almost no MI/SM JSON. The full dump (MI JSON + SM StaticMaterials) usually lives at
+    ``{FModelOutput}/PioneerGame/Content`` next to ``MapPlacements/``.
+    """
+    out: list[str] = []
+    seed = os.path.abspath(seed_content_dir or "")
+    if not seed:
+        return out
+
+    parts = seed.replace("/", os.sep).split(os.sep)
+    for i, part in enumerate(parts):
+        if part.lower() != "mapplacements":
+            continue
+        # Parent of MapPlacements (FModel output root).
+        if i == 0:
+            break
+        if parts[0].endswith(":"):
+            parent = parts[0] + os.sep
+            if i > 1:
+                parent = os.path.join(parent, *parts[1:i])
+        else:
+            parent = os.path.join(*parts[:i])
+        sibling = os.path.join(parent, "PioneerGame", "Content")
+        if os.path.isdir(sibling):
+            out.append(os.path.normpath(sibling))
+        break
+    return out
+
+
+def get_content_dirs(extra_roots: list[str] | None = None) -> list[str]:
+    """Ordered Content directories for ObjectPath / MI / SM JSON resolve.
+
+    Prefers Content trees that actually contain MI_*.json (full FModel dump) over
+    MapPlacements mesh-only trees that only have .uemodel files.
+    """
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _add(path: str, *, prefer_front: bool = False) -> None:
+        if not path:
+            return
+        norm = os.path.normcase(os.path.normpath(path))
+        if norm in seen or not os.path.isdir(path):
+            return
+        seen.add(norm)
+        if prefer_front:
+            ordered.insert(0, os.path.normpath(path))
+        else:
+            ordered.append(os.path.normpath(path))
+
+    roots: list[str] = []
+    pioneer = get_pioneer_root()
+    if pioneer:
+        roots.append(pioneer)
+    try:
+        scene = bpy.context.scene
+        mesh_root = bpy.path.abspath(getattr(scene, "arc_placement_mesh_root", "") or "")
+        if mesh_root:
+            roots.append(mesh_root)
+        csv = bpy.path.abspath(getattr(scene, "arc_placement_csv", "") or "")
+        if csv:
+            roots.append(os.path.dirname(csv))
+    except Exception:
+        pass
+    for er in extra_roots or []:
+        if er:
+            roots.append(er)
+
+    seed_contents: list[str] = []
+    for root in roots:
+        cd = find_content_dir(root)
+        if cd:
+            seed_contents.append(cd)
+            has_mi = _content_dir_has_mi_jsons(cd)
+            _add(cd, prefer_front=has_mi)
+
+    for seed in seed_contents:
+        for guessed in guess_full_fmodel_content_dirs(seed):
+            if _content_dir_has_mi_jsons(guessed):
+                _add(guessed, prefer_front=True)
+            else:
+                _add(guessed)
+
+    return ordered
+
+
+def remap_path_into_content_dirs(file_path: str, content_dirs: list[str] | None = None) -> list[str]:
+    """Map a MapPlacements (or any Content-relative) file into alternate Content trees.
+
+    Example:
+      .../MapPlacements/RivenTides_01_P/PioneerGame/Content/Pioneer/Environment/.../SM_X.uemodel
+      → .../PioneerGame/Content/Pioneer/Environment/.../SM_X.uemodel
+    """
+    if not file_path:
+        return []
+    abs_path = os.path.normpath(os.path.abspath(bpy.path.abspath(file_path)))
+    rel = ""
+    parts = abs_path.replace("/", os.sep).split(os.sep)
+    for i, part in enumerate(parts):
+        if part.lower() == "content" and i + 1 < len(parts):
+            rel = os.sep.join(parts[i + 1 :])
+            break
+    if not rel:
+        return []
+
+    dirs = content_dirs if content_dirs is not None else get_content_dirs()
+    out: list[str] = []
+    seen: set[str] = set()
+    for cd in dirs:
+        candidate = os.path.normpath(os.path.join(cd, rel))
+        key = os.path.normcase(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(candidate)
+    return out
 
 def find_relative_dir(root: str, rel_parts: list) -> str:
     if not root:
@@ -335,6 +552,40 @@ def ensure_material(name: str) -> bool:
             return False
         data_to.materials = [name]
     return name in bpy.data.materials
+
+def normalize_ue_uv_layer_names(mesh) -> int:
+    """Rename UV layers to ``UV0``, ``UV1``, … matching UE TexCoord indices.
+
+    UEFormat already names layers ``UV0``/``UV1``. PSK (``io_scene_psk_psa``) uses
+    ``UVMap`` for TexCoord0 and ``EXTRAUV0`` for TexCoord1. GraphicAtlas posters
+    set ``Use UV1`` and bind a UV Map node to ``UV1`` — without this rename, PSK
+    imports sample the wrong (or missing) set and textures look misplaced.
+
+    Returns the number of layers renamed (0 if already normalized / empty).
+    """
+    if mesh is None:
+        return 0
+    uv_layers = getattr(mesh, "uv_layers", None)
+    if not uv_layers or len(uv_layers) == 0:
+        return 0
+    current = [uv.name for uv in uv_layers]
+    expected = [f"UV{i}" for i in range(len(current))]
+    if current == expected:
+        return 0
+    # Two-pass rename avoids collisions (e.g. EXTRAUV0 → UV1 while UV1 exists).
+    for i, uv in enumerate(list(uv_layers)):
+        uv.name = f"__arc_uv_tmp_{i}"
+    for i, uv in enumerate(list(uv_layers)):
+        uv.name = f"UV{i}"
+    return len(expected)
+
+
+def normalize_object_ue_uv_layers(obj) -> int:
+    """Normalize UV layer names on a mesh object. See :func:`normalize_ue_uv_layer_names`."""
+    if obj is None or getattr(obj, "type", None) != "MESH":
+        return 0
+    return normalize_ue_uv_layer_names(getattr(obj, "data", None))
+
 
 def ensure_psk_addon():
     """Install the bundled io_scene_psk_psa addon if not available."""

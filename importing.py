@@ -28,7 +28,11 @@ def import_psk(filepath: str) -> list:
     if 'FINISHED' not in result:
         raise RuntimeError(f"PSK import operator returned: {result}")
     after = set(bpy.data.objects.keys())
-    return [bpy.data.objects[k] for k in after - before]
+    objs = [bpy.data.objects[k] for k in after - before]
+    # PSK names UV1 as EXTRAUV0; materials (GraphicAtlas Use UV1) expect UV1.
+    for obj in objs:
+        utils.normalize_object_ue_uv_layers(obj)
+    return objs
 
 # ---------------------------------------------------------------------------
 # Outfit CSV handling
@@ -193,6 +197,22 @@ def character_from_asset_path(asset_path: str) -> str:
                 return parts[i + 1]
     return ""
 
+# Backpack mesh folder → Items/Characters/Skins/<slot> mapping
+_BACKPACK_SLOT_MAP = {
+    "containers": "BackpackContainer",
+    "attachments": "BackpackAttachment",
+    "charms": "BackpackCharm",
+    "frames": "BackpackFrame",
+    "straps": "BackpackAttachment",
+}
+
+# Cosmetic DA_OI colourways: DA_OI_Outfit_X_Color_Y OR DA_OI_BackpackContainer_X_Color_Y
+_COLORWAY_RE = re.compile(
+    r'^DA_OI_(?:Outfit_)?(.+)_Color(?:_(.+))?$',
+    re.IGNORECASE,
+)
+
+
 def scan_outfit_presets(character_name: str, manual_folder: str = "") -> list:
     if manual_folder and os.path.isdir(bpy.path.abspath(manual_folder)):
         return scan_outfit_presets_in_folder(bpy.path.abspath(manual_folder))
@@ -203,9 +223,9 @@ def scan_outfit_presets(character_name: str, manual_folder: str = "") -> list:
     return scan_outfit_presets_in_folder(folder, char_norm)
 
 def scan_outfit_presets_in_folder(folder: str, char_norm: str = "") -> list:
+    """Scan DA_OI_*_Color_* colourway JSONs (outfits + backpack/cosmetic slots)."""
     if not folder or not os.path.isdir(folder):
         return []
-    pattern = re.compile(r'^DA_OI_Outfit_(.+?)_Color(_.*)?$', re.IGNORECASE)
     results = []
     try:
         for fname in sorted(os.listdir(folder)):
@@ -214,20 +234,98 @@ def scan_outfit_presets_in_folder(folder: str, char_norm: str = "") -> list:
             if "persistence" in fname.lower():
                 continue
             stem = os.path.splitext(fname)[0]
-            m = pattern.match(stem)
+            m = _COLORWAY_RE.match(stem)
             if not m:
                 continue
-            file_char_segment, suffix = m.group(1), m.group(2)
-            if char_norm and utils.normalize_folder_name(file_char_segment) != char_norm:
-                continue
-            if not suffix or not suffix.startswith("_"):
-                continue
-            preset_name = suffix.lstrip("_")
+            item_segment, preset_suffix = m.group(1), m.group(2)
+            # Outfit mode: optionally require the character segment to match
+            if char_norm:
+                # DA_OI_Outfit_Beekeeper_Color_Blue → item_segment == Beekeeper
+                # DA_OI_BackpackContainer_TechBag_Color_Green → skip char filter
+                # (cosmetic folders are already item-scoped)
+                if "outfit" in stem.lower() or stem.lower().startswith("da_oi_outfit"):
+                    # With (?:Outfit_)? stripped, item_segment is the character name for outfits
+                    if utils.normalize_folder_name(item_segment) != char_norm:
+                        continue
+            if preset_suffix:
+                preset_name = preset_suffix
+            else:
+                # DA_OI_…_Color.json (no variant suffix) → Default
+                preset_name = "Default"
             if preset_name:
-                results.append((preset_name, os.path.join(folder, fname)))
+                json_path = os.path.join(folder, fname)
+                # Skip DA_OI colourways that don't carry a material modifier
+                # (e.g. slot-only Color.json or incomplete Grey dumps).
+                if not _mi_stems_from_colourway_json(json_path):
+                    continue
+                results.append((preset_name, json_path))
     except OSError:
         pass
     return results
+
+
+def find_cosmetic_colourway_folder(psk_path: str) -> str:
+    """Map a cosmetic mesh (backpack etc.) to its Items/Characters/Skins/<Slot>/<Item> folder."""
+    if not psk_path:
+        return ""
+    root = utils.get_pioneer_root()
+    if not root:
+        return ""
+    skins_root = utils.find_relative_dir(root, ["Items", "Characters", "Skins"])
+    if not skins_root or not os.path.isdir(skins_root):
+        return ""
+
+    norm = bpy.path.abspath(psk_path).replace("\\", "/")
+    parts = [p for p in norm.split("/") if p]
+    parts_l = [p.lower() for p in parts]
+
+    # Characters/Backpacks/<Containers|Attachments|…>/<Item>/…
+    if "backpacks" in parts_l:
+        bi = parts_l.index("backpacks")
+        if bi + 2 < len(parts):
+            slot_folder = parts[bi + 1]
+            item_name = parts[bi + 2]
+            skin_slot = _BACKPACK_SLOT_MAP.get(slot_folder.lower(), "")
+            if skin_slot:
+                candidate = os.path.join(skins_root, skin_slot, item_name)
+                if os.path.isdir(candidate):
+                    return candidate
+                # Fuzzy item match under the skin slot
+                fuzzy = _fuzzy_skin_item_dir(os.path.join(skins_root, skin_slot), item_name)
+                if fuzzy:
+                    return fuzzy
+
+    # Characters/…/RaiderTools or Items path leftovers — try common cosmetic slots by mesh leaf
+    mesh_dir = os.path.basename(os.path.dirname(norm))
+    parent_dir = os.path.basename(os.path.dirname(os.path.dirname(norm)))
+    for slot in (
+        "BackpackContainer", "BackpackAttachment", "BackpackCharm",
+        "BackpackFrame", "RaiderTool",
+    ):
+        for name in (mesh_dir, parent_dir):
+            if not name:
+                continue
+            candidate = os.path.join(skins_root, slot, name)
+            if os.path.isdir(candidate) and scan_outfit_presets_in_folder(candidate):
+                return candidate
+            fuzzy = _fuzzy_skin_item_dir(os.path.join(skins_root, slot), name)
+            if fuzzy and scan_outfit_presets_in_folder(fuzzy):
+                return fuzzy
+    return ""
+
+
+def _fuzzy_skin_item_dir(slot_dir: str, item_name: str) -> str:
+    if not slot_dir or not os.path.isdir(slot_dir) or not item_name:
+        return ""
+    want = utils.normalize_folder_name(item_name)
+    try:
+        for entry in os.listdir(slot_dir):
+            full = os.path.join(slot_dir, entry)
+            if os.path.isdir(full) and utils.normalize_folder_name(entry) == want:
+                return full
+    except OSError:
+        pass
+    return ""
 
 # ---------------------------------------------------------------------------
 # Outfit preset application
@@ -235,20 +333,31 @@ def scan_outfit_presets_in_folder(folder: str, char_norm: str = "") -> list:
 
 def apply_outfit_preset(context, preset_json_path: str) -> int:
     preset_map = parse_outfit_preset(preset_json_path)
-    if not preset_map:
-        return 0
+    mi_stems_from_preset = list(preset_map.values()) if preset_map else []
+    # Cosmetics often fail Assets-style part keys — also collect bare MI stems from the JSON
+    if not mi_stems_from_preset:
+        mi_stems_from_preset = _mi_stems_from_colourway_json(preset_json_path)
+
     updated = 0
     for entry in context.scene.arc_psk_entries:
         psk_path = bpy.path.abspath(entry.psk_path)
-        part_key = get_part_key(psk_path)
-        if not part_key:
-            continue
-        part_key_norm = utils.normalize_part_key(part_key)
         mi_stem = None
-        for pk, stem in preset_map.items():
-            if utils.normalize_part_key(pk) == part_key_norm:
-                mi_stem = stem
-                break
+
+        part_key = get_part_key(psk_path) or get_characters_rel_key(psk_path)
+        if part_key and preset_map:
+            part_key_norm = utils.normalize_part_key(part_key)
+            for pk, stem in preset_map.items():
+                if utils.normalize_part_key(pk) == part_key_norm:
+                    mi_stem = stem
+                    break
+
+        # Cosmetic fallback: any MI stem from the colourway that resolves beside this mesh
+        if not mi_stem:
+            for stem in mi_stems_from_preset:
+                if textures.find_skin_json_for_mi_stem(psk_path, stem):
+                    mi_stem = stem
+                    break
+
         if not mi_stem:
             continue
         skin_json = textures.find_skin_json_for_mi_stem(psk_path, mi_stem)
@@ -283,7 +392,7 @@ def parse_outfit_preset(json_path: str) -> dict:
             part_path = props.get("Part", {}).get("AssetPathName", "")
             if not mat_path or not part_path:
                 continue
-            part_key = get_part_key_from_asset_path(part_path)
+            part_key = get_part_key_from_asset_path(part_path) or get_characters_rel_key(part_path)
             if not part_key:
                 continue
             mi_stem = mat_path.split("/")[-1].split(".")[0]
@@ -292,6 +401,32 @@ def parse_outfit_preset(json_path: str) -> dict:
     except Exception as e:
         print(f"Arc Raiders PSK Importer: Failed to parse outfit preset '{json_path}': {e}")
     return result
+
+
+def _mi_stems_from_colourway_json(json_path: str) -> list:
+    """Collect Material MI stems from a DA_OI colourway JSON (outfit or cosmetic)."""
+    stems = []
+    if not json_path or not os.path.isfile(json_path):
+        return stems
+    _VALID_TYPES = {
+        "CustomizationVisualPartSetMaterialModifier",
+        "CustomizationVisualPartSetMaterialPropertyModifier",
+    }
+    try:
+        with open(json_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        for entry in utils.ue_export_entries(data):
+            if entry.get("Type") not in _VALID_TYPES:
+                continue
+            mat_path = entry.get("Properties", {}).get("Material", {}).get("AssetPathName", "")
+            if not mat_path:
+                continue
+            stem = mat_path.split("/")[-1].split(".")[0]
+            if stem and stem not in stems:
+                stems.append(stem)
+    except Exception:
+        pass
+    return stems
 
 def get_part_key(psk_path: str) -> str:
     norm = bpy.path.abspath(psk_path).replace("\\", "/")
@@ -309,6 +444,28 @@ def get_part_key_from_asset_path(asset_path: str) -> str:
         if part.lower() == "assets" and i > 0 and parts[i - 1].lower() == "characters":
             if i + 2 < len(parts):
                 return f"{parts[i + 1]}/{parts[i + 2]}"
+    return ""
+
+
+def get_characters_rel_key(path: str) -> str:
+    """Relative key under Characters/ for backpacks/cosmetics (drops asset filename)."""
+    if not path:
+        return ""
+    clean = path.replace("\\", "/")
+    leaf = clean.split("/")[-1]
+    if "." in leaf:
+        clean = clean[: -(len(leaf))] + leaf.split(".")[0]
+    parts = [p for p in clean.strip("/").split("/") if p]
+    for i, part in enumerate(parts):
+        if part.lower() != "characters" or i + 1 >= len(parts):
+            continue
+        segs = parts[i + 1 :]
+        if not segs:
+            return ""
+        last = segs[-1].lower()
+        if last.startswith(("da_vp_", "da_oi_", "sm_", "sk_", "mi_", "t_")):
+            segs = segs[:-1]
+        return "/".join(segs) if segs else ""
     return ""
 
 def collect_psks_for_outfit_row(root: str, item_ui_folders: list) -> list:
@@ -381,18 +538,20 @@ def find_psk_in_specific_folder(folder: str):
 # ---------------------------------------------------------------------------
 
 def queue_supports_outfit_batch(context) -> bool:
-    """True only when the queued PSKs should scan DA_OI_Outfit colourways.
+    """True when the queued PSKs should show the colourway batch UI.
 
-    Outfit batching is for layered character clothing (and explicit manual
-    overrides). Weapons, misc, face/body/hair-only, etc. must skip the
-    expensive Outfit-folder / CSV searches.
+    Covers layered character clothing, backpacks/cosmetics with DA_OI colourways,
+    and explicit manual DA_OI folder overrides.
     """
     manual_folder = getattr(context.scene, "arc_manual_outfit_folder", "")
     if manual_folder and os.path.isdir(bpy.path.abspath(manual_folder)):
         return True
     for entry in context.scene.arc_psk_entries:
         psk_path = bpy.path.abspath(entry.psk_path)
-        if textures.detect_model_type(psk_path) == "clothing":
+        model_type = textures.detect_model_type(psk_path)
+        if model_type == "clothing":
+            return True
+        if find_cosmetic_colourway_folder(psk_path):
             return True
     return False
 
@@ -411,6 +570,31 @@ def populate_outfit_selections(context) -> int:
             s.json_path = json_path
             s.selected = prior.get(json_path, False)
         return len(sels)
+
+    seen_paths = set()
+    added = 0
+
+    # 1) Cosmetic / backpack colourways linked to queued meshes
+    for entry in context.scene.arc_psk_entries:
+        psk_path = bpy.path.abspath(entry.psk_path)
+        cosmetic_folder = find_cosmetic_colourway_folder(psk_path)
+        if not cosmetic_folder or cosmetic_folder in seen_paths:
+            continue
+        seen_paths.add(cosmetic_folder)
+        presets = scan_outfit_presets_in_folder(cosmetic_folder)
+        for preset_name, json_path in presets:
+            if json_path in seen_paths:
+                continue
+            seen_paths.add(json_path)
+            s = sels.add()
+            s.preset_name = preset_name
+            s.json_path = json_path
+            s.selected = prior.get(json_path, False)
+            added += 1
+    if added:
+        return added
+
+    # 2) Character outfit colourways (DA_OI_Outfit_*)
     root = utils.get_pioneer_root()
     if not root:
         return 0
