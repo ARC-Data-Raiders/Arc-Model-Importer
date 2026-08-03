@@ -7305,6 +7305,7 @@ class ARC_OT_ApplyMapMaterials(bpy.types.Operator):
                 try:
                     mats_force.clear_leaked_preferred_mi(obj)
                     mats_force.invalidate_shared_mi_on_object(obj)
+                    mats_force.clear_out_of_context_map_materials(obj)
                 except Exception:
                     pass
             self._targets = list(targets)

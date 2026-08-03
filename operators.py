@@ -1142,6 +1142,7 @@ def reimport_selected_mesh(obj) -> tuple:
         try:
             materials.clear_leaked_preferred_mi(obj)
             materials.invalidate_shared_mi_on_object(obj)
+            materials.clear_out_of_context_map_materials(obj)
         except Exception as exc:
             log.warning("Re-import Selected map invalidate '%s': %s", name, exc)
 

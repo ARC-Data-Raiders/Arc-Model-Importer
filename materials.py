@@ -108,6 +108,101 @@ def path_allowed_for_context(path: str, context: str = CTX_ANY) -> bool:
     return True
 
 
+def _iter_material_image_filepaths(mat) -> list[str]:
+    """Collect Image Texture node filepaths (absolute when Blender can resolve)."""
+    out: list[str] = []
+    if mat is None or not getattr(mat, "use_nodes", False) or not mat.node_tree:
+        return out
+    for node in mat.node_tree.nodes:
+        if getattr(node, "type", "") != "TEX_IMAGE":
+            continue
+        img = getattr(node, "image", None)
+        if img is None:
+            continue
+        fp = ""
+        try:
+            fp = img.filepath_from_user() or ""
+        except Exception:
+            fp = ""
+        if not fp:
+            fp = getattr(img, "filepath", "") or ""
+        if fp:
+            out.append(fp)
+    return out
+
+
+def material_has_map_forbidden_content(mat) -> bool:
+    """True when a map slot still points at Characters/Heroes/outfit cosmetics.
+
+    Checks ``arc_mi_path`` *and* TEX_IMAGE filepaths — Force All used to only
+    unset custom props (or skip textured stamps), leaving belt/helmet images.
+    """
+    if mat is None:
+        return False
+    mi = str(mat.get("arc_mi_path") or "").strip()
+    if mi and not path_allowed_for_context(mi, CTX_MAP):
+        return True
+    for fp in _iter_material_image_filepaths(mat):
+        if fp and not path_allowed_for_context(fp, CTX_MAP):
+            return True
+    return False
+
+
+def _new_map_cleared_placeholder(hint: str = "") -> object:
+    """Fresh material stub that will not resolve as an MI_* cosmetic stem."""
+    base = "ARC_MapCleared"
+    stem = (hint or "").strip()
+    if stem and not stem.lower().startswith("mi_"):
+        base = f"ARC_MapCleared_{stem[:48]}"
+    mat = bpy.data.materials.new(name=base)
+    mat.use_nodes = True
+    try:
+        mat["arc_map_cleared"] = 1
+    except Exception:
+        pass
+    return mat
+
+
+def wipe_out_of_context_map_slot(obj, slot) -> bool:
+    """Replace a cosmetic/out-of-context map slot with a clean unique stub.
+
+    Always assigns a *new* datablock (never edits a shared MI in place), so
+    other objects keeping the old cosmetic mat are unaffected.
+    """
+    if obj is None or slot is None:
+        return False
+    old = slot.material
+    if old is None or not material_has_map_forbidden_content(old):
+        return False
+    try:
+        utils.get_logger().warning(
+            "wiping out-of-context map material '%s' on '%s' (mi=%s)",
+            old.name,
+            getattr(obj, "name", "?"),
+            str(old.get("arc_mi_path") or ""),
+        )
+    except Exception:
+        pass
+    # Detach first so a 1-user cosmetic can be orphaned without mutating it.
+    stub = _new_map_cleared_placeholder()
+    try:
+        slot.material = stub
+    except Exception:
+        return False
+    return True
+
+
+def clear_out_of_context_map_materials(obj) -> int:
+    """Wipe every map-slot material that still references outfit/character paths."""
+    if not obj or getattr(obj, "type", "") != "MESH":
+        return 0
+    n = 0
+    for slot in obj.material_slots or []:
+        if wipe_out_of_context_map_slot(obj, slot):
+            n += 1
+    return n
+
+
 def context_from_model_type(model_type: str = "", psk_path: str = "") -> str:
     """Map ``arc_model_type`` / path hints to a resolve context."""
     mt = (model_type or "").strip().lower()
@@ -9420,12 +9515,28 @@ def fix_object_materials_from_mi_slots(
             continue
         # Already wired to a shared Arc MI — skip rebuild unless out of context
         existing_key = str(slot.material.get("arc_mi_path", "") or "")
-        if existing_key:
+        resolve_stem = _mi_stem_from_blender_name(slot.material.name)
+        if context == CTX_MAP and material_has_map_forbidden_content(slot.material):
+            # Cosmetic MI and/or Characters TEX_IMAGE on a map prop — wipe the
+            # slot datablock (do not leave belt/helmet Image Texture nodes).
+            try:
+                log.warning(
+                    "clearing out-of-context MI '%s' on map mesh '%s'",
+                    existing_key or slot.material.name, obj.name,
+                )
+            except Exception:
+                pass
+            wipe_out_of_context_map_slot(obj, slot)
+            # Only re-resolve if the *original* MI stem still maps to an allowed path.
+            mi_stem = resolve_stem
+            if not mi_stem:
+                continue
+            # Fall through to resolve below (CTX_MAP will refuse Characters).
+        elif existing_key:
             if path_allowed_for_context(existing_key, context):
                 fixed += 1
                 continue
-            # Stamped cosmetic MI on a map prop — drop so Stage 2 can rebuild
-            # from UEModel MI names / valid SM JSON (never keep belt/helmet).
+            # Stamped path failed context gate without TEX hits — wipe anyway.
             try:
                 log.warning(
                     "clearing out-of-context MI '%s' on map mesh '%s'",
@@ -9433,18 +9544,14 @@ def fix_object_materials_from_mi_slots(
                 )
             except Exception:
                 pass
-            try:
-                old = slot.material
-                stem_keep = _mi_stem_from_blender_name(old.name) or "MI_Pending"
-                # Prefer renaming away from shared cosmetic datablock
-                stub = bpy.data.materials.new(name=f"{stem_keep}_pending")
-                stub.use_nodes = True
-                slot.material = stub
-            except Exception:
-                slot.material = None
-        mi_stem = _mi_stem_from_blender_name(
-            slot.material.name if slot.material else ""
-        )
+            wipe_out_of_context_map_slot(obj, slot)
+            mi_stem = resolve_stem
+            if not mi_stem:
+                continue
+        else:
+            mi_stem = resolve_stem
+            if not mi_stem:
+                continue
         if not mi_stem:
             continue
 
@@ -9635,13 +9742,16 @@ def object_needs_material_repair(obj) -> tuple[bool, str]:
     if not is_map:
         psk = str(obj.get("arc_psk_path") or obj.get("arc_mesh_file") or "")
         is_map = context_from_model_type("", psk) == CTX_MAP
+    # SRC_* / arc_map stamps are always map Stage 1/2 meshes.
+    if not is_map:
+        name = getattr(obj, "name", "") or ""
+        if name.startswith("SRC_") or str(obj.get("arc_map") or "").strip():
+            is_map = True
     for slot in slots:
         mat = slot.material
-        if is_map and mat is not None:
-            mi_path = str(mat.get("arc_mi_path") or "").strip()
-            if mi_path and not path_allowed_for_context(mi_path, CTX_MAP):
-                reasons.append("out_of_context_outfit")
-                continue
+        if is_map and mat is not None and material_has_map_forbidden_content(mat):
+            reasons.append("out_of_context_outfit")
+            continue
         need, why = material_slot_needs_repair(mat)
         if need:
             reasons.append(why)
@@ -10542,6 +10652,11 @@ def invalidate_shared_mi_on_object(obj) -> int:
     return n
 
 
+def clear_leaked_map_cosmetics(obj) -> int:
+    """Force All / Fix White: wipe Characters/Heroes TEX + MI stamps on map meshes."""
+    return clear_out_of_context_map_materials(obj)
+
+
 def repair_sma_trim_materials(obj, psk_path: str = "") -> dict:
     """Force-rebuild all slots from SM JSON; clear leaked preferred stamps.
 
@@ -10559,6 +10674,7 @@ def repair_sma_trim_materials(obj, psk_path: str = "") -> dict:
 
     result["cleared_preferred"] = clear_leaked_preferred_mi(obj)
     invalidate_shared_mi_on_object(obj)
+    wiped = clear_out_of_context_map_materials(obj)
 
     if not psk_path:
         for key in ("arc_psk_path", "arc_mesh_file"):
@@ -10595,8 +10711,12 @@ def repair_sma_trim_materials(obj, psk_path: str = "") -> dict:
         pass
 
     result["fixed"] = int(fixed or 0)
-    result["ok"] = bool(fixed) or result["cleared_preferred"]
-    result["reason"] = f"rebuilt:{fixed}" if fixed else "no_slots_resolved"
+    result["ok"] = bool(fixed) or result["cleared_preferred"] or bool(wiped)
+    result["reason"] = (
+        f"rebuilt:{fixed}"
+        if fixed
+        else (f"wiped_cosmetics:{wiped}" if wiped else "no_slots_resolved")
+    )
     return result
 
 
@@ -10626,6 +10746,10 @@ def fix_white_unassigned_materials(obj, psk_path: str = "") -> dict:
         result["ok"] = True
         result["reason"] = "already_ok"
         return result
+
+    # Always strip cosmetic TEX/MI before rebuild — corrupt SM JSON may leave
+    # no replacement, but the belt/helmet images must not remain visible.
+    clear_out_of_context_map_materials(obj)
 
     if not psk_path:
         for key in ("arc_psk_path", "arc_mesh_file"):
@@ -10681,6 +10805,9 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
     """Assign from MI-named slots + SM/SK JSON + preferred BP MI (no fuzzy)."""
     if not obj or obj.type != "MESH":
         return 0
+
+    # Drop leaked Characters/Heroes Image Textures before any reuse/resolve.
+    clear_out_of_context_map_materials(obj)
 
     folder = os.path.dirname(psk_path) if psk_path else ""
     # Prefer remapped Content folder when MapPlacements only has .uemodel.
