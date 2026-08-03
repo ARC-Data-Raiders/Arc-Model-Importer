@@ -728,15 +728,28 @@ def package_to_game_path(package_key: str) -> str:
     return "/Game/" + key
 
 
-def resolve_export_file(stem: str, extension: str = ".json") -> str:
-    """Resolve an exported file on disk via FMDex path + Pioneer content root."""
+def resolve_export_file(
+    stem: str,
+    extension: str = ".json",
+    *,
+    context: str = "any",
+    allow_basename_walk: bool = True,
+) -> str:
+    """Resolve an exported file on disk via FMDex path + Pioneer content root.
+
+    ``context`` / ``allow_basename_walk`` gate unconstrained Pioneer walks that
+    previously returned Characters/helmet MIs for map prop stems.
+    """
     from . import textures
 
     if not stem:
         return ""
     if not extension.startswith("."):
         extension = "." + extension
-    cache_key = f"{stem.strip().lower()}|{extension.lower()}"
+    cache_key = (
+        f"{stem.strip().lower()}|{extension.lower()}|"
+        f"{context}|{int(bool(allow_basename_walk))}"
+    )
     export_cache: Dict[str, str] = _cache.setdefault("export_file", {})
     if cache_key in export_cache:
         return export_cache[cache_key]
@@ -745,20 +758,46 @@ def resolve_export_file(stem: str, extension: str = ".json") -> str:
         export_cache[cache_key] = path or ""
         return path or ""
 
+    def _ok(path: str) -> bool:
+        if not path:
+            return False
+        if context == "map":
+            pl = path.replace("\\", "/").lower()
+            if any(
+                s in pl
+                for s in (
+                    "/characters/", "/heroes/", "/outfits/", "/scrappy/", "/heads/",
+                )
+            ):
+                return False
+        return True
+
     pkg, tags = lookup_asset_path(stem)
     if not pkg:
         return _remember("")
 
     game_path = package_to_game_path(pkg)
     if game_path:
+        if context == "map":
+            gpl = game_path.replace("\\", "/").lower()
+            if any(
+                s in gpl
+                for s in (
+                    "/characters/", "/heroes/", "/outfits/", "/scrappy/", "/heads/",
+                )
+            ):
+                return _remember("")
         found = textures.find_asset_from_object_path(game_path, extension)
-        if found:
+        if found and _ok(found):
             return _remember(found)
 
     # Basename-only (flatUnique unique names): search Pioneer for stem+ext
-    return _remember(
-        _search_content_by_basename(_stem_from_package_key(pkg) or stem, extension)
-    )
+    if not allow_basename_walk or context == "map":
+        return _remember("")
+    found = _search_content_by_basename(_stem_from_package_key(pkg) or stem, extension)
+    if found and _ok(found):
+        return _remember(found)
+    return _remember("")
 
 
 def resolve_mesh_asset_folder(stem: str) -> str:
@@ -801,6 +840,13 @@ def _search_content_by_basename(stem: str, extension: str, max_visited: int = 40
             break
         low = walk_root.replace("\\", "/").lower()
         if any(s in low for s in ("/saved/", "/intermediate/", "/deriveddatacache/")):
+            dirs[:] = []
+            continue
+        # Never return Characters/Heroes/outfit cosmetics from a global basename walk.
+        if any(
+            s in low
+            for s in ("/characters/", "/heroes/", "/outfits/", "/scrappy/")
+        ):
             dirs[:] = []
             continue
         for fname in files:

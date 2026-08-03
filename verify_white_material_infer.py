@@ -270,23 +270,71 @@ def main() -> int:
         print(f"{'OK' if hit else 'FAIL'} Game/ → Content remap ({remapped[:2]})")
         fails += 0 if hit else 1
         mats.clear_material_session_caches()
-        slots = mats._parse_sk_material_slots(dam_psk)
-        # Remap must surface the Content SM JSON (slot MI paths may still be bad dump data).
-        ok = bool(slots)
+        slots = mats._parse_sk_material_slots(dam_psk, context=mats.CTX_MAP)
+        # Corrupt SM JSON (wrong Name/Package) must be rejected — empty slots OK.
+        bad = [
+            (a, b, c)
+            for a, b, c in slots
+            if b and (
+                "signstreet" in b.lower()
+                or "belt" in b.lower()
+                or "helmet" in b.lower()
+                or (c and ("/characters/" in c.replace("\\", "/").lower()))
+            )
+        ]
+        ok = not bad
         print(
-            f"{'OK' if ok else 'FAIL'} Dam Aircon SM JSON via Game/ remap "
-            f"slots={[(a, b, os.path.basename(c) if c else '') for a, b, c in slots]}"
+            f"{'OK' if ok else 'FAIL'} Dam Aircon rejects crossover slots "
+            f"slots={[(a, b, os.path.basename(c) if c else '') for a, b, c in slots]} "
+            f"bad={len(bad)}"
         )
         fails += 0 if ok else 1
+
+        roof_psk = os.path.join(
+            PIONEER,
+            r"MapPlacements\TheDam_02_P\Game\Pioneer\Environment\POI\POI16"
+            r"\WaterControl\SM_POI16_WaterControl_Roof_01_A.uemodel",
+        )
+        rock_psk = os.path.join(
+            PIONEER,
+            r"MapPlacements\TheDam_02_P\Game\Pioneer\Environment\South\Base"
+            r"\Meshes\Rock_XL_04\SM_Base_Rock_XL_04.uemodel",
+        )
+        for label, psk in (("roof", roof_psk), ("rock", rock_psk)):
+            if not os.path.isfile(psk):
+                print(f"SKIP {label} psk missing")
+                continue
+            mats.clear_material_session_caches()
+            slots = mats._parse_sk_material_slots(psk, context=mats.CTX_MAP)
+            char = [
+                b for _a, b, c in slots
+                if (c and "/characters/" in c.replace("\\", "/").lower())
+                or (b and any(k in b.lower() for k in ("belt", "helmet", "pants")))
+            ]
+            ok = not char
+            print(
+                f"{'OK' if ok else 'FAIL'} {label} no character MI slots "
+                f"n={len(slots)} char={char}"
+            )
+            fails += 0 if ok else 1
+
+        banned = os.path.join(
+            PIONEER,
+            r"PioneerGame\Content\Pioneer\Characters\Assets\Western\Belt\MI_Belt_Belt.json",
+        )
+        ok2 = not mats.path_allowed_for_context(banned, mats.CTX_MAP)
+        print(f"{'OK' if ok2 else 'FAIL'} map forbids Characters belt path")
+        fails += 0 if ok2 else 1
+
         if os.path.isfile(dam_mi):
             id_ok = mats._mi_json_matches_requested_stem(dam_mi, "MI_AirconUnit_01_A")
-            # Current Desktop dump often has wrong bodies under prop MI filenames.
             print(
                 f"INFO Aircon MI identity match={id_ok} "
                 f"(False => dump body mismatch; Stage 2 should reject)"
             )
             resolved = mats._resolve_mi_json_path(
-                "MI_AirconUnit_01_A", "", os.path.dirname(dam_sm_json)
+                "MI_AirconUnit_01_A", "", os.path.dirname(dam_sm_json),
+                context=mats.CTX_MAP,
             )
             if not id_ok:
                 ok = resolved == ""

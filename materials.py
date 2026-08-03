@@ -27,6 +27,107 @@ _SK_SLOTS_CACHE: dict[str, list] = {}
 _SHARED_MI_MATERIALS: dict[str, object] = {}
 _IMAGE_BY_PATH: dict[str, object] = {}
 
+# ---------------------------------------------------------------------------
+# Resolve contexts — assignment/discovery scopes (node wiring stays shared)
+# ---------------------------------------------------------------------------
+# Map/prop Stage 2 must NEVER pull Characters/Heroes/outfit cosmetics via
+# basename walks or mismatched SM JSON bodies (FModel dump races).
+CTX_MAP = "map"
+CTX_OUTFIT = "outfit"
+CTX_WEAPON = "weapon"
+CTX_EFFECT = "effect"
+CTX_ENEMY = "enemy"
+CTX_ANY = "any"
+
+# Path segments forbidden when resolving MIs/textures for map/environment props.
+_MAP_FORBIDDEN_SEGMENTS = (
+    "/characters/",
+    "/heroes/",
+    "/outfits/",
+    "/scrappy/",
+    "/backpacks/charms/",
+    "/heads/",
+)
+# Soft allow markers for map (ObjectPath / MaterialLibrary / Environment).
+_MAP_ALLOWED_SEGMENTS = (
+    "/environment/",
+    "/materiallibrary/",
+    "/lighting/",
+    "/effects/",
+    "/architecture/",
+    "/foliage/",
+    "/landscape/",
+    "/blueprints/",
+    "/toolkit/",
+)
+
+
+def _norm_game_path(path: str) -> str:
+    return (path or "").replace("\\", "/").lower()
+
+
+def path_allowed_for_context(path: str, context: str = CTX_ANY) -> bool:
+    """True when an on-disk or ObjectPath location may be used for ``context``.
+
+    Shared node-wiring helpers ignore this; only MI/texture *discovery* gates.
+    """
+    if not path or context in ("", CTX_ANY):
+        return True
+    p = _norm_game_path(path)
+    if context == CTX_MAP:
+        if any(seg in p for seg in _MAP_FORBIDDEN_SEGMENTS):
+            return False
+        # Allow MaterialLibrary + Environment + remapped mesh folders.
+        if any(seg in p for seg in _MAP_ALLOWED_SEGMENTS):
+            return True
+        # Sibling files next to an Environment mesh (no mid-path marker yet)
+        # still pass when under PioneerGame/Content and not Characters.
+        if "/pioneergame/content/" in p or "/content/pioneer/" in p:
+            return not any(seg in p for seg in _MAP_FORBIDDEN_SEGMENTS)
+        # /Game/ ObjectPaths without Content prefix
+        if p.startswith("/game/"):
+            return not any(seg in p for seg in _MAP_FORBIDDEN_SEGMENTS)
+        return True
+    if context == CTX_OUTFIT:
+        return any(
+            seg in p
+            for seg in (
+                "/characters/", "/heroes/", "/outfits/", "/scrappy/",
+                "/heads/", "/backpacks/",
+            )
+        )
+    if context == CTX_WEAPON:
+        return "/weapons/" in p or "/gun/" in p or "/firearm/" in p or "/materiallibrary/" in p
+    if context == CTX_EFFECT:
+        return any(
+            seg in p
+            for seg in ("/effects/", "/decals/", "/materiallibrary/", "/toolkit/", "/environment/")
+        )
+    if context == CTX_ENEMY:
+        return "/enemies/" in p or "/materiallibrary/" in p
+    return True
+
+
+def context_from_model_type(model_type: str = "", psk_path: str = "") -> str:
+    """Map ``arc_model_type`` / path hints to a resolve context."""
+    mt = (model_type or "").strip().lower()
+    if mt == "map":
+        return CTX_MAP
+    if mt in ("clothing", "visor", "face", "body", "hair", "misc"):
+        return CTX_OUTFIT
+    if mt == "weapon":
+        return CTX_WEAPON
+    pl = _norm_game_path(psk_path)
+    if "/environment/" in pl or "/mapplacements/" in pl:
+        return CTX_MAP
+    if "/characters/" in pl or "/heroes/" in pl:
+        return CTX_OUTFIT
+    if "/weapons/" in pl:
+        return CTX_WEAPON
+    if "/enemies/" in pl:
+        return CTX_ENEMY
+    return CTX_ANY
+
 
 def clear_material_session_caches():
     """Drop in-memory caches (e.g. after Pioneer root change). Keeps Blender data."""
@@ -2615,16 +2716,86 @@ def _mi_json_matches_requested_stem(json_path: str, requested_stem: str) -> bool
     return True
 
 
-def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
-    """Find MI_*.json beside the PSK, in shared weapon mats, or via ObjectPath."""
+def _mesh_json_matches_requested_stem(json_path: str, requested_stem: str) -> bool:
+    """True when SM_/SK_ JSON body Name/Package matches the mesh stem we asked for.
+
+    FModel parallel Properties export can write SK_Western_Belt under
+    SM_POI16_WaterControl_Roof_01_A.json (shared Document race). Accepting that
+    body paints belt/helmet cosmetics onto roofs and rocks.
+    """
+    stem = (requested_stem or "").strip()
+    if "." in stem:
+        stem = stem.split(".", 1)[0]
+    if not stem or not json_path or not os.path.isfile(json_path):
+        return False
+    stem_l = stem.lower()
+    # Hash-bake / LOD variants: compare against stem variants.
+    variants = {v.lower() for v in _mesh_stem_variants(stem)}
+    variants.add(stem_l)
+    try:
+        with open(json_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return False
+    entry = None
+    for e in utils.ue_export_entries(data):
+        if not isinstance(e, dict):
+            continue
+        if e.get("Type") in ("StaticMesh", "SkeletalMesh"):
+            entry = e
+            break
+    if not isinstance(entry, dict):
+        return False
+    name = (entry.get("Name") or "").strip()
+    if "." in name:
+        name = name.split(".", 1)[0]
+    package = (entry.get("Package") or "").replace("\\", "/").strip()
+    pkg_leaf = package.rsplit("/", 1)[-1] if package else ""
+    if "." in pkg_leaf:
+        pkg_leaf = pkg_leaf.split(".", 1)[0]
+    if not name and not pkg_leaf:
+        return True
+    name_l = name.lower() if name else ""
+    pkg_l = pkg_leaf.lower() if pkg_leaf else ""
+    if name_l and name_l not in variants:
+        return False
+    if pkg_l and pkg_l not in variants:
+        return False
+    return True
+
+
+def _resolve_mi_json_path(
+    mi_stem: str,
+    obj_path: str,
+    psk_folder: str,
+    *,
+    context: str = CTX_ANY,
+) -> str:
+    """Find MI_*.json beside the PSK, via ObjectPath, or scoped FMDex.
+
+    ``context`` gates which trees are legal (map never accepts Characters/).
+    ObjectPath is preferred over any basename walk.
+    """
     if not mi_stem:
         return ""
 
     mi_stem = mi_stem.strip()
+    # ObjectPath outside the allowed context → refuse before any disk search.
+    if obj_path and not path_allowed_for_context(obj_path, context):
+        try:
+            utils.get_logger().debug(
+                "reject MI ObjectPath for context=%s stem=%s path=%s",
+                context, mi_stem, obj_path,
+            )
+        except Exception:
+            pass
+        return ""
+
     cache_key = (
         mi_stem.lower(),
         _norm_path_key(psk_folder or ""),
         (obj_path or "").replace("\\", "/").lower(),
+        (context or CTX_ANY),
     )
     if cache_key in _MI_JSON_PATH_CACHE:
         return _MI_JSON_PATH_CACHE[cache_key]
@@ -2634,8 +2805,17 @@ def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
         return path or ""
 
     def _accept(path: str) -> str:
-        """Cache + return path only when body identity matches the requested stem."""
+        """Cache + return path only when body identity + context match."""
         if not path or not os.path.isfile(path):
+            return ""
+        if not path_allowed_for_context(path, context):
+            try:
+                utils.get_logger().debug(
+                    "reject MI path for context=%s stem=%s: %s",
+                    context, mi_stem, path,
+                )
+            except Exception:
+                pass
             return ""
         if not _mi_json_matches_requested_stem(path, mi_stem):
             try:
@@ -2661,21 +2841,26 @@ def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
         if psk_folder:
             search_folders.append(psk_folder)
             # Heroes Base: MI JSON is under sibling Materials/, not Meshes/.
-            search_folders.extend(_character_layout_search_folders(psk_folder))
+            # Never pull character layout siblings when resolving map/env props.
+            if context != CTX_MAP:
+                search_folders.extend(_character_layout_search_folders(psk_folder))
             for alt in utils.remap_path_into_content_dirs(
                 os.path.join(psk_folder, "__probe__")
             ):
                 search_folders.append(os.path.dirname(alt))
-                search_folders.extend(
-                    _character_layout_search_folders(os.path.dirname(alt))
-                )
+                if context != CTX_MAP:
+                    search_folders.extend(
+                        _character_layout_search_folders(os.path.dirname(alt))
+                    )
         shared = utils.get_weapon_shared_folder()
-        if shared:
+        if shared and context in (CTX_ANY, CTX_WEAPON):
             search_folders.append(shared)
         seen_sf: set[str] = set()
         for search_folder in search_folders:
             key = os.path.normcase(os.path.normpath(search_folder or ""))
             if not search_folder or key in seen_sf:
+                continue
+            if not path_allowed_for_context(search_folder, context):
                 continue
             seen_sf.add(key)
             candidate = os.path.join(search_folder, stem + ".json")
@@ -2703,19 +2888,33 @@ def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
                 if hit:
                     return hit
 
+        # FMDex: full package path OK; basename Content walks are gated by context
+        # (map forbids Characters/ and skips unconstrained Pioneer walks).
         try:
             from . import fmdex
-            found = fmdex.resolve_export_file(stem, ".json")
+            found = fmdex.resolve_export_file(
+                stem, ".json", context=context, allow_basename_walk=(context != CTX_MAP),
+            )
             hit = _accept(found) if found else ""
             if hit:
                 return hit
+        except TypeError:
+            # Older fmdex without context kwargs
+            try:
+                from . import fmdex
+                found = fmdex.resolve_export_file(stem, ".json")
+                hit = _accept(found) if found else ""
+                if hit:
+                    return hit
+            except Exception:
+                pass
         except Exception:
             pass
 
         # Enemy meshes often live under Enemies/<Type>/.../Art while shared MIs
         # sit in Enemies/Shared/Art/<Set>/ (e.g. LightAndEliteDrone). Search there
         # before relying on PioneerGame Root ObjectPath resolve.
-        if psk_folder:
+        if psk_folder and context in (CTX_ANY, CTX_ENEMY, CTX_WEAPON):
             norm = psk_folder.replace("\\", "/").lower()
             marker = "/enemies/"
             idx = norm.find(marker)
@@ -2737,43 +2936,45 @@ def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
         # Last-resort: MaterialLibrary MI folders under every known Content root.
         # Prefer direct folder hits; bounded walk of Material_Instances only (not
         # the whole Pioneer tree — that made Stage 2 unusable at city scale).
-        try:
-            for content_dir in utils.get_content_dirs():
-                inst_root = os.path.join(
-                    content_dir, "Pioneer", "MaterialLibrary", "Material_Instances",
-                )
-                for folder_name in (
-                    "Enemies", "Decals", "Weapons", "Items", "Props", "Themes", "Trims",
-                ):
-                    inst_folder = os.path.join(inst_root, folder_name)
-                    candidate = os.path.join(inst_folder, stem + ".json")
-                    hit = _accept(candidate)
-                    if hit:
-                        return hit
-                if os.path.isdir(inst_root):
-                    target_l = (stem + ".json").lower()
-                    walked = 0
-                    for walk_root, _dirs, files in os.walk(inst_root):
-                        for fname in files:
-                            if fname.lower() == target_l:
-                                hit = _accept(os.path.join(walk_root, fname))
-                                if hit:
-                                    return hit
-                        walked += 1
-                        if walked > 4000:
-                            break
-                # Map props often live beside meshes under Environment/... —
-                # try ObjectPath-less basename only in the remapped mesh folder.
-                if psk_folder:
-                    for alt in utils.remap_path_into_content_dirs(
-                        os.path.join(psk_folder, stem + ".json"),
-                        [content_dir],
+        # Map/effect contexts may use MaterialLibrary; never Characters.
+        if context in (CTX_ANY, CTX_MAP, CTX_EFFECT, CTX_ENEMY, CTX_WEAPON):
+            try:
+                for content_dir in utils.get_content_dirs():
+                    inst_root = os.path.join(
+                        content_dir, "Pioneer", "MaterialLibrary", "Material_Instances",
+                    )
+                    for folder_name in (
+                        "Enemies", "Decals", "Weapons", "Items", "Props", "Themes", "Trims",
                     ):
-                        hit = _accept(alt)
+                        inst_folder = os.path.join(inst_root, folder_name)
+                        candidate = os.path.join(inst_folder, stem + ".json")
+                        hit = _accept(candidate)
                         if hit:
                             return hit
-        except Exception:
-            pass
+                    if os.path.isdir(inst_root):
+                        target_l = (stem + ".json").lower()
+                        walked = 0
+                        for walk_root, _dirs, files in os.walk(inst_root):
+                            for fname in files:
+                                if fname.lower() == target_l:
+                                    hit = _accept(os.path.join(walk_root, fname))
+                                    if hit:
+                                        return hit
+                            walked += 1
+                            if walked > 4000:
+                                break
+                    # Map props often live beside meshes under Environment/... —
+                    # try ObjectPath-less basename only in the remapped mesh folder.
+                    if psk_folder:
+                        for alt in utils.remap_path_into_content_dirs(
+                            os.path.join(psk_folder, stem + ".json"),
+                            [content_dir],
+                        ):
+                            hit = _accept(alt)
+                            if hit:
+                                return hit
+            except Exception:
+                pass
 
     return _remember("")
 
@@ -2888,6 +3089,7 @@ def _mesh_material_json_paths(psk_path: str) -> list[str]:
             _add_path(os.path.join(folder, stem, stem + ".json"))
 
     # Basename fallback via FMDex when folder remap missed the canonical SM package.
+    # Map context: never unconstrained Pioneer basename walks (Characters bleed).
     try:
         from . import fmdex
 
@@ -2895,12 +3097,26 @@ def _mesh_material_json_paths(psk_path: str) -> list[str]:
             # Skip walking for the unique bake id itself (Name-HEX).
             if re.search(r"-[0-9A-Fa-f]{4,10}$", stem):
                 continue
-            found = fmdex.resolve_export_file(stem, ".json")
-            if found:
+            found = fmdex.resolve_export_file(
+                stem, ".json", context=CTX_MAP, allow_basename_walk=False,
+            )
+            if found and path_allowed_for_context(found, CTX_MAP):
                 _add_path(found)
                 print(
                     f"Arc Raiders Stage 2: FMDex JSON hit '{stem}' -> {found}"
                 )
+    except TypeError:
+        try:
+            from . import fmdex
+
+            for stem in stems:
+                if re.search(r"-[0-9A-Fa-f]{4,10}$", stem):
+                    continue
+                found = fmdex.resolve_export_file(stem, ".json")
+                if found and path_allowed_for_context(found, CTX_MAP):
+                    _add_path(found)
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -2944,17 +3160,42 @@ def is_engine_or_placeholder_mesh(psk_path: str = "", asset_path: str = "", obje
     return bool(_ENGINE_OR_EMPTY_MESH_RE.match(stem or ""))
 
 
-def _parse_sk_material_slots(psk_path: str) -> list:
-    """Return [(slot_name, mi_stem, mi_json_path), ...] from sibling SK_/SM_*.json."""
+def _parse_sk_material_slots(psk_path: str, *, context: str = CTX_ANY) -> list:
+    """Return [(slot_name, mi_stem, mi_json_path), ...] from sibling SK_/SM_*.json.
+
+    Rejects mesh JSON whose Name/Package does not match the requested SM_/SK_
+    stem (corrupt FModel dumps that put helmet/belt packages under rock/roof
+    filenames). ``context`` gates MI ObjectPath / disk resolves.
+    """
     if not psk_path:
         return []
-    cache_key = _norm_path_key(psk_path)
+    cache_key = f"{_norm_path_key(psk_path)}|{context or CTX_ANY}"
     if cache_key in _SK_SLOTS_CACHE:
         return _SK_SLOTS_CACHE[cache_key]
 
+    psk_stem = os.path.splitext(os.path.basename(psk_path))[0]
     json_paths = _mesh_material_json_paths(psk_path)
     for json_path in json_paths:
         if not os.path.isfile(json_path):
+            continue
+        if not _mesh_json_matches_requested_stem(json_path, psk_stem):
+            try:
+                utils.get_logger().debug(
+                    "reject SM/SK JSON identity mismatch for '%s': %s",
+                    psk_stem, json_path,
+                )
+            except Exception:
+                pass
+            print(
+                f"Arc Raiders: reject mismatched mesh JSON for '{psk_stem}': "
+                f"{os.path.basename(json_path)} (wrong Name/Package body)"
+            )
+            continue
+        if context == CTX_MAP and not path_allowed_for_context(json_path, CTX_MAP):
+            print(
+                f"Arc Raiders: reject out-of-context mesh JSON for map '{psk_stem}': "
+                f"{json_path}"
+            )
             continue
         folder = os.path.dirname(json_path)
         try:
@@ -2997,7 +3238,17 @@ def _parse_sk_material_slots(psk_path: str) -> list:
                     ):
                         result.append((slot_name, "", ""))
                         continue
-                    mi_json = _resolve_mi_json_path(mi_stem, obj_path, folder)
+                    # Map props: refuse character/outfit ObjectPaths even if SM matched.
+                    if obj_path and not path_allowed_for_context(obj_path, context):
+                        print(
+                            f"Arc Raiders: skip out-of-context MI '{mi_stem}' "
+                            f"({obj_path}) for context={context}"
+                        )
+                        result.append((slot_name, mi_stem, ""))
+                        continue
+                    mi_json = _resolve_mi_json_path(
+                        mi_stem, obj_path, folder, context=context,
+                    )
                     result.append((slot_name, mi_stem, mi_json))
                 if result:
                     _SK_SLOTS_CACHE[cache_key] = result
@@ -3013,14 +3264,25 @@ def _parse_weapon_sk_json(psk_path: str) -> list:
     return _parse_sk_material_slots(psk_path)
 
 
-def _match_material_slot(obj, slot_name: str, slot_index: int, used_indices: set, mi_stem: str = ""):
+def _match_material_slot(
+    obj,
+    slot_name: str,
+    slot_index: int,
+    used_indices: set,
+    mi_stem: str = "",
+    *,
+    allow_index_fallback: bool = True,
+):
     """Bind SK/SM slot → Blender material slot.
 
     Prefer MI-stem / slot-name match when the mesh already has named materials.
     UEModel LOD material order often differs from SM JSON ``StaticMaterials``
     order (e.g. PerimeterWall: JSON slot0=Rebar, UEModel slot0=ConcreteDamaged).
     Index-first assignment painted rebar onto every face that still indexed 0.
-    Fall back to index only when no name match exists.
+
+    When ``allow_index_fallback`` is False (map props with UEModel MI_* names),
+    never clobber by index — that is how belt/helmet MIs from corrupt SM JSON
+    overwrote roofs and rocks.
     """
     wants = []
     for raw in (mi_stem, slot_name):
@@ -3043,6 +3305,8 @@ def _match_material_slot(obj, slot_name: str, slot_index: int, used_indices: set
                 continue
             sn = s.material.name.lower()
             sn0 = sn.split(".")[0]
+            # Strip Stage 2 force_rebuild suffixes for matching
+            sn0 = re.sub(r"(_force_rebuild)+$", "", sn0)
             arc_stem = ""
             try:
                 arc_stem = str(s.material.get("arc_mi_stem") or "").strip().lower()
@@ -3064,7 +3328,9 @@ def _match_material_slot(obj, slot_name: str, slot_index: int, used_indices: set
                     want in sn0 or sn0 in want or (arc_stem and want in arc_stem)
                 ):
                     return s, i
-    if slot_index < len(obj.material_slots) and slot_index not in used_indices:
+        if not allow_index_fallback:
+            return None, -1
+    if allow_index_fallback and slot_index < len(obj.material_slots) and slot_index not in used_indices:
         return obj.material_slots[slot_index], slot_index
     return None, -1
 
@@ -9130,12 +9396,16 @@ def _mi_stem_from_blender_name(name: str) -> str:
     return m.group(1) if m else ""
 
 
-def fix_object_materials_from_mi_slots(obj, asset_folder: str = "") -> int:
+def fix_object_materials_from_mi_slots(
+    obj, asset_folder: str = "", *, context: str = CTX_MAP,
+) -> int:
     """Rebuild shaders for slots whose material names look like MI_*.
 
     Used when an object (e.g. from BlenderUMap) has MI-named materials but no
     sibling SK/SM mesh JSON is available. Returns the number of slots fixed.
     Shared MI datablocks are reused across meshes (map Stage 2).
+
+    ``context`` defaults to map — never resolve Characters/ via FMDex basename.
     """
     if not obj or obj.type != "MESH":
         return 0
@@ -9148,12 +9418,33 @@ def fix_object_materials_from_mi_slots(obj, asset_folder: str = "") -> int:
     for slot in obj.material_slots:
         if not slot.material:
             continue
-        # Already wired to a shared Arc MI — skip rebuild
+        # Already wired to a shared Arc MI — skip rebuild unless out of context
         existing_key = str(slot.material.get("arc_mi_path", "") or "")
         if existing_key:
-            fixed += 1
-            continue
-        mi_stem = _mi_stem_from_blender_name(slot.material.name)
+            if path_allowed_for_context(existing_key, context):
+                fixed += 1
+                continue
+            # Stamped cosmetic MI on a map prop — drop so Stage 2 can rebuild
+            # from UEModel MI names / valid SM JSON (never keep belt/helmet).
+            try:
+                log.warning(
+                    "clearing out-of-context MI '%s' on map mesh '%s'",
+                    existing_key, obj.name,
+                )
+            except Exception:
+                pass
+            try:
+                old = slot.material
+                stem_keep = _mi_stem_from_blender_name(old.name) or "MI_Pending"
+                # Prefer renaming away from shared cosmetic datablock
+                stub = bpy.data.materials.new(name=f"{stem_keep}_pending")
+                stub.use_nodes = True
+                slot.material = stub
+            except Exception:
+                slot.material = None
+        mi_stem = _mi_stem_from_blender_name(
+            slot.material.name if slot.material else ""
+        )
         if not mi_stem:
             continue
 
@@ -9161,14 +9452,21 @@ def fix_object_materials_from_mi_slots(obj, asset_folder: str = "") -> int:
         folder = asset_folder or ""
         tags = []
 
-        # FMDex: basename / full package path → exported JSON
+        # FMDex: basename / full package path → exported JSON (context-gated)
         pkg, tags = fmdex.lookup_asset_path(mi_stem)
         if pkg:
             game_path = fmdex.package_to_game_path(pkg)
-            if game_path:
+            if game_path and path_allowed_for_context(game_path, context):
                 mi_path = texmod.find_asset_from_object_path(game_path, ".json")
-            if not mi_path:
-                mi_path = fmdex.resolve_export_file(mi_stem, ".json")
+            if not mi_path and context != CTX_MAP:
+                mi_path = fmdex.resolve_export_file(
+                    mi_stem, ".json", context=context, allow_basename_walk=True,
+                )
+            elif not mi_path and game_path:
+                # Map: ObjectPath-only from FMDex full package keys — no basename walk
+                mi_path = texmod.find_asset_from_object_path(game_path, ".json")
+            if mi_path and not path_allowed_for_context(mi_path, context):
+                mi_path = ""
             if mi_path:
                 folder = os.path.dirname(mi_path)
                 log.debug(
@@ -9176,14 +9474,16 @@ def fix_object_materials_from_mi_slots(obj, asset_folder: str = "") -> int:
                 )
 
         if not mi_path:
-            mi_path = _resolve_mi_json_path(mi_stem, "", folder or asset_folder)
+            mi_path = _resolve_mi_json_path(
+                mi_stem, "", folder or asset_folder, context=context,
+            )
             if mi_path:
                 folder = os.path.dirname(mi_path)
 
         if not mi_path:
             log.warning(
-                "MI JSON not found for '%s' on '%s' (folder=%s, %s)",
-                slot.material.name, obj.name, asset_folder or "(none)",
+                "MI JSON not found for '%s' on '%s' (folder=%s, ctx=%s, %s)",
+                slot.material.name, obj.name, asset_folder or "(none)", context,
                 fmdex.fmdex_summary_for_report(),
             )
             continue
@@ -9330,8 +9630,19 @@ def object_needs_material_repair(obj) -> tuple[bool, str]:
     if not slots:
         return True, "no_slots"
     reasons = []
+    # Map props: character/outfit MI paths are crossover artifacts (belt on roof).
+    is_map = str(obj.get("arc_model_type") or "").strip().lower() == "map"
+    if not is_map:
+        psk = str(obj.get("arc_psk_path") or obj.get("arc_mesh_file") or "")
+        is_map = context_from_model_type("", psk) == CTX_MAP
     for slot in slots:
-        need, why = material_slot_needs_repair(slot.material)
+        mat = slot.material
+        if is_map and mat is not None:
+            mi_path = str(mat.get("arc_mi_path") or "").strip()
+            if mi_path and not path_allowed_for_context(mi_path, CTX_MAP):
+                reasons.append("out_of_context_outfit")
+                continue
+        need, why = material_slot_needs_repair(mat)
         if need:
             reasons.append(why)
     if reasons:
@@ -9957,7 +10268,7 @@ def infer_map_mi_candidates(
         candidates.append((stem, path, score, reason))
 
     # 1) Authoritative SM/SK StaticMaterials (with MapPlacements → Content remap)
-    for slot_name, mi_stem, mi_path in _parse_sk_material_slots(psk_path) if psk_path else []:
+    for slot_name, mi_stem, mi_path in _parse_sk_material_slots(psk_path, context=CTX_MAP) if psk_path else []:
         if not mi_stem or not mi_path:
             continue
         score = 50.0
@@ -10056,17 +10367,27 @@ def _fuzzy_fill_white_slots_only(obj, psk_path: str = "", asset_path: str = "") 
     if not obj or obj.type != "MESH":
         return 0
     fixed = 0
-    slots = _parse_sk_material_slots(psk_path) if psk_path else []
+    slots = _parse_sk_material_slots(psk_path, context=CTX_MAP) if psk_path else []
     if slots:
         _ensure_mesh_material_slot_count(obj, len(slots))
         used = set()
+        has_mi_named = any(
+            _mi_stem_from_blender_name(s.material.name)
+            for s in (obj.material_slots or [])
+            if s.material
+        )
         for idx, (slot_name, mi_stem, mi_path) in enumerate(slots):
             if not mi_stem or not mi_path:
                 continue
+            if not path_allowed_for_context(mi_path, CTX_MAP):
+                continue
             target_slot, slot_i = _match_material_slot(
                 obj, slot_name, idx, used, mi_stem,
+                allow_index_fallback=not has_mi_named,
             )
             if target_slot is None:
+                if has_mi_named:
+                    continue
                 if idx < len(obj.material_slots) and idx not in used:
                     slot_i = idx
                 else:
@@ -10374,13 +10695,25 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
     # UEModel often embeds the real MI_* names while SM StaticMaterials point at
     # shared PropTrim / wrong refs. Resolve MI-named Blender slots first (with
     # MapPlacements → Content remap), then fill leftovers from SM JSON.
-    fixed_named = fix_object_materials_from_mi_slots(obj, folder)
-    slots = _parse_sk_material_slots(psk_path) if psk_path else []
+    # Context=map: never Characters/Heroes via FMDex basename.
+    fixed_named = fix_object_materials_from_mi_slots(obj, folder, context=CTX_MAP)
+    slots = _parse_sk_material_slots(psk_path, context=CTX_MAP) if psk_path else []
     fixed = fixed_named
     force_rebuild = bool(obj.get("arc_force_material_rebuild"))
 
+    # UEModel MI_* slot names are authoritative when present — do not
+    # index-clobber them with unrelated SM StaticMaterials (belt/helmet from
+    # corrupt dumps, PropTrim atlas, StreetSign refs on Aircon, etc.).
+    has_mi_named = any(
+        _mi_stem_from_blender_name(s.material.name)
+        for s in (obj.material_slots or [])
+        if s.material
+    )
+
     preferred = str(obj.get("arc_preferred_mi") or "").strip()
-    if not preferred:
+    # Do not invent preferred_mi from actor name when SM/UEModel slots already
+    # define materials — actor heuristics caused Vent/PropTrim leaks.
+    if not preferred and not slots and not has_mi_named:
         preferred = preferred_mi_hint_from_actor_name(
             " ".join(
                 p for p in (
@@ -10417,14 +10750,18 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
         for _sn, _st, mp in real_slots:
             pref_folder = os.path.dirname(mp)
             break
-        pref_path = _resolve_mi_json_path(preferred, "", pref_folder or folder)
+        pref_path = _resolve_mi_json_path(
+            preferred, "", pref_folder or folder, context=CTX_MAP,
+        )
         if not pref_path:
             for alt in decal_mi_stem_candidates_from_actor(
                 str(obj.get("arc_actor_name") or obj.name or "")
             ):
                 if alt.lower() == preferred.lower():
                     continue
-                pref_path = _resolve_mi_json_path(alt, "", pref_folder or folder)
+                pref_path = _resolve_mi_json_path(
+                    alt, "", pref_folder or folder, context=CTX_MAP,
+                )
                 if pref_path:
                     preferred = alt
                     break
@@ -10449,26 +10786,22 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
         # Keep BP water/decal preferred on slot 0 when it already won above.
         if fixed and preferred and _preferred_mi_is_single_slot_override(preferred):
             used_indices.add(0)
-        # UEModel MI_* slot names are authoritative when present — do not
-        # index-clobber them with unrelated SM StaticMaterials (PropTrim atlas,
-        # StreetSign refs on Aircon packages, etc.).
-        has_mi_named = any(
-            _mi_stem_from_blender_name(s.material.name)
-            for s in (obj.material_slots or [])
-            if s.material
-        )
+        allow_idx = not has_mi_named
         for idx, (slot_name, mi_stem, mi_path) in enumerate(slots):
             if not mi_stem or not mi_path:
+                continue
+            if not path_allowed_for_context(mi_path, CTX_MAP):
                 continue
             if idx in used_indices:
                 continue
             target_slot, slot_i = _match_material_slot(
                 obj, slot_name, idx, used_indices, mi_stem,
+                allow_index_fallback=allow_idx,
             )
             if target_slot is None:
                 if has_mi_named:
                     continue
-                if idx < len(obj.material_slots) and idx not in used_indices:
+                if allow_idx and idx < len(obj.material_slots) and idx not in used_indices:
                     target_slot = obj.material_slots[idx]
                     slot_i = idx
                 else:
@@ -10530,7 +10863,8 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
                 _SHARED_MI_MATERIALS.pop(_norm_path_key(mi_path), None)
                 if cur is not None:
                     try:
-                        cur.name = f"{cur.name}_force_rebuild"
+                        base_n = re.sub(r"(_force_rebuild)+$", "", cur.name or "")
+                        cur.name = f"{base_n}_force_rebuild"
                     except Exception:
                         pass
             mat = _get_or_build_shared_mi_material(
@@ -10543,7 +10877,9 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
         if fixed:
             return fixed
 
-    return fixed if fixed else fix_object_materials_from_mi_slots(obj, folder)
+    return fixed if fixed else fix_object_materials_from_mi_slots(
+        obj, folder, context=CTX_MAP,
+    )
 
 
 def setup_map_material(obj, psk_path: str) -> int:

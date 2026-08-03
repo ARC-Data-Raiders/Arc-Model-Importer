@@ -1,4 +1,4 @@
-﻿version=2.18.19
-synced=2026-08-03T16:33:11.9995577-06:00
+﻿version=2.18.20
+synced=2026-08-03T17:13:32.6534306-06:00
 source=C:\Users\Gideon\Documents\GitHub\DataRaiders-BlenderImporter
 pycache=%LOCALAPPDATA%\DataRaiders-BlenderImporter\pycache
