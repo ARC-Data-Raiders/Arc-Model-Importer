@@ -1,0 +1,3 @@
+﻿version=2.18.13
+synced=2026-08-02T21:50:50.8171176-06:00
+source=C:\Users\Gideon\Documents\GitHub\DataRaiders-BlenderImporter

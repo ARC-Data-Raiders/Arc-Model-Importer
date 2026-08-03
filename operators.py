@@ -3,6 +3,7 @@ Processing logic for PSK imports and model texturing
 """
 
 import os
+import re
 import bpy
 import bpy_extras
 import mathutils
@@ -14,6 +15,24 @@ from . import textures
 from . import materials
 from . import importing
 from . import rig
+from . import fmdex
+from . import map_placement
+from . import palette_calibration
+
+log = utils.get_logger()
+
+
+def _colorway_name_from_skin_path(path: str) -> str:
+    """Return the Skins/<Colorway> folder name when path points at a colorway MI JSON."""
+    if not path or path == "NONE":
+        return ""
+    abs_path = bpy.path.abspath(str(path))
+    parent = os.path.basename(os.path.dirname(abs_path))
+    skins_parent = os.path.basename(os.path.dirname(os.path.dirname(abs_path)))
+    if skins_parent.casefold() == "skins" and parent:
+        return parent
+    return ""
+
 
 def process_entry(entry) -> tuple:
     """Process a single PSK entry: import and set up materials."""
@@ -26,7 +45,6 @@ def process_entry(entry) -> tuple:
     if not os.path.isfile(psk_path):
         return False, f"PSK not found: {psk_path}", []
     
-    folder = os.path.dirname(psk_path)
     model_type = textures.detect_model_type(psk_path)
     
     try:
@@ -35,90 +53,243 @@ def process_entry(entry) -> tuple:
         return False, str(e), []
     
     mesh_objects = [o for o in new_objects if o.type == "MESH"]
-    
-    if model_type == "face":
-        for obj in mesh_objects:
-            materials.setup_face_material(obj, psk_path)
-        return True, f"Imported (face): {os.path.basename(psk_path)}", new_objects
-    
-    elif model_type == "body":
-        for obj in mesh_objects:
-            materials.setup_body_material(obj, psk_path, body_variant)
-        label = body_variant if body_variant != 'NONE' else 'no skin'
-        return True, f"Imported (body, {label}): {os.path.basename(psk_path)}", new_objects
-    
-    elif model_type == "hair":
-        hair_json = entry.hair_mi if hasattr(entry, 'hair_mi') and entry.hair_mi != 'NONE' else ""
-        for obj in mesh_objects:
-            materials.setup_hair_material(obj, hair_json)
-        return True, f"Imported (hair): {os.path.basename(psk_path)}", new_objects
-    
-    elif model_type == "weapon":
-        for obj in mesh_objects:
-            materials.setup_weapon_material(obj, psk_path)
+    hair_mi = entry.hair_mi if hasattr(entry, 'hair_mi') else 'NONE'
+    for obj in mesh_objects:
+        try:
+            obj["arc_psk_path"] = psk_path
+            obj["arc_model_type"] = model_type
+            obj["arc_materials_pending"] = 0
+            obj["arc_body_variant"] = body_variant if body_variant else "NONE"
+            obj["arc_hair_mi"] = hair_mi if hair_mi else "NONE"
+        except Exception:
+            pass
+        apply_materials_to_object(
+            obj, psk_path,
+            body_variant=body_variant,
+            hair_mi=hair_mi,
+            skin_json=json_path,
+            manual_skins_folder=entry.manual_skins_folder,
+            skin_choice=entry.skin_choice,
+        )
+    kind = model_type
+    if model_type == "weapon":
         kind = "enemy" if textures.is_enemy(psk_path) else "weapon"
-        return True, f"Imported ({kind}): {os.path.basename(psk_path)}", new_objects
-    
     elif model_type == "clothing":
+        mi_data = textures.parse_clothing_mi(json_path) if json_path else {}
+        kind = "with skin colours" if mi_data.get("colours") else "default skin"
+    elif model_type == "body":
+        kind = f"body, {body_variant if body_variant != 'NONE' else 'no skin'}"
+    return True, f"Imported ({kind}): {os.path.basename(psk_path)}", new_objects
+
+
+def import_psk_with_materials(
+    psk_path: str,
+    *,
+    body_variant: str = "NONE",
+    hair_mi: str = "NONE",
+    skin_json: str = "",
+    manual_skins_folder: str = "",
+    skin_choice: str = "NONE",
+) -> tuple:
+    """Import a PSK and apply default Arc materials (no outfit dialog).
+
+    Returns (ok, message, new_objects) — same shape as process_entry.
+    """
+    psk_path = bpy.path.abspath(psk_path)
+    if not os.path.isfile(psk_path):
+        return False, f"PSK not found: {psk_path}", []
+
+    if not skin_json:
+        skin_json = textures.get_base_skin_json(psk_path, manual_skins_folder) or ""
+
+    model_type = textures.detect_model_type(psk_path)
+    try:
+        new_objects = importing.import_psk(psk_path)
+    except RuntimeError as e:
+        return False, str(e), []
+
+    mesh_objects = [o for o in new_objects if o.type == "MESH"]
+    for obj in mesh_objects:
+        try:
+            obj["arc_psk_path"] = psk_path
+            obj["arc_model_type"] = model_type
+            obj["arc_materials_pending"] = 0
+            obj["arc_bridge_source"] = "fmodel"
+            obj["arc_body_variant"] = body_variant if body_variant else "NONE"
+            obj["arc_hair_mi"] = hair_mi if hair_mi else "NONE"
+        except Exception:
+            pass
+        apply_materials_to_object(
+            obj, psk_path,
+            body_variant=body_variant,
+            hair_mi=hair_mi,
+            skin_json=skin_json,
+            manual_skins_folder=manual_skins_folder,
+            skin_choice=skin_choice,
+        )
+    return True, f"Imported ({model_type}): {os.path.basename(psk_path)}", new_objects
+
+
+def assign_cached_materials(obj, materials: list) -> bool:
+    """Assign previously built Material datablocks to obj (reuse, no rebuild)."""
+    if not obj or obj.type != "MESH" or not materials:
+        return False
+    try:
+        obj.data.materials.clear()
+        for mat in materials:
+            if mat is not None:
+                obj.data.materials.append(mat)
+        return True
+    except Exception:
+        return False
+
+
+def snapshot_object_materials(obj) -> list:
+    """Return Material datablocks currently on a mesh (for cache reuse)."""
+    if not obj or obj.type != "MESH":
+        return []
+    return [slot.material for slot in obj.material_slots]
+
+
+def apply_materials_to_object(
+    obj,
+    psk_path: str,
+    *,
+    body_variant: str = "NONE",
+    hair_mi: str = "NONE",
+    skin_json: str = "",
+    manual_skins_folder: str = "",
+    skin_choice: str = "NONE",
+) -> str:
+    """Apply Arc materials to an existing mesh without importing. Returns a short status."""
+    if not obj or obj.type != "MESH":
+        return "skipped (not a mesh)"
+
+    folder = os.path.dirname(psk_path) if psk_path else ""
+    # FModel's outfit manifest already resolved the part type. Prefer that stamp because bridge
+    # exports may not have had their material PNGs on disk when the PSK was first inspected.
+    model_type = str(obj.get("arc_model_type", "") or "").strip().lower()
+    if not model_type:
+        model_type = textures.detect_model_type(psk_path) if psk_path else "unknown"
+
+    if model_type == "face":
+        materials.setup_face_material(obj, psk_path)
+        return "face"
+
+    if model_type == "body":
+        try:
+            if body_variant and body_variant != "NONE":
+                obj["arc_body_variant"] = body_variant
+        except Exception:
+            pass
+        materials.setup_body_material(obj, psk_path, body_variant)
+        return "body"
+
+    if model_type == "hair":
+        hair_json = hair_mi if hair_mi and hair_mi != "NONE" else ""
+        if not hair_json:
+            mis = textures.scan_hair_mis(psk_path)
+            hair_json = mis[0][1] if mis else ""
+        try:
+            if hair_json:
+                obj["arc_hair_mi"] = hair_json
+        except Exception:
+            pass
+        materials.setup_hair_material(obj, hair_json)
+        return "hair"
+
+    if model_type == "weapon":
+        materials.setup_weapon_material(obj, psk_path)
+        return "enemy" if textures.is_enemy(psk_path) else "weapon"
+
+    # A visor is a clothing shell plus a glass slot, so it takes the same ArcTexturer path and
+    # only differs in which slots get replaced afterwards.
+    if model_type in ("clothing", "visor"):
+        json_path = skin_json
+        if not json_path:
+            json_path = textures.get_base_skin_json(psk_path, manual_skins_folder)
+        # Only persist real values. Empty/default fallbacks must not erase a prior colorway stamp.
+        try:
+            if json_path:
+                obj["arc_skin_json"] = os.path.abspath(json_path)
+                obj["arc_manual_skins_folder"] = (
+                    os.path.abspath(manual_skins_folder)
+                    if manual_skins_folder
+                    else os.path.dirname(os.path.abspath(json_path))
+                )
+            if skin_choice and skin_choice != "NONE":
+                obj["arc_skin_choice"] = skin_choice
+            elif json_path:
+                obj["arc_skin_choice"] = os.path.abspath(json_path)
+        except Exception:
+            pass
         decal_folder = utils.get_decal_folder()
         mi_data = textures.parse_clothing_mi(json_path) if json_path else {
-            "colours": {}, "ta_ids": {}, "mi_params": {"scalars": [], "vectors": []}, "decals": [],
+            "colours": {}, "ta_ids": {}, "zone_scalars": {},
+            "mi_params": {"scalars": [], "vectors": []}, "decals": [],
         }
         colours = mi_data["colours"]
-        selected_skin_name = ""
-        if entry.skin_choice and entry.skin_choice != "NONE":
-            skin_dir_name = os.path.basename(os.path.dirname(bpy.path.abspath(entry.skin_choice)))
-            selected_skin_name = skin_dir_name
+        selected_skin_name = _colorway_name_from_skin_path(
+            skin_choice if skin_choice and skin_choice != "NONE" else json_path
+        )
         try:
-            main_pngs = sorted(f for f in os.listdir(folder) if f.lower().endswith(".png"))
+            main_pngs = sorted(f for f in os.listdir(folder) if f.lower().endswith(".png")) if folder else []
         except OSError:
             main_pngs = []
         base_pngs = textures.scan_base_skin_textures(
-            psk_path, selected_skin_name, entry.manual_skins_folder
+            psk_path, selected_skin_name, manual_skins_folder
         ) if psk_path else []
-        for obj in mesh_objects:
-            materials.setup_arc_texturer_material(
-                obj, folder, colours, psk_path,
-                json_path=json_path, decal_folder=decal_folder,
-                selected_skin_name=selected_skin_name,
-                manual_skins_folder=entry.manual_skins_folder,
-                mi_data=mi_data, main_pngs=main_pngs, base_pngs=base_pngs,
-            )
-            materials.apply_embedded_visor_slots(obj, psk_path)
-        label = "with skin colours" if colours else "default skin"
-        return True, f"Imported ({label}): {os.path.basename(psk_path)}", new_objects
-    
-    elif model_type == "visor":
-        for obj in mesh_objects:
-            materials.setup_visor_material(obj, psk_path)
-        return True, f"Imported (visor): {os.path.basename(psk_path)}", new_objects
+        materials.setup_arc_texturer_material(
+            obj, folder, colours, psk_path,
+            json_path=json_path, decal_folder=decal_folder,
+            selected_skin_name=selected_skin_name,
+            manual_skins_folder=manual_skins_folder,
+            mi_data=mi_data, main_pngs=main_pngs, base_pngs=base_pngs,
+        )
+        glass_json = str(obj.get("arc_glass_skin_json", "") or "") or json_path
+        applied = materials.apply_embedded_visor_slots(obj, psk_path, skin_json=glass_json)
+        if model_type == "visor":
+            if not applied:
+                materials.setup_visor_material(obj, psk_path, skin_json=glass_json)
+            return "visor"
+        return "clothing"
 
-    elif model_type == "misc":
-        for obj in mesh_objects:
-            materials.setup_misc_material(obj, psk_path)
-        return True, f"Imported (misc): {os.path.basename(psk_path)}", new_objects
-    
-    else:
-        tex_folder = os.path.join(folder, "Textures")
-        if os.path.isdir(tex_folder):
-            for obj in mesh_objects:
-                mat = bpy.data.materials.new(name=obj.name + "_Mat")
-                mat.use_nodes = True
-                obj.active_material = mat
-                nodes = mat.node_tree.nodes
-                row = 400
-                try:
-                    for fname in sorted(f for f in os.listdir(tex_folder) if f.lower().endswith(".png")):
-                        img = bpy.data.images.load(os.path.join(tex_folder, fname), check_existing=True)
-                        node = nodes.new("ShaderNodeTexImage")
-                        node.image = img
-                        node.label = fname
-                        node.interpolation = "Cubic"
-                        node.location = (-600, row)
-                        row -= 300
-                except OSError:
-                    pass
-        return True, f"Imported (unknown type): {os.path.basename(psk_path)}", new_objects
+    if model_type == "misc":
+        materials.setup_misc_material(obj, psk_path)
+        return "misc"
+
+    # Map props (Stage 1 stamps arc_model_type=map): shared MI cache, no outfit walks
+    if model_type == "map":
+        fixed = materials.setup_map_material(obj, psk_path)
+        return f"map ({fixed})" if fixed else "unresolved"
+
+    # unknown / no path: try MI-named slots, then dump Textures folder images
+    fixed = materials.fix_object_materials_from_mi_slots(obj, folder)
+    if fixed:
+        return f"mi-slots ({fixed})"
+
+    tex_folder = os.path.join(folder, "Textures") if folder else ""
+    if tex_folder and os.path.isdir(tex_folder):
+        mat = bpy.data.materials.new(name=obj.name + "_Mat")
+        mat.use_nodes = True
+        obj.active_material = mat
+        nodes = mat.node_tree.nodes
+        row = 400
+        try:
+            for fname in sorted(f for f in os.listdir(tex_folder) if f.lower().endswith(".png")):
+                img = bpy.data.images.load(os.path.join(tex_folder, fname), check_existing=True)
+                node = nodes.new("ShaderNodeTexImage")
+                node.image = img
+                node.label = fname
+                node.interpolation = "Cubic"
+                node.location = (-600, row)
+                row -= 300
+        except OSError:
+            pass
+        return "textures-folder"
+
+    return "unresolved"
+
 
 def batch_import_instances(context, selected_presets) -> tuple:
     """Import one full model instance per selected outfit colourway."""
@@ -193,81 +364,441 @@ def batch_import_instances(context, selected_presets) -> tuple:
     return instances, parts_total
 
 def texture_existing_model(obj, model_name: str, manual_folder: str = "") -> bool:
-    """Apply Arc Raiders texturing to an existing model."""
+    """Apply Arc Raiders texturing to an existing model in place (no re-import)."""
     psk_path = find_psk_for_model(model_name, manual_folder)
     if not psk_path:
-        print(f"Arc Raiders: Could not find PSK for '{model_name}'")
+        fixed = materials.fix_object_materials_from_mi_slots(obj, manual_folder)
+        if fixed:
+            print(f"Arc Raiders: Fixed {fixed} MI slot(s) on '{obj.name}' via material names")
+            return True
+        print(f"Arc Raiders: Could not find PSK/asset for '{model_name}'")
         return False
-    
-    temp_entry = None
-    for entry in bpy.context.scene.arc_psk_entries:
-        if entry.display_name == model_name:
-            temp_entry = entry
-            break
-    
-    if not temp_entry:
-        temp_entry = bpy.context.scene.arc_psk_entries.add()
-        temp_entry.psk_path = psk_path
-        temp_entry.display_name = model_name
-    
-    bpy.ops.arc.confirm_psk_import('INVOKE_DEFAULT')
-    return True
+    status = apply_materials_to_object(obj, psk_path, manual_skins_folder=manual_folder)
+    print(f"Arc Raiders: Fixed materials on '{obj.name}' as {status}")
+    return status != "unresolved"
+
+
+def _strip_blender_name_suffix(name: str) -> str:
+    """SM_Foo.001 → SM_Foo; also strip BlenderUMap '.mat' material suffix."""
+    n = name or ""
+    n = re.sub(r"\.mat$", "", n, flags=re.IGNORECASE)
+    return re.sub(r"\.\d+$", "", n)
+
+
+def _strip_umap_hash_suffix(name: str) -> str:
+    """SM_CatBed_01_A_14b0362f → SM_CatBed_01_A (BlenderUMap mesh-data hash)."""
+    return re.sub(r"_[0-9a-f]{8}$", "", name or "", flags=re.IGNORECASE)
+
+
+def _mesh_name_body(name: str) -> str:
+    """Normalize mesh name for fuzzy match: strip .001, hash, and SK_/SM_ prefix."""
+    stem = _strip_umap_hash_suffix(_strip_blender_name_suffix(name))
+    stem = re.sub(r"^(SK|SM)_", "", stem, flags=re.IGNORECASE)
+    return stem.lower()
+
+
+def _name_candidates_for_object(obj) -> list:
+    """Collect likely UE mesh names from an object (UMap / Blender suffixes / parents)."""
+    raws = [obj.name]
+    if getattr(obj, "data", None) is not None:
+        raws.append(obj.data.name)
+    if obj.parent is not None:
+        raws.append(obj.parent.name)
+    # BlenderUMap material names are often the best clue (MI_CatBed_01_A.mat)
+    for slot in getattr(obj, "material_slots", []) or []:
+        if slot.material:
+            raws.append(slot.material.name)
+
+    names = []
+
+    def _add(n: str):
+        n = (n or "").strip()
+        if n and n not in names:
+            names.append(n)
+
+    for raw in raws:
+        n = _strip_blender_name_suffix(raw)
+        _add(n)
+        stripped = _strip_umap_hash_suffix(n)
+        _add(stripped)
+
+    # Pull embedded SK_/SM_/MI_ tokens out of longer actor-style names
+    extra = []
+    for n in names:
+        for m in re.finditer(
+            r"((?:SK|SM|MI)_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*)",
+            n,
+            flags=re.IGNORECASE,
+        ):
+            token = _strip_umap_hash_suffix(m.group(1))
+            if token not in names and token not in extra:
+                extra.append(token)
+    for token in extra:
+        _add(token)
+        # MI_CatBed_01_A → also try SM_/SK_ equivalents for mesh JSON lookup
+        if token.upper().startswith("MI_"):
+            body = token[3:]
+            _add("SM_" + body)
+            _add("SK_" + body)
+            _add(body)
+        elif token.upper().startswith("SM_") or token.upper().startswith("SK_"):
+            body = token[3:]
+            _add("MI_" + body)
+            _add(body)
+
+    # Drop useless UMap actor names from priority (keep as last resort only)
+    prioritized = [
+        n for n in names
+        if not n.lower().startswith("staticmeshcomponent")
+        and not n.lower().startswith("skeletalmeshcomponent")
+    ]
+    leftovers = [n for n in names if n not in prioritized]
+    return prioritized + leftovers
+
+
+def _asset_path_from_folder(folder: str, model_name: str) -> str:
+    """Find a real PSK/PSKX or a synthetic path from SK_/SM_*.json in folder."""
+    if not folder or not os.path.isdir(folder):
+        return ""
+    want = _mesh_name_body(model_name)
+    if not want:
+        return ""
+
+    psks, _ = utils.find_psks_in_folder(folder)
+    for psk in psks:
+        base = os.path.basename(psk)
+        body = _mesh_name_body(base)
+        if want == body or want in body or body in want or want in base.lower():
+            return psk
+
+    try:
+        for fname in os.listdir(folder):
+            fl = fname.lower()
+            if not fl.endswith(".json"):
+                continue
+            stem = os.path.splitext(fname)[0]
+            body = _mesh_name_body(stem)
+            is_mesh_json = fl.startswith("sk_") or fl.startswith("sm_")
+            if not is_mesh_json and body != want:
+                continue
+            if want == body or want in body or body in want:
+                # Synthetic path so dirname + sibling JSON heuristics still work
+                return os.path.join(folder, stem + ".psk")
+    except OSError:
+        pass
+    return ""
+
+
+def _fmdex_psk_for_stem(stem: str) -> str:
+    """Use FMDex to resolve SM_/SK_ (or bare body) to a synthetic/real mesh path."""
+    if not stem:
+        return ""
+    pkg, tags = fmdex.lookup_asset_path(stem)
+    if not pkg:
+        return ""
+    tags_l = [t.lower() for t in (tags or [])]
+    meshish = any(
+        t in ("staticmesh", "skeletalmesh", "bodysetup")
+        or "mesh" in t
+        for t in tags_l
+    )
+    # Still try even without mesh tags — basename may be unique MI/SM sibling folder
+    folder = fmdex.resolve_mesh_asset_folder(stem)
+    if folder:
+        hit = _asset_path_from_folder(folder, stem)
+        if hit:
+            return hit
+        # Synthetic path from resolved JSON folder
+        base = os.path.splitext(os.path.basename(pkg))[0] or stem
+        for suf in (".uasset", ".umap"):
+            if base.lower().endswith(suf):
+                base = base[: -len(suf)]
+        return os.path.join(folder, base + ".psk")
+    if meshish:
+        log.debug("FMDex hit for '%s' (%s) but no on-disk mesh export found", stem, pkg)
+    return ""
+
 
 def find_psk_for_model(model_name: str, manual_folder: str = "") -> str:
-    """Find a PSK file matching the model name."""
+    """Find a PSK (or synthetic mesh-JSON path) matching the model name under Pioneer root."""
+    model_name = _strip_blender_name_suffix(model_name)
+    if not model_name:
+        return ""
+
     if manual_folder and os.path.isdir(manual_folder):
-        psks, _ = utils.find_psks_in_folder(manual_folder)
-        for psk in psks:
-            if model_name.lower() in os.path.basename(psk).lower():
-                return psk
-        for ext in ['.psk', '.pskx']:
+        hit = _asset_path_from_folder(manual_folder, model_name)
+        if hit:
+            return hit
+        for ext in [".psk", ".pskx"]:
             candidate = os.path.join(manual_folder, f"{model_name}{ext}")
             if os.path.isfile(candidate):
                 return candidate
         return ""
-    
+
+    # FMDex-assisted path (before shallow Pioneer walks)
+    fmdex_hit = _fmdex_psk_for_stem(model_name)
+    if fmdex_hit:
+        return fmdex_hit
+
     root = utils.get_pioneer_root()
-    if root:
-        assets_dir = utils.find_relative_dir(root, ["Characters", "Assets"])
-        if assets_dir:
-            try:
-                for char_dir in os.listdir(assets_dir):
-                    char_path = utils.find_relative_dir(root, ["Characters", "Assets", char_dir])
-                    if not char_path:
-                        continue
-                    try:
-                        for part_dir in os.listdir(char_path):
-                            part_path = os.path.join(char_path, part_dir)
-                            if os.path.isdir(part_path):
-                                psks, _ = utils.find_psks_in_folder(part_path)
-                                for psk in psks:
-                                    if model_name.lower() in os.path.basename(psk).lower():
-                                        return psk
-                    except OSError:
-                        continue
-            except OSError:
-                pass
-        
-        weapons_path = utils.find_relative_dir(root, ["Items", "Firearms"])
-        if weapons_path:
-            try:
-                for subdir in os.listdir(weapons_path):
-                    sub_path = os.path.join(weapons_path, subdir)
-                    if os.path.isdir(sub_path):
-                        psks, _ = utils.find_psks_in_folder(sub_path)
-                        for psk in psks:
-                            if model_name.lower() in os.path.basename(psk).lower():
-                                return psk
-            except OSError:
-                pass
-    
+    if not root:
+        return ""
+
+    search_roots = []
+    for rel in (
+        ["Characters", "Assets"],
+        ["Items", "Firearms"],
+        ["Characters", "Enemies"],
+        ["Enemies"],
+        ["Items"],
+        ["Props"],
+        ["Environment"],
+    ):
+        found = utils.find_relative_dir(root, rel)
+        if found and found not in search_roots:
+            search_roots.append(found)
+
+    # Shallow walk: each search root's immediate children (and one level deeper for Assets)
+    for base in search_roots:
+        hit = _asset_path_from_folder(base, model_name)
+        if hit:
+            return hit
+        try:
+            for entry in os.listdir(base):
+                sub = os.path.join(base, entry)
+                if not os.path.isdir(sub):
+                    continue
+                hit = _asset_path_from_folder(sub, model_name)
+                if hit:
+                    return hit
+                # Characters/Assets/<Char>/<Part>
+                try:
+                    for part in os.listdir(sub):
+                        part_path = os.path.join(sub, part)
+                        if os.path.isdir(part_path):
+                            hit = _asset_path_from_folder(part_path, model_name)
+                            if hit:
+                                return hit
+                except OSError:
+                    continue
+        except OSError:
+            continue
+
+    # Last resort: basename match under Content/Pioneer (bounded)
+    content_dir = utils.find_content_dir(root)
+    pioneer = os.path.join(content_dir, "Pioneer") if content_dir else ""
+    if pioneer and os.path.isdir(pioneer):
+        want = _mesh_name_body(model_name)
+        raw_l = model_name.lower()
+        targets = {
+            f"{model_name}.psk".lower(),
+            f"{model_name}.pskx".lower(),
+            f"{model_name}.json".lower(),
+            f"sk_{want}.psk".lower(),
+            f"sk_{want}.pskx".lower(),
+            f"sk_{want}.json".lower(),
+            f"sm_{want}.psk".lower(),
+            f"sm_{want}.pskx".lower(),
+            f"sm_{want}.json".lower(),
+        }
+        max_visited = 40000
+        visited = 0
+        for walk_root, dirs, files in os.walk(pioneer):
+            visited += 1
+            if visited > max_visited:
+                break
+            low = walk_root.replace("\\", "/").lower()
+            if any(skip in low for skip in ("/saved/", "/intermediate/", "/deriveddatacache/")):
+                dirs[:] = []
+                continue
+            for fname in files:
+                fl = fname.lower()
+                if not (fl.endswith(".psk") or fl.endswith(".pskx") or fl.endswith(".json")):
+                    continue
+                if fl in targets:
+                    full = os.path.join(walk_root, fname)
+                    if fl.endswith(".json"):
+                        stem = os.path.splitext(fname)[0]
+                        return os.path.join(walk_root, stem + ".psk")
+                    return full
+                # Fuzzy: SK_/SM_ mesh dumps whose body matches
+                if fl.startswith("sk_") or fl.startswith("sm_"):
+                    body = _mesh_name_body(fname)
+                    if body == want or (len(want) >= 6 and (want in body or body in want)):
+                        full = os.path.join(walk_root, fname)
+                        if fl.endswith(".json"):
+                            stem = os.path.splitext(fname)[0]
+                            return os.path.join(walk_root, stem + ".psk")
+                        return full
+                # Exact raw stem without prefix requirement
+                stem = os.path.splitext(fname)[0].lower()
+                if stem == raw_l or stem == want:
+                    full = os.path.join(walk_root, fname)
+                    if fl.endswith(".json"):
+                        return os.path.join(walk_root, os.path.splitext(fname)[0] + ".psk")
+                    return full
+
     return ""
+
+
+def fix_materials_for_object(obj) -> tuple:
+    """Resolve asset for a scene mesh and re-apply materials in place.
+
+    Returns (ok: bool, message: str).
+    """
+    candidates = _name_candidates_for_object(obj)
+    mat_names = [
+        _strip_blender_name_suffix(s.material.name)
+        for s in obj.material_slots if s.material
+    ]
+    fmdex.ensure_loaded()
+    fmdex_st = fmdex.fmdex_summary_for_report()
+    log.info(
+        "Update Materials '%s' candidates=%s mats=%s %s",
+        obj.name, candidates, mat_names, fmdex_st,
+    )
+
+    # Prefer path stamped at import time (reliable for old addon blends)
+    psk_path = ""
+    used_name = ""
+    stamped = obj.get("arc_psk_path", "") if hasattr(obj, "get") else ""
+    if stamped:
+        stamped = bpy.path.abspath(str(stamped))
+        folder = os.path.dirname(stamped)
+        if os.path.isdir(folder):
+            psk_path = stamped
+            used_name = "arc_psk_path"
+            log.info("Update Materials: using stamped path '%s'", psk_path)
+
+    if not psk_path:
+        for cand in candidates:
+            psk_path = find_psk_for_model(cand)
+            if psk_path:
+                used_name = cand
+                log.info("Update Materials: resolved '%s' → %s", cand, psk_path)
+                break
+
+    # FMDex: try MI stems directly for asset_folder even when mesh PSK missing
+    fmdex_folder = ""
+    if not psk_path:
+        for cand in candidates:
+            folder = fmdex.resolve_mesh_asset_folder(cand)
+            if folder:
+                fmdex_folder = folder
+                used_name = f"fmdex:{cand}"
+                log.info("Update Materials: FMDex folder for '%s' → %s", cand, folder)
+                break
+        if not fmdex_folder:
+            for mat_name in mat_names:
+                if not mat_name.upper().startswith("MI_"):
+                    continue
+                mi_json = fmdex.resolve_export_file(mat_name, ".json")
+                if mi_json:
+                    fmdex_folder = os.path.dirname(mi_json)
+                    used_name = f"fmdex-mi:{mat_name}"
+                    log.info(
+                        "Update Materials: FMDex MI '%s' → %s", mat_name, mi_json
+                    )
+                    break
+
+    if psk_path:
+        skin_json = str(obj.get("arc_skin_json", "") or "") if hasattr(obj, "get") else ""
+        if skin_json:
+            skin_json = bpy.path.abspath(skin_json)
+            if not os.path.isfile(skin_json):
+                log.warning("Update Materials: stamped skin JSON missing: %s", skin_json)
+                skin_json = ""
+        # Backward compatibility for objects imported before arc_skin_json was persisted.
+        # FModel outfit imports already carry the colourway name, so recover its exact JSON.
+        if not skin_json and hasattr(obj, "get"):
+            colorway = str(obj.get("arc_colorway", "") or "").strip()
+            stamped_choice = str(obj.get("arc_skin_choice", "") or "").strip()
+            if not colorway and stamped_choice and stamped_choice != "NONE":
+                colorway = _colorway_name_from_skin_path(stamped_choice)
+            if colorway:
+                wanted = colorway.casefold()
+                skin_candidates = textures.scan_skins(psk_path)
+                matches = [
+                    path for name, path in skin_candidates
+                    if name.casefold() == wanted
+                    or os.path.basename(os.path.dirname(path)).casefold() == wanted
+                ]
+                if len(matches) == 1:
+                    skin_json = os.path.abspath(matches[0])
+                    log.info(
+                        "Update Materials: recovered colourway '%s' skin JSON: %s",
+                        colorway, skin_json,
+                    )
+        manual_skins_folder = (
+            str(obj.get("arc_manual_skins_folder", "") or "")
+            if hasattr(obj, "get") else ""
+        )
+        if manual_skins_folder:
+            manual_skins_folder = bpy.path.abspath(manual_skins_folder)
+            if not os.path.isdir(manual_skins_folder):
+                manual_skins_folder = ""
+        if not manual_skins_folder and skin_json:
+            manual_skins_folder = os.path.dirname(skin_json)
+        skin_choice = (
+            str(obj.get("arc_skin_choice", "NONE") or "NONE")
+            if hasattr(obj, "get") else "NONE"
+        )
+        if (not skin_choice or skin_choice == "NONE") and skin_json:
+            skin_choice = skin_json
+        body_variant = (
+            str(obj.get("arc_body_variant", "NONE") or "NONE")
+            if hasattr(obj, "get") else "NONE"
+        )
+        hair_mi = (
+            str(obj.get("arc_hair_mi", "NONE") or "NONE")
+            if hasattr(obj, "get") else "NONE"
+        )
+        status = apply_materials_to_object(
+            obj,
+            psk_path,
+            skin_json=skin_json,
+            manual_skins_folder=manual_skins_folder,
+            skin_choice=skin_choice,
+            body_variant=body_variant,
+            hair_mi=hair_mi,
+        )
+        folder = os.path.dirname(psk_path)
+        leftover = materials.fix_object_materials_from_mi_slots(obj, folder)
+        try:
+            obj["arc_psk_path"] = psk_path
+        except Exception:
+            pass
+        if status not in ("unresolved",):
+            extra = f" +{leftover} mi-slots" if leftover else ""
+            return True, (
+                f"{obj.name}: {status}{extra} ← {os.path.basename(psk_path)} "
+                f"(via '{used_name}'); {fmdex_st}"
+            )
+        if leftover:
+            return True, (
+                f"{obj.name}: mi-slots ({leftover}) via {os.path.basename(psk_path)}; "
+                f"{fmdex_st}"
+            )
+        return False, (
+            f"{obj.name}: found '{os.path.basename(psk_path)}' but could not wire materials "
+            f"(type unresolved; mats={mat_names}; tried={candidates}; {fmdex_st})"
+        )
+
+    asset_folder = fmdex_folder or ""
+    fixed = materials.fix_object_materials_from_mi_slots(obj, asset_folder)
+    if fixed:
+        via = used_name or "MaterialLibrary/FMDex"
+        return True, f"{obj.name}: mi-slots ({fixed}) via {via}; {fmdex_st}"
+    return False, (
+        f"{obj.name}: no asset for names {candidates}; "
+        f"mats={mat_names or ['(none)']}; {fmdex_st}. "
+        f"See {utils.debug_log_path()}"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Operators
 # ---------------------------------------------------------------------------
-
 class ARC_OT_SelectHairMI(Operator):
     """Select a hair MI JSON for this entry."""
     bl_idname = "arc.select_hair_mi"
@@ -506,6 +1037,180 @@ class ARC_OT_MergeSelectedArmatures(Operator):
         return {'FINISHED'}
 
 
+class ARC_OT_FixMaterials(Operator):
+    """Rebuild shaders on existing meshes using Pioneer MI JSONs / textures."""
+    bl_idname = "arc.fix_materials"
+    bl_label = "Update Materials"
+    bl_description = (
+        "Rebuild materials on selected meshes (or all scene meshes if none selected) "
+        "from PioneerGame MI JSONs and textures. Use after BlenderUMap imports, or to "
+        "refresh old blends after an addon update — object placement is kept."
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        root = utils.get_pioneer_root()
+        if not root or not os.path.isdir(root):
+            self.report({'ERROR'}, "Set PioneerGame Folder in Settings first")
+            return {'CANCELLED'}
+
+        objs = [o for o in context.selected_objects if o.type == 'MESH']
+        if not objs:
+            objs = [o for o in context.scene.objects if o.type == 'MESH']
+        if not objs:
+            self.report({'WARNING'}, "No mesh objects to fix")
+            return {'CANCELLED'}
+
+        fmdex.ensure_loaded()
+        log.info(
+            "Update Materials start: %d mesh(es); %s; log=%s",
+            len(objs), fmdex.fmdex_summary_for_report(), utils.debug_log_path(),
+        )
+
+        ok_n = 0
+        fail_n = 0
+        last_fail = ""
+        for obj in objs:
+            ok, msg = fix_materials_for_object(obj)
+            log.info("%s", msg)
+            if ok:
+                ok_n += 1
+            else:
+                fail_n += 1
+                last_fail = msg
+
+        if ok_n and not fail_n:
+            self.report({'INFO'}, f"Updated materials on {ok_n} mesh(es)")
+        elif ok_n and fail_n:
+            short = last_fail if len(last_fail) < 180 else (last_fail[:177] + "...")
+            self.report(
+                {'WARNING'},
+                f"Updated {ok_n}, failed {fail_n}. Last: {short}",
+            )
+        else:
+            short = last_fail if len(last_fail) < 220 else (last_fail[:217] + "...")
+            self.report({'ERROR'}, short or f"Could not update {fail_n} mesh(es)")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+def reimport_selected_mesh(obj) -> tuple:
+    """Refresh UV + Arc materials on one mesh in place (no Stage 1 / folder import).
+
+    Returns (ok: bool, message: str).
+    """
+    if obj is None or getattr(obj, "type", None) != "MESH":
+        return False, "skipped (not a mesh)"
+    try:
+        name = obj.name
+    except ReferenceError:
+        return False, "skipped (deleted object)"
+
+    if obj.get("arc_placement_instancer"):
+        return False, (
+            f"{name}: GN instancer — select its SRC mesh (or Realize Unique Instancers) "
+            "instead of the point cloud"
+        )
+
+    try:
+        utils.normalize_object_ue_uv_layers(obj)
+    except Exception as exc:
+        log.warning("Re-import Selected UV normalize '%s': %s", name, exc)
+
+    is_map = bool(obj.get("arc_map")) or str(obj.get("arc_model_type", "") or "").lower() == "map"
+    if is_map:
+        try:
+            obj["arc_materials_pending"] = 1
+            obj["arc_force_material_rebuild"] = 1
+        except Exception:
+            pass
+        try:
+            materials.clear_leaked_preferred_mi(obj)
+            materials.invalidate_shared_mi_on_object(obj)
+        except Exception as exc:
+            log.warning("Re-import Selected map invalidate '%s': %s", name, exc)
+
+    ok, msg = fix_materials_for_object(obj)
+    if ok and is_map:
+        try:
+            if obj.get("arc_force_material_rebuild"):
+                del obj["arc_force_material_rebuild"]
+            obj["arc_materials_pending"] = 0
+        except Exception:
+            pass
+    return ok, msg
+
+
+class ARC_OT_ReimportSelected(Operator):
+    """Refresh materials/UVs on selected meshes only (no whole map/folder re-import)."""
+    bl_idname = "arc.reimport_selected"
+    bl_label = "Re-import Selected"
+    bl_description = (
+        "Rebuild textures, UV names (incl. poster UV1 / GraphicAtlas), and Arc materials "
+        "on currently selected mesh objects only. Does not re-run Stage 1 or Import Folder. "
+        "Meshes without a resolvable Pioneer/FMDex path are reported and skipped"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        root = utils.get_pioneer_root()
+        if not root or not os.path.isdir(root):
+            self.report({'ERROR'}, "Set PioneerGame Folder in Settings first")
+            return {'CANCELLED'}
+
+        objs = [o for o in context.selected_objects if o.type == 'MESH']
+        if not objs:
+            self.report({'WARNING'}, "Select one or more mesh objects first")
+            return {'CANCELLED'}
+
+        fmdex.ensure_loaded()
+        log.info(
+            "Re-import Selected start: %d mesh(es); %s; log=%s",
+            len(objs), fmdex.fmdex_summary_for_report(), utils.debug_log_path(),
+        )
+
+        ok_n = 0
+        fail_n = 0
+        skip_n = 0
+        fail_samples = []
+        for obj in objs:
+            ok, msg = reimport_selected_mesh(obj)
+            log.info("%s", msg)
+            if ok:
+                ok_n += 1
+                continue
+            # Instancer / soft skips vs hard path failures
+            low = (msg or "").lower()
+            if "instancer" in low or low.startswith("skipped"):
+                skip_n += 1
+            else:
+                fail_n += 1
+            if len(fail_samples) < 4:
+                fail_samples.append(msg)
+
+        sample = "; ".join(fail_samples)
+        if len(sample) > 200:
+            sample = sample[:197] + "..."
+
+        if ok_n and not fail_n and not skip_n:
+            self.report({'INFO'}, f"Re-imported {ok_n} selected mesh(es)")
+        elif ok_n and (fail_n or skip_n):
+            self.report(
+                {'WARNING'},
+                f"Re-imported {ok_n}; failed {fail_n}; skipped {skip_n}. {sample}".strip(),
+            )
+        elif skip_n and not fail_n:
+            self.report({'WARNING'}, sample or f"Skipped {skip_n} selected mesh(es)")
+            return {'CANCELLED'}
+        else:
+            self.report(
+                {'ERROR'},
+                sample or f"Could not re-import {fail_n} selected mesh(es)",
+            )
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
 class ARC_OT_ApplyOutfitPreset(Operator):
     """Apply the selected outfit preset's per-part skin colours."""
     bl_idname = "arc.apply_outfit_preset"
@@ -626,9 +1331,9 @@ class ARC_OT_ConfirmPSKImport(Operator):
                 else:
                     bbox.label(text="None ticked → single import using the choices below", icon='INFO')
             else:
-                bbox.label(text="No outfit colourway data detected automatically.", icon='ERROR')
-                bbox.label(text="The DA_OI_Outfit folder name may not match the character — pick it manually:")
-                bbox.operator("arc.pick_manual_outfit_folder", text="Browse for DA_OI_Outfit Folder...", icon='FILEBROWSER')
+                bbox.label(text="No colourway data detected automatically.", icon='ERROR')
+                bbox.label(text="Pick the DA_OI colourway folder manually (Outfit or BackpackContainer/…):")
+                bbox.operator("arc.pick_manual_outfit_folder", text="Browse for DA_OI Colourway Folder...", icon='FILEBROWSER')
 
             layout.separator()
 
@@ -736,6 +1441,139 @@ class ARC_OT_ClearPioneerRoot(Operator):
         return {'FINISHED'}
 
 
+class ARC_OT_PickFmdexRoot(Operator, bpy_extras.io_utils.ImportHelper):
+    """Browse to FModel's FMDex output folder (contains *_FMDex.json.br)."""
+    bl_idname = "arc.pick_fmdex_root"
+    bl_label = "Select FMDex Folder"
+    filename_ext = ""
+    filter_glob: StringProperty(default="*", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        default = fmdex.get_fmdex_directory()
+        if default:
+            self.filepath = default.rstrip("/\\") + os.sep
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        folder = os.path.dirname(bpy.path.abspath(self.filepath))
+        if not folder:
+            folder = bpy.path.abspath(self.filepath)
+        if not os.path.isdir(folder):
+            self.report({'ERROR'}, f"Not a valid folder: {folder}")
+            return {'CANCELLED'}
+        context.scene.arc_fmdex_root = folder
+        fmdex.invalidate_cache()
+        files = fmdex.find_fmdex_index_files(folder)
+        if files:
+            fmdex.ensure_loaded(force=True)
+            st = fmdex.status()
+            self.report(
+                {'INFO'},
+                f"FMDex: {len(files)} index file(s); loaded {st.get('entry_count', 0)} entries",
+            )
+        else:
+            self.report(
+                {'WARNING'},
+                "No *_FMDex.json.br found — pick FModel's FMDex/<Profile> output, not source code",
+            )
+        return {'FINISHED'}
+
+
+class ARC_OT_ClearFmdexRoot(Operator):
+    """Clear the FMDex folder override."""
+    bl_idname = "arc.clear_fmdex_root"
+    bl_label = "Clear FMDex Folder"
+
+    def execute(self, context):
+        context.scene.arc_fmdex_root = ""
+        fmdex.invalidate_cache()
+        return {'FINISHED'}
+
+
+class ARC_OT_PaletteSetSelected(Operator):
+    bl_idname = "arc.palette_set_selected"
+    bl_label = "Set Palette On Selected"
+    bl_description = "Persist the scene palette mode as an override for selected materials' stable keys"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        mode = str(getattr(context.scene, "arc_palette_mode", "AUTO") or "AUTO").lower()
+        count = 0
+        for obj in context.selected_objects or []:
+            key = str(obj.get("arc_material_key", "") or "")
+            if not key and obj.active_material:
+                key = str(obj.active_material.get("arc_material_key", "") or "")
+            if not key:
+                continue
+            palette_calibration.set_override(key, mode)
+            obj["arc_palette_mode"] = mode
+            if obj.active_material:
+                obj.active_material["arc_palette_mode"] = mode
+            count += 1
+        self.report({'INFO'}, f"Palette override '{mode}' on {count} object(s) — Update Materials")
+        return {'FINISHED'}
+
+
+class ARC_OT_PaletteResetSelected(Operator):
+    bl_idname = "arc.palette_reset_selected"
+    bl_label = "Reset Palette Selected"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        count = 0
+        for obj in context.selected_objects or []:
+            key = str(obj.get("arc_material_key", "") or "")
+            if not key and obj.active_material:
+                key = str(obj.active_material.get("arc_material_key", "") or "")
+            if key:
+                palette_calibration.set_override(key, "auto")
+            obj["arc_palette_mode"] = "auto"
+            obj["arc_palette_routing"] = "auto"
+            if obj.active_material:
+                obj.active_material["arc_palette_mode"] = "auto"
+            count += 1
+        self.report({'INFO'}, f"Reset palette on {count} object(s) — Update Materials")
+        return {'FINISHED'}
+
+
+class ARC_OT_PaletteExportCalibration(Operator, bpy_extras.io_utils.ExportHelper):
+    bl_idname = "arc.palette_export_calibration"
+    bl_label = "Export Palette Calibration"
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+
+    def execute(self, context):
+        with open(self.filepath, "w", encoding="utf-8") as fh:
+            fh.write(palette_calibration.export_overrides_json())
+        self.report({'INFO'}, f"Exported {self.filepath}")
+        return {'FINISHED'}
+
+
+class ARC_OT_PaletteImportCalibration(Operator, bpy_extras.io_utils.ImportHelper):
+    bl_idname = "arc.palette_import_calibration"
+    bl_label = "Import Palette Calibration"
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+
+    def execute(self, context):
+        with open(self.filepath, "r", encoding="utf-8") as fh:
+            n = palette_calibration.import_overrides_json(fh.read())
+        self.report({'INFO'}, f"Imported {n} override(s) — Update Materials")
+        return {'FINISHED'}
+
+
+class ARC_OT_PaletteClearCalibration(Operator):
+    bl_idname = "arc.palette_clear_calibration"
+    bl_label = "Clear Palette Calibration"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        palette_calibration.clear_overrides()
+        self.report({'INFO'}, "Cleared all palette overrides")
+        return {'FINISHED'}
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -750,6 +1588,8 @@ classes = (
     ARC_OT_SelectOutfit,
     ARC_OT_ClearOutfitSearch,
     ARC_OT_MergeSelectedArmatures,
+    ARC_OT_FixMaterials,
+    ARC_OT_ReimportSelected,
     ARC_OT_ApplyOutfitPreset,
     ARC_OT_PickManualSkinsFolder,
     ARC_OT_PickManualOutfitFolder,
@@ -757,4 +1597,11 @@ classes = (
     ARC_OT_ConfirmPSKImport,
     ARC_OT_PickPioneerRoot,
     ARC_OT_ClearPioneerRoot,
-)
+    ARC_OT_PickFmdexRoot,
+    ARC_OT_ClearFmdexRoot,
+    ARC_OT_PaletteSetSelected,
+    ARC_OT_PaletteResetSelected,
+    ARC_OT_PaletteExportCalibration,
+    ARC_OT_PaletteImportCalibration,
+    ARC_OT_PaletteClearCalibration,
+) + map_placement.OPERATOR_CLASSES

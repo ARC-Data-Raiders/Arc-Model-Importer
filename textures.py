@@ -250,10 +250,13 @@ def find_texture_from_object_path(obj_path: str) -> str:
 
 
 def find_asset_from_object_path(obj_path: str, extension: str) -> str:
-    """Resolve a /Game/... ObjectPath to a file under the Pioneer content root."""
+    """Resolve a /Game/... ObjectPath to a file under Pioneer Content (multi-root).
+
+    Searches every Content dir from :func:`utils.get_content_dirs` so MapPlacements
+    mesh-only trees still resolve MI/SM JSON from the sibling full FModel dump.
+    """
     utils.invalidate_dir_caches_if_root_changed()
-    root = utils.get_pioneer_root()
-    if not root or not obj_path:
+    if not obj_path:
         return ""
     # UE dumps often use AssetName.AssetName — strip trailing instance suffix
     leaf = obj_path.split("/")[-1]
@@ -266,13 +269,24 @@ def find_asset_from_object_path(obj_path: str, extension: str) -> str:
         rel = clean.lstrip('/')
     if not extension.startswith('.'):
         extension = '.' + extension
-    content_dir = utils.find_content_dir(root)
-    if content_dir:
-        candidate = os.path.join(content_dir, rel.replace('/', os.sep)) + extension
+
+    content_dirs = utils.get_content_dirs()
+    if not content_dirs:
+        root = utils.get_pioneer_root()
+        cd = utils.find_content_dir(root) if root else ""
+        if cd:
+            content_dirs = [cd]
+
+    rel_os = rel.replace('/', os.sep)
+    for content_dir in content_dirs:
+        candidate = os.path.join(content_dir, rel_os) + extension
         if os.path.isfile(candidate):
             return candidate
+
+    # Fallback: folder search under pioneer root (legacy shallow resolve).
+    root = utils.get_pioneer_root()
     rel_parts = rel.split('/')
-    if len(rel_parts) > 1:
+    if root and len(rel_parts) > 1:
         dir_parts = rel_parts[:-1]
         filename = rel_parts[-1] + extension
         found_dir = utils.find_relative_dir(root, dir_parts)
@@ -301,11 +315,19 @@ def mi_stem_from_material_ref(material_ref: dict) -> str:
 # ---------------------------------------------------------------------------
 
 _TA_ID_SUFFIXES = (
-    'BaseNormalID', 'EdgeNormalID', 'CreaseNormalID',
+    'BaseNormalID', 'MediumNormalID', 'EdgeNormalID', 'CreaseNormalID',
     'BaseRoughnessID', 'EdgeRoughnessID', 'CreaseRoughnessID',
     'CreaseMaskID', 'EdgeMaskID', 'ColorTextureID', 'PatternID',
 )
-_MI_KEEP_TOKENS = ("Roughness", "Metallic", "Specular")
+_MI_KEEP_TOKENS = ("Roughness", "Metallic", "Specular", "BaseTextureStrength")
+_ZONE_SCALAR_SUFFIXES = (
+    'BaseTextureStrength',
+    'BaseColorMaskStrength',
+    'MediumNormalStrength',
+    'MediumNormalTiling',
+    'EdgeNormalTiling',
+    'CreaseNormalTiling',
+)
 
 
 def load_mi_properties(json_path: str) -> dict:
@@ -348,6 +370,23 @@ def _ta_ids_from_props(props: dict) -> dict:
             if m:
                 result[(m.group(1), suffix)] = int(float(param.get("ParameterValue", 0)))
                 break
+    return result
+
+
+def _zone_scalars_from_props(props: dict) -> dict:
+    """Per-zone scalars such as BaseTextureStrength / MediumNormalStrength."""
+    result = {}
+    for param in props.get("ScalarParameterValues", []):
+        name = param.get("ParameterInfo", {}).get("Name", "")
+        for suffix in _ZONE_SCALAR_SUFFIXES:
+            m = re.match(r'^(\d+)_' + re.escape(suffix) + r'$', name)
+            if not m:
+                continue
+            try:
+                result[(m.group(1), suffix)] = float(param.get("ParameterValue", 0))
+            except (TypeError, ValueError):
+                pass
+            break
     return result
 
 
@@ -427,6 +466,7 @@ def _decals_from_props(props: dict) -> list:
         if not tex_stem:
             continue
         placement = vec_lookup.get(f"{idx}_DecalPlacement", (0.0, 0.0, 1.0, 0.0))
+        color_override = max(0.0, min(1.0, scalar_lookup.get(f"{idx}_ColorOverride", 0.0)))
         results.append({
             "index": idx,
             "texture": tex_stem,
@@ -439,9 +479,14 @@ def _decals_from_props(props: dict) -> list:
             "uv_v": placement[1],
             "scale": placement[2],
             "rotation": placement[3],
-            "width_ratio": scalar_lookup.get(f"{idx}_WidthRatio", 1.0),
+            # None lets materials.py derive width/height from the loaded decal
+            # image if a broken/older MI omits the authored scalar.
+            "width_ratio": scalar_lookup.get(f"{idx}_WidthRatio"),
             "layer_mask": scalar_lookup.get(f"{idx}_LayerMask", 255.0),
-            "color_override": scalar_lookup.get(f"{idx}_ColorOverride", 1.0),
+            # M_Character_Layered lerps sampled decal RGB (0) to ColorA/B (1).
+            # The master material's authored default is 0.
+            "color_override": color_override,
+            "original_color": color_override < 0.9999,
         })
     return results
 
@@ -453,6 +498,7 @@ def parse_clothing_mi(json_path: str) -> dict:
         return {
             "colours": {},
             "ta_ids": {},
+            "zone_scalars": {},
             "mi_params": {"scalars": [], "vectors": []},
             "decals": [],
         }
@@ -460,6 +506,7 @@ def parse_clothing_mi(json_path: str) -> dict:
     return {
         "colours": colours,
         "ta_ids": _ta_ids_from_props(props),
+        "zone_scalars": _zone_scalars_from_props(props),
         "mi_params": _mi_params_from_props(props, set(colours.keys())),
         "decals": _decals_from_props(props),
     }

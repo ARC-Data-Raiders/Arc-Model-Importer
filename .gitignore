@@ -3,3 +3,4 @@ outfit_toggles.txt
 *.log
 *.tmp
 __pycache__/
+arc_palette_calibration.json

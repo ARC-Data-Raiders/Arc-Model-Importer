@@ -66,7 +66,12 @@ def merge_armatures(armatures):
     bpy.ops.object.join()
     return bpy.context.active_object, shared_bone_names
 
-def cleanup_duplicate_bones(master_arm, shared_bone_names):
+def cleanup_duplicate_bones(master_arm, shared_bone_names, mesh_objects=None):
+    mesh_objects = (
+        [obj for obj in bpy.data.objects if obj.type == 'MESH']
+        if mesh_objects is None
+        else [obj for obj in mesh_objects if obj.type == 'MESH']
+    )
     bpy.ops.object.mode_set(mode='EDIT')
     bone_map = {}
     all_edit_bones = sorted([b.name for b in master_arm.data.edit_bones], reverse=True)
@@ -92,35 +97,34 @@ def cleanup_duplicate_bones(master_arm, shared_bone_names):
     
     bpy.ops.object.mode_set(mode='OBJECT')
     
-    for obj in bpy.data.objects:
-        if obj.type == 'MESH':
-            for mod in obj.modifiers:
-                if mod.type == 'ARMATURE' and mod.object is not master_arm:
-                    mod.object = master_arm
+    for obj in mesh_objects:
+        for mod in obj.modifiers:
+            if mod.type == 'ARMATURE' and mod.object is not master_arm:
+                mod.object = master_arm
     
-    for obj in bpy.data.objects:
-        if obj.type == 'MESH':
-            for b_dup_name, b_orig_name in bone_map.items():
-                vg_dup = obj.vertex_groups.get(b_dup_name)
-                vg_orig = obj.vertex_groups.get(b_orig_name)
-                if vg_dup:
-                    if not vg_orig:
-                        vg_dup.name = b_orig_name
-                    else:
-                        mod = obj.modifiers.new(name="TempWeightMerge", type='VERTEX_WEIGHT_MIX')
-                        mod.vertex_group_a = b_orig_name
-                        mod.vertex_group_b = b_dup_name
-                        mod.mix_mode = 'ADD'
-                        mod.mix_set = 'ALL'
-                        prev_active = bpy.context.view_layer.objects.active
-                        bpy.context.view_layer.objects.active = obj
-                        bpy.ops.object.modifier_apply(modifier=mod.name)
-                        bpy.context.view_layer.objects.active = prev_active
-                        obj.vertex_groups.remove(vg_dup)
+    for obj in mesh_objects:
+        for b_dup_name, b_orig_name in bone_map.items():
+            vg_dup = obj.vertex_groups.get(b_dup_name)
+            vg_orig = obj.vertex_groups.get(b_orig_name)
+            if vg_dup:
+                if not vg_orig:
+                    vg_dup.name = b_orig_name
+                else:
+                    mod = obj.modifiers.new(name="TempWeightMerge", type='VERTEX_WEIGHT_MIX')
+                    mod.vertex_group_a = b_orig_name
+                    mod.vertex_group_b = b_dup_name
+                    mod.mix_mode = 'ADD'
+                    mod.mix_set = 'ALL'
+                    prev_active = bpy.context.view_layer.objects.active
+                    bpy.context.view_layer.objects.active = obj
+                    bpy.ops.object.modifier_apply(modifier=mod.name)
+                    bpy.context.view_layer.objects.active = prev_active
+                    obj.vertex_groups.remove(vg_dup)
 
 def fix_rig_all(all_new_objects: list, merge: bool = True, model_type: str = ""):
     """Fix and merge all armatures. merge: if False, skip merge step."""
     armatures = [o for o in all_new_objects if o.type == 'ARMATURE']
+    mesh_objects = [o for o in all_new_objects if o.type == 'MESH']
     if not armatures:
         print("Arc Raiders PSK Importer: No armatures found to fix.")
         return
@@ -128,7 +132,7 @@ def fix_rig_all(all_new_objects: list, merge: bool = True, model_type: str = "")
     if merge and len(armatures) > 1:
         print(f"Arc Raiders PSK Importer: Merging {len(armatures)} armatures...")
         master, shared = merge_armatures(armatures)
-        cleanup_duplicate_bones(master, shared)
+        cleanup_duplicate_bones(master, shared, mesh_objects)
         print("Arc Raiders PSK Importer: Merge complete.")
     else:
         master = armatures[0]
@@ -173,8 +177,7 @@ def fix_rig_all(all_new_objects: list, merge: bool = True, model_type: str = "")
         print("Arc Raiders PSK Importer: Fixing bone orientations...")
         fix_bone_orientations(master)
     
-    for obj in bpy.data.objects:
-        if obj.type == 'MESH':
-            for mod in obj.modifiers:
-                if mod.type == 'ARMATURE':
-                    mod.use_deform_preserve_volume = True
+    for obj in mesh_objects:
+        for mod in obj.modifiers:
+            if mod.type == 'ARMATURE':
+                mod.use_deform_preserve_volume = True
