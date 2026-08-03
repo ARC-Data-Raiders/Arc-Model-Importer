@@ -6,19 +6,54 @@ Import Arc Raiders models by selecting an outfit folder.
 bl_info = {
     "name": "Arc Raiders Model Importer",
     "author": "Silarious (Ai Vibe Code)/ Naryun & Zebulon Core Functions",
-    "version": (2, 18, 14),
+    "version": (2, 18, 15),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Arc Raiders",
     "description": "Import Arc Raiders models by selecting an outfit folder.",
     "category": "Import-Export",
 }
 
-import bpy
 import os
+import shutil
 import sys
 
+# Redirect bytecode out of the addon tree BEFORE submodule imports so zip/install
+# folders stay free of growing __pycache__ (process-global; see PEP 304).
+_addon_dir = os.path.dirname(__file__)
+
+
+def _configure_pycache_prefix():
+    local = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or os.path.expanduser("~")
+    prefix = os.path.join(local, "DataRaiders-BlenderImporter", "pycache")
+    try:
+        os.makedirs(prefix, exist_ok=True)
+        sys.pycache_prefix = prefix
+    except OSError as exc:
+        print(f"Arc Raiders: could not set pycache_prefix ({prefix}): {exc}")
+
+
+def _scrub_inplace_pycache(root: str) -> None:
+    """Remove leftover __pycache__ dirs under the addon (from before prefix redirect)."""
+    if not root or not os.path.isdir(root):
+        return
+    for dirpath, dirnames, _filenames in os.walk(root, topdown=True):
+        if "__pycache__" not in dirnames:
+            continue
+        path = os.path.join(dirpath, "__pycache__")
+        try:
+            shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+        dirnames.remove("__pycache__")
+
+
+_configure_pycache_prefix()
+_scrub_inplace_pycache(_addon_dir)
+
+import bpy
+
 # Add current directory to path for imports
-addon_dir = os.path.dirname(__file__)
+addon_dir = _addon_dir
 if addon_dir not in sys.path:
     sys.path.insert(0, addon_dir)
 

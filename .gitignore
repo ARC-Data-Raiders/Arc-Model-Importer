@@ -1,6 +1,30 @@
-*.pyc
-outfit_toggles.txt
-*.log
-*.tmp
+# Bytecode / caches (also redirected at runtime via sys.pycache_prefix)
 __pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local / generated
+*.log
+*_log.txt
+*.tmp
+*.blend1
+outfit_toggles.txt
 arc_palette_calibration.json
+
+# Temp / agent scratch
+_tmp_*
+*.csv.bak
+
+# Packaging output
+dist/
+*.addon.zip
+DataRaiders-BlenderImporter-*.zip
+
+# Editor / OS
+.cursor/
+.DS_Store
+Thumbs.db
+Desktop.ini
