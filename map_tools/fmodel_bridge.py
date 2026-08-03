@@ -19,7 +19,9 @@ import json
 import os
 import shutil
 import socket
+import tempfile
 import threading
+import time
 import traceback
 from collections import deque
 from typing import Any
@@ -540,6 +542,105 @@ def import_outfit_manifest(data: dict[str, Any]) -> list[str]:
     return imported
 
 
+def _same_filesystem_path(a: str, b: str) -> bool:
+    """True when a and b resolve to the same path (case-insensitive on Windows)."""
+    if not a or not b:
+        return False
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        pass
+    na = os.path.normcase(os.path.abspath(a))
+    nb = os.path.normcase(os.path.abspath(b))
+    return na == nb
+
+
+def _is_sharing_violation(exc: BaseException) -> bool:
+    """WinError 32 / errno 13 sharing violations and shutil SameFileError."""
+    if isinstance(exc, shutil.SameFileError):
+        return True
+    if isinstance(exc, PermissionError):
+        winerr = getattr(exc, "winerror", None)
+        if winerr in (32, 33):  # ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION
+            return True
+        if getattr(exc, "errno", None) in (13, 11):
+            return True
+    if isinstance(exc, OSError):
+        winerr = getattr(exc, "winerror", None)
+        if winerr in (32, 33):
+            return True
+    return False
+
+
+def _copy_file_robust(src: str, dest: str, *, label: str = "file") -> bool:
+    """
+    Copy src → dest with same-path skip, WinError-32 retries, and byte fallback.
+
+    Returns True if dest exists and is usable afterward.
+    Skips with a warning when dest already exists but the source stays locked.
+    """
+    if not src or not os.path.isfile(src):
+        return os.path.isfile(dest)
+    if _same_filesystem_path(src, dest):
+        return True
+
+    os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+    delays = (0.05, 0.15, 0.35, 0.75)
+    last_exc: BaseException | None = None
+
+    for attempt, delay in enumerate((0.0,) + delays):
+        if delay:
+            time.sleep(delay)
+        try:
+            shutil.copy2(src, dest)
+            return True
+        except Exception as exc:
+            last_exc = exc
+            if not _is_sharing_violation(exc):
+                break
+            # Fallback: read bytes then atomic-ish replace via temp in dest dir.
+            try:
+                with open(src, "rb") as fh:
+                    payload = fh.read()
+                dest_dir = os.path.dirname(dest) or "."
+                fd, tmp_path = tempfile.mkstemp(
+                    prefix=".arc_copy_", suffix=".tmp", dir=dest_dir
+                )
+                try:
+                    with os.fdopen(fd, "wb") as out:
+                        out.write(payload)
+                    os.replace(tmp_path, dest)
+                    try:
+                        shutil.copystat(src, dest)
+                    except OSError:
+                        pass
+                    return True
+                finally:
+                    if os.path.exists(tmp_path):
+                        try:
+                            os.remove(tmp_path)
+                        except OSError:
+                            pass
+            except Exception as fallback_exc:
+                last_exc = fallback_exc
+                if not _is_sharing_violation(fallback_exc):
+                    break
+                continue
+
+    if os.path.isfile(dest) and os.path.getsize(dest) > 0:
+        print(
+            f"Arc Raiders FModel bridge: skipped {label} copy "
+            f"(locked; keeping existing {dest!r}): {last_exc}"
+        )
+        return True
+
+    raise PermissionError(
+        f"Could not copy {label} from {src!r} to {dest!r} "
+        f"(file locked by another process). Close FModel/explorer handles "
+        f"and retry. Last error: {last_exc}"
+    ) from last_exc
+
+
 def ingest_fmodel_payload(data: dict[str, Any], scene) -> tuple[str, str]:
     """
     Copy FModel CSV into the placement workspace and wire scene properties.
@@ -560,8 +661,7 @@ def ingest_fmodel_payload(data: dict[str, Any], scene) -> tuple[str, str]:
 
     dest_dir = mp.map_output_dir(map_name, scene)
     dest_csv = os.path.join(dest_dir, "placements.csv")
-    if os.path.abspath(csv_src) != os.path.abspath(dest_csv):
-        shutil.copy2(csv_src, dest_csv)
+    _copy_file_robust(csv_src, dest_csv, label="placements.csv")
 
     manifest_src = (data.get("ManifestPath") or data.get("manifest_path") or "").strip()
     if not manifest_src:
@@ -569,7 +669,11 @@ def ingest_fmodel_payload(data: dict[str, Any], scene) -> tuple[str, str]:
         if os.path.isfile(sibling):
             manifest_src = sibling
     if manifest_src and os.path.isfile(manifest_src):
-        shutil.copy2(manifest_src, os.path.join(dest_dir, "placements_manifest.json"))
+        _copy_file_robust(
+            manifest_src,
+            os.path.join(dest_dir, "placements_manifest.json"),
+            label="placements_manifest.json",
+        )
 
     # Prefer FModel's MapPlacements mesh folder from the manifest (absolute paths).
     try:
