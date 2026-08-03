@@ -9319,11 +9319,136 @@ def water_mi_hint_from_actor_name(actor_name: str = "") -> str:
     return f"MI_Water_{variant}"
 
 
+def _bp_decal_package_stem(actor_name: str = "") -> str:
+    """``BP_Decal_AddonWall_01_C_0_…`` → ``BP_Decal_AddonWall_01``."""
+    raw = (actor_name or "").strip()
+    if not raw:
+        return ""
+    m = re.search(
+        r"(BP_Decal_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*?)(?:_C(?:_|$)|$)",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    return m.group(1) if m else ""
+
+
+def _rank_bp_decal_mi_stems(stems: list[str], bp_body: str = "") -> list[str]:
+    """Prefer MIs whose stem matches the BP body (AddonWall_01 → MI_AddonWall_01).
+
+    BP_Decal_* packages often carry a leftover OverrideMaterials on a secondary
+    DecalMesh1 component (parent-template residue) before the real DecalMesh slot.
+    """
+    body = (bp_body or "").strip().lower()
+    ranked: list[tuple[tuple, str]] = []
+    seen: set[str] = set()
+    for stem in stems or []:
+        s = (stem or "").strip()
+        if not s:
+            continue
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        core = key
+        if core.startswith("mi_"):
+            core = core[3:]
+        core_no_decal = core[6:] if core.startswith("decal_") else core
+        exact = 0
+        if body:
+            if core == body or core_no_decal == body or core == f"decal_{body}":
+                exact = 3
+            elif body in core or body in core_no_decal or core_no_decal in body:
+                exact = 2
+            else:
+                # Token overlap (Damage_Wall_01 ↔ Decal_Damage_Wall_01)
+                body_toks = set(body.split("_"))
+                mi_toks = set(core_no_decal.split("_"))
+                if body_toks and body_toks <= mi_toks:
+                    exact = 2
+                elif body_toks and len(body_toks & mi_toks) >= max(2, len(body_toks) - 1):
+                    exact = 1
+        # Cooked class-looking *_C suffixes are usually the wrong leftover slot
+        cooked = 1 if key.endswith("_c") else 0
+        ranked.append(((-exact, cooked, len(key), key), s))
+    ranked.sort(key=lambda t: t[0])
+    return [s for _k, s in ranked]
+
+
+def _mi_stems_from_bp_decal_override_json(
+    bp_stem: str, psk_folder: str = "", bp_body: str = ""
+) -> list[str]:
+    """Read ``OverrideMaterials`` from ``BP_Decal_*.json`` (authoritative projector MI).
+
+    Name-guess alone misses retargets (e.g. ``BP_Decal_CrackPlaster_01`` →
+    ``MI_CrackWall_01``, ``BP_Decal_Drain_01`` → ``MI_Drain_02``).
+    """
+    stem = (bp_stem or "").strip()
+    if not stem:
+        return []
+    # BP JSONs live beside MIs under MaterialLibrary/.../Decals/
+    bp_path = _resolve_mi_json_path(stem, "", psk_folder or "")
+    if not bp_path or not os.path.isfile(bp_path):
+        return []
+    try:
+        with open(bp_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    try:
+        for entry in utils.ue_export_entries(data):
+            props = entry.get("Properties") or {}
+            overrides = props.get("OverrideMaterials") or []
+            if not isinstance(overrides, list):
+                continue
+            # Prefer the primary DecalMesh component over DecalMesh1 leftovers
+            entry_name = str(entry.get("Name") or "").lower()
+            primary = "decalmesh1" not in entry_name and (
+                entry_name.startswith("decalmesh") or "decalmesh_gen" in entry_name
+            )
+            for ref in overrides:
+                if not isinstance(ref, dict):
+                    continue
+                mi_stem = textures.mi_stem_from_material_ref(ref)
+                if not mi_stem:
+                    continue
+                key = mi_stem.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                if primary:
+                    out.insert(0, mi_stem)
+                else:
+                    out.append(mi_stem)
+    except Exception:
+        pass
+    body = bp_body
+    if not body and stem.lower().startswith("bp_decal_"):
+        body = stem[len("BP_Decal_") :]
+    return _rank_bp_decal_mi_stems(out, body)
+
+
+def _mi_json_is_map_decal_library(path: str = "") -> bool:
+    """True when MI/BP JSON lives under MaterialLibrary Decals (map projector cards)."""
+    pl = (path or "").replace("\\", "/").lower()
+    if not pl:
+        return False
+    if "/materiallibrary/" in pl and "/decals/" in pl:
+        return True
+    if "/material_instances/decals/" in pl:
+        return True
+    return False
+
+
 def decal_mi_stem_candidates_from_actor(actor_name: str = "") -> list[str]:
     """BP_Decal_CrackTarmac_01_C_… → [MI_CrackTarmac_01, MI_Decal_CrackTarmac_01].
 
     Also ``SM_Decal_AstraVenturo_01_A`` → ``MI_Decal_AstraVenturo_01``.
     Shared projector mesh is always ``SM_DecalMesh_*``; the BP/actor name carries the MI.
+
+    Prefer ``OverrideMaterials`` from the BP JSON when present (authoritative), then
+    name-guess ``MI_<body>`` / ``MI_Decal_<body>``.
     """
     raw = (actor_name or "").strip()
     if not raw:
@@ -9335,15 +9460,14 @@ def decal_mi_stem_candidates_from_actor(actor_name: str = "") -> list[str]:
         if stem and stem not in out:
             out.append(stem)
 
-    m = re.search(
-        r"BP_Decal_([A-Za-z0-9]+(?:_[A-Za-z0-9]+)*?)(?:_C(?:_|$)|$)",
-        raw,
-        flags=re.IGNORECASE,
-    )
-    if m:
-        body = m.group(1)
-        _add(f"MI_{body}")
-        _add(f"MI_Decal_{body}")
+    bp_stem = _bp_decal_package_stem(raw)
+    if bp_stem:
+        body = bp_stem[len("BP_Decal_") :] if bp_stem.lower().startswith("bp_decal_") else ""
+        for ov in _mi_stems_from_bp_decal_override_json(bp_stem, "", body):
+            _add(ov)
+        if body:
+            _add(f"MI_{body}")
+            _add(f"MI_Decal_{body}")
         return out
 
     m = re.search(
@@ -9392,13 +9516,36 @@ def preferred_mi_hint_from_actor_name(actor_name: str = "", psk_folder: str = ""
     water = water_mi_hint_from_actor_name(raw)
     if water:
         return water
+    # BP OverrideMaterials first (needs folder for resolve)
+    bp_stem = _bp_decal_package_stem(raw)
+    if bp_stem:
+        body = bp_stem[len("BP_Decal_") :] if bp_stem.lower().startswith("bp_decal_") else ""
+        for ov in _mi_stems_from_bp_decal_override_json(bp_stem, psk_folder or "", body):
+            path = _resolve_mi_json_path(ov, "", psk_folder or "")
+            if path:
+                leaf = os.path.splitext(os.path.basename(path))[0].lower()
+                if leaf.startswith("bp_"):
+                    continue
+                return ov
+            # Authoritative override stem even if path resolve lags
+            return ov
     cands = decal_mi_stem_candidates_from_actor(raw)
     if not cands:
         return ""
     for stem in cands:
         path = _resolve_mi_json_path(stem, "", psk_folder or "")
-        if path:
+        if path and not os.path.basename(path).lower().startswith("bp_"):
             return stem
+        if path and _mi_json_is_map_decal_library(path):
+            # Skip BP JSON collision (stem resolved to blueprint package)
+            leaf = os.path.splitext(os.path.basename(path))[0].lower()
+            if leaf.startswith("bp_"):
+                continue
+            return stem
+        if path:
+            leaf = os.path.splitext(os.path.basename(path))[0].lower()
+            if not leaf.startswith("bp_"):
+                return stem
     return cands[0]
 
 
@@ -9410,8 +9557,13 @@ def _preferred_mi_is_single_slot_override(preferred_stem: str = "") -> bool:
 
     Architecture ``*Trim*_Decal_*`` / EdgeTrim names are NOT map decals even though
     they contain ``_decal_`` (that false positive wiped SMA slots / wrong family).
+
+    Many map-decal MIs omit the ``MI_Decal_`` prefix (``MI_AddonWall_01``,
+    ``MI_BrokenTile_01``, ``MI_Drain_02``). Accept those when the JSON resolves
+    under MaterialLibrary Decals.
     """
-    stem = (preferred_stem or "").strip().lower()
+    stem_raw = (preferred_stem or "").strip()
+    stem = stem_raw.lower()
     if not stem:
         return False
     if stem.startswith("mi_water") or stem.startswith("m_water") or "waterplane" in stem:
@@ -9421,11 +9573,20 @@ def _preferred_mi_is_single_slot_override(preferred_stem: str = "") -> bool:
     # Architecture trim sheets that happen to include "Decal" in the MI name
     if _is_architecture_trim_stem(stem):
         return False
+    if _is_prop_trim_atlas_mi_stem(stem) or _is_rebar_mi_stem(stem):
+        return False
     if stem.startswith("mi_decal") or stem.startswith("mi_crack"):
         return True
     # Narrow: only leading map-decal patterns, not arbitrary *_decal_* mid-tokens
     if stem.startswith("m_decal") or stem.startswith("mi_cracktarmac"):
         return True
+    # Decals library MIs without MI_Decal_ prefix (AddonWall, BrokenTile, …)
+    if stem.startswith("mi_") or stem.startswith("m_"):
+        path = _resolve_mi_json_path(stem_raw, "", "")
+        if path and _mi_json_is_map_decal_library(path):
+            leaf = os.path.splitext(os.path.basename(path))[0].lower()
+            if not leaf.startswith("bp_"):
+                return True
     return False
 
 

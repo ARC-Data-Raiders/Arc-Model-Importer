@@ -7530,17 +7530,20 @@ class ARC_OT_ApplyMapMaterials(bpy.types.Operator):
 
             slots = mats_mod._parse_sk_material_slots(psk)
             resolved = sum(1 for _n, _s, p in slots if p)
-            if not slots and not resolved:
-                # No SM/SK JSON / no MI — soft-skip (PROXY LOD miss used to land here)
+            # No SM/SK JSON, or SM only has Engine WorldGridMaterial (DecalMesh cards):
+            # soft-skip unless a BP preferred MI should have covered this (retried above).
+            if not resolved:
                 self._skipped += 1
+                why = "no_mi_json" if not slots else "worldgrid_only"
                 try:
                     obj["arc_materials_pending"] = 0
-                    obj["arc_materials_skipped"] = "no_mi_json"
+                    obj["arc_materials_skipped"] = why
                 except Exception:
                     pass
                 if len(self._skip_samples) < 6:
                     self._skip_samples.append(
-                        f"{obj.name}: no_mi sk=0 psk={os.path.basename(psk)}"
+                        f"{obj.name}: {why} sk={len(slots)} "
+                        f"psk={os.path.basename(psk)}"
                     )
                 continue
 
