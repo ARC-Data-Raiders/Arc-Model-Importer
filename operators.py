@@ -263,12 +263,27 @@ def apply_materials_to_object(
         fixed = materials.setup_map_material(obj, psk_path)
         return f"map ({fixed})" if fixed else "unresolved"
 
-    # unknown / no path: try MI-named slots, then dump Textures folder images
+    # unknown / hero character SKs: same multi-slot path as weapons (SK SkeletalMaterials
+    # ObjectPaths → Materials/ siblings). detect_model_type returns "unknown" for
+    # SK_Kalika_Base_Body (not sk_body / clothing occlusion / firearm).
+    if psk_path and os.path.isfile(psk_path):
+        sk_slots = materials._parse_sk_material_slots(psk_path)
+        if any(mi_path for _name, _stem, mi_path in sk_slots):
+            sk_wired = materials.setup_weapon_material(obj, psk_path)
+            if sk_wired:
+                return f"sk-slots ({sk_wired})"
+
+    # Fall back: MI-named Blender slots (BlenderUMap / PSK slot names) without SK JSON
     fixed = materials.fix_object_materials_from_mi_slots(obj, folder)
     if fixed:
         return f"mi-slots ({fixed})"
 
     tex_folder = os.path.join(folder, "Textures") if folder else ""
+    # Heroes layout: Textures is sibling of Meshes, not a child
+    if (not tex_folder or not os.path.isdir(tex_folder)) and folder:
+        parent_tex = os.path.join(os.path.dirname(folder), "Textures")
+        if os.path.isdir(parent_tex):
+            tex_folder = parent_tex
     if tex_folder and os.path.isdir(tex_folder):
         mat = bpy.data.materials.new(name=obj.name + "_Mat")
         mat.use_nodes = True

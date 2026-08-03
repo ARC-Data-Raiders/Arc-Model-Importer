@@ -2533,6 +2533,40 @@ def setup_hair_material(obj, json_path: str):
 # Multi-slot material setup (weapons + enemies)
 # ---------------------------------------------------------------------------
 
+def _character_layout_search_folders(*paths: str) -> list[str]:
+    """Heroes/character export layout: Meshes + Materials + Textures siblings.
+
+    Kalika etc. keep ``SK_*.psk`` under ``.../Resources/Base/Meshes/`` while
+    ``MI_*.json`` lives in ``.../Materials/`` and PNGs in ``.../Textures/``.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _add(folder: str) -> None:
+        if not folder:
+            return
+        key = os.path.normcase(os.path.normpath(folder))
+        if key in seen:
+            return
+        if os.path.isdir(folder):
+            seen.add(key)
+            out.append(folder)
+
+    for path in paths:
+        if not path:
+            continue
+        folder = path if os.path.isdir(path) else os.path.dirname(path)
+        if not folder:
+            continue
+        _add(folder)
+        parent = os.path.dirname(folder)
+        _add(parent)
+        for sub in ("Materials", "Material", "Textures", "Meshes"):
+            _add(os.path.join(parent, sub))
+            _add(os.path.join(folder, sub))
+    return out
+
+
 def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
     """Find MI_*.json beside the PSK, in shared weapon mats, or via ObjectPath."""
     if not mi_stem:
@@ -2564,10 +2598,15 @@ def _resolve_mi_json_path(mi_stem: str, obj_path: str, psk_folder: str) -> str:
         search_folders: list[str] = []
         if psk_folder:
             search_folders.append(psk_folder)
+            # Heroes Base: MI JSON is under sibling Materials/, not Meshes/.
+            search_folders.extend(_character_layout_search_folders(psk_folder))
             for alt in utils.remap_path_into_content_dirs(
                 os.path.join(psk_folder, "__probe__")
             ):
                 search_folders.append(os.path.dirname(alt))
+                search_folders.extend(
+                    _character_layout_search_folders(os.path.dirname(alt))
+                )
         shared = utils.get_weapon_shared_folder()
         if shared:
             search_folders.append(shared)
@@ -4128,14 +4167,20 @@ def _setup_weapon_screen_material(mat, mi_path: str):
     _setup_enemy_scan_display_material(mat, mi_path)
 
 
-def setup_weapon_material(obj, psk_path: str):
-    """Assign per-slot materials for firearms and enemies from SK SkeletalMaterials."""
+def setup_weapon_material(obj, psk_path: str) -> int:
+    """Assign per-slot materials from SK/SM SkeletalMaterials / StaticMaterials.
+
+    Used for firearms, enemies, and hero/character SKs (e.g. Kalika Base Body)
+    whose MIs live beside the mesh via ObjectPath / Materials/ siblings.
+    Returns the number of Blender slots successfully wired.
+    """
     slots = _parse_sk_material_slots(psk_path)
     if not slots:
         print(f"Arc Raiders PSK Importer: No SK material slots found for '{os.path.basename(psk_path)}'")
-        return
+        return 0
 
     used_indices = set()
+    wired = 0
     for idx, (slot_name, mi_stem, mi_path) in enumerate(slots):
         target_slot, slot_i = _match_material_slot(obj, slot_name, idx, used_indices, mi_stem)
         if target_slot is None:
@@ -4143,7 +4188,6 @@ def setup_weapon_material(obj, psk_path: str):
             continue
         used_indices.add(slot_i)
 
-        mi_stem_lower = mi_stem.lower()
         slot_lower = (slot_name or "").lower()
 
         if not mi_path:
@@ -4158,6 +4202,8 @@ def setup_weapon_material(obj, psk_path: str):
             )
             continue
         target_slot.material = mat
+        wired += 1
+    return wired
 
 
 def _is_weapon_emissive_light_mi(mi_stem_lower: str) -> bool:
@@ -8398,10 +8444,9 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
     out_node.location = (COL_OUT, 0)
     links.new(principled.outputs["BSDF"], out_node.inputs["Surface"])
 
-    local_folders = []
-    for folder in (os.path.dirname(mi_path), os.path.dirname(psk_path) if psk_path else ""):
-        if folder and folder not in local_folders:
-            local_folders.append(folder)
+    local_folders = _character_layout_search_folders(
+        mi_path, psk_path if psk_path else "",
+    )
     tex_lookup = _tex_lookup_from_flat_mi(mi, local_folders=local_folders)
 
     _, albedo_img = _find_env_tex(tex_lookup, *_SIMPLE_ALBEDO_KEYS)
