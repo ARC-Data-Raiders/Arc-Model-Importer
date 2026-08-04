@@ -26,6 +26,8 @@ _MI_JSON_PATH_CACHE: dict[tuple, str] = {}
 _SK_SLOTS_CACHE: dict[str, list] = {}
 _SHARED_MI_MATERIALS: dict[str, object] = {}
 _IMAGE_BY_PATH: dict[str, object] = {}
+_MI_STEM_IDENTITY_INDEX: dict[str, list[str]] | None = None
+_MI_STEM_IDENTITY_INDEX_ROOTS: tuple[str, ...] = ()
 
 # ---------------------------------------------------------------------------
 # Resolve contexts — assignment/discovery scopes (node wiring stays shared)
@@ -226,11 +228,14 @@ def context_from_model_type(model_type: str = "", psk_path: str = "") -> str:
 
 def clear_material_session_caches():
     """Drop in-memory caches (e.g. after Pioneer root change). Keeps Blender data."""
+    global _MI_STEM_IDENTITY_INDEX, _MI_STEM_IDENTITY_INDEX_ROOTS
     _FLAT_MI_CACHE.clear()
     _MI_JSON_PATH_CACHE.clear()
     _SK_SLOTS_CACHE.clear()
     _SHARED_MI_MATERIALS.clear()
     _IMAGE_BY_PATH.clear()
+    _MI_STEM_IDENTITY_INDEX = None
+    _MI_STEM_IDENTITY_INDEX_ROOTS = ()
 
 
 def warm_shared_mi_material_cache():
@@ -438,21 +443,6 @@ def apply_node_graph_padding(nodes, pad_x: float = _NODE_PAD_X, pad_y: float = _
         node_i.location = (items[i][1], items[i][2])
 
 
-def _zone_to_cm_instance(zone_str: str) -> int:
-    """Map Colour zone 1..8 to ColorMask_XYZ instance index (0/1/2)."""
-    try:
-        z = int(zone_str)
-    except (TypeError, ValueError):
-        return 0
-    if z in (1, 3, 5):
-        return 0
-    if z in (2, 4, 6):
-        return 1
-    if z in (7, 8):
-        return 2
-    return 0
-
-
 # ---------------------------------------------------------------------------
 # Material setup - Arc Texturer
 # ---------------------------------------------------------------------------
@@ -560,25 +550,24 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
     
     colormask_nodes = place_column(colormask_tex, -2200)
     
-    _SECTION_SOCKETS = [
-        (["Colour 1", "Colour 3", "Colour 5"],
-         ["Roughness 1", "Roughness 3", "Roughness 5"],
-         ["Metallic 1", "Metallic 3", "Metallic 5"]),
-        (["Colour 2", "Colour 4", "Colour 6"],
-         ["Roughness 2", "Roughness 4", "Roughness 6"],
-         ["Metallic 2", "Metallic 4", "Metallic 6"]),
-        (["Colour 7", "Colour 8"],
-         ["Roughness 7", "Roughness 8"],
-         ["Metallic 7", "Metallic 8"]),
-    ]
-    
+    # One ColorMask_XYZ per Colour/Roughness/Metallic channel (zones 1..8).
+    # Layout note: preferred node.location values can be MCP-dumped later
+    # (execute_blender_code → node.location) once an outfit graph is arranged by hand.
+    _ZONE_CHANNELS = tuple(range(1, 9))
+
     _CM_COLOUR_INPUTS = {
         # Default AUTO map — resolved per material via palette_calibration.resolve_routing.
         # Odd zones 1/3/5/7 and zone 8 use ColorA/B/C; even zones 2/4/6 use ColorA2/B2/C2.
         # Cooked data has no StaticSwitch for this; overrides cover ambiguous items.
-        0: {"X_Green": "ColorA", "Y_Blue": "ColorB", "Z_Pink": "ColorC"},
-        1: {"X_Green": "ColorA2", "Y_Blue": "ColorB2", "Z_Pink": "ColorC2"},
-        2: {"X_Green": "ColorA", "Y_Blue": "ColorB", "Z_Pink": "ColorC"},
+        # Keys are zone numbers (1..8), one XYZ group each.
+        1: {"X_Green": "ColorA", "Y_Blue": "ColorB", "Z_Pink": "ColorC"},
+        2: {"X_Green": "ColorA2", "Y_Blue": "ColorB2", "Z_Pink": "ColorC2"},
+        3: {"X_Green": "ColorA", "Y_Blue": "ColorB", "Z_Pink": "ColorC"},
+        4: {"X_Green": "ColorA2", "Y_Blue": "ColorB2", "Z_Pink": "ColorC2"},
+        5: {"X_Green": "ColorA", "Y_Blue": "ColorB", "Z_Pink": "ColorC"},
+        6: {"X_Green": "ColorA2", "Y_Blue": "ColorB2", "Z_Pink": "ColorC2"},
+        7: {"X_Green": "ColorA", "Y_Blue": "ColorB", "Z_Pink": "ColorC"},
+        8: {"X_Green": "ColorA", "Y_Blue": "ColorB", "Z_Pink": "ColorC"},
     }
 
     # Per-material / scene / manifest routing (never outfit/object name special cases).
@@ -620,54 +609,51 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
         pass
     
     _cm_group_ok = utils.ensure_colormask_node_group()
-    _single_colormask = len(colormask_nodes) == 1
-    _cm_groups = []
+    _cm_groups = {}  # zone int → ColorMask_XYZ group node
     cm_frame = None
+    _cm_src = colormask_nodes[0] if colormask_nodes else None
+    _CM_XYZ_X = -800
+    _CM_XYZ_Y0 = 400
+    _CM_XYZ_STEP = -420
 
-    for cm_idx, (colour_socks, rough_socks, metal_socks) in enumerate(_SECTION_SOCKETS):
-        if not any(s in group_node.inputs for s in colour_socks):
-            _cm_groups.append(None)
+    for zone in _ZONE_CHANNELS:
+        colour_sock = f"Colour {zone}"
+        rough_sock = f"Roughness {zone}"
+        metal_sock = f"Metallic {zone}"
+        if colour_sock not in group_node.inputs:
             continue
         cm_group = None
         if _cm_group_ok:
             cm_group = nodes.new("ShaderNodeGroup")
             cm_group.node_tree = bpy.data.node_groups[utils._COLORMASK_GROUP]
-            cm_group.label = f"ColorMask_XYZ (instance {cm_idx + 1})"
-            # Vertical gap ≥ ~800 so the three XYZ groups never stack on import.
-            if cm_idx == 2:
-                cm_group.location = (-800, -2000)
-            else:
-                cm_group.location = (-800, -cm_idx * 800)
+            cm_group.label = f"ColorMask_XYZ (zone {zone})"
+            cm_group.location = (_CM_XYZ_X, _CM_XYZ_Y0 + (zone - 1) * _CM_XYZ_STEP)
             if cm_frame is None:
                 cm_frame = nodes.new("NodeFrame")
-                cm_frame.label = "ColorMask Sections → Colour / Rough / Metal"
+                cm_frame.label = "ColorMask_XYZ per channel → Colour / Rough / Metal"
                 cm_frame.label_size = 18
             cm_group.parent = cm_frame
-        _cm_groups.append(cm_group)
-        
-        if _single_colormask:
-            src_node = colormask_nodes[0]
-        else:
-            src_node = colormask_nodes[cm_idx] if cm_idx < len(colormask_nodes) else None
-        
-        if cm_group and src_node:
-            if cm_group.inputs:
-                links.new(src_node.outputs["Color"], cm_group.inputs[0])
+        _cm_groups[zone] = cm_group
+
+        if cm_group and _cm_src:
+            if "ColorMask" in cm_group.inputs:
+                links.new(_cm_src.outputs["Color"], cm_group.inputs["ColorMask"])
+            elif cm_group.inputs:
+                links.new(_cm_src.outputs["Color"], cm_group.inputs[0])
+
             def _wire_out(cm_grp, out_name, arc_sock):
                 if arc_sock not in group_node.inputs:
                     return
                 out = cm_grp.outputs.get(out_name)
                 if out:
                     links.new(out, group_node.inputs[arc_sock])
-            for csock, rsock, msock in zip(colour_socks, rough_socks, metal_socks):
-                _wire_out(cm_group, "Mask_Color", csock)
-                _wire_out(cm_group, "Mask_Roughness", rsock)
-                _wire_out(cm_group, "Mask_Metal", msock)
-        elif src_node and not cm_group:
-            for csock in colour_socks:
-                if csock in group_node.inputs:
-                    links.new(src_node.outputs["Color"], group_node.inputs[csock])
-    
+
+            _wire_out(cm_group, "Mask_Color", colour_sock)
+            _wire_out(cm_group, "Mask_Roughness", rough_sock)
+            _wire_out(cm_group, "Mask_Metal", metal_sock)
+        elif _cm_src and not cm_group:
+            links.new(_cm_src.outputs["Color"], group_node.inputs[colour_sock])
+
     place_column(other_tex, -2400, start_y=-2000)
     
     tex_coord_node = nodes.new("ShaderNodeTexCoord")
@@ -707,7 +693,7 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
         ("MediumNormalID", "Medium Normal {zone}", _normal_nodes, base_normals),
         ("EdgeNormalID", "Edge Normal {zone}", _normal_nodes, base_normals),
         ("CreaseNormalID", "Crease Normal {zone}", _normal_nodes, base_normals),
-        ("BaseRoughnessID", "Roughness {zone}", _mask_nodes, base_masks),
+        # BaseRoughnessID → ColorMask_XYZ Roughness_X/Y/Z (see block below), not Arc directly.
         ("EdgeRoughnessID", "Edge Roughness {zone}", _mask_nodes, base_masks),
         ("CreaseRoughnessID", "Crease Roughness {zone}", _mask_nodes, base_masks),
         ("CreaseMaskID", "Crease Mask {zone}", _mask_nodes, base_masks),
@@ -717,6 +703,7 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
     
     _zones_with_normal = set()
     _ta_nodes_wired_to_arc = set()
+    _rough_sep_by_tex = {}  # id(tex_nd) → Separate Color (R → XYZ Roughness_*)
     
     def _ensure_slice_node(node_dict, png_list, slice_idx, non_color=True):
         slice_map = slice_maps[id(png_list)]
@@ -753,6 +740,33 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
             if id_suffix == "BaseNormalID" and zone not in _zones_with_normal:
                 set_enable_slider(group_node, zone)
                 _zones_with_normal.add(zone)
+
+    # BaseRoughnessID → ColorMask_XYZ Roughness_X/Y/Z (Masks.r), then Mask_Roughness → Arc.
+    for (zone, key_sfx), slice_idx in list(ta_ids.items()):
+        if key_sfx != "BaseRoughnessID":
+            continue
+        try:
+            zone_i = int(zone)
+        except (TypeError, ValueError):
+            continue
+        cm_grp = _cm_groups.get(zone_i)
+        if not cm_grp:
+            continue
+        tex_nd, png_path = _ensure_slice_node(_mask_nodes, base_masks, slice_idx, non_color=True)
+        if tex_nd is None:
+            print(f"    WARNING: No PNG for slice {slice_idx} (BaseRoughness zone {zone})")
+            continue
+        sep = _rough_sep_by_tex.get(id(tex_nd))
+        if sep is None:
+            sep = nodes.new("ShaderNodeSeparateColor")
+            sep.label = f"Rough R ← {os.path.basename(png_path)}"
+            sep.location = (tex_nd.location.x + 280, tex_nd.location.y)
+            links.new(tex_nd.outputs["Color"], sep.inputs["Color"])
+            _rough_sep_by_tex[id(tex_nd)] = sep
+        for sock_name in ("Roughness_X", "Roughness_Y", "Roughness_Z"):
+            if sock_name in cm_grp.inputs and not cm_grp.inputs[sock_name].is_linked:
+                links.new(sep.outputs["Red"], cm_grp.inputs[sock_name])
+        _ta_nodes_wired_to_arc.add(id(tex_nd))
 
     # Pattern: only when PatternColorA/B/C has a live (non-zero alpha) swatch.
     # ColorTexture is applied after ColorMask→Colour N (see modulate block below).
@@ -865,8 +879,8 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
                 rgb_node.location = (-1900 + (j % 2) * 280, -1100 - (j // 2) * 280)
                 j += 1
         
-        for inst_idx, input_map in _CM_COLOUR_INPUTS.items():
-            cm_grp = _cm_groups[inst_idx] if inst_idx < len(_cm_groups) else None
+        for zone_key, input_map in _CM_COLOUR_INPUTS.items():
+            cm_grp = _cm_groups.get(int(zone_key)) if zone_key is not None else None
             if not cm_grp:
                 continue
             for socket_name, colour_key in input_map.items():
@@ -947,8 +961,7 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
             base_mix = nodes.new("ShaderNodeMix")
             base_mix.data_type = 'RGBA'
             base_mix.blend_type = 'MIX'
-            cm_inst = _zone_to_cm_instance(zone_str)
-            base_mix.label = f"Base Overlay ↔ XYZ{cm_inst + 1} {zone_str}"
+            base_mix.label = f"Base Overlay ↔ XYZ zone {zone_str}"
             # Column of mix nodes with ≥100px vertical gap (fallback height ~180).
             base_mix.location = (-700, 200 - int(zone_str) * 280)
             base_mix.inputs[0].default_value = mix_fac
@@ -1919,6 +1932,168 @@ def _parent_name_from_object(parent_obj) -> str:
     return str(raw).rsplit("/", 1)[-1].split(".", 1)[0]
 
 
+def _parent_object_path(parent_obj) -> str:
+    """ObjectPath from a Parent soft reference (for Material JSON resolve)."""
+    if isinstance(parent_obj, dict):
+        return str(parent_obj.get("ObjectPath") or "").strip()
+    return ""
+
+
+# Filename suffix → MI param name when inheriting from parent Material ReferencedTextures.
+# Deterministic suffix map only — no fuzzy soft-match.
+_PARENT_REF_SUFFIX_PARAMS = (
+    ("_bch", "BaseColor"),
+    ("_cxa", "BaseColor"),
+    ("_cr", "CR"),
+    ("_bc", "BaseColor"),
+    ("_ca", "CA"),
+    ("_ch", "BaseColor"),
+    ("_d", "BaseColor"),
+    ("_diff", "BaseColor"),
+    ("_nao", "NAO"),
+    ("_naoh", "NAO"),
+    ("_noh", "NOH"),
+    ("_ndd", "Normal"),
+    ("_nn", "Normal"),
+    ("_n", "Normal"),
+    ("_nrh", "BaseColor"),  # snow packed NRH used as albedo+rough
+    ("_nc", "Overlay"),
+    ("_grm", "PM_SpecularMasks"),
+    ("_nom", "NOM"),
+    ("_nxx", "NXX"),
+    ("_nmx", "NMX"),
+)
+
+
+def _param_from_texture_stem(stem: str) -> str:
+    """Map ``T_Foo_CR`` → ``CR`` via known suffixes (longest first)."""
+    s = (stem or "").lower()
+    if not s:
+        return ""
+    for suf, param in _PARENT_REF_SUFFIX_PARAMS:
+        if s.endswith(suf):
+            return param
+    return ""
+
+
+def _enrich_parent_material_textures(mi: dict, mi_path: str = "", parent_obj_path: str = "") -> None:
+    """Fill missing albedo/normal params from parent Material ReferencedTextures.
+
+    Child MIs often only override Overlay/Trim sheet while the parent Material
+    authors ``T_*_BCH`` / ``T_*_CR``. Uses Parent ObjectPath only (exact).
+    """
+    if not mi:
+        return
+    have = {p for p, _ in (mi.get("textures") or [])}
+    have_l = {p.lower() for p in have}
+    # True albedo already present — still allow parent BCH when only Trim sheet (NAO).
+    strong_albedo = {
+        "cr", "cr texture", "basecolor", "base color", "bc", "ca", "c", "ch",
+        "pm_diffuse", "color", "basetextrue", "signtexture",
+    }
+    only_trim_sheet = ("trim sheet" in have_l) and not (have_l & strong_albedo)
+    if (have_l & strong_albedo) and not only_trim_sheet:
+        # May still lack NAO/NOH — continue only for those gaps below via suffix map
+        pass
+
+    obj_path = (parent_obj_path or "").strip()
+    parent_stem = (mi.get("parent") or "").strip()
+    folder = os.path.dirname(mi_path or "")
+    parent_json = ""
+    if obj_path:
+        parent_json = textures.find_asset_from_object_path(obj_path, ".json")
+        if not parent_json and obj_path.endswith(".0"):
+            parent_json = textures.find_asset_from_object_path(obj_path[:-2], ".json")
+    # Sibling beside the child MI (common for prop-local Materials).
+    if (not parent_json or not os.path.isfile(parent_json)) and parent_stem and folder:
+        cand = os.path.join(folder, parent_stem + ".json")
+        if os.path.isfile(cand):
+            parent_json = cand
+    if not parent_json or not os.path.isfile(parent_json):
+        return
+    # Avoid re-entry on same file
+    if os.path.normcase(os.path.normpath(parent_json)) == os.path.normcase(
+        os.path.normpath(mi_path or "")
+    ):
+        return
+    try:
+        with open(parent_json, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return
+    entry = None
+    for e in utils.ue_export_entries(data):
+        if not isinstance(e, dict):
+            continue
+        if e.get("Type") in ("Material", "MaterialInstanceConstant", "MaterialInstance"):
+            entry = e
+            break
+    if not entry:
+        return
+    # Identity: parent file must match parent stem when Name is present
+    ename = (entry.get("Name") or "").split(".", 1)[0]
+    if parent_stem and ename and ename.lower() != parent_stem.lower():
+        return
+
+    refs = list(entry.get("ReferencedTextures") or [])
+    # CachedExpressionData.TextureValues often lists the authored defaults
+    ced = entry.get("CachedExpressionData") or {}
+    for tv in ced.get("TextureValues") or []:
+        if isinstance(tv, dict) and tv.get("AssetPathName"):
+            refs.append({"ObjectPath": tv["AssetPathName"]})
+
+    added = 0
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        op = str(ref.get("ObjectPath") or "").strip()
+        if not op or op.startswith("/Engine/"):
+            continue
+        leaf = op.rstrip("/").replace("\\", "/").split("/")[-1]
+        stem = leaf.split(".", 1)[0]
+        param = _param_from_texture_stem(stem)
+        if not param or param in have:
+            continue
+        clean = op.rsplit(".", 1)[0] if "." in leaf else op
+        # Avoid duplicate ObjectPaths under different params
+        if any(p == clean for _, p in (mi.get("textures") or [])):
+            continue
+        mi.setdefault("textures", []).append((param, clean))
+        have.add(param)
+        added += 1
+    if added:
+        try:
+            utils.get_logger().info(
+                "Parent Material refs %s ← %s (+%d tex)",
+                os.path.splitext(os.path.basename(mi_path or ""))[0],
+                os.path.basename(parent_json),
+                added,
+            )
+        except Exception:
+            pass
+
+
+# BrokenGlassSDF parent MaterialLibrary dump is often corrupt; PNGs still exist.
+_BROKEN_GLASS_DEFAULT_TEX = (
+    ("T_BrokenGlassSDF_NDD", "/Game/Pioneer/MaterialLibrary/Textures/Glass/BrokenGlass_SDF/T_BrokenGlassSDF_NDD"),
+    ("T_BrokenGlassOverlay_01_NC", "/Game/Pioneer/MaterialLibrary/Textures/Glass/BrokenGlass_SDF/T_BrokenGlassOverlay_01_NC"),
+    ("TA_BrokenGlassShards_01", "/Game/Pioneer/MaterialLibrary/Textures/Glass/BrokenGlass_SDF/TA_BrokenGlassShards_01_0"),
+)
+
+
+def _enrich_broken_glass_default_textures(mi: dict, mi_stem: str = "") -> None:
+    """Inject known BrokenGlass SDF texture ObjectPaths when the MI authored none."""
+    if not mi:
+        return
+    stem_l = (mi_stem or mi.get("parent") or "").lower()
+    if "brokenglass" not in stem_l.replace("_", ""):
+        return
+    if mi.get("textures"):
+        return
+    for param, path in _BROKEN_GLASS_DEFAULT_TEX:
+        mi.setdefault("textures", []).append((param, path))
+
+
 def _apply_bpo_flags(result: dict, bpo: dict):
     """Copy BlendMode / TwoSided / OpacityMaskClip / shading from BasePropertyOverrides."""
     if not bpo:
@@ -1977,11 +2152,16 @@ def _parse_flat_mi_json(json_path: str) -> dict:
         _apply_bpo_flags(result, bpo)
 
         # Full FModel Exports dump — fill gaps + always capture Parent / BPO flags.
+        parent_obj_path = ""
         entry = utils.first_ue_export(data, "MaterialInstanceConstant")
         if entry:
             eprops = entry.get("Properties") or {}
+            parent_ref = eprops.get("Parent")
             if not result.get("parent"):
-                result["parent"] = _parent_name_from_object(eprops.get("Parent"))
+                result["parent"] = _parent_name_from_object(parent_ref)
+            parent_obj_path = _parent_object_path(parent_ref)
+            if parent_obj_path:
+                result["parent_object_path"] = parent_obj_path
             bpo2 = eprops.get("BasePropertyOverrides") or {}
             _apply_bpo_flags(result, bpo2)
             need_tex = not result['textures']
@@ -2044,6 +2224,10 @@ def _parse_flat_mi_json(json_path: str) -> dict:
     # (only Prop AO + Overlay overrides). Pull those from the library parent.
     stem = os.path.splitext(os.path.basename(json_path or ""))[0]
     _enrich_proptrim_inherited_textures(result, stem, json_path)
+    _enrich_parent_material_textures(
+        result, json_path, result.get("parent_object_path") or "",
+    )
+    _enrich_broken_glass_default_textures(result, stem)
     _FLAT_MI_CACHE[cache_key] = result
     return result
 
@@ -3071,7 +3255,99 @@ def _resolve_mi_json_path(
             except Exception:
                 pass
 
+        # ObjectPath / MaterialLibrary often hit corrupt multithread dumps (wrong
+        # Name/Package body under the right filename). Exact-stem basename search
+        # under Environment + MaterialLibrary with identity verify recovers good
+        # duplicates (e.g. MI_Concrete_Trim_02_A beside Fountain_01). Not fuzzy.
+        hit = _find_mi_json_by_stem_identity(stem, context=context)
+        if hit:
+            return _remember(hit)
+
     return _remember("")
+
+
+# Exact-stem → candidate JSON paths (built once per Content root set).
+# Declared with session caches at module top; rebuilt by _mi_stem_identity_index.
+
+
+def _mi_stem_identity_index() -> dict[str, list[str]]:
+    """Basename index of MI/M_*.json under Environment + MaterialLibrary.
+
+    Built once; used when ObjectPath dumps fail identity so Stage 2 does not
+    re-walk Pioneer for every unresolved slot.
+    """
+    global _MI_STEM_IDENTITY_INDEX, _MI_STEM_IDENTITY_INDEX_ROOTS
+    try:
+        roots = tuple(
+            os.path.normcase(os.path.normpath(c)) for c in (utils.get_content_dirs() or [])
+        )
+    except Exception:
+        roots = ()
+    if _MI_STEM_IDENTITY_INDEX is not None and roots == _MI_STEM_IDENTITY_INDEX_ROOTS:
+        return _MI_STEM_IDENTITY_INDEX
+    index: dict[str, list[str]] = {}
+    subtrees = (
+        ("Pioneer", "Environment"),
+        ("Pioneer", "MaterialLibrary"),
+        ("Pioneer", "Architecture"),
+    )
+    try:
+        content_dirs = utils.get_content_dirs() or []
+    except Exception:
+        content_dirs = []
+    for content_dir in content_dirs:
+        for parts in subtrees:
+            root = os.path.join(content_dir, *parts)
+            if not os.path.isdir(root):
+                continue
+            try:
+                for walk_root, dirs, files in os.walk(root):
+                    base = os.path.basename(walk_root).lower()
+                    if base in {"characters", "outfits", "enemies", "weapons"}:
+                        dirs[:] = []
+                        continue
+                    for fname in files:
+                        fl = fname.lower()
+                        if not fl.endswith(".json"):
+                            continue
+                        if not (fl.startswith("mi_") or fl.startswith("m_")):
+                            continue
+                        stem = fname[:-5]  # strip .json
+                        key = stem.lower()
+                        path = os.path.join(walk_root, fname)
+                        index.setdefault(key, []).append(path)
+            except OSError:
+                continue
+    # Prefer Environment (prop-local good copies) over MaterialLibrary dumps.
+    for key, paths in index.items():
+        paths.sort(
+            key=lambda p: (
+                0 if f"{os.sep}environment{os.sep}" in p.lower() else 1,
+                0 if f"{os.sep}materiallibrary{os.sep}" not in p.lower() else 1,
+                len(p),
+            )
+        )
+    _MI_STEM_IDENTITY_INDEX = index
+    _MI_STEM_IDENTITY_INDEX_ROOTS = roots
+    return index
+
+
+def _find_mi_json_by_stem_identity(mi_stem: str, *, context: str = CTX_ANY) -> str:
+    """Find ``{stem}.json`` whose body Name matches (map-safe trees only).
+
+    Used only after ObjectPath/MaterialLibrary identity rejects. Exact stem —
+    not fuzzy. Indexed once for Stage 2 city-scale performance.
+    """
+    stem = (mi_stem or "").strip()
+    if not stem:
+        return ""
+    key = stem.lower()
+    for cand in _mi_stem_identity_index().get(key) or []:
+        if not path_allowed_for_context(cand, context):
+            continue
+        if _mi_json_matches_requested_stem(cand, stem):
+            return cand
+    return ""
 
 
 def _mesh_stem_variants(psk_stem: str) -> list[str]:
@@ -4695,6 +4971,9 @@ _METAL_PACKED_NORMALS = frozenset({
 _SIMPLE_ALBEDO_KEYS = (
     # Hero/character flat MIs use Color (+ _Color suffix); env packs use CR/CA/C.
     "BaseColor", "Color", "CA", "1. CA", "CR", "CR Texture", "PM_Diffuse", "BC", "C",
+    # Authoring typos / non-standard param names (exact aliases, not fuzzy).
+    "BaseTextrue", "SignTexture", "RIT_ColorMap", "CM", "Texture",
+    "Trim sheet",  # UXR NAO sheet; parent BCH enrich supplies true albedo when present
 )
 _SIMPLE_NORMAL_KEYS = (
     "Normals", "Normal", "NormalMap", "NOH", "1. NTR", "NTR",
@@ -5599,6 +5878,7 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     cr1_keys = (
         "1. CR", "0. CR 1", "CR", "CR Texture", "Base_Material_CR", "Color Base",
         "CR_1", "B CR", "BC", "1.  Material CR", "1. Wear CR", "BaseColor",
+        "BaseTextrue", "SignTexture", "RIT_ColorMap", "CM", "Texture", "Trim sheet",
     )
     cr2_keys = (
         "2. CR", "0. CR 2", "CR Blend", "CR_Blend", "Breakup_Material_CR",
@@ -6026,7 +6306,7 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     if is_trim and use_alpha_mask is not False and (
         _is_masked_blend(mi) or use_alpha_mask
     ):
-        _, nao_img = _find_env_tex(tex_lookup, "NAO", "NA", "nao")
+        _, nao_img = _find_env_tex(tex_lookup, "NAO", "NA", "nao", "Trim sheet")
         nao_alpha_sock = None
         if nao_img is not None and noh1_node is not None and noh1_img is nao_img:
             nao_alpha_sock = noh1_node.outputs["Alpha"]
@@ -11143,6 +11423,38 @@ def _analyze_broken_mesh_type(
                 fam = classify_mi_family(mi, (mi_stem or "").lower(), (slot_name or "").lower())
                 row["family"] = fam
                 row["tex_params"] = sorted(_mi_tex_params(mi))
+                local = [os.path.dirname(mi_path)]
+                missing_png = []
+                found_png = []
+                for param, obj in mi.get("textures") or []:
+                    if not obj or str(obj).startswith("/Engine/"):
+                        continue
+                    png = _resolve_mi_texture_path(obj, local)
+                    if png:
+                        found_png.append(param)
+                    else:
+                        missing_png.append(f"{param}={obj}")
+                row["expected_textures"] = "|".join(row["tex_params"])
+                row["found_textures"] = "|".join(found_png) if found_png else "none"
+                row["missing_pngs"] = "|".join(missing_png[:8])
+                if not row["tex_params"] and fam != FAMILY_WATER:
+                    row["tex_reason"] = "mi_no_texture_params"
+                    row["suggested_fix"] = (
+                        "Re-export MI JSON Textures / parent Material; "
+                        "or rely on BrokenGlass/parent-ref enrich"
+                    )
+                elif missing_png and not found_png:
+                    row["tex_reason"] = "all_pngs_missing"
+                    row["suggested_fix"] = "Re-export referenced PNGs from FModel"
+                elif missing_png:
+                    row["tex_reason"] = "some_pngs_missing"
+                    row["suggested_fix"] = "Re-export missing texture PNGs from FModel"
+                elif row["tex_params"] and not found_png:
+                    row["tex_reason"] = "textures_unresolved"
+                    row["suggested_fix"] = "Check ObjectPath → Content PNG resolve"
+                else:
+                    row["tex_reason"] = ""
+                    row["suggested_fix"] = ""
                 if "proptrim" in (mi_stem or "").lower():
                     row["missing_cr"] = "CR Texture" not in row["tex_params"] and "CR" not in row["tex_params"]
                     sc = (mi.get("scalars") or {}) if mi_path else {}
@@ -11167,6 +11479,7 @@ def _analyze_broken_mesh_type(
                             (row["notes"] + "; " if row["notes"] else "")
                             + f"PropTrim child lacks CR — expect inherit from {lib or 'library parent'}"
                         )
+                        row["tex_reason"] = row.get("tex_reason") or "proptrim_missing_cr_after_inherit"
                 if fam == FAMILY_ENVIRONMENT and _is_architecture_trim_stem(mi_stem or ""):
                     row["notes"] = (
                         (row["notes"] + "; " if row["notes"] else "")
@@ -11175,6 +11488,8 @@ def _analyze_broken_mesh_type(
                 if fam == FAMILY_GLASS:
                     glass_slots.append(mi_stem or slot_name)
                     row["notes"] = (row["notes"] + "; " if row["notes"] else "") + "glass family"
+                    if not found_png:
+                        row["tex_reason"] = row.get("tex_reason") or "glass_textures_missing"
                 if "proptrim" in (mi_stem or "").lower() or "proptrim" in (slot_name or "").lower():
                     trim_slots.append(mi_stem or slot_name)
                 if fam == FAMILY_DECAL and _is_architecture_trim_stem(mi_stem or ""):
@@ -11185,9 +11500,30 @@ def _analyze_broken_mesh_type(
             except Exception as exc:
                 row["notes"] = f"parse_error:{exc}"
         elif mi_stem:
-            row["notes"] = "MI JSON path unresolved"
+            alt = _find_mi_json_by_stem_identity(mi_stem, context=CTX_MAP)
+            if alt:
+                row["notes"] = f"MI JSON path unresolved (but identity-good copy at {alt})"
+                row["tex_reason"] = "mi_json_unresolved_has_alt"
+                row["suggested_fix"] = "Stage 2 identity fallback should pick this path — re-run Force"
+                row["expected_textures"] = f"{mi_stem}.json"
+                row["found_textures"] = alt
+            else:
+                row["notes"] = (
+                    "MI JSON unresolved — corrupt FModel dump (wrong Name/Package body) "
+                    "or file absent; re-export from FModel"
+                )
+                row["tex_reason"] = "mi_json_corrupt_or_missing"
+                row["suggested_fix"] = (
+                    "Re-export MI from FModel (MaterialLibrary body Name/Package mismatch is common)"
+                )
+                row["expected_textures"] = f"{mi_stem}.json"
+                row["found_textures"] = "missing"
         else:
             row["notes"] = "empty/engine slot"
+            row["tex_reason"] = "empty_or_worldgrid_slot"
+            row["suggested_fix"] = "SM slot has no Material — DecalMesh/WorldGrid or empty export"
+            row["expected_textures"] = "real MI"
+            row["found_textures"] = "empty/WorldGrid"
         slot_rows.append(row)
 
     # Exact library MI match for first missing stem
@@ -11447,6 +11783,112 @@ def _write_material_audit_report(report: dict, scene=None) -> list[str]:
             written.append(csv_path)
         except OSError as exc:
             print(f"Arc Raiders material audit: failed CSV {csv_path}: {exc}")
+
+    # Also emit missing-texture focused report (unique MI ∷ reason).
+    written.extend(_write_missing_textures_audit(report, destinations))
+    return written
+
+
+def _write_missing_textures_audit(report: dict, destinations: list) -> list[str]:
+    """Write docs/MISSING_TEXTURES_AUDIT.md + CSV from map audit slot analysis."""
+    written: list[str] = []
+    # Group by mi + tex_reason across broken types
+    by_key: dict[str, dict] = {}
+    for g in report.get("broken") or []:
+        a = g.get("analysis") or {}
+        for row in a.get("slots") or []:
+            reason = (row.get("tex_reason") or "").strip()
+            if not reason and row.get("mi_exists") and not row.get("missing_pngs"):
+                continue
+            if not reason:
+                if not row.get("mi_exists") and row.get("mi"):
+                    reason = "mi_json_corrupt_or_missing"
+                elif not row.get("mi"):
+                    reason = "empty_or_worldgrid_slot"
+                else:
+                    continue
+            mi = row.get("mi") or "(no MI)"
+            ukey = f"{mi}::{reason}"
+            if ukey not in by_key:
+                by_key[ukey] = {
+                    "asset": g.get("stem") or "",
+                    "mi": mi,
+                    "expected": row.get("expected_textures") or "|".join(row.get("tex_params") or []),
+                    "found": row.get("found_textures") or "",
+                    "reason": reason,
+                    "suggested_fix": row.get("suggested_fix") or a.get("recommendation") or "",
+                    "count": 0,
+                    "samples": [],
+                }
+            by_key[ukey]["count"] += int(g.get("count") or 1)
+            stem = g.get("stem") or ""
+            if stem and stem not in by_key[ukey]["samples"] and len(by_key[ukey]["samples"]) < 6:
+                by_key[ukey]["samples"].append(stem)
+
+    unique = sorted(by_key.values(), key=lambda x: (-x["count"], x["reason"], x["mi"]))
+    reason_counts: dict[str, int] = {}
+    for u in unique:
+        reason_counts[u["reason"]] = reason_counts.get(u["reason"], 0) + u["count"]
+
+    md_lines = [
+        f"# Missing Textures Audit — {report.get('map') or '(any)'}",
+        "",
+        f"- From **Audit Map Materials** (live scene)",
+        f"- Unique missing-texture types: **{len(unique)}**",
+        f"- Fuzzy soft-match: **{'ON' if report.get('fuzzy_enabled') else 'OFF'}**",
+        "",
+        "## Counts by failure reason",
+        "",
+        "| Reason | Rows |",
+        "|--------|------|",
+    ]
+    for reason, n in sorted(reason_counts.items(), key=lambda t: -t[1]):
+        md_lines.append(f"| `{reason}` | {n} |")
+    md_lines.extend(["", "## Unique types", ""])
+    for u in unique[:100]:
+        md_lines.append(f"### `{u['mi']}` — `{u['reason']}` ×{u['count']}")
+        md_lines.append(f"- Expected: `{u['expected'] or '—'}`")
+        md_lines.append(f"- Found: `{u['found'] or '—'}`")
+        md_lines.append(f"- Samples: {', '.join(f'`{s}`' for s in u['samples'])}")
+        md_lines.append(f"- Suggested fix: {u['suggested_fix'] or '—'}")
+        md_lines.append("")
+    md_lines.extend([
+        "## Regenerate",
+        "",
+        "1. **Audit Map Materials (unique types)** in the addon panel",
+        "2. Or offline: `python audit_missing_textures.py`",
+        "3. After fixes: Stage 2 **Force** materials rebuild",
+        "",
+    ])
+    csv_lines = [
+        "asset,mi,expected textures,found/missing,reason,suggested fix,count,sample_assets"
+    ]
+    for u in unique:
+        csv_lines.append(
+            f"\"{u['samples'][0] if u['samples'] else u['asset']}\","
+            f"\"{u['mi']}\","
+            f"\"{(u['expected'] or '').replace(chr(34), '')}\","
+            f"\"{(u['found'] or '').replace(chr(34), '')}\","
+            f"\"{u['reason']}\","
+            f"\"{(u['suggested_fix'] or '').replace(chr(34), '').replace(',', ';')}\","
+            f"{u['count']},"
+            f"\"{';'.join(u['samples'])}\""
+        )
+
+    md_body = "\n".join(md_lines)
+    csv_body = "\n".join(csv_lines) + "\n"
+    for dest in destinations:
+        for name, body in (
+            ("MISSING_TEXTURES_AUDIT.md", md_body),
+            ("MISSING_TEXTURES_AUDIT.csv", csv_body),
+        ):
+            path = os.path.join(dest, name)
+            try:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(body)
+                written.append(path)
+            except OSError as exc:
+                print(f"Arc Raiders missing-textures audit: failed {path}: {exc}")
     return written
 
 

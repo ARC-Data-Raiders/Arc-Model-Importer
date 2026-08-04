@@ -22,11 +22,14 @@ BANDS = [0.0, 0.03, 0.10, 0.18, 0.30, 0.45, 0.60, 0.75, 0.88, 1.01]
 
 MODES = ("auto", "primary", "secondary", "swap")
 
-# ColorMask_XYZ instance → ArcTexturer Colour sockets (matches materials.py sections).
+# ColorMask_XYZ: one group instance per Colour N channel (zones 1..8).
+COLORMASK_ZONES = tuple(range(1, 9))
+
+# Legacy section labels kept for calibration report readability.
 COLORMASK_SECTIONS = (
-    (0, (1, 3, 5), "Colour 1/3/5"),
-    (1, (2, 4, 6), "Colour 2/4/6"),
-    (2, (7, 8), "Colour 7/8"),
+    (0, (1, 3, 5), "Colour 1/3/5 (legacy shared)"),
+    (1, (2, 4, 6), "Colour 2/4/6 (legacy shared)"),
+    (2, (7, 8), "Colour 7/8 (legacy shared)"),
 )
 
 SIGNALS_SEARCHED = [
@@ -147,12 +150,12 @@ def evaluate_confidence(primary, secondary, secondary_authored: bool) -> tuple[s
 
 
 def section_colour_inputs(mode: str) -> dict[int, dict[str, str]]:
-    """Build materials.py _CM_COLOUR_INPUTS for the resolved routing mode."""
+    """Build materials.py _CM_COLOUR_INPUTS keyed by zone 1..8 (one XYZ group each)."""
     uses = resolve_uses_secondary(mode)
     out = {}
-    for instance, zones, _label in COLORMASK_SECTIONS:
-        secondary = uses[zones[0] - 1]
-        out[instance] = {
+    for zone in COLORMASK_ZONES:
+        secondary = uses[zone - 1]
+        out[zone] = {
             "X_Green": "ColorA2" if secondary else "ColorA",
             "Y_Blue": "ColorB2" if secondary else "ColorB",
             "Z_Pink": "ColorC2" if secondary else "ColorC",
@@ -233,13 +236,14 @@ def build_report(
         )
 
     sections = []
-    for instance, zone_list, label in COLORMASK_SECTIONS:
-        secondary_flag = uses[zone_list[0] - 1]
+    for zone in COLORMASK_ZONES:
+        secondary_flag = uses[zone - 1]
         sections.append(
             {
-                "instance": instance,
-                "label": label,
-                "zones": list(zone_list),
+                "instance": zone - 1,
+                "zone": zone,
+                "label": f"Colour {zone}",
+                "zones": [zone],
                 "palette": "secondary" if secondary_flag else "primary",
                 "x": "ColorA2" if secondary_flag else "ColorA",
                 "y": "ColorB2" if secondary_flag else "ColorB",
