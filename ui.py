@@ -168,6 +168,11 @@ class ARC_PT_MainPanel(bpy.types.Panel):
             icon='MATERIAL',
         )
         map_box.operator(
+            "arc.apply_materials_by_mesh_name",
+            text="Apply Materials by Mesh Name",
+            icon='FILE_TEXT',
+        )
+        map_box.operator(
             "arc.reimport_selected",
             text="Re-import Selected (materials / UV)",
             icon='IMPORT',

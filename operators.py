@@ -405,9 +405,20 @@ def _strip_umap_hash_suffix(name: str) -> str:
     return re.sub(r"_[0-9a-f]{8}$", "", name or "", flags=re.IGNORECASE)
 
 
+def _strip_pts_mesh_prefix(name: str) -> str:
+    """PTS_SM_Foo → SM_Foo (third-party map mesh datablock prefix)."""
+    n = name or ""
+    if n.upper().startswith("PTS_"):
+        return n[4:]
+    if n.upper().startswith("SRC_"):
+        return n[4:]
+    return n
+
+
 def _mesh_name_body(name: str) -> str:
     """Normalize mesh name for fuzzy match: strip .001, hash, and SK_/SM_ prefix."""
     stem = _strip_umap_hash_suffix(_strip_blender_name_suffix(name))
+    stem = _strip_pts_mesh_prefix(stem)
     stem = re.sub(r"^(SK|SM)_", "", stem, flags=re.IGNORECASE)
     return stem.lower()
 
@@ -436,6 +447,7 @@ def _name_candidates_for_object(obj) -> list:
         _add(n)
         stripped = _strip_umap_hash_suffix(n)
         _add(stripped)
+        _add(_strip_pts_mesh_prefix(stripped))
 
     # Pull embedded SK_/SM_/MI_ tokens out of longer actor-style names
     extra = []

@@ -3179,6 +3179,227 @@ def create_placement_mesh_or_empty(
     return empty, False
 
 
+def normalize_mesh_lookup_stem(name: str) -> str:
+    """Strip Blender / UMap / PTS_ noise so SM_* stems match export basenames.
+
+    Someone else's untextured map often has mesh datablocks like
+    ``PTS_SM_Foo.002`` while object names stay ``SM_Foo``.
+    """
+    n = (name or "").strip()
+    if not n:
+        return ""
+    n = re.sub(r"\.mat$", "", n, flags=re.IGNORECASE)
+    n = re.sub(r"\.\d+$", "", n)
+    n = re.sub(r"_[0-9a-f]{8}$", "", n, flags=re.IGNORECASE)
+    n = re.sub(r"-[0-9A-Fa-f]{4,10}$", "", n)
+    n = re.sub(r"_LOD\d+$", "", n, flags=re.IGNORECASE)
+    if n.upper().startswith("PTS_"):
+        n = n[4:]
+    if n.upper().startswith("SRC_"):
+        n = n[4:]
+    return n.strip()
+
+
+_PLACEHOLDER_MESH_STEMS = frozenset(
+    {
+        "cube",
+        "cylinder",
+        "plane",
+        "sphere",
+        "ico_sphere",
+        "uv_sphere",
+        "1m_cube",
+        "suzanne",
+        "monkey",
+    }
+)
+
+
+def mesh_lookup_stems_for_object(obj) -> list[str]:
+    """Candidate UE mesh stems from object / mesh datablock / parent names."""
+    if obj is None:
+        return []
+    raws: list[str] = []
+    try:
+        raws.append(obj.name)
+    except ReferenceError:
+        return []
+    data = getattr(obj, "data", None)
+    if data is not None:
+        raws.append(getattr(data, "name", "") or "")
+    parent = getattr(obj, "parent", None)
+    if parent is not None:
+        raws.append(getattr(parent, "name", "") or "")
+
+    stems: list[str] = []
+    seen: set[str] = set()
+
+    def _add(stem: str) -> None:
+        stem = normalize_mesh_lookup_stem(stem)
+        if not stem:
+            return
+        key = stem.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        stems.append(stem)
+
+    for raw in raws:
+        _add(raw)
+        # Pull embedded SM_/SK_ tokens out of longer actor-style names
+        for m in re.finditer(
+            r"((?:SK|SM)_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*)",
+            raw or "",
+            flags=re.IGNORECASE,
+        ):
+            _add(m.group(1))
+
+    # Prefer SM_/SK_ stems first for map MI resolution
+    preferred = [
+        s for s in stems
+        if s.upper().startswith(("SM_", "SK_"))
+        and s.lower() not in _PLACEHOLDER_MESH_STEMS
+    ]
+    rest = [
+        s for s in stems
+        if s not in preferred and s.lower() not in _PLACEHOLDER_MESH_STEMS
+    ]
+    return preferred + rest
+
+
+def resolve_map_asset_path_by_stem(stem: str) -> str:
+    """Resolve SM_/SK_ stem → mesh/JSON path usable by Stage 2 / setup_map_material.
+
+    Prefers Content ``*.json`` (StaticMaterials) over MapPlacements ``.uemodel``-only
+    trees. Returns a real ``.uemodel``/``.psk`` when present, else a synthetic
+    ``.psk`` beside the SM JSON so ``_parse_sk_material_slots`` still works.
+    """
+    stem = normalize_mesh_lookup_stem(stem)
+    if not stem or stem.lower() in _PLACEHOLDER_MESH_STEMS:
+        return ""
+
+    from . import fmdex
+    from . import operators as ops
+
+    try:
+        fmdex.ensure_loaded()
+    except Exception:
+        pass
+
+    # JSON first (authoritative StaticMaterials), then mesh containers
+    for ext in (".json", ".uemodel", ".psk", ".pskx"):
+        try:
+            found = fmdex.resolve_export_file(
+                stem, ext, context="map", allow_basename_walk=False,
+            )
+        except TypeError:
+            found = fmdex.resolve_export_file(stem, ext)
+        except Exception:
+            found = ""
+        if not found or not os.path.isfile(found):
+            continue
+        if ext == ".json":
+            base = os.path.splitext(found)[0]
+            for mesh_ext in (".uemodel", ".psk", ".pskx"):
+                mesh_path = base + mesh_ext
+                if os.path.isfile(mesh_path):
+                    return mesh_path
+            return base + ".psk"
+        return found
+
+    # Broader outfit/map finder (PSK / synthetic JSON path)
+    try:
+        hit = ops.find_psk_for_model(stem)
+    except Exception:
+        hit = ""
+    if hit:
+        return hit
+
+    # Last resort: basename walk under Pioneer Environment/Props only
+    try:
+        root = utils.get_pioneer_root()
+        content = utils.find_content_dir(root) if root else ""
+        pioneer = os.path.join(content, "Pioneer") if content else ""
+        if pioneer and os.path.isdir(pioneer):
+            want = f"{stem}.json".lower()
+            want_ue = f"{stem}.uemodel".lower()
+            for walk_root, dirs, files in os.walk(pioneer):
+                low = walk_root.replace("\\", "/").lower()
+                if any(
+                    s in low
+                    for s in (
+                        "/characters/",
+                        "/heroes/",
+                        "/outfits/",
+                        "/saved/",
+                        "/intermediate/",
+                    )
+                ):
+                    dirs[:] = []
+                    continue
+                for fname in files:
+                    fl = fname.lower()
+                    if fl == want or fl == want_ue:
+                        full = os.path.join(walk_root, fname)
+                        if fl.endswith(".json"):
+                            base = os.path.splitext(full)[0]
+                            for mesh_ext in (".uemodel", ".psk", ".pskx"):
+                                if os.path.isfile(base + mesh_ext):
+                                    return base + mesh_ext
+                            return base + ".psk"
+                        return full
+    except OSError:
+        pass
+    return ""
+
+
+def resolve_map_asset_path_for_object(obj) -> tuple[str, str]:
+    """Return ``(asset_path, matched_stem)`` for an unstamped map mesh."""
+    stamped = ""
+    if obj is not None and hasattr(obj, "get"):
+        for key in ("arc_psk_path", "arc_mesh_file"):
+            raw = obj.get(key) or ""
+            if raw:
+                stamped = bpy.path.abspath(str(raw))
+                if os.path.isfile(stamped) or os.path.isdir(os.path.dirname(stamped)):
+                    return stamped, key
+                stamped = ""
+    for stem in mesh_lookup_stems_for_object(obj):
+        hit = resolve_map_asset_path_by_stem(stem)
+        if hit:
+            return hit, stem
+    return "", ""
+
+
+def collect_meshes_from_collection(collection_name: str) -> list:
+    """Recursive mesh objects under a collection (by name). Unique by datablock."""
+    name = (collection_name or "").strip()
+    if not name:
+        return []
+    col = bpy.data.collections.get(name)
+    if col is None:
+        return []
+    meshes: list = []
+    seen: set = set()
+
+    def _walk(c):
+        for obj in c.objects:
+            if obj.type != "MESH":
+                continue
+            if obj.get("arc_placement_instancer") or obj.get("arc_heightmap_plane"):
+                continue
+            key = obj.data.as_pointer() if obj.data else obj.as_pointer()
+            if key in seen:
+                continue
+            seen.add(key)
+            meshes.append(obj)
+        for ch in c.children:
+            _walk(ch)
+
+    _walk(col)
+    return meshes
+
+
 def collect_map_mesh_targets(
     context,
     map_name: str = "",
@@ -7436,24 +7657,35 @@ class ARC_OT_ApplyMapMaterials(bpy.types.Operator):
                 continue
 
             if not psk:
-                folder = ""
-                fixed = mats_mod.fix_object_materials_from_mi_slots(obj, folder)
-                if fixed:
-                    self._ok += 1
+                # Unstamped imports (someone else's map): resolve SM_* by mesh/object name
+                psk, matched = resolve_map_asset_path_for_object(obj)
+                if psk:
                     try:
-                        obj["arc_materials_pending"] = 0
+                        obj["arc_psk_path"] = psk
+                        obj["arc_model_type"] = "map"
+                        if matched:
+                            obj["arc_name_resolve"] = matched
                     except Exception:
                         pass
                 else:
-                    self._skipped += 1
-                    try:
-                        obj["arc_materials_pending"] = 0
-                        obj["arc_materials_skipped"] = "no_psk"
-                    except Exception:
-                        pass
-                    if len(self._skip_samples) < 6:
-                        self._skip_samples.append(f"{obj.name}: no psk path")
-                continue
+                    folder = ""
+                    fixed = mats_mod.fix_object_materials_from_mi_slots(obj, folder)
+                    if fixed:
+                        self._ok += 1
+                        try:
+                            obj["arc_materials_pending"] = 0
+                        except Exception:
+                            pass
+                    else:
+                        self._skipped += 1
+                        try:
+                            obj["arc_materials_pending"] = 0
+                            obj["arc_materials_skipped"] = "no_psk"
+                        except Exception:
+                            pass
+                        if len(self._skip_samples) < 6:
+                            self._skip_samples.append(f"{obj.name}: no psk path")
+                    continue
 
             cache_key = mats_mod.map_material_cache_key(psk) or os.path.normcase(
                 os.path.normpath(psk)
@@ -7651,6 +7883,381 @@ class ARC_OT_ApplyMapMaterials(bpy.types.Operator):
                 f"skipped_no_mi {self._skipped}, failed {self._fail} "
                 f"(map={self._map_name or 'any'}, prior_done≈{self._already_done})"
                 f"{sample}{shore_note}",
+            )
+            return {"FINISHED"}
+
+        return {"RUNNING_MODAL"}
+
+    def _cleanup(self, context):
+        wm = context.window_manager
+        if self._timer is not None:
+            wm.event_timer_remove(self._timer)
+            self._timer = None
+        context.workspace.status_text_set(None)
+
+
+class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
+    """Materials-only apply: match object/mesh names → Arc MI (no mesh re-import)."""
+    bl_idname = "arc.apply_materials_by_mesh_name"
+    bl_label = "Apply Materials by Mesh Name"
+    bl_description = (
+        "Apply Arc map materials to existing meshes by object or mesh datablock name "
+        "(strips PTS_ / .001). No mesh re-import. Target a collection (e.g. "
+        "FrozenTrail_Props.002) or the current selection"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    collection_name: bpy.props.StringProperty(
+        name="Collection",
+        description=(
+            "Collection to process (recursive). Leave empty to use selection, "
+            "or selection if any meshes are selected"
+        ),
+        default="FrozenTrail_Props.002",
+    )
+    prefer_selection: bpy.props.BoolProperty(
+        name="Prefer Selection",
+        description="If any meshes are selected, use those instead of the collection",
+        default=True,
+    )
+    dry_run: bpy.props.BoolProperty(
+        name="Dry Run",
+        description="Only resolve name→export paths; do not build materials",
+        default=False,
+    )
+
+    _timer = None
+    _targets: list = []
+    _index: int = 0
+    _batch: int = 24
+    _ok: int = 0
+    _fail: int = 0
+    _skip: int = 0
+    _cached: int = 0
+    _mat_cache: dict = {}
+    _fail_samples: list = []
+    _skip_samples: list = []
+    _ok_samples: list = []
+    _ui_tick: int = 0
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "collection_name")
+        layout.prop(self, "prefer_selection")
+        layout.prop(self, "dry_run")
+        layout.label(
+            text="Uses Stage 2 MI resolve (SM JSON StaticMaterials). No mesh import.",
+            icon="INFO",
+        )
+
+    def execute(self, context):
+        from . import materials as mats_mod
+        from . import fmdex
+        from . import utils as utils_mod
+
+        root = utils_mod.get_pioneer_root()
+        if not root or not os.path.isdir(root):
+            self.report({"ERROR"}, "Set PioneerGame Folder in Settings first")
+            return {"CANCELLED"}
+
+        targets: list = []
+        selected = [o for o in context.selected_objects if o.type == "MESH"]
+        if self.prefer_selection and selected:
+            seen = set()
+            for obj in selected:
+                key = obj.data.as_pointer() if obj.data else obj.as_pointer()
+                if key in seen:
+                    continue
+                seen.add(key)
+                targets.append(obj)
+        elif (self.collection_name or "").strip():
+            targets = collect_meshes_from_collection(self.collection_name.strip())
+            if not targets:
+                self.report(
+                    {"WARNING"},
+                    f"Collection '{self.collection_name}' not found or has no meshes",
+                )
+                return {"CANCELLED"}
+        else:
+            targets = selected
+
+        if not targets:
+            self.report(
+                {"WARNING"},
+                "No meshes — select objects or set a collection name",
+            )
+            return {"CANCELLED"}
+
+        mats_mod.clear_material_session_caches()
+        mats_mod.warm_shared_mi_material_cache()
+        try:
+            fmdex.ensure_loaded()
+        except Exception:
+            pass
+
+        if self.dry_run:
+            resolved = 0
+            missing = 0
+            samples_ok = []
+            samples_miss = []
+            report_rows = []
+            for obj in targets:
+                path, stem = resolve_map_asset_path_for_object(obj)
+                if path:
+                    resolved += 1
+                    mi_hint = ""
+                    try:
+                        slots = mats_mod._parse_sk_material_slots(path, context="map")
+                        mis = [s for _n, s, p in slots if p]
+                        mi_hint = ",".join(mis[:3])
+                    except Exception:
+                        pass
+                    if len(samples_ok) < 12:
+                        samples_ok.append(
+                            f"{obj.name} → {os.path.basename(path)}"
+                            + (f" [{mi_hint}]" if mi_hint else "")
+                        )
+                    report_rows.append(
+                        {
+                            "obj": obj.name,
+                            "mesh": getattr(obj.data, "name", ""),
+                            "stem": stem,
+                            "path": path,
+                            "mi": mi_hint,
+                        }
+                    )
+                else:
+                    missing += 1
+                    if len(samples_miss) < 12:
+                        samples_miss.append(obj.name)
+                    report_rows.append(
+                        {
+                            "obj": obj.name,
+                            "mesh": getattr(obj.data, "name", ""),
+                            "stem": stem,
+                            "path": "",
+                            "mi": "",
+                        }
+                    )
+            out = os.path.join(
+                os.path.dirname(__file__),
+                "_apply_materials_by_name_dryrun.json",
+            )
+            try:
+                with open(out, "w", encoding="utf-8") as fh:
+                    json.dump(
+                        {
+                            "collection": self.collection_name,
+                            "total": len(targets),
+                            "resolved": resolved,
+                            "missing": missing,
+                            "samples_ok": samples_ok,
+                            "samples_miss": samples_miss,
+                            "rows": report_rows,
+                        },
+                        fh,
+                        indent=2,
+                    )
+            except OSError as exc:
+                print(f"Arc Raiders name-apply dry-run write failed: {exc}")
+            self.report(
+                {"INFO"} if missing == 0 else {"WARNING"},
+                f"Dry run: {resolved}/{len(targets)} resolved, {missing} missing "
+                f"(wrote {os.path.basename(out)})",
+            )
+            for line in samples_ok[:6]:
+                print(f"Arc Raiders name-apply OK: {line}")
+            for line in samples_miss[:6]:
+                print(f"Arc Raiders name-apply MISS: {line}")
+            return {"FINISHED"}
+
+        self._targets = list(targets)
+        self._index = 0
+        base = int(getattr(context.scene, "arc_placement_batch_size", 100) or 100)
+        self._batch = max(8, min(40, base // 2 or 24))
+        self._ok = 0
+        self._fail = 0
+        self._skip = 0
+        self._cached = 0
+        self._mat_cache = {}
+        self._fail_samples = []
+        self._skip_samples = []
+        self._ok_samples = []
+        self._ui_tick = 0
+        wm = context.window_manager
+        self._timer = wm.event_timer_add(0.01, window=context.window)
+        wm.modal_handler_add(self)
+        self.report(
+            {"INFO"},
+            f"Apply Materials by Mesh Name: {len(self._targets)} mesh(es) "
+            f"(batch {self._batch}, ESC to cancel)",
+        )
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        if event.type in {"ESC"}:
+            self._cleanup(context)
+            self.report(
+                {"WARNING"},
+                f"Name-apply cancelled ({self._ok + self._cached}/{len(self._targets)} "
+                f"done, {self._fail} fail, {self._skip} skip)",
+            )
+            return {"CANCELLED"}
+
+        if event.type != "TIMER":
+            return {"RUNNING_MODAL"}
+
+        from . import operators as ops
+        from . import materials as mats_mod
+
+        end = min(self._index + self._batch, len(self._targets))
+        for i in range(self._index, end):
+            obj = self._targets[i]
+            try:
+                _ = obj.name
+            except ReferenceError:
+                self._fail += 1
+                continue
+
+            psk, matched = resolve_map_asset_path_for_object(obj)
+            if not psk:
+                self._skip += 1
+                if len(self._skip_samples) < 8:
+                    stems = mesh_lookup_stems_for_object(obj)
+                    self._skip_samples.append(
+                        f"{obj.name}: no export ({','.join(stems[:3]) or '?'})"
+                    )
+                try:
+                    obj["arc_materials_skipped"] = "no_name_resolve"
+                except Exception:
+                    pass
+                continue
+
+            if mats_mod.is_engine_or_placeholder_mesh(psk, "", obj.name):
+                self._skip += 1
+                if len(self._skip_samples) < 8:
+                    self._skip_samples.append(f"{obj.name}: placeholder")
+                continue
+
+            try:
+                obj["arc_psk_path"] = psk
+                obj["arc_model_type"] = "map"
+                obj["arc_force_material_rebuild"] = 1
+                if matched:
+                    obj["arc_name_resolve"] = matched
+            except Exception:
+                pass
+            try:
+                mats_mod.clear_leaked_preferred_mi(obj)
+                mats_mod.invalidate_shared_mi_on_object(obj)
+                mats_mod.clear_out_of_context_map_materials(obj)
+            except Exception:
+                pass
+
+            cache_key = mats_mod.map_material_cache_key(psk) or os.path.normcase(
+                os.path.normpath(psk)
+            )
+            psk_base = os.path.splitext(os.path.basename(psk))[0].lower()
+            cached_mats = self._mat_cache.get(cache_key)
+            if cached_mats and ops.assign_cached_materials(obj, cached_mats):
+                self._cached += 1
+                try:
+                    obj["arc_materials_pending"] = 0
+                    if obj.get("arc_force_material_rebuild"):
+                        del obj["arc_force_material_rebuild"]
+                except Exception:
+                    pass
+                continue
+
+            try:
+                status = ops.apply_materials_to_object(obj, psk)
+            except Exception as exc:
+                status = f"error ({exc})"
+                print(f"Arc Raiders name-apply: {obj.name}: {exc}")
+
+            mats = ops.snapshot_object_materials(obj)
+            if (
+                mats
+                and status not in ("unresolved", "skipped (not a mesh)")
+                and not str(status).startswith("error")
+            ):
+                try:
+                    if mats[0] is not None:
+                        mats[0]["arc_cache_psk_stem"] = psk_base
+                except Exception:
+                    pass
+                self._mat_cache[cache_key] = mats
+                self._ok += 1
+                if len(self._ok_samples) < 8:
+                    self._ok_samples.append(
+                        f"{obj.name}←{matched or os.path.basename(psk)} ({status})"
+                    )
+                try:
+                    obj["arc_materials_pending"] = 0
+                    if obj.get("arc_force_material_rebuild"):
+                        del obj["arc_force_material_rebuild"]
+                except Exception:
+                    pass
+                continue
+
+            folder = os.path.dirname(psk)
+            fixed = mats_mod.fix_object_materials_from_mi_slots(obj, folder)
+            if fixed:
+                mats = ops.snapshot_object_materials(obj)
+                if mats:
+                    self._mat_cache[cache_key] = mats
+                self._ok += 1
+                try:
+                    obj["arc_materials_pending"] = 0
+                except Exception:
+                    pass
+                continue
+
+            self._fail += 1
+            if len(self._fail_samples) < 8:
+                self._fail_samples.append(
+                    f"{obj.name}: {status} psk={os.path.basename(psk)}"
+                )
+
+        self._index = end
+        total = len(self._targets)
+        done = self._ok + self._cached + self._fail + self._skip
+        self._ui_tick += 1
+        if self._ui_tick == 1 or self._ui_tick % 4 == 0 or self._index >= total:
+            context.workspace.status_text_set(
+                f"Materials by name: {done}/{total} "
+                f"({100.0 * done / max(total, 1):.1f}%) | "
+                f"ok {self._ok} reuse {self._cached} "
+                f"skip {self._skip} fail {self._fail}"
+            )
+            for area in context.screen.areas:
+                if area.type in {"VIEW_3D", "STATUSBAR"}:
+                    area.tag_redraw()
+
+        if self._index >= total:
+            self._cleanup(context)
+            level = {"INFO"} if self._fail == 0 else {"WARNING"}
+            sample = ""
+            if self._ok_samples:
+                sample = " | e.g. " + " · ".join(self._ok_samples[:2])
+            elif self._skip_samples:
+                sample = " | skip e.g. " + " · ".join(self._skip_samples[:2])
+            elif self._fail_samples:
+                sample = " | fail e.g. " + " · ".join(self._fail_samples[:2])
+            for line in self._ok_samples:
+                print(f"Arc Raiders name-apply OK: {line}")
+            for line in self._skip_samples:
+                print(f"Arc Raiders name-apply skip: {line}")
+            for line in self._fail_samples:
+                print(f"Arc Raiders name-apply fail: {line}")
+            self.report(
+                level,
+                f"Materials by name — ok {self._ok}, reused {self._cached}, "
+                f"skipped {self._skip}, failed {self._fail}"
+                f"{sample}",
             )
             return {"FINISHED"}
 
@@ -9686,6 +10293,7 @@ OPERATOR_CLASSES = (
     ARC_OT_ImportPlacementMeshes,
     ARC_OT_ImportPlacementInstanced,
     ARC_OT_ApplyMapMaterials,
+    ARC_OT_ApplyMaterialsByMeshName,
     ARC_OT_FixWhiteUnassignedMaterials,
     ARC_OT_RepairSmaTrimMaterials,
     ARC_OT_RefreshWaterShoreProximity,
