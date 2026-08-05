@@ -28,6 +28,8 @@ _SHARED_MI_MATERIALS: dict[str, object] = {}
 _IMAGE_BY_PATH: dict[str, object] = {}
 _MI_STEM_IDENTITY_INDEX: dict[str, list[str]] | None = None
 _MI_STEM_IDENTITY_INDEX_ROOTS: tuple[str, ...] = ()
+# Force All / name-apply: rebuild each MI JSON at most once per session, then reuse.
+_FORCE_REBUILT_MI_PATHS: set[str] = set()
 
 # ---------------------------------------------------------------------------
 # Resolve contexts — assignment/discovery scopes (node wiring stays shared)
@@ -234,6 +236,7 @@ def clear_material_session_caches():
     _SK_SLOTS_CACHE.clear()
     _SHARED_MI_MATERIALS.clear()
     _IMAGE_BY_PATH.clear()
+    _FORCE_REBUILT_MI_PATHS.clear()
     _MI_STEM_IDENTITY_INDEX = None
     _MI_STEM_IDENTITY_INDEX_ROOTS = ()
 
@@ -11267,18 +11270,40 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
                     fixed += 1
                     continue
             elif force_rebuild and mi_path:
-                _SHARED_MI_MATERIALS.pop(_norm_path_key(mi_path), None)
-                if cur is not None:
-                    try:
-                        base_n = re.sub(r"(_force_rebuild)+$", "", cur.name or "")
-                        cur.name = f"{base_n}_force_rebuild"
-                    except Exception:
-                        pass
+                mi_key = _norm_path_key(mi_path)
+                # One rebuild per MI path per session — Force All used to pop +
+                # rename on every object, reloading the same textures hundreds of times.
+                if mi_key in _FORCE_REBUILT_MI_PATHS:
+                    shared = _SHARED_MI_MATERIALS.get(mi_key)
+                    if shared is not None:
+                        try:
+                            _ = shared.name
+                            target_slot.material = shared
+                            fixed += 1
+                            continue
+                        except ReferenceError:
+                            _SHARED_MI_MATERIALS.pop(mi_key, None)
+                    if (
+                        cur is not None
+                        and str(cur.get("arc_mi_path", "") or "") == mi_key
+                    ):
+                        fixed += 1
+                        continue
+                else:
+                    _SHARED_MI_MATERIALS.pop(mi_key, None)
+                    if cur is not None:
+                        try:
+                            base_n = re.sub(r"(_force_rebuild)+$", "", cur.name or "")
+                            cur.name = f"{base_n}_force_rebuild"
+                        except Exception:
+                            pass
             mat = _get_or_build_shared_mi_material(
                 mi_stem, mi_path, psk_path, (slot_name or mi_stem).lower(),
             )
             if mat is None:
                 continue
+            if force_rebuild and mi_path:
+                _FORCE_REBUILT_MI_PATHS.add(_norm_path_key(mi_path))
             target_slot.material = mat
             fixed += 1
         if fixed:

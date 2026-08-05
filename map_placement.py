@@ -3214,6 +3214,91 @@ _PLACEHOLDER_MESH_STEMS = frozenset(
     }
 )
 
+# Stem → export path (or "") so 600+ name-apply resolves never re-walk Pioneer.
+_STEM_ASSET_PATH_CACHE: dict[str, str] = {}
+# One-shot basename index for last-resort Pioneer lookup (json/uemodel/psk).
+_PIONEER_MESH_BASENAME_INDEX: dict[str, str] | None = None
+
+
+def clear_map_name_resolve_caches() -> None:
+    """Drop stem→path + Pioneer basename index (after Pioneer root change)."""
+    global _PIONEER_MESH_BASENAME_INDEX
+    _STEM_ASSET_PATH_CACHE.clear()
+    _PIONEER_MESH_BASENAME_INDEX = None
+
+
+def _ensure_pioneer_mesh_basename_index() -> dict[str, str]:
+    """Build stem.lower() → preferred mesh/json path under Pioneer/ once."""
+    global _PIONEER_MESH_BASENAME_INDEX
+    if _PIONEER_MESH_BASENAME_INDEX is not None:
+        return _PIONEER_MESH_BASENAME_INDEX
+    index: dict[str, str] = {}
+    try:
+        root = utils.get_pioneer_root()
+        content = utils.find_content_dir(root) if root else ""
+        pioneer = os.path.join(content, "Pioneer") if content else ""
+        if not pioneer or not os.path.isdir(pioneer):
+            _PIONEER_MESH_BASENAME_INDEX = index
+            return index
+        skip_segs = (
+            "/characters/",
+            "/heroes/",
+            "/outfits/",
+            "/saved/",
+            "/intermediate/",
+        )
+        for walk_root, dirs, files in os.walk(pioneer):
+            low = walk_root.replace("\\", "/").lower()
+            if any(s in low for s in skip_segs):
+                dirs[:] = []
+                continue
+            for fname in files:
+                fl = fname.lower()
+                if not (
+                    fl.endswith(".json")
+                    or fl.endswith(".uemodel")
+                    or fl.endswith(".psk")
+                    or fl.endswith(".pskx")
+                ):
+                    continue
+                stem = os.path.splitext(fname)[0].lower()
+                full = os.path.join(walk_root, fname)
+                prev = index.get(stem)
+                # Prefer json (StaticMaterials), then containers
+                if prev is None:
+                    index[stem] = full
+                elif fl.endswith(".json") and not prev.lower().endswith(".json"):
+                    index[stem] = full
+                elif (
+                    fl.endswith((".uemodel", ".psk", ".pskx"))
+                    and prev.lower().endswith(".json")
+                ):
+                    pass
+                elif fl.endswith(".uemodel") and prev.lower().endswith(
+                    (".psk", ".pskx")
+                ):
+                    index[stem] = full
+    except OSError as exc:
+        print(f"Arc Raiders: Pioneer mesh index failed: {exc}")
+    _PIONEER_MESH_BASENAME_INDEX = index
+    print(f"Arc Raiders: Pioneer mesh basename index ({len(index)} stems)")
+    return index
+
+
+def _path_from_pioneer_index_hit(full: str) -> str:
+    """Normalize an index hit to a mesh path (or synthetic .psk beside JSON)."""
+    if not full or not os.path.isfile(full):
+        return ""
+    fl = full.lower()
+    if fl.endswith(".json"):
+        base = os.path.splitext(full)[0]
+        for mesh_ext in (".uemodel", ".psk", ".pskx"):
+            mesh_path = base + mesh_ext
+            if os.path.isfile(mesh_path):
+                return mesh_path
+        return base + ".psk"
+    return full
+
 
 def mesh_lookup_stems_for_object(obj) -> list[str]:
     """Candidate UE mesh stems from object / mesh datablock / parent names."""
@@ -3277,6 +3362,9 @@ def resolve_map_asset_path_by_stem(stem: str) -> str:
     stem = normalize_mesh_lookup_stem(stem)
     if not stem or stem.lower() in _PLACEHOLDER_MESH_STEMS:
         return ""
+    cache_key = stem.lower()
+    if cache_key in _STEM_ASSET_PATH_CACHE:
+        return _STEM_ASSET_PATH_CACHE[cache_key]
 
     from . import fmdex
     from . import operators as ops
@@ -3285,6 +3373,8 @@ def resolve_map_asset_path_by_stem(stem: str) -> str:
         fmdex.ensure_loaded()
     except Exception:
         pass
+
+    found_path = ""
 
     # JSON first (authoritative StaticMaterials), then mesh containers
     for ext in (".json", ".uemodel", ".psk", ".pskx"):
@@ -3303,54 +3393,34 @@ def resolve_map_asset_path_by_stem(stem: str) -> str:
             for mesh_ext in (".uemodel", ".psk", ".pskx"):
                 mesh_path = base + mesh_ext
                 if os.path.isfile(mesh_path):
-                    return mesh_path
-            return base + ".psk"
-        return found
+                    found_path = mesh_path
+                    break
+            else:
+                found_path = base + ".psk"
+        else:
+            found_path = found
+        break
 
     # Broader outfit/map finder (PSK / synthetic JSON path)
-    try:
-        hit = ops.find_psk_for_model(stem)
-    except Exception:
-        hit = ""
-    if hit:
-        return hit
+    if not found_path:
+        try:
+            hit = ops.find_psk_for_model(stem)
+        except Exception:
+            hit = ""
+        if hit:
+            found_path = hit
 
-    # Last resort: basename walk under Pioneer Environment/Props only
-    try:
-        root = utils.get_pioneer_root()
-        content = utils.find_content_dir(root) if root else ""
-        pioneer = os.path.join(content, "Pioneer") if content else ""
-        if pioneer and os.path.isdir(pioneer):
-            want = f"{stem}.json".lower()
-            want_ue = f"{stem}.uemodel".lower()
-            for walk_root, dirs, files in os.walk(pioneer):
-                low = walk_root.replace("\\", "/").lower()
-                if any(
-                    s in low
-                    for s in (
-                        "/characters/",
-                        "/heroes/",
-                        "/outfits/",
-                        "/saved/",
-                        "/intermediate/",
-                    )
-                ):
-                    dirs[:] = []
-                    continue
-                for fname in files:
-                    fl = fname.lower()
-                    if fl == want or fl == want_ue:
-                        full = os.path.join(walk_root, fname)
-                        if fl.endswith(".json"):
-                            base = os.path.splitext(full)[0]
-                            for mesh_ext in (".uemodel", ".psk", ".pskx"):
-                                if os.path.isfile(base + mesh_ext):
-                                    return base + mesh_ext
-                            return base + ".psk"
-                        return full
-    except OSError:
-        pass
-    return ""
+    # Last resort: one-shot Pioneer basename index (never os.walk per stem)
+    if not found_path:
+        try:
+            idx = _ensure_pioneer_mesh_basename_index()
+            hit = idx.get(cache_key) or ""
+            found_path = _path_from_pioneer_index_hit(hit)
+        except Exception:
+            found_path = ""
+
+    _STEM_ASSET_PATH_CACHE[cache_key] = found_path or ""
+    return found_path or ""
 
 
 def resolve_map_asset_path_for_object(obj) -> tuple[str, str]:
@@ -7517,6 +7587,9 @@ class ARC_OT_ApplyMapMaterials(bpy.types.Operator):
         already_done = 0
         if self.force_all:
             from . import materials as mats_force
+            # Cheap flags only — do NOT invalidate shared MI / wipe slots here.
+            # That used to freeze Blender for hundreds of meshes before the modal
+            # even started; force-rebuild is once-per-MI inside setup_map_material.
             for obj in targets:
                 try:
                     obj["arc_materials_pending"] = 1
@@ -7525,8 +7598,6 @@ class ARC_OT_ApplyMapMaterials(bpy.types.Operator):
                     pass
                 try:
                     mats_force.clear_leaked_preferred_mi(obj)
-                    mats_force.invalidate_shared_mi_on_object(obj)
-                    mats_force.clear_out_of_context_map_materials(obj)
                 except Exception:
                     pass
             self._targets = list(targets)
@@ -7902,10 +7973,11 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
     bl_label = "Apply Materials by Mesh Name"
     bl_description = (
         "Apply Arc map materials to existing meshes by object or mesh datablock name "
-        "(strips PTS_ / .001). No mesh re-import. Target a collection (e.g. "
-        "FrozenTrail_Props.002) or the current selection"
+        "(strips PTS_ / .001). Lightweight shared-MI assign by default; optional Force "
+        "Rebuild. Target a collection (e.g. FrozenTrail_Props.002) or selection"
     )
-    bl_options = {"REGISTER", "UNDO"}
+    # No UNDO — batching 600+ slot assigns into one undo step freezes Blender on finish.
+    bl_options = {"REGISTER"}
 
     collection_name: bpy.props.StringProperty(
         name="Collection",
@@ -7925,31 +7997,50 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
         description="Only resolve name→export paths; do not build materials",
         default=False,
     )
+    force_rebuild: bpy.props.BoolProperty(
+        name="Force Rebuild",
+        description=(
+            "Force All style: rebuild MI graphs once per MI path. Default is "
+            "lightweight shared-MI slot assign (much faster on large collections)"
+        ),
+        default=False,
+    )
+    skip_already_assigned: bpy.props.BoolProperty(
+        name="Skip Already Assigned",
+        description="Skip meshes that already have Arc MI stamps on all slots",
+        default=True,
+    )
 
     _timer = None
     _targets: list = []
     _index: int = 0
-    _batch: int = 24
+    _batch: int = 32
     _ok: int = 0
     _fail: int = 0
     _skip: int = 0
     _cached: int = 0
+    _already: int = 0
     _mat_cache: dict = {}
+    _path_cache: dict = {}
     _fail_samples: list = []
     _skip_samples: list = []
     _ok_samples: list = []
     _ui_tick: int = 0
+    _prev_global_undo: bool | None = None
+    _progress_started: bool = False
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=420)
+        return context.window_manager.invoke_props_dialog(self, width=440)
 
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "collection_name")
         layout.prop(self, "prefer_selection")
         layout.prop(self, "dry_run")
+        layout.prop(self, "force_rebuild")
+        layout.prop(self, "skip_already_assigned")
         layout.label(
-            text="Uses Stage 2 MI resolve (SM JSON StaticMaterials). No mesh import.",
+            text="Default: shared MI assign from SM JSON (cached). No mesh import.",
             icon="INFO",
         )
 
@@ -7991,7 +8082,13 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
             )
             return {"CANCELLED"}
 
-        mats_mod.clear_material_session_caches()
+        # Keep image/shared-MI caches warm — wiping them forced 653 cold texture loads.
+        # Only reset Force-All once-per-MI tracking when explicitly rebuilding.
+        if self.force_rebuild:
+            try:
+                mats_mod._FORCE_REBUILT_MI_PATHS.clear()
+            except Exception:
+                pass
         mats_mod.warm_shared_mi_material_cache()
         try:
             fmdex.ensure_loaded()
@@ -7999,13 +8096,27 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
             pass
 
         if self.dry_run:
+            import time as _time
+            t0 = _time.perf_counter()
             resolved = 0
             missing = 0
             samples_ok = []
             samples_miss = []
             report_rows = []
-            for obj in targets:
-                path, stem = resolve_map_asset_path_for_object(obj)
+            path_cache: dict[str, tuple] = {}
+            for i, obj in enumerate(targets):
+                cache_key = ""
+                try:
+                    stems = mesh_lookup_stems_for_object(obj)
+                    cache_key = "|".join(s.lower() for s in stems[:4])
+                except Exception:
+                    stems = []
+                if cache_key and cache_key in path_cache:
+                    path, stem = path_cache[cache_key]
+                else:
+                    path, stem = resolve_map_asset_path_for_object(obj)
+                    if cache_key:
+                        path_cache[cache_key] = (path, stem)
                 if path:
                     resolved += 1
                     mi_hint = ""
@@ -8042,6 +8153,11 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
                             "mi": "",
                         }
                     )
+                if (i + 1) % 100 == 0:
+                    print(
+                        f"Arc Raiders name-apply dry-run: {i + 1}/{len(targets)} "
+                        f"({resolved} ok, {missing} miss)"
+                    )
             out = os.path.join(
                 os.path.dirname(__file__),
                 "_apply_materials_by_name_dryrun.json",
@@ -8054,6 +8170,7 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
                             "total": len(targets),
                             "resolved": resolved,
                             "missing": missing,
+                            "elapsed_s": round(_time.perf_counter() - t0, 3),
                             "samples_ok": samples_ok,
                             "samples_miss": samples_miss,
                             "rows": report_rows,
@@ -8063,10 +8180,11 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
                     )
             except OSError as exc:
                 print(f"Arc Raiders name-apply dry-run write failed: {exc}")
+            elapsed = _time.perf_counter() - t0
             self.report(
                 {"INFO"} if missing == 0 else {"WARNING"},
                 f"Dry run: {resolved}/{len(targets)} resolved, {missing} missing "
-                f"(wrote {os.path.basename(out)})",
+                f"in {elapsed:.1f}s (wrote {os.path.basename(out)})",
             )
             for line in samples_ok[:6]:
                 print(f"Arc Raiders name-apply OK: {line}")
@@ -8077,25 +8195,61 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
         self._targets = list(targets)
         self._index = 0
         base = int(getattr(context.scene, "arc_placement_batch_size", 100) or 100)
-        self._batch = max(8, min(40, base // 2 or 24))
+        # Smaller batches when force-rebuilding (texture work); larger for assign-only.
+        if self.force_rebuild:
+            self._batch = max(4, min(16, base // 4 or 8))
+        else:
+            self._batch = max(16, min(64, base // 2 or 32))
         self._ok = 0
         self._fail = 0
         self._skip = 0
         self._cached = 0
+        self._already = 0
         self._mat_cache = {}
+        self._path_cache = {}
         self._fail_samples = []
         self._skip_samples = []
         self._ok_samples = []
         self._ui_tick = 0
+        self._progress_started = False
+
+        # Disable global undo for the batch — restores in cleanup.
+        self._prev_global_undo = None
+        try:
+            prefs = context.preferences.edit
+            self._prev_global_undo = bool(prefs.use_global_undo)
+            prefs.use_global_undo = False
+        except Exception:
+            self._prev_global_undo = None
+
         wm = context.window_manager
+        try:
+            wm.progress_begin(0, max(1, len(self._targets)))
+            self._progress_started = True
+        except Exception:
+            self._progress_started = False
         self._timer = wm.event_timer_add(0.01, window=context.window)
         wm.modal_handler_add(self)
+        mode = "force-rebuild" if self.force_rebuild else "shared-MI assign"
         self.report(
             {"INFO"},
             f"Apply Materials by Mesh Name: {len(self._targets)} mesh(es) "
-            f"(batch {self._batch}, ESC to cancel)",
+            f"({mode}, batch {self._batch}, ESC to cancel)",
+        )
+        print(
+            f"Arc Raiders name-apply: start n={len(self._targets)} mode={mode} "
+            f"batch={self._batch}"
         )
         return {"RUNNING_MODAL"}
+
+    @staticmethod
+    def _object_already_has_arc_mi(obj) -> bool:
+        if not obj or obj.type != "MESH" or not obj.material_slots:
+            return False
+        mats = [s.material for s in obj.material_slots]
+        if not mats or any(m is None for m in mats):
+            return False
+        return all(str(m.get("arc_mi_path") or "").strip() for m in mats)
 
     def modal(self, context, event):
         if event.type in {"ESC"}:
@@ -8103,7 +8257,7 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
             self.report(
                 {"WARNING"},
                 f"Name-apply cancelled ({self._ok + self._cached}/{len(self._targets)} "
-                f"done, {self._fail} fail, {self._skip} skip)",
+                f"done, {self._fail} fail, {self._skip} skip, {self._already} already)",
             )
             return {"CANCELLED"}
 
@@ -8122,11 +8276,24 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
                 self._fail += 1
                 continue
 
-            psk, matched = resolve_map_asset_path_for_object(obj)
+            if self.skip_already_assigned and not self.force_rebuild:
+                if self._object_already_has_arc_mi(obj):
+                    self._already += 1
+                    continue
+
+            # Resolve with per-run stem-list cache (objects sharing names)
+            stems = mesh_lookup_stems_for_object(obj)
+            stem_key = "|".join(s.lower() for s in stems[:4]) or obj.name.lower()
+            cached_resolve = self._path_cache.get(stem_key)
+            if cached_resolve is not None:
+                psk, matched = cached_resolve
+            else:
+                psk, matched = resolve_map_asset_path_for_object(obj)
+                self._path_cache[stem_key] = (psk, matched)
+
             if not psk:
                 self._skip += 1
                 if len(self._skip_samples) < 8:
-                    stems = mesh_lookup_stems_for_object(obj)
                     self._skip_samples.append(
                         f"{obj.name}: no export ({','.join(stems[:3]) or '?'})"
                     )
@@ -8145,17 +8312,22 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
             try:
                 obj["arc_psk_path"] = psk
                 obj["arc_model_type"] = "map"
-                obj["arc_force_material_rebuild"] = 1
                 if matched:
                     obj["arc_name_resolve"] = matched
+                if self.force_rebuild:
+                    obj["arc_force_material_rebuild"] = 1
+                elif obj.get("arc_force_material_rebuild"):
+                    del obj["arc_force_material_rebuild"]
             except Exception:
                 pass
-            try:
-                mats_mod.clear_leaked_preferred_mi(obj)
-                mats_mod.invalidate_shared_mi_on_object(obj)
-                mats_mod.clear_out_of_context_map_materials(obj)
-            except Exception:
-                pass
+
+            # Lightweight path: never invalidate shared MI / wipe slots per object.
+            # Force rebuild relies on once-per-MI tracking inside setup_map_material.
+            if self.force_rebuild:
+                try:
+                    mats_mod.clear_leaked_preferred_mi(obj)
+                except Exception:
+                    pass
 
             cache_key = mats_mod.map_material_cache_key(psk) or os.path.normcase(
                 os.path.normpath(psk)
@@ -8224,18 +8396,30 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
 
         self._index = end
         total = len(self._targets)
-        done = self._ok + self._cached + self._fail + self._skip
+        done = (
+            self._ok + self._cached + self._fail + self._skip + self._already
+        )
         self._ui_tick += 1
-        if self._ui_tick == 1 or self._ui_tick % 4 == 0 or self._index >= total:
-            context.workspace.status_text_set(
+        if self._ui_tick == 1 or self._ui_tick % 3 == 0 or self._index >= total:
+            msg = (
                 f"Materials by name: {done}/{total} "
                 f"({100.0 * done / max(total, 1):.1f}%) | "
-                f"ok {self._ok} reuse {self._cached} "
+                f"ok {self._ok} reuse {self._cached} already {self._already} "
                 f"skip {self._skip} fail {self._fail}"
             )
+            context.workspace.status_text_set(msg)
+            print(f"Arc Raiders name-apply: {msg}")
+            try:
+                if self._progress_started:
+                    context.window_manager.progress_update(done)
+            except Exception:
+                pass
             for area in context.screen.areas:
                 if area.type in {"VIEW_3D", "STATUSBAR"}:
                     area.tag_redraw()
+            # Periodic operator report so the info bar updates during long runs
+            if self._ui_tick == 1 or self._ui_tick % 8 == 0:
+                self.report({"INFO"}, msg)
 
         if self._index >= total:
             self._cleanup(context)
@@ -8256,7 +8440,7 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
             self.report(
                 level,
                 f"Materials by name — ok {self._ok}, reused {self._cached}, "
-                f"skipped {self._skip}, failed {self._fail}"
+                f"already {self._already}, skipped {self._skip}, failed {self._fail}"
                 f"{sample}",
             )
             return {"FINISHED"}
@@ -8268,6 +8452,18 @@ class ARC_OT_ApplyMaterialsByMeshName(bpy.types.Operator):
         if self._timer is not None:
             wm.event_timer_remove(self._timer)
             self._timer = None
+        if self._progress_started:
+            try:
+                wm.progress_end()
+            except Exception:
+                pass
+            self._progress_started = False
+        if self._prev_global_undo is not None:
+            try:
+                context.preferences.edit.use_global_undo = self._prev_global_undo
+            except Exception:
+                pass
+            self._prev_global_undo = None
         context.workspace.status_text_set(None)
 
 
