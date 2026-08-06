@@ -1992,7 +1992,8 @@ def _enrich_parent_material_textures(mi: dict, mi_path: str = "", parent_obj_pat
     # True albedo already present — still allow parent BCH when only Trim sheet (NAO).
     strong_albedo = {
         "cr", "cr texture", "basecolor", "base color", "bc", "ca", "c", "ch",
-        "pm_diffuse", "color", "basetextrue", "signtexture",
+        "pm_diffuse", "color", "basetextrue",
+        "1.  material cr", "1. material cr", "base_material_cr", "color base",
     }
     only_trim_sheet = ("trim sheet" in have_l) and not (have_l & strong_albedo)
     if (have_l & strong_albedo) and not only_trim_sheet:
@@ -4951,6 +4952,10 @@ _ENV_LAYER_MARKERS = frozenset({
     "Breakup Mask - Linear Grayscale",
     "0. CR 1", "0. CR 2", "0. NOH 1", "0. NOH 2", "4. Mask",
     "HolesNXX", "WaterlineOverlay",
+    # ArchitecturePreset layered props (Dam HydroTower / painted metal):
+    # "1.  Material CR" (double-space), Wear packs, Overlay CR — not SignTexture.
+    "1.  Material CR", "1.  Material NOH", "1. Material CR", "1. Material NOH",
+    "1. Wear CR", "1. Wear NOH", "2. Overlay CR", "2. Overlay",
 })
 
 _FOLIAGE_TEX_MARKERS = frozenset({
@@ -4974,9 +4979,16 @@ _METAL_PACKED_NORMALS = frozenset({
 _SIMPLE_ALBEDO_KEYS = (
     # Hero/character flat MIs use Color (+ _Color suffix); env packs use CR/CA/C.
     "BaseColor", "Color", "CA", "1. CA", "CR", "CR Texture", "PM_Diffuse", "BC", "C",
+    # Architecture layered albedo (before any suffix fallback).
+    "1.  Material CR", "1. Material CR", "Base_Material_CR", "Color Base",
     # Authoring typos / non-standard param names (exact aliases, not fuzzy).
-    "BaseTextrue", "SignTexture", "RIT_ColorMap", "CM", "Texture",
+    # SignTexture is a *decal/sign* slot — never treat as base albedo (HydroTower bug).
+    "BaseTextrue", "RIT_ColorMap", "CM", "Texture",
     "Trim sheet",  # UXR NAO sheet; parent BCH enrich supplies true albedo when present
+)
+# Optional sign/sticker overlays on environment MIs (EnableSigns), not base color.
+_SIGN_DECAL_KEYS = (
+    "SignTexture", "Sign Texture", "Sign", "RoadSign",
 )
 _SIMPLE_NORMAL_KEYS = (
     "Normals", "Normal", "NormalMap", "NOH", "1. NTR", "NTR",
@@ -5141,10 +5153,31 @@ def _is_translucent_blend(mi: dict) -> bool:
     return "translucent" in bm or "additive" in bm
 
 
+def _param_looks_like_env_pack(param: str) -> bool:
+    """True for ArchitecturePreset layered pack names (Material/Wear/Overlay CR|NOH)."""
+    pl = (param or "").lower().strip()
+    if not pl:
+        return False
+    if pl in {m.lower() for m in _ENV_LAYER_MARKERS}:
+        return True
+    # Compact / spaced variants: "1.  Material CR", "2. Overlay CR", "Wear NOH"
+    if "material cr" in pl or "material noh" in pl:
+        return True
+    if "wear cr" in pl or "wear noh" in pl:
+        return True
+    if "overlay cr" in pl or pl.endswith(" overlay") or "overlay noh" in pl:
+        return True
+    if pl.endswith(" material cr") or pl.endswith(" material noh"):
+        return True
+    return False
+
+
 def _is_environment_surface_mi(mi: dict) -> bool:
     """True when MI uses environment packing (NOH/Overlay/layers) rather than weapon NOM/NXM."""
     params = _mi_tex_params(mi)
     if params & _ENV_LAYER_MARKERS:
+        return True
+    if any(_param_looks_like_env_pack(p) for p in params):
         return True
     # Plain CR+NOH concrete slabs (no Overlay param) still need the env path —
     # weapon setup ignores NOH entirely.
@@ -5154,6 +5187,16 @@ def _is_environment_surface_mi(mi: dict) -> bool:
         return True
     # Edge-trim sheets: CR + NAO (+ optional PM_Normals / Detail Normal)
     if "CR" in params and "NAO" in params:
+        return True
+    # Filename-stem aliases in compact dumps (T_*_CR + T_*_NOH) without bare CR/NOH params.
+    stems = []
+    for _p, obj in (mi.get("textures") or []):
+        if not obj:
+            continue
+        stems.append(os.path.splitext(os.path.basename(str(obj)))[0].lower())
+    has_cr_stem = any(s.endswith("_cr") for s in stems)
+    has_noh_stem = any(s.endswith("_noh") or s.endswith("_nao") for s in stems)
+    if has_cr_stem and has_noh_stem:
         return True
     return False
 
@@ -5878,22 +5921,28 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     tex_lookup = _tex_lookup_from_flat_mi(mi, local_folders=local_folders)
 
     # ── Resolve layer-1 albedo / roughness (CR family) ─────────────────────
+    # Prefer Material/Base CR over Wear; never use SignTexture as base albedo.
     cr1_keys = (
-        "1. CR", "0. CR 1", "CR", "CR Texture", "Base_Material_CR", "Color Base",
-        "CR_1", "B CR", "BC", "1.  Material CR", "1. Wear CR", "BaseColor",
-        "BaseTextrue", "SignTexture", "RIT_ColorMap", "CM", "Texture", "Trim sheet",
+        "1.  Material CR", "1. Material CR", "1. CR", "0. CR 1", "CR", "CR Texture",
+        "Base_Material_CR", "Color Base", "CR_1", "B CR", "BC", "BaseColor",
+        "BaseTextrue", "RIT_ColorMap", "CM", "Texture", "Trim sheet",
+        # Wear only as last-resort albedo when Material CR is absent
+        "1. Wear CR",
     )
     cr2_keys = (
         "2. CR", "0. CR 2", "CR Blend", "CR_Blend", "Breakup_Material_CR",
-        "CR Breakup", "Color Top", "CR_2", "B CR", "2. Overlay CR",
+        "CR Breakup", "Color Top", "CR_2", "B CR",
+        # Wear pack as layer-2 when Material CR already filled layer-1
+        "1. Wear CR",
     )
     noh1_keys = (
-        "1. NOH", "0. NOH 1", "NOH", "Normal Base", "NOH_1", "Base_Material_NOH",
-        "1.  Material NOH", "1. Wear NOH", "Normal", "Normals", "NormalMap",
+        "1.  Material NOH", "1. Material NOH", "1. NOH", "0. NOH 1", "NOH",
+        "Normal Base", "NOH_1", "Base_Material_NOH", "Normal", "Normals", "NormalMap",
+        "1. Wear NOH",
     )
     noh2_keys = (
         "2. NOH", "0. NOH 2", "NOH Blend", "NOH_Blend", "Breakup_Material_NOH",
-        "NOH Breakup", "Normal Top", "NOH_2", "B NOH",
+        "NOH Breakup", "Normal Top", "NOH_2", "B NOH", "1. Wear NOH",
     )
     mask_keys = (
         "3. Blend Mask", "4. Mask", "Breakup Mask", "Breakup Mask - Linear Grayscale",
@@ -5935,6 +5984,9 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
 
     _, mask_img = _find_env_tex(tex_lookup, *mask_keys)
     _, overlay_img = _find_env_tex(tex_lookup, *overlay_keys)
+    # Do not also treat Overlay CR as layer-2 when it is the overlay slot
+    if overlay_img is not None and cr2_img is not None and cr2_img == overlay_img:
+        cr2_img = None
     # PM_Diffuse often aliases Overlay color-var; only use when Overlay missing
     if not overlay_img:
         _, pm_diff = _find_env_tex(tex_lookup, "PM_Diffuse")
@@ -5949,8 +6001,14 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
 
     _, detail_img = _find_env_tex(tex_lookup, *detail_n_keys)
     _, ao_img = _find_env_tex(tex_lookup, "Prop AO Texture", "AO")
+    _, sign_img = _find_env_tex(tex_lookup, *_SIGN_DECAL_KEYS)
 
-    base_tiling = _mi_scalar(scalars, "Tiling", "Tile", default=1.0)
+    base_tiling = _mi_scalar(
+        scalars,
+        "2. Base Material Tiling", "3. Base Material Tiling", "4. Base Material Tiling",
+        "Tiling", "Tile", "Base Material Tiling",
+        default=1.0,
+    )
     # PropTrim atlases + ArchitecturePreset_Trim shift UV (vent grille vs panel cells /
     # trim sheet offsets). Always honour authored offsets — never METAL-only.
     mi_stem_l = os.path.splitext(os.path.basename(mi_path or ""))[0].lower()
@@ -6156,17 +6214,24 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
 
     # ── Overlay color variation (concrete ColorVar / rust overlays) ────────
     use_overlay = _mi_switch(
-        switches, "UseOverlay", "EnableOverlay", "Color Overlay", default=None,
+        switches,
+        "UseOverlay", "EnableOverlay", "Color Overlay",
+        "2. OverlayTexture", "3. Overlay Texture", "4. Overlay Texture",
+        "2. OverlayTint Color", "3. OverlayTint Color",
+        default=None,
     )
     ov_str = _mi_scalar(
         scalars,
-        "Overlay_BaseColor_Strength", "Overlay Strength", "4. Overlay Strength",
+        "Overlay_BaseColor_Strength", "Overlay Strength",
+        "2. Overlay Strength", "3. Overlay Strength", "4. Overlay Strength",
         "OverlayIntensity", default=0.5,
     )
     if overlay_img and use_overlay is not False and ov_str > 0.001 and albedo_sock is not None:
         ov_node = _new_tex_image(nodes, overlay_img, "Overlay", (COL_TEX, y_ov))
         ov_tile = _mi_scalar(
-            scalars, "OverlayTiling", "2. OverlayTiling", "4. Overlay Size", default=2.0,
+            scalars,
+            "2. OverlayTiling", "3. OverlayTiling", "4. OverlayTiling",
+            "OverlayTiling", "4. Overlay Size", default=2.0,
         )
         _bind_tex_vec(ov_node, y_ov, tiling=ov_tile)
         # Soft contrast so mid-gray ColorVars don't flatten the base
@@ -6187,12 +6252,55 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             (COL_MIX + 160, y_ov + 80), "Overlay Mix",
         )
         # Optional roughness lift from overlay alpha / strength
-        ov_rough = _mi_scalar(scalars, "Overlay_Roughness_Strength", default=0.0)
+        ov_rough = _mi_scalar(
+            scalars,
+            "Overlay_Roughness_Strength", "2. Overlay Roughness", "3. Overlay Roughness",
+            "4. Overlay Roughness", default=0.0,
+        )
         if ov_rough > 0.001 and rough_sock is not None:
             rough_sock = _mix_float(
                 nodes, links, rough_sock, ov_node.outputs["Alpha"],
-                min(ov_rough, 1.0), (COL_MIX + 160, y_ov - 80), "Overlay → Rough",
+                min(ov_rough if ov_rough <= 1.0 else 0.35, 1.0),
+                (COL_MIX + 160, y_ov - 80), "Overlay → Rough",
             )
+
+    # ── Optional SignTexture / road-sign decal (UV1 when authored) ─────────
+    # EnableSigns=false on HydroTower — must NOT replace Material CR as albedo.
+    enable_signs = _mi_switch(
+        switches, "EnableSigns", "Enable Signs", "Use Signs", default=False,
+    )
+    if (
+        enable_signs
+        and sign_img is not None
+        and albedo_sock is not None
+        and sign_img is not cr1_img
+        and sign_img is not overlay_img
+    ):
+        sign_node = _new_tex_image(nodes, sign_img, "Sign / Decal", (COL_TEX - 500, y_ov - 280))
+        use_uv1 = _mi_switch(
+            switches,
+            "1. Use Texture Coord1 For Tiling", "Use Texture Coord1", "Use UV1",
+            default=False,
+        )
+        if use_uv1:
+            uv_node = nodes.new("ShaderNodeUVMap")
+            # PSK imports usually name the second channel UVMap.001
+            uv_node.uv_map = "UVMap.001"
+            uv_node.label = "Sign UV1"
+            uv_node.location = (COL_TEX - 750, y_ov - 280)
+            links.new(uv_node.outputs["UV"], sign_node.inputs["Vector"])
+        else:
+            _bind_tex_vec(sign_node, y_ov - 280, tiling=1.0)
+        # Alpha-over mix: sign RGB over base using texture alpha (or luminance)
+        sign_mix = nodes.new("ShaderNodeMix")
+        sign_mix.data_type = "RGBA"
+        sign_mix.blend_type = "MIX"
+        sign_mix.label = "Sign over Albedo"
+        sign_mix.location = (COL_MIX + 160, y_ov - 200)
+        links.new(sign_node.outputs["Alpha"], sign_mix.inputs["Factor"])
+        links.new(albedo_sock, sign_mix.inputs[6])
+        links.new(sign_node.outputs["Color"], sign_mix.inputs[7])
+        albedo_sock = sign_mix.outputs[2]
 
     # ── Detail / micro normal (often overlaid on concrete & metals) ─────────
     use_detail = _mi_switch(
@@ -6257,7 +6365,8 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     else:
         tint = _mi_colour(
             colours, "Tint", "RT Base Color", "BaseColor Tint", "GlobalTint",
-            "1. Tint", "Paint", default=None,
+            "1. Tint", "Paint", "2. ColorTint", "3. ColorTint", "4. ColorTint",
+            default=None,
         )
     if tint is not None and albedo_sock is not None and _mi_switch(
         switches, "Use Tint", "Enable Tinting", "Tint", default=True,
@@ -6297,10 +6406,26 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         # Soft remap UE roughness alphas that sit very dark/bright
         links.new(rough_sock, principled.inputs["Roughness"])
     else:
-        principled.inputs["Roughness"].default_value = 0.55
+        principled.inputs["Roughness"].default_value = _mi_scalar(
+            scalars, "2. Roughness", "3. Roughness", "4. Roughness", "Roughness",
+            default=0.55,
+        )
 
     if normal_sock is not None:
         links.new(normal_sock, principled.inputs["Normal"])
+
+    # Layered architecture MIs author Metalness as a scalar (UseMetalness), not NOM alpha
+    if not principled.inputs["Metallic"].links:
+        use_metal = _mi_switch(switches, "UseMetalness", "Use Metalness", default=None)
+        metal = _mi_scalar(
+            scalars,
+            "2. Metalness", "3. Metalness Green", "4. Metalness Blue",
+            "Metalness", "Metallic", default=0.0,
+        )
+        if use_metal is True or (use_metal is None and metal > 0.001):
+            principled.inputs["Metallic"].default_value = min(max(float(metal), 0.0), 1.0)
+        elif fam == FAMILY_METAL:
+            principled.inputs["Metallic"].default_value = 0.8
 
     # Architecture trim: NAO.A = opacity mask (Masked + Use Alpha mask)
     use_alpha_mask = _mi_switch(
@@ -9167,6 +9292,23 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
     tex_lookup = _tex_lookup_from_flat_mi(mi, local_folders=local_folders)
 
     _, albedo_img = _find_env_tex(tex_lookup, *_SIMPLE_ALBEDO_KEYS)
+    # Never let SignTexture win as simple albedo when a CR/BaseColor pack exists
+    if albedo_img is not None:
+        a_param = next((p for p, (_fp, im) in tex_lookup.items() if im == albedo_img), "")
+        if (a_param or "").lower() in {k.lower() for k in _SIGN_DECAL_KEYS}:
+            albedo_img = None
+            for key in _SIMPLE_ALBEDO_KEYS:
+                hit, img = _find_env_tex(tex_lookup, key)
+                if img is not None and (hit or "").lower() not in {k.lower() for k in _SIGN_DECAL_KEYS}:
+                    albedo_img = img
+                    break
+            if albedo_img is None:
+                # Suffix fallback: prefer *_CR / *_BC over road-sign *_X
+                for param, (fpath, img) in tex_lookup.items():
+                    stem = os.path.splitext(os.path.basename(fpath))[0].lower()
+                    if stem.endswith(("_cr", "_bc", "_bch", "_ca", "_c", "_color")):
+                        albedo_img = img
+                        break
     _, normal_img = _find_env_tex(tex_lookup, *_SIMPLE_NORMAL_KEYS)
     _, rm_img = _find_env_tex(tex_lookup, *_SIMPLE_ROUGHNESS_METAL_KEYS)
     _, tintmask_img = _find_env_tex(tex_lookup, *_SIMPLE_TINTMASK_KEYS)

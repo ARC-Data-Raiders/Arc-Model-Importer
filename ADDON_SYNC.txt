@@ -1,5 +1,5 @@
-﻿version=2.18.26
-synced=2026-08-05T17:04:21.8823140-06:00
+﻿version=2.18.27
+synced=2026-08-05T20:34:41.1935480-06:00
 source=C:\Users\Gideon\Documents\GitHub\DataRaiders-BlenderImporter
 pycache=%LOCALAPPDATA%\DataRaiders-BlenderImporter\pycache
-note=Fix name-apply/Stage2 Force All freeze: shared-MI cache, once-per-MI rebuild, stem path cache, no undo batch
+note=HydroTower Material CR/NOH env mapping; SignTexture not base albedo
