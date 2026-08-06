@@ -5125,8 +5125,300 @@ _WATER_EXCLUDE_NAME = (
 )
 
 
+# ---------------------------------------------------------------------------
+# MI texture-role inventory → family decision
+#
+# Compact FModel dumps list each map twice (param name + T_* asset stem).
+# Inventory keeps real ParameterInfo names only, assigns roles, then a small
+# decision table picks the setup family. Prefer MI structure over mesh name.
+#
+# Decision table (first match wins among surface families):
+#   clothing ColorMask / TextureArray  → leave Arc Texturer (not remapped here)
+#   Material/Wear/Overlay CR+NOH packs → environment (layered)
+#   base_cr + base_noh / NAO           → environment
+#   CR Texture + NXX/NMX (+ Overlay)   → metal
+#   CR + NOM/NXM/Wear/EXX              → weapon
+#   albedo + RoughnessMetal/ORM (+N)   → simple (packed ORM/RMA PBR)
+#   1–2 maps albedo±normal (±mask)     → simple
+#   sign/decal_mask only               → decal (EnableSigns gates overlay only)
+# ---------------------------------------------------------------------------
+
+# Role tags returned by inventory_mi_textures / _tex_param_role.
+_ROLE_BASE_CR = "base_cr"
+_ROLE_BASE_NOH = "base_noh"
+_ROLE_WEAR_CR = "wear_cr"
+_ROLE_WEAR_NOH = "wear_noh"
+_ROLE_OVERLAY = "overlay"
+_ROLE_SIGN = "sign"
+_ROLE_DECAL_MASK = "decal_mask"
+_ROLE_PACKED_METAL_N = "packed_metal_normal"
+_ROLE_NORMAL = "normal"
+_ROLE_ORM = "orm"
+_ROLE_PACKED_MASK = "packed_mask"
+_ROLE_TINTMASK = "tintmask"
+_ROLE_AO = "ao"
+_ROLE_BLEND_MASK = "blend_mask"
+_ROLE_DETAIL_N = "detail_normal"
+_ROLE_NAO = "nao"
+_ROLE_FOLIAGE = "foliage"
+_ROLE_GLASS = "glass"
+_ROLE_CLOTHING = "clothing"
+_ROLE_EMISSIVE = "emissive"
+_ROLE_OTHER = "other"
+
+
+def _is_compact_tex_stem_alias(param: str) -> bool:
+    """True for compact-dump duplicate keys like ``T_Metal_Painted_03_A_CR``."""
+    p = (param or "").strip()
+    if not p:
+        return True
+    # Real MI params almost never start with T_ and never look like asset stems.
+    if p.startswith("T_") and " " not in p and "/" not in p:
+        return True
+    return False
+
+
 def _mi_tex_params(mi: dict) -> set:
-    return {p for p, _ in (mi.get("textures") or [])}
+    """Authored texture parameter names (excludes compact T_* stem aliases)."""
+    return {
+        p for p, _ in (mi.get("textures") or [])
+        if p and not _is_compact_tex_stem_alias(p)
+    }
+
+
+def _tex_param_role(param: str) -> str:
+    """Map one MI texture parameter name to a coarse role tag."""
+    p = (param or "").strip()
+    if not p:
+        return _ROLE_OTHER
+    pl = p.lower()
+
+    # Clothing / outfit markers — Arc Texturer owns these; never treat as env albedo.
+    if "colormask" in pl.replace(" ", "") or pl in ("ocm",):
+        return _ROLE_CLOTHING
+    if pl.startswith("texturearray") or "texture array" in pl:
+        return _ROLE_CLOTHING
+
+    # Sign / road-sign decal slots (never base albedo — HydroTower bug).
+    if pl in {k.lower() for k in _SIGN_DECAL_KEYS} or pl in ("roadsign", "sign texture"):
+        return _ROLE_SIGN
+
+    if pl in ("raider mark texture", "decal mask"):
+        return _ROLE_DECAL_MASK
+
+    # Wear packs (ArchitecturePreset)
+    if "wear cr" in pl or pl == "wear":
+        return _ROLE_WEAR_CR
+    if "wear noh" in pl:
+        return _ROLE_WEAR_NOH
+
+    # Overlay / ColorVar (before generic CR — "2. Overlay CR")
+    if "overlay" in pl or pl in ("color overlay", "waterlineoverlay", "waterlinetexture"):
+        return _ROLE_OVERLAY
+
+    # Layered Material / Base NOH (before generic "normal")
+    if "material noh" in pl or pl in {
+        "noh", "1. noh", "0. noh 1", "noh_1", "normal base", "base_material_noh",
+        "2. noh", "0. noh 2", "noh_2", "normal top", "noh blend", "noh_blend",
+        "breakup_material_noh", "noh breakup", "b noh",
+    }:
+        return _ROLE_BASE_NOH
+    if pl.endswith(" noh") or (pl.startswith("noh") and "wear" not in pl):
+        return _ROLE_BASE_NOH
+
+    if pl in ("nao", "decaltrimsheet") or pl.endswith(" nao"):
+        return _ROLE_NAO
+
+    # Layered / base CR albedo packs
+    if "material cr" in pl or pl in {
+        "cr", "1. cr", "0. cr 1", "cr_1", "b cr", "bc", "cr texture",
+        "base_material_cr", "color base", "basecolor", "pm_diffuse",
+        "basetextrue", "rit_colormap", "cm", "texture", "trim sheet", "c",
+        "2. cr", "0. cr 2", "cr blend", "cr_blend", "cr_2", "color top",
+        "breakup_material_cr", "cr breakup", "ca", "1. ca", "color", "coloralpha",
+    }:
+        return _ROLE_BASE_CR
+    if pl in {k.lower() for k in _SIMPLE_ALBEDO_KEYS}:
+        return _ROLE_BASE_CR
+
+    # Packed weapon/prop normals
+    if pl in {k.lower() for k in _METAL_PACKED_NORMALS} or pl in (
+        "nom", "nxm", "nmx", "nxx", "nxx/nmx texture", "holesnxx",
+    ):
+        return _ROLE_PACKED_METAL_N
+
+    # Generic tangent normals
+    if pl in {k.lower() for k in _SIMPLE_NORMAL_KEYS} or pl in (
+        "normals", "normal", "normalmap", "pm_normals",
+    ):
+        return _ROLE_NORMAL
+
+    # Packed ORM / roughness-metal
+    if pl in ("roughnessmetal", "orm", "rma", "occlusionroughnessmetallic"):
+        return _ROLE_ORM
+
+    if pl in ("packed mask", "pm_specularmasks"):
+        return _ROLE_PACKED_MASK
+
+    if pl in {k.lower() for k in _SIMPLE_TINTMASK_KEYS}:
+        return _ROLE_TINTMASK
+
+    if pl in ("prop ao texture", "ao", "ambient occlusion"):
+        return _ROLE_AO
+
+    if pl in (
+        "3. blend mask", "4. mask", "breakup mask", "breakup mask - linear grayscale",
+        "paintbreakup", "mask", "variation masks", "variation mask", "x",
+    ) or "blend mask" in pl or (pl.endswith(" mask") and "decal" not in pl):
+        return _ROLE_BLEND_MASK
+
+    if "detail normal" in pl or pl in ("1. detail", "detail nxr"):
+        return _ROLE_DETAIL_N
+
+    if pl in {m.lower() for m in _FOLIAGE_TEX_MARKERS} or "trunk" in pl:
+        return _ROLE_FOLIAGE
+
+    if pl in {m.lower() for m in _GLASS_TEX_MARKERS} or "cubemap" in pl or pl == "glasstexture":
+        return _ROLE_GLASS
+
+    if pl in ("ex", "exx", "emissivemask", "pm_emissive", "lightbulb"):
+        return _ROLE_EMISSIVE
+
+    if _param_looks_like_env_pack(p):
+        if "noh" in pl:
+            return _ROLE_BASE_NOH
+        if "cr" in pl or "color" in pl:
+            return _ROLE_BASE_CR
+        return _ROLE_OVERLAY
+
+    return _ROLE_OTHER
+
+
+def inventory_mi_textures(mi: dict) -> dict:
+    """Inventory MI texture parameters into roles + counts.
+
+    Returns dict::
+        {
+          "params": set[str],          # authored param names
+          "roles": dict[str, list],    # role → [param, ...]
+          "counts": dict[str, int],    # role → count
+          "map_count": int,            # unique authored params
+          "has": callable / use _inv_has
+        }
+    """
+    params = sorted(_mi_tex_params(mi))
+    roles: dict[str, list] = {}
+    for name in params:
+        role = _tex_param_role(name)
+        roles.setdefault(role, []).append(name)
+    counts = {r: len(names) for r, names in roles.items()}
+    return {
+        "params": set(params),
+        "roles": roles,
+        "counts": counts,
+        "map_count": len(params),
+    }
+
+
+def _inv_has(inv: dict, *role_names: str) -> bool:
+    counts = inv.get("counts") or {}
+    return any(counts.get(r, 0) > 0 for r in role_names)
+
+
+def _inv_count(inv: dict, *role_names: str) -> int:
+    counts = inv.get("counts") or {}
+    return sum(int(counts.get(r, 0) or 0) for r in role_names)
+
+
+def _family_from_tex_inventory(inv: dict, mi: dict, mi_stem_lower: str = "") -> str | None:
+    """Decision table: texture-role inventory → setup family (or None to continue).
+
+    Prefer MI structure (roles / counts) over mesh / MI-name heuristics.
+    SignTexture is never treated as base albedo; EnableSigns only gates overlay mix.
+    """
+    if not inv or not inv.get("map_count"):
+        return None
+
+    # Clothing ColorMask / TextureArray — do not remap into env/metal/simple overlays.
+    # Outfit setup uses Arc Texturer; Stage 2 should not steal these MIs.
+    if _inv_has(inv, _ROLE_CLOTHING):
+        return None
+
+    params = inv.get("params") or set()
+    stem = (mi_stem_lower or "").lower()
+
+    # Sign / mural mask only → decal (not simple albedo)
+    decal_only = {_ROLE_SIGN, _ROLE_DECAL_MASK, _ROLE_BLEND_MASK, _ROLE_OTHER}
+    role_keys = set((inv.get("counts") or {}).keys())
+    if role_keys and role_keys <= decal_only and _inv_has(inv, _ROLE_SIGN, _ROLE_DECAL_MASK):
+        if "sign" not in stem or _inv_has(inv, _ROLE_DECAL_MASK):
+            return FAMILY_DECAL
+    if params and params <= {"Mask", "Raider Mark Texture", "Decal Mask", "X", "SignTexture"}:
+        if "sign" not in stem:
+            return FAMILY_DECAL
+
+    # Metal BEFORE Overlay→env: PropTrim is CR Texture + NXX/NMX + Overlay.
+    if _is_metal_prop_mi(mi, stem):
+        return FAMILY_METAL
+
+    # Weapon / enemy CR + packed metallic normal / wear (before env Overlay catch-all)
+    if _inv_has(inv, _ROLE_BASE_CR) and (
+        "NOM" in params or "NXM" in params or "NMX" in params
+        or "Wear" in params or "EXX" in params or "EX" in params
+    ):
+        parent_l = (mi.get("parent") or "").lower()
+        if (
+            "enemypreset" in parent_l or "weapon" in parent_l or "firearm" in parent_l
+            or "NOM" in params or "EXX" in params or "EX" in params
+        ):
+            return FAMILY_WEAPON
+
+    # Layered environment: Material/Wear/Overlay packs, breakup, numbered layers
+    if _inv_has(inv, _ROLE_WEAR_CR, _ROLE_WEAR_NOH):
+        return FAMILY_ENVIRONMENT
+    if any(_param_looks_like_env_pack(p) for p in params):
+        return FAMILY_ENVIRONMENT
+    if params & _ENV_LAYER_MARKERS:
+        return FAMILY_ENVIRONMENT
+    # base CR + NOH (env packing) — weapon path ignores NOH
+    if _inv_has(inv, _ROLE_BASE_CR) and _inv_has(inv, _ROLE_BASE_NOH):
+        return FAMILY_ENVIRONMENT
+    if _inv_has(inv, _ROLE_BASE_CR) and _inv_has(inv, _ROLE_NAO):
+        return FAMILY_ENVIRONMENT
+    # Overlay on top of a base pack still needs the env graph (rust ColorVar)
+    if _inv_has(inv, _ROLE_OVERLAY) and _inv_has(inv, _ROLE_BASE_CR):
+        return FAMILY_ENVIRONMENT
+    # Filename-stem fallback: authored CR + NOH param names
+    if "CR" in params and "NOH" in params:
+        return FAMILY_ENVIRONMENT
+    if "CR_1" in params and "NOH_1" in params:
+        return FAMILY_ENVIRONMENT
+
+    # Packed ORM/RMA (+ base ± normal) → simple Principled (RoughnessMetal wiring)
+    if _inv_has(inv, _ROLE_ORM) and _inv_has(inv, _ROLE_BASE_CR, _ROLE_NORMAL):
+        return FAMILY_SIMPLE
+    if _inv_has(inv, _ROLE_ORM) and _inv_has(inv, _ROLE_BASE_CR):
+        return FAMILY_SIMPLE
+
+    # Simple: 1–2 maps (albedo ± normal), or albedo+normal+mask/tint without layered packs
+    n = int(inv.get("map_count") or 0)
+    has_albedo = _inv_has(inv, _ROLE_BASE_CR)
+    has_normal = _inv_has(inv, _ROLE_NORMAL, _ROLE_BASE_NOH)
+    has_extra = _inv_has(
+        inv, _ROLE_BLEND_MASK, _ROLE_PACKED_MASK, _ROLE_TINTMASK, _ROLE_AO, _ROLE_DETAIL_N,
+    )
+    layered = _inv_has(
+        inv, _ROLE_WEAR_CR, _ROLE_WEAR_NOH, _ROLE_OVERLAY, _ROLE_PACKED_METAL_N,
+    )
+    if not layered and (has_albedo or has_normal or _inv_has(inv, _ROLE_ORM)):
+        if n <= 2:
+            return FAMILY_SIMPLE
+        if n <= 4 and has_albedo and has_normal and has_extra:
+            return FAMILY_SIMPLE
+        if has_albedo or has_normal or _inv_has(inv, _ROLE_ORM):
+            return FAMILY_SIMPLE
+
+    return None
 
 
 def _blend_mode_str(mi: dict) -> str:
@@ -5174,7 +5466,11 @@ def _param_looks_like_env_pack(param: str) -> bool:
 
 def _is_environment_surface_mi(mi: dict) -> bool:
     """True when MI uses environment packing (NOH/Overlay/layers) rather than weapon NOM/NXM."""
-    params = _mi_tex_params(mi)
+    inv = inventory_mi_textures(mi)
+    fam = _family_from_tex_inventory(inv, mi, "")
+    if fam == FAMILY_ENVIRONMENT:
+        return True
+    params = inv.get("params") or set()
     if params & _ENV_LAYER_MARKERS:
         return True
     if any(_param_looks_like_env_pack(p) for p in params):
@@ -5526,16 +5822,26 @@ def _is_metal_prop_mi(mi: dict, mi_stem_lower: str = "") -> bool:
 
 def _is_simple_surface_mi(mi: dict) -> bool:
     """BaseColor/Color+Normal (or CR+Normal / hero RoughnessMetal) without layered packs."""
-    params = _mi_tex_params(mi)
+    inv = inventory_mi_textures(mi)
+    if _family_from_tex_inventory(inv, mi, "") == FAMILY_SIMPLE:
+        return True
+    params = inv.get("params") or set()
     if not params:
         return False
     if params & _ENV_LAYER_MARKERS:
         return False
+    if any(_param_looks_like_env_pack(p) for p in params):
+        return False
     if params & {"NOM", "NXM", "NMX", "Wear", "1. Wear CR", "EX", "EXX"}:
         return False
-    has_albedo = bool(params & set(_SIMPLE_ALBEDO_KEYS))
-    has_normal = bool(params & set(_SIMPLE_NORMAL_KEYS))
-    has_rm = bool(params & {"RoughnessMetal"})
+    # SignTexture alone is a decal slot, not simple albedo
+    if _inv_has(inv, _ROLE_SIGN) and not _inv_has(inv, _ROLE_BASE_CR, _ROLE_NORMAL, _ROLE_ORM):
+        return False
+    has_albedo = _inv_has(inv, _ROLE_BASE_CR) or bool(params & set(_SIMPLE_ALBEDO_KEYS))
+    has_normal = _inv_has(inv, _ROLE_NORMAL, _ROLE_BASE_NOH) or bool(
+        params & set(_SIMPLE_NORMAL_KEYS)
+    )
+    has_rm = _inv_has(inv, _ROLE_ORM) or bool(params & {"RoughnessMetal"})
     return has_albedo or has_normal or has_rm
 
 
@@ -5552,7 +5858,13 @@ def _is_graphic_atlas_mi(mi: dict, mi_stem_lower: str = "") -> bool:
 
 
 def classify_mi_family(mi: dict, mi_stem_lower: str = "", slot_lower: str = "") -> str:
-    """Classify an MI into a setup family. Order matters — specific before general."""
+    """Classify an MI into a setup family. Order matters — specific before general.
+
+    Surface families (environment / metal / weapon / simple / mask-decal) are driven by
+    ``inventory_mi_textures`` role counts when possible — prefer MI texture structure
+    over mesh-name heuristics. Clothing ColorMask / TextureArray markers are left alone
+    for Arc Texturer.
+    """
     stem = (mi_stem_lower or "").lower()
     slot = (slot_lower or "").lower()
 
@@ -5584,11 +5896,6 @@ def classify_mi_family(mi: dict, mi_stem_lower: str = "", slot_lower: str = "") 
         return FAMILY_DECAL
     if "decal" in stem and not _is_architecture_trim_stem(stem):
         return FAMILY_DECAL
-    # Mask-only murals / raider marks still count as decals
-    params = _mi_tex_params(mi)
-    if params and params <= {"Mask", "Raider Mark Texture", "Decal Mask", "X", "SignTexture"}:
-        if "sign" not in stem:
-            return FAMILY_DECAL
     if _is_water_mi(mi, stem):
         return FAMILY_WATER
     if _is_sand_dune_mi(mi, stem):
@@ -5599,6 +5906,14 @@ def classify_mi_family(mi: dict, mi_stem_lower: str = "", slot_lower: str = "") 
         return FAMILY_ROAD
     if _is_tarp_mi(mi, stem):
         return FAMILY_TARP
+
+    # Texture-role inventory decision table (MI structure over mesh name).
+    inv = inventory_mi_textures(mi)
+    params = inv.get("params") or set()
+    inv_family = _family_from_tex_inventory(inv, mi, stem)
+    if inv_family:
+        return inv_family
+
     if _is_metal_prop_mi(mi, stem):
         return FAMILY_METAL
     if _is_environment_surface_mi(mi):
