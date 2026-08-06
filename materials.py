@@ -4165,29 +4165,36 @@ def _setup_weapon_main_material(mat, mi_path: str, psk_path: str):
         normal_node.label = normal_type.upper()
         normal_node.interpolation = "Cubic"
         normal_node.location = (COL_TEX, Y_N)
-        if utils.ensure_node_group("NormalFlipper"):
-            flipper = nodes.new("ShaderNodeGroup")
-            flipper.node_tree = bpy.data.node_groups["NormalFlipper"]
-            flipper.location = (COL_UTIL, Y_N)
-            links.new(normal_node.outputs["Color"], flipper.inputs[0])
-            nm_in = flipper.outputs[0]
-        else:
-            nm_in = normal_node.outputs["Color"]
-        nm_node = nodes.new("ShaderNodeNormalMap")
-        nm_node.location = (COL_MIX, Y_N)
-        try:
-            nm_node.convention = 'DIRECTX'
-        except Exception:
-            pass
-        links.new(nm_in, nm_node.inputs["Color"])
-        links.new(nm_node.outputs["Normal"], principled.inputs["Normal"])
-        if normal_type != "nom":
-            links.new(normal_node.outputs["Alpha"], principled.inputs["Metallic"])
+        n_fpath = ""
+        for _p, (fp, im) in tex_lookup.items():
+            if im is normal_img:
+                n_fpath = fp
+                break
+        if not n_fpath:
+            n_fpath = f"t_{normal_type}"
+        pack = wire_packed_normal_channels(
+            nodes, links, normal_node, (COL_UTIL, Y_N),
+            kind=normal_type.upper(), param_name=normal_type.upper(), filepath=n_fpath,
+            label_prefix=normal_type.upper(),
+        )
+        nm_out = _wire_normal_map(
+            nodes, links, pack["normal_color"], (COL_MIX, Y_N),
+            label=f"{normal_type.upper()} Normal",
+        )
+        links.new(nm_out, principled.inputs["Normal"])
+        # NOM/NEM/NAM have custom Blue/Alpha mixes below — don't pre-bind Metallic.
+        if normal_type not in ("nom", "nem", "nam"):
+            if pack.get("metallic") is not None:
+                links.new(pack["metallic"], principled.inputs["Metallic"])
+            else:
+                links.new(normal_node.outputs["Alpha"], principled.inputs["Metallic"])
 
         if normal_type in ("nom", "nem", "nam"):
-            sep_node = nodes.new("ShaderNodeSeparateColor")
-            sep_node.location = (COL_UTIL, Y_N - 280)
-            links.new(normal_node.outputs["Color"], sep_node.inputs["Color"])
+            sep_node = pack.get("sep")
+            if sep_node is None:
+                sep_node = nodes.new("ShaderNodeSeparateColor")
+                sep_node.location = (COL_UTIL, Y_N - 280)
+                links.new(normal_node.outputs["Color"], sep_node.inputs["Color"])
             if normal_type == "nom":
                 mul_node = nodes.new("ShaderNodeMix")
                 mul_node.data_type = 'RGBA'
@@ -5020,7 +5027,8 @@ _PROPTRIM_UV_SETUP_V = "v2"
 _TRIM_SETUP_V = "v3"
 # Environment layered walls: PaintColor/PaintBreakup + Blend Mask Range scalars.
 # v4: per-MI paint / leak blend ranges (white walls, Dam leaks, roof breakup).
-_ENV_SETUP_V = "v4"
+# v5: per-pack normal decode (NOH/NAO/NOM/NMX/NXX/…) — RG→Normal, route B/A by kind.
+_ENV_SETUP_V = "v5"
 # Water graph: Water↔Shore + ridged world noise bump + proximity/AO shore factor.
 _WATER_SETUP_V = "v3_shore_prox"
 _WATER_SHORE_ATTR = "arc_shore_proximity"
@@ -5572,37 +5580,14 @@ def _trim_wants_world_uv(mi: dict) -> bool:
 
 
 def _needs_env_setup_rebuild(mat, mi_path: str = "") -> bool:
-    """Rebuild env walls missing paint / Blend Mask Range / setup stamp (v4)."""
+    """Rebuild env/metal/road graphs missing current setup stamp (v5 packed normals)."""
     if not mi_path or not os.path.isfile(mi_path):
         return False
     fam = str(mat.get("arc_mi_family") or "")
     if fam and fam not in (FAMILY_ENVIRONMENT, FAMILY_METAL, FAMILY_ROAD):
         return False
-    if str(mat.get("arc_env_setup") or "") == _ENV_SETUP_V:
-        return False
-    try:
-        mi = _parse_flat_mi_json(mi_path)
-    except Exception:
-        return False
-    # Only force when this MI actually uses paint / dual-blend features v4 adds.
-    colours = mi.get("colours") or []
-    colour_names = {str(n).lower() for n, _v in colours}
-    scalars = mi.get("scalars") or {}
-    params = _mi_tex_params(mi)
-    has_paint = bool(colour_names & {"paintcolor1", "paintcolor2", "paint color 1", "paint color 2"})
-    has_paint_amt = any(
-        k in scalars for k in ("ColorOverlayAmount", "BreakupOverlayAmount", "PaintRoughness")
-    )
-    has_blend_range = any(
-        k in scalars
-        for k in (
-            "Blend Mask Range Low", "Blend Mask Range High",
-            "Blend Mask Range Min", "Blend Mask Range Max",
-        )
-    )
-    has_paint_mask = "PaintBreakup" in params
-    has_dual = bool({"CR Blend", "NOH Blend", "Breakup_Material_CR", "Breakup_Material_NOH"} & params)
-    return bool(has_paint or has_paint_amt or has_blend_range or has_paint_mask or has_dual)
+    # v5: every env/metal/road with a stale stamp gets per-pack RG normal decode.
+    return str(mat.get("arc_env_setup") or "") != _ENV_SETUP_V
 
 
 def _needs_trim_setup_rebuild(mat, mi_path: str = "") -> bool:
@@ -6144,14 +6129,205 @@ def _wire_normal_map(nodes, links, color_sock, loc, strength: float = 1.0, label
     return nm.outputs["Normal"]
 
 
-def _noh_ao_from_tex(nodes, links, noh_node, loc):
-    """NOH packing: RGB=Normal(+Occlusion in B). Return (normal_color_sock, ao_value_sock)."""
+# ---------------------------------------------------------------------------
+# Packed normal decode (Arc env / metal / weapon trim sheets)
+#
+# Arc stores tangent normals in **RG** (UE BC5 / "Normal + packed" convention).
+# Blue and Alpha are NOT Z — they hold occlusion / height / metallic / opacity
+# depending on the asset suffix. Feeding full RGB into Normal Map was wrong for
+# NOH/NAO/NOM (B = AO leaked into Z). Clothing ColorMask / TextureArray path is
+# untouched (Arc Texturer).
+#
+# | Kind   | R G     | B            | A            | Principled extras      |
+# |--------|---------|--------------|--------------|------------------------|
+# | NOH    | Normal  | Occlusion    | Height       | B → AO × albedo        |
+# | NAO    | Normal  | AO           | Opacity      | B → AO; A → Alpha CLIP |
+# | NAOH   | Normal  | AO           | Height       | B → AO (detail)        |
+# | NOM    | Normal  | Occlusion    | Metallic     | B → AO; A → Metallic   |
+# | NXM/NMX| Normal  | (unused)     | Metallic     | A → Metallic           |
+# | NXX/NX | Normal  | (unused/Z)   | (unused)     | normal only            |
+# | NR     | Normal  | Roughness    | (opt)        | B → Roughness          |
+# | NRH    | Normal  | Roughness    | Height       | B → Roughness          |
+# | NHM    | Normal  | Height       | Metallic     | A → Metallic           |
+# | NAM    | Normal  | Mask/Alpha   | Metallic     | A → Metallic           |
+# | NHA    | Normal  | Height       | Alpha        | A → Alpha (masked)     |
+# | NOA    | Normal  | Occlusion    | Alpha        | B → AO; A → Alpha      |
+# | NAA    | Normal  | AO           | Alpha        | B → AO; A → Alpha      |
+# | N / RGB| Normal  | Normal Z     | —            | full RGB (no repack)   |
+# ---------------------------------------------------------------------------
+
+# Longest-first stem suffixes → pack kind.
+_PACKED_NORMAL_STEM_SUFFIXES = (
+    ("_naoh", "NAOH"),
+    ("_nao", "NAO"),
+    ("_noh", "NOH"),
+    ("_nom", "NOM"),
+    ("_nxm", "NXM"),
+    ("_nmx", "NMX"),
+    ("_nxx", "NXX"),
+    ("_nhm", "NHM"),
+    ("_nam", "NAM"),
+    ("_nha", "NHA"),
+    ("_noa", "NOA"),
+    ("_naa", "NAA"),
+    ("_nrh", "NRH"),
+    ("_ncr", "NCR"),
+    ("_ntr", "NTR"),
+    ("_ntx", "NTX"),
+    ("_nmd", "NMD"),
+    ("_nr", "NR"),
+    ("_nh", "NH"),
+    ("_nx", "NX"),
+    ("_n", "N"),
+)
+
+# Packs whose Blue channel is AO / occlusion (multiply onto albedo).
+_PACK_AO_IN_BLUE = frozenset({"NOH", "NAO", "NAOH", "NOM", "NOA", "NAA"})
+# Packs whose Alpha is metallic.
+_PACK_METAL_IN_ALPHA = frozenset({"NOM", "NXM", "NMX", "NHM", "NAM"})
+# Packs whose Blue is roughness (when CR alpha absent).
+_PACK_ROUGH_IN_BLUE = frozenset({"NR", "NRH"})
+# Packs whose Alpha is opacity / mask (env trim CLIP when UseAlpha).
+_PACK_OPACITY_IN_ALPHA = frozenset({"NAO", "NHA", "NOA", "NAA", "NAM"})
+# Packs whose Alpha is height (unused on Principled preview; kept for inspect).
+_PACK_HEIGHT_IN_ALPHA = frozenset({"NOH", "NAOH", "NRH"})
+# Full RGB tangent normal (no RG rebuild) — plain N / foliage NTR / NTX / NCR.
+_PACK_FULL_RGB_NORMAL = frozenset({"N", "NTR", "NTX", "NCR", "NMD", "NH"})
+
+
+def detect_packed_normal_kind(param_name: str = "", filepath_or_stem: str = "") -> str:
+    """Infer packed-normal kind from MI param name and/or texture asset stem.
+
+    Prefers filename suffix (``T_Foo_NOH`` → NOH) over ambiguous param labels
+    like ``Normal`` / ``PM_Normals`` / ``NXX/NMX Texture``.
+    """
+    stem = os.path.splitext(os.path.basename(filepath_or_stem or ""))[0].lower()
+    for suf, kind in _PACKED_NORMAL_STEM_SUFFIXES:
+        if stem.endswith(suf):
+            return kind
+
+    pl = (param_name or "").strip().lower()
+    if not pl:
+        return "RGB"
+    # Exact / known MI parameter labels (before generic "normal").
+    param_map = {
+        "nao": "NAO",
+        "decaltrimsheet": "NAO",
+        "noh": "NOH",
+        "nom": "NOM",
+        "nxm": "NXM",
+        "nmx": "NMX",
+        "nxx": "NXX",
+        "holesnxx": "NXX",
+        "nxx/nmx texture": "NMX",  # metal trim sheet; stem usually settles NXX vs NMX
+        "normalroughness": "NR",
+        "normalroughnessheight": "NRH",
+        "1. nr": "NR",
+        "nr": "NR",
+        "nh": "NH",
+        "1. ntr": "NTR",
+        "ntr": "NTR",
+    }
+    if pl in param_map:
+        return param_map[pl]
+    if "nxx/nmx" in pl or pl.endswith(" nmx") or "nmx" in pl:
+        return "NMX"
+    if "nxm" in pl:
+        return "NXM"
+    if pl.endswith(" nao") or pl.startswith("nao"):
+        return "NAO"
+    if "material noh" in pl or pl.endswith(" noh") or pl.startswith("noh"):
+        return "NOH"
+    if pl in ("normal", "normals", "normalmap", "pm_normals", "normal base", "normal top"):
+        return "RGB"
+    if "normal" in pl:
+        return "RGB"
+    return "RGB"
+
+
+def _rebuild_rg_normal_color(nodes, links, sep_node, loc, label: str = "Normal RG + Z=1"):
+    """RG tangent → CombineColor(R, G, Z=1) for DirectX Normal Map input."""
+    combine = nodes.new("ShaderNodeCombineColor")
+    combine.label = label
+    combine.location = loc
+    links.new(sep_node.outputs["Red"], combine.inputs["Red"])
+    links.new(sep_node.outputs["Green"], combine.inputs["Green"])
+    combine.inputs["Blue"].default_value = 1.0
+    return combine.outputs["Color"]
+
+
+def wire_packed_normal_channels(
+    nodes,
+    links,
+    tex_node,
+    loc,
+    *,
+    kind: str = "",
+    param_name: str = "",
+    filepath: str = "",
+    label_prefix: str = "",
+):
+    """Separate a packed normal tex and route channels by pack kind.
+
+    Returns dict:
+      kind, normal_color (Color sock for Normal Map),
+      ao, metallic, roughness, opacity, height (Value socks or None).
+    """
+    detected = (kind or "").strip().upper() or detect_packed_normal_kind(param_name, filepath)
+    if detected == "RGB" and filepath:
+        # Stem may still carry a pack suffix when param was generic "Normal".
+        detected = detect_packed_normal_kind("", filepath)
+
     sep = nodes.new("ShaderNodeSeparateColor")
-    sep.label = "NOH Channels"
+    prefix = (label_prefix or detected or "Pack").strip()
+    sep.label = f"{prefix} Channels"
     sep.location = loc
-    links.new(noh_node.outputs["Color"], sep.inputs["Color"])
-    # Rebuild RGB for Normal Map; Blue still carries occlusion for albedo darkening.
-    return noh_node.outputs["Color"], sep.outputs["Blue"]
+    links.new(tex_node.outputs["Color"], sep.inputs["Color"])
+
+    use_rg = detected not in _PACK_FULL_RGB_NORMAL and detected != "RGB"
+    if use_rg:
+        normal_color = _rebuild_rg_normal_color(
+            nodes, links, sep, (loc[0] + 220, loc[1] + 40),
+            label=f"{prefix} RG + Z=1",
+        )
+    else:
+        # Plain RGB / foliage NTR — keep authored XYZ (or BC5-expanded PNG).
+        normal_color = tex_node.outputs["Color"]
+
+    ao = sep.outputs["Blue"] if detected in _PACK_AO_IN_BLUE else None
+    metallic = tex_node.outputs["Alpha"] if detected in _PACK_METAL_IN_ALPHA else None
+    roughness = sep.outputs["Blue"] if detected in _PACK_ROUGH_IN_BLUE else None
+    opacity = tex_node.outputs["Alpha"] if detected in _PACK_OPACITY_IN_ALPHA else None
+    height = None
+    if detected in _PACK_HEIGHT_IN_ALPHA:
+        height = tex_node.outputs["Alpha"]
+    elif detected in ("NHM", "NHA", "NH"):
+        height = sep.outputs["Blue"]
+
+    # Pure NXX / NX: never treat alpha as metal (PropTrim painted sheets).
+    if detected in ("NXX", "NX"):
+        metallic = None
+        ao = None
+        opacity = None
+
+    return {
+        "kind": detected,
+        "normal_color": normal_color,
+        "ao": ao,
+        "metallic": metallic,
+        "roughness": roughness,
+        "opacity": opacity,
+        "height": height,
+        "sep": sep,
+    }
+
+
+def _noh_ao_from_tex(nodes, links, noh_node, loc, *, param_name: str = "", filepath: str = ""):
+    """Back-compat wrapper: packed decode → (normal_color_sock, ao_value_sock|None)."""
+    packed = wire_packed_normal_channels(
+        nodes, links, noh_node, loc, param_name=param_name, filepath=filepath,
+    )
+    return packed["normal_color"], packed["ao"]
 
 
 def _mix_float(nodes, links, a, b, fac, loc, label: str):
@@ -6449,9 +6625,13 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             )
 
     noh1_node = None
+    pack1 = None
     if noh1_img:
+        noh1_fpath = next((fp for _p, (fp, im) in tex_lookup.items() if im == noh1_img), "")
+        noh1_param = next((p for p, (_fp, im) in tex_lookup.items() if im == noh1_img), "")
+        pack_kind_hint = detect_packed_normal_kind(noh1_param, noh1_fpath)
         noh1_node = _new_tex_image(
-            nodes, noh1_img, "NOH / Normal L1", (COL_TEX, y_n), non_color=True,
+            nodes, noh1_img, f"{pack_kind_hint} / Normal L1", (COL_TEX, y_n), non_color=True,
         )
         _bind_tex_vec(noh1_node, y_n)
         n_str = _mi_scalar(
@@ -6460,35 +6640,27 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         )
         # UE often authors strengths > 1; Principled Normal Map Strength stays usable ≤ 2
         n_str = min(max(n_str, 0.0), 2.5)
-        n_color, ao_from_noh = _noh_ao_from_tex(
+        pack1 = wire_packed_normal_channels(
             nodes, links, noh1_node, (COL_UTIL, y_n),
+            kind=pack_kind_hint, param_name=noh1_param, filepath=noh1_fpath,
+            label_prefix=pack_kind_hint,
         )
         normal_sock = _wire_normal_map(
-            nodes, links, n_color, (COL_MIX - 200, y_n), strength=n_str, label="Base Normal",
+            nodes, links, pack1["normal_color"], (COL_MIX - 200, y_n),
+            strength=n_str, label=f"Base Normal ({pack1['kind']})",
         )
-        ao_sock = ao_from_noh
-        # NXX/NMX / NOM alpha → Metallic when present on the packed normal
-        stem = os.path.splitext(os.path.basename(
-            next((fp for _p, (fp, im) in tex_lookup.items() if im == noh1_img), "")
-        ))[0].lower()
-        param_hit = next((p for p, (_fp, im) in tex_lookup.items() if im == noh1_img), "")
-        param_l = (param_hit or "").lower()
-        is_metallic_pack = (
-            any(stem.endswith(s) for s in ("_nxm", "_nmx", "_nom", "_nhm"))
-            or "nmx" in param_l
-            or "nxm" in param_l
-            or param_l == "nom"
-            or "nxx/nmx" in param_l
-        )
-        is_pure_nxx = (
-            stem.endswith("_nxx")
-            or stem.endswith("_nx")
-            or param_l in ("nxx", "holesnxx")
-        )
-        if is_metallic_pack and not is_pure_nxx:
-            links.new(noh1_node.outputs["Alpha"], principled.inputs["Metallic"])
+        ao_sock = pack1.get("ao")
+        if pack1.get("metallic") is not None:
+            links.new(pack1["metallic"], principled.inputs["Metallic"])
         elif fam == FAMILY_METAL:
             principled.inputs["Metallic"].default_value = 0.8
+        # NR / NRH: Blue → Roughness when CR did not already supply it
+        if pack1.get("roughness") is not None and rough_sock is None:
+            rough_sock = pack1["roughness"]
+        try:
+            mat["arc_normal_pack"] = pack1["kind"]
+        except Exception:
+            pass
 
     # ── Layer-2 blend (concrete / brick / stucco dual materials) ────────────
     use_breakup = _mi_switch(
@@ -6552,14 +6724,23 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             )
 
     if has_layer2 and noh2_img and normal_sock is not None and blend_fac is not None:
+        noh2_fpath = next((fp for _p, (fp, im) in tex_lookup.items() if im == noh2_img), "")
+        noh2_param = next((p for p, (_fp, im) in tex_lookup.items() if im == noh2_img), "")
+        pack2_kind = detect_packed_normal_kind(noh2_param, noh2_fpath)
         noh2_node = _new_tex_image(
-            nodes, noh2_img, "NOH / Normal L2", (COL_TEX - 500, y_n - 320), non_color=True,
+            nodes, noh2_img, f"{pack2_kind} / Normal L2", (COL_TEX - 500, y_n - 320),
+            non_color=True,
         )
         _bind_tex_vec(noh2_node, y_n - 320)
         blend_n_str = _mi_scalar(scalars, "Blend Normal Strength", default=1.0)
         blend_n_str = min(max(blend_n_str, 0.0), 2.5)
+        pack2 = wire_packed_normal_channels(
+            nodes, links, noh2_node, (COL_UTIL - 200, y_n - 320),
+            kind=pack2_kind, param_name=noh2_param, filepath=noh2_fpath,
+            label_prefix=f"L2 {pack2_kind}",
+        )
         n2 = _wire_normal_map(
-            nodes, links, noh2_node.outputs["Color"],
+            nodes, links, pack2["normal_color"],
             (COL_MIX - 200, y_n - 280), strength=blend_n_str, label="Layer2 Normal",
         )
         # Fac: how much layer2 replaces layer1
@@ -6570,6 +6751,15 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             nodes, links, normal_sock, n2, fac,
             (COL_MIX + 80, y_n - 100), "Layer1↔2 Normal",
         )
+        # Layer-2 AO soft-mix into base AO when both present
+        if pack2.get("ao") is not None:
+            if ao_sock is not None:
+                ao_sock = _mix_float(
+                    nodes, links, ao_sock, pack2["ao"], fac,
+                    (COL_MIX + 80, y_n - 220), "Layer1↔2 AO",
+                )
+            else:
+                ao_sock = pack2["ao"]
 
     # ── Overlay color variation (concrete ColorVar / rust overlays) ────────
     use_overlay = _mi_switch(
@@ -6743,8 +6933,11 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         default=0.5,
     )
     if detail_img and use_detail is not False and det_str > 0.001 and normal_sock is not None:
+        det_fpath = next((fp for _p, (fp, im) in tex_lookup.items() if im == detail_img), "")
+        det_param = next((p for p, (_fp, im) in tex_lookup.items() if im == detail_img), "")
+        det_kind = detect_packed_normal_kind(det_param, det_fpath)
         det_node = _new_tex_image(
-            nodes, detail_img, "Detail Normal", (COL_TEX, y_det), non_color=True,
+            nodes, detail_img, f"Detail ({det_kind})", (COL_TEX, y_det), non_color=True,
         )
         det_tile = _mi_scalar(
             scalars,
@@ -6753,9 +6946,13 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             default=4.0,
         )
         _bind_tex_vec(det_node, y_det, tiling=det_tile)
-        # NCR detail packs may carry albedo in RGB — still treat as normal for strength path
+        det_pack = wire_packed_normal_channels(
+            nodes, links, det_node, (COL_UTIL, y_det),
+            kind=det_kind, param_name=det_param, filepath=det_fpath,
+            label_prefix=f"Detail {det_kind}",
+        )
         det_n = _wire_normal_map(
-            nodes, links, det_node.outputs["Color"],
+            nodes, links, det_pack["normal_color"],
             (COL_MIX - 200, y_det), strength=1.0, label="Detail Normal Map",
         )
         fac = min(max(det_str if det_str <= 1.0 else det_str / 2.0, 0.0), 1.0)
@@ -6874,16 +7071,21 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     if is_trim and use_alpha_mask is not False and (
         _is_masked_blend(mi) or use_alpha_mask
     ):
-        _, nao_img = _find_env_tex(tex_lookup, "NAO", "NA", "nao", "Trim sheet")
         nao_alpha_sock = None
-        if nao_img is not None and noh1_node is not None and noh1_img is nao_img:
-            nao_alpha_sock = noh1_node.outputs["Alpha"]
-        elif nao_img is not None:
-            nao_clip = _new_tex_image(
-                nodes, nao_img, "NAO Opacity", (COL_TEX - 500, y_extra - 100), non_color=True,
-            )
-            _bind_tex_vec(nao_clip, y_extra - 100)
-            nao_alpha_sock = nao_clip.outputs["Alpha"]
+        # Prefer opacity from the already-wired base pack (NAO / NOA / NAA / …).
+        if pack1 is not None and pack1.get("opacity") is not None:
+            nao_alpha_sock = pack1["opacity"]
+        else:
+            _, nao_img = _find_env_tex(tex_lookup, "NAO", "NA", "nao", "Trim sheet")
+            if nao_img is not None and noh1_node is not None and noh1_img is nao_img:
+                nao_alpha_sock = noh1_node.outputs["Alpha"]
+            elif nao_img is not None:
+                nao_clip = _new_tex_image(
+                    nodes, nao_img, "NAO Opacity", (COL_TEX - 500, y_extra - 100),
+                    non_color=True,
+                )
+                _bind_tex_vec(nao_clip, y_extra - 100)
+                nao_alpha_sock = nao_clip.outputs["Alpha"]
         if nao_alpha_sock is not None:
             links.new(nao_alpha_sock, principled.inputs["Alpha"])
             _set_material_alpha_mode(
@@ -9813,19 +10015,49 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
         log.warning("Simple MI '%s' has no resolvable albedo texture", os.path.basename(mi_path))
 
     if normal_img:
+        n_fpath = next((fp for _p, (fp, im) in tex_lookup.items() if im == normal_img), "")
+        n_param = next((p for p, (_fp, im) in tex_lookup.items() if im == normal_img), "")
+        n_kind = detect_packed_normal_kind(n_param, n_fpath)
         n_node = _new_tex_image(
-            nodes, normal_img, "Normal", (COL_TEX, -50), non_color=True,
+            nodes, normal_img, f"Normal ({n_kind})", (COL_TEX, -50), non_color=True,
         )
         n_str = min(max(_mi_scalar(scalars, "Normal Strength", default=1.0), 0.0), 2.5)
+        pack = wire_packed_normal_channels(
+            nodes, links, n_node, (COL_MIX - 280, -50),
+            kind=n_kind, param_name=n_param, filepath=n_fpath, label_prefix=n_kind,
+        )
         n_sock = _wire_normal_map(
-            nodes, links, n_node.outputs["Color"], (COL_MIX, -50), strength=n_str,
+            nodes, links, pack["normal_color"], (COL_MIX, -50), strength=n_str,
+            label=f"Normal Map ({pack['kind']})",
         )
         links.new(n_sock, principled.inputs["Normal"])
-        stem = os.path.splitext(os.path.basename(
-            next((fp for _p, (fp, im) in tex_lookup.items() if im == normal_img), "")
-        ))[0].lower()
-        if any(stem.endswith(s) for s in ("_nxm", "_nmx", "_nom")):
-            links.new(n_node.outputs["Alpha"], principled.inputs["Metallic"])
+        if pack.get("metallic") is not None:
+            links.new(pack["metallic"], principled.inputs["Metallic"])
+        if pack.get("roughness") is not None and not principled.inputs["Roughness"].links:
+            links.new(pack["roughness"], principled.inputs["Roughness"])
+        if pack.get("ao") is not None and principled.inputs["Base Color"].links:
+            # Soft AO multiply when simple MI has no separate Prop AO
+            ao_mul = nodes.new("ShaderNodeMix")
+            ao_mul.data_type = "RGBA"
+            ao_mul.blend_type = "MULTIPLY"
+            ao_mul.label = f"{pack['kind']} AO → Albedo"
+            ao_mul.location = (COL_MIX + 200, 200)
+            ao_mul.inputs["Factor"].default_value = 0.65
+            # Re-wire: take existing Base Color link source
+            base_from = principled.inputs["Base Color"].links[0].from_socket
+            links.remove(principled.inputs["Base Color"].links[0])
+            ao_rgb = nodes.new("ShaderNodeCombineColor")
+            ao_rgb.location = (COL_MIX + 40, 80)
+            links.new(pack["ao"], ao_rgb.inputs["Red"])
+            links.new(pack["ao"], ao_rgb.inputs["Green"])
+            links.new(pack["ao"], ao_rgb.inputs["Blue"])
+            links.new(base_from, ao_mul.inputs[6])
+            links.new(ao_rgb.outputs["Color"], ao_mul.inputs[7])
+            links.new(ao_mul.outputs[2], principled.inputs["Base Color"])
+        try:
+            mat["arc_normal_pack"] = pack["kind"]
+        except Exception:
+            pass
 
     if rm_img is not None:
         # Hero RoughnessMetal: R → Roughness, G → Metallic (name order; channel stats agree).

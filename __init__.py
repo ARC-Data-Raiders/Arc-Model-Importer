@@ -6,7 +6,8 @@ Import Arc Raiders models by selecting an outfit folder.
 bl_info = {
     "name": "Arc Raiders Model Importer",
     "author": "Silarious (Ai Vibe Code)/ Naryun & Zebulon Core Functions",
-    "version": (2, 18, 29),    "blender": (5, 1, 0),
+    "version": (2, 18, 30),
+    "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Arc Raiders",
     "description": "Import Arc Raiders models by selecting an outfit folder.",
     "category": "Import-Export",
