@@ -131,21 +131,33 @@ def import_psk_with_materials(
 
 
 def assign_cached_materials(obj, materials: list) -> bool:
-    """Assign previously built Material datablocks to obj (reuse, no rebuild)."""
+    """Assign previously built Material datablocks to obj (reuse, no rebuild).
+
+    Preserves per-slot index alignment — never drop ``None`` holes or collapse
+    multi-slot walls onto fewer datablocks (trim/leaks/white/roof must stay
+    independent slots).
+    """
     if not obj or obj.type != "MESH" or not materials:
         return False
     try:
-        obj.data.materials.clear()
-        for mat in materials:
-            if mat is not None:
-                obj.data.materials.append(mat)
+        mesh = obj.data
+        # Grow / shrink mesh material slots to match cached length (index-aligned).
+        while len(mesh.materials) < len(materials):
+            mesh.materials.append(None)
+        while len(mesh.materials) > len(materials):
+            mesh.materials.pop()
+        for i, mat in enumerate(materials):
+            mesh.materials[i] = mat
         return True
     except Exception:
         return False
 
 
 def snapshot_object_materials(obj) -> list:
-    """Return Material datablocks currently on a mesh (for cache reuse)."""
+    """Return Material datablocks currently on a mesh (for cache reuse).
+
+    Keeps ``None`` entries so multi-slot index alignment survives caching.
+    """
     if not obj or obj.type != "MESH":
         return []
     return [slot.material for slot in obj.material_slots]

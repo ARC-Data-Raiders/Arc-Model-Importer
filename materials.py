@@ -290,6 +290,7 @@ def _get_or_build_shared_mi_material(
         return None
     key = _norm_path_key(mi_path)
     stem = (mi_stem or os.path.splitext(os.path.basename(mi_path))[0] or "MI").strip()
+    stem = _normalize_mi_lookup_stem(stem) or stem
     slot_l = (slot_lower or stem).lower()
 
     def _expected_family() -> str:
@@ -312,6 +313,7 @@ def _get_or_build_shared_mi_material(
             _stale_decal_misclass(mat)
             or _needs_map_decal_mask_rebuild(mat, mi_path)
             or _needs_trim_setup_rebuild(mat, mi_path)
+            or _needs_env_setup_rebuild(mat, mi_path)
             or _needs_proptrim_or_glass_rebuild(mat, mi_path, stem)
             or _needs_water_setup_rebuild(mat, mi_path)
         )
@@ -3679,12 +3681,15 @@ def _match_material_slot(
             if i in used_indices or not s.material:
                 continue
             sn = s.material.name.lower()
-            sn0 = sn.split(".")[0]
+            sn0 = _normalize_mi_lookup_stem(s.material.name).lower()
             # Strip Stage 2 force_rebuild suffixes for matching
-            sn0 = re.sub(r"(_force_rebuild)+$", "", sn0)
+            if not sn0:
+                sn0 = re.sub(r"(_force_rebuild)+$", "", sn.split(".")[0])
             arc_stem = ""
             try:
-                arc_stem = str(s.material.get("arc_mi_stem") or "").strip().lower()
+                arc_stem = _normalize_mi_lookup_stem(
+                    str(s.material.get("arc_mi_stem") or "")
+                ).lower()
             except Exception:
                 arc_stem = ""
             for want in wants:
@@ -5013,6 +5018,9 @@ _PROPTRIM_UV_SETUP_V = "v2"
 # ArchitecturePreset_Trim: world-UV + NAO CLIP + UV Offset Amount / Color Multiply.
 # v3: TrimInterior/EdgeTrim_*Decal* no longer misrouted through map-decal family.
 _TRIM_SETUP_V = "v3"
+# Environment layered walls: PaintColor/PaintBreakup + Blend Mask Range scalars.
+# v4: per-MI paint / leak blend ranges (white walls, Dam leaks, roof breakup).
+_ENV_SETUP_V = "v4"
 # Water graph: Water↔Shore + ridged world noise bump + proximity/AO shore factor.
 _WATER_SETUP_V = "v3_shore_prox"
 _WATER_SHORE_ATTR = "arc_shore_proximity"
@@ -5561,6 +5569,40 @@ def _trim_wants_world_uv(mi: dict) -> bool:
         return True
     # Compact dumps omit parent + UV Mode — default world for confirmed trim sheets.
     return True
+
+
+def _needs_env_setup_rebuild(mat, mi_path: str = "") -> bool:
+    """Rebuild env walls missing paint / Blend Mask Range / setup stamp (v4)."""
+    if not mi_path or not os.path.isfile(mi_path):
+        return False
+    fam = str(mat.get("arc_mi_family") or "")
+    if fam and fam not in (FAMILY_ENVIRONMENT, FAMILY_METAL, FAMILY_ROAD):
+        return False
+    if str(mat.get("arc_env_setup") or "") == _ENV_SETUP_V:
+        return False
+    try:
+        mi = _parse_flat_mi_json(mi_path)
+    except Exception:
+        return False
+    # Only force when this MI actually uses paint / dual-blend features v4 adds.
+    colours = mi.get("colours") or []
+    colour_names = {str(n).lower() for n, _v in colours}
+    scalars = mi.get("scalars") or {}
+    params = _mi_tex_params(mi)
+    has_paint = bool(colour_names & {"paintcolor1", "paintcolor2", "paint color 1", "paint color 2"})
+    has_paint_amt = any(
+        k in scalars for k in ("ColorOverlayAmount", "BreakupOverlayAmount", "PaintRoughness")
+    )
+    has_blend_range = any(
+        k in scalars
+        for k in (
+            "Blend Mask Range Low", "Blend Mask Range High",
+            "Blend Mask Range Min", "Blend Mask Range Max",
+        )
+    )
+    has_paint_mask = "PaintBreakup" in params
+    has_dual = bool({"CR Blend", "NOH Blend", "Breakup_Material_CR", "Breakup_Material_NOH"} & params)
+    return bool(has_paint or has_paint_amt or has_blend_range or has_paint_mask or has_dual)
 
 
 def _needs_trim_setup_rebuild(mat, mi_path: str = "") -> bool:
@@ -6476,11 +6518,13 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         lo = _mi_scalar(
             scalars,
             "3. Blend Mask Low", "Breakup MaskRange_Low", "Blending_RangeLow",
-            "Blend Bias", default=0.35,
+            "Blend Mask Range Low", "Blend Mask Range Min", "Blend Bias",
+            default=0.35,
         )
         hi = _mi_scalar(
             scalars,
             "3. Blend Mask High", "Breakup MaskRange_High", "Blending_RangeHigh",
+            "Blend Mask Range High", "Blend Mask Range Max",
             default=0.65,
         )
         # Blend Bias on VT materials is often negative; remap softly
@@ -6577,6 +6621,75 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
                 nodes, links, rough_sock, ov_node.outputs["Alpha"],
                 min(ov_rough if ov_rough <= 1.0 else 0.35, 1.0),
                 (COL_MIX + 160, y_ov - 80), "Overlay → Rough",
+            )
+
+    # ── Paint / white-wall color overlay (PaintBreakup + PaintColor1/2) ─────
+    # Rsr / Interior white walls author PaintColor vectors + PaintBreakup mask
+    # (or ColorOverlayAmount alone). Without this, every wall slot looks like
+    # the same bare CR concrete.
+    paint1 = _mi_colour(colours, "PaintColor1", "Paint Color 1", "PaintColour1")
+    paint2 = _mi_colour(colours, "PaintColor2", "Paint Color 2", "PaintColour2")
+    paint_amt = _mi_scalar(
+        scalars,
+        "ColorOverlayAmount", "BreakupOverlayAmount", "Paint Amount",
+        default=0.0,
+    )
+    if paint_amt <= 0.0 and (paint1 or paint2):
+        # Compact dumps sometimes omit amount; still apply a soft paint wash.
+        paint_amt = 0.55 if paint1 else 0.0
+    if albedo_sock is not None and paint_amt > 0.001 and (paint1 or paint2):
+        paint_rgb = paint1 or paint2
+        paint_node = nodes.new("ShaderNodeRGB")
+        paint_node.label = "PaintColor1" if paint1 else "PaintColor2"
+        paint_node.outputs[0].default_value = paint_rgb
+        paint_node.location = (COL_MIX - 80, y_ov - 320)
+        paint_fac = min(max(float(paint_amt), 0.0), 1.0)
+        # Prefer PaintBreakup (or any blend mask) as factor when present.
+        paint_mask_fac = None
+        if mask_img is not None:
+            pmask = _new_tex_image(
+                nodes, mask_img, "PaintBreakup", (COL_TEX, y_ov - 320), non_color=True,
+            )
+            pmask_tile = _mi_scalar(
+                scalars, "UVTilingPaint", "BreakupMaskTiling", "Breakup Tiling",
+                default=1.0,
+            )
+            if pmask_tile > 64.0:
+                pmask_tile = 4.0
+            _bind_tex_vec(pmask, y_ov - 320, tiling=pmask_tile)
+            raw_p = _mask_channel_value(nodes, links, pmask, (COL_UTIL, y_ov - 320))
+            paint_mask_fac = _contrast_mask(
+                nodes, links, raw_p, 0.25, 0.75,
+                (COL_UTIL + 220, y_ov - 320), "Paint Contrast",
+            )
+        if paint_mask_fac is not None:
+            # Scale mask by authored amount
+            scaled = nodes.new("ShaderNodeMath")
+            scaled.operation = "MULTIPLY"
+            scaled.label = "Paint Amount × Mask"
+            scaled.location = (COL_MIX - 80, y_ov - 420)
+            scaled.inputs[1].default_value = paint_fac
+            links.new(paint_mask_fac, scaled.inputs[0])
+            paint_fac_sock = scaled.outputs[0]
+            albedo_sock = _mix_rgba(
+                nodes, links, albedo_sock, paint_node.outputs[0], paint_fac_sock,
+                (COL_MIX + 160, y_ov - 320), "Paint over Albedo",
+            )
+        else:
+            albedo_sock = _mix_rgba(
+                nodes, links, albedo_sock, paint_node.outputs[0], paint_fac,
+                (COL_MIX + 160, y_ov - 320), "Paint over Albedo",
+            )
+        if paint1 and paint2 and paint_mask_fac is not None:
+            # Optional second paint color on inverted mask midtones
+            paint2_node = nodes.new("ShaderNodeRGB")
+            paint2_node.label = "PaintColor2"
+            paint2_node.outputs[0].default_value = paint2
+            paint2_node.location = (COL_MIX - 80, y_ov - 520)
+            albedo_sock = _mix_rgba(
+                nodes, links, albedo_sock, paint2_node.outputs[0],
+                min(paint_fac * 0.35, 1.0),
+                (COL_MIX + 160, y_ov - 480), "Paint2 wash",
             )
 
     # ── Optional SignTexture / road-sign decal (UV1 when authored) ─────────
@@ -6678,11 +6791,23 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     if is_trim:
         tint = _mi_colour(colours, "Color", "Tint", "BaseColor Tint", "GlobalTint", default=None)
     else:
-        tint = _mi_colour(
-            colours, "Tint", "RT Base Color", "BaseColor Tint", "GlobalTint",
-            "1. Tint", "Paint", "2. ColorTint", "3. ColorTint", "4. ColorTint",
-            default=None,
+        paint_amt_peek = _mi_scalar(
+            scalars, "ColorOverlayAmount", "BreakupOverlayAmount", default=0.0,
         )
+        if paint_amt_peek > 0.05:
+            # Painted / white walls: don't let a dull Tint flatten PaintColor / RT Base.
+            tint = _mi_colour(
+                colours,
+                "RT Base Color", "PaintColor1", "Tint", "BaseColor Tint", "GlobalTint",
+                "1. Tint", "Paint", "2. ColorTint", "3. ColorTint", "4. ColorTint",
+                default=None,
+            )
+        else:
+            tint = _mi_colour(
+                colours, "Tint", "RT Base Color", "BaseColor Tint", "GlobalTint",
+                "1. Tint", "Paint", "2. ColorTint", "3. ColorTint", "4. ColorTint",
+                default=None,
+            )
     if tint is not None and albedo_sock is not None and _mi_switch(
         switches, "Use Tint", "Enable Tinting", "Tint", default=True,
     ):
@@ -6794,6 +6919,7 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
                 pass
         if is_trim:
             mat["arc_trim_setup"] = _TRIM_SETUP_V
+        mat["arc_env_setup"] = _ENV_SETUP_V
     except Exception:
         pass
 
@@ -10209,6 +10335,29 @@ def _dispatch_weapon_slot_material(mat, mi_path: str, psk_path: str, mi_stem_low
             log.error("Simple fallback also failed for '%s': %s", mi_path, exc2)
 
 
+def _normalize_mi_lookup_stem(stem: str) -> str:
+    """Strip Blender duplicate / Stage 2 rebuild suffixes for MI JSON lookup.
+
+    ``MI_Foo.001``, ``MI_Foo_force_rebuild``, ``MI_Foo_stale_trim`` → ``MI_Foo``.
+    """
+    if not stem:
+        return ""
+    s = stem.strip()
+    s = re.sub(r"\.mat$", "", s, flags=re.IGNORECASE)
+    # Blender duplicate: .001 / .002 (before other suffix strips)
+    s = re.sub(r"\.\d{3}$", "", s)
+    s = s.split(".")[0].strip()
+    # Stage 2 / stale rename tails (may stack)
+    s = re.sub(
+        r"(_force_rebuild|_stale_decal|_stale_decal_mask|_stale_trim|"
+        r"_stale_proptrim|_stale_water|_stale_env)+$",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
+    return s.strip()
+
+
 def _mi_stem_from_blender_name(name: str) -> str:
     """Extract an MI_* stem from a Blender / BlenderUMap material name.
 
@@ -10216,19 +10365,20 @@ def _mi_stem_from_blender_name(name: str) -> str:
       MI_CatBed_01_A
       MI_CatBed_01_A.mat
       MI_CatBed_01_A.001
+      MI_CatBed_01_A_force_rebuild
     """
     if not name:
         return ""
-    stem = name.strip()
-    stem = re.sub(r"\.mat$", "", stem, flags=re.IGNORECASE)
-    stem = stem.split(".")[0].strip()
+    stem = _normalize_mi_lookup_stem(name)
     # Skip materials we already created: Obj_MI_Foo_Mat
     if stem.lower().endswith("_mat") and "_mi_" in stem.lower():
         return ""
     if stem.lower().startswith("mi_"):
         return stem
     m = re.search(r"(MI_[A-Za-z0-9_]+)", stem, flags=re.IGNORECASE)
-    return m.group(1) if m else ""
+    if not m:
+        return ""
+    return _normalize_mi_lookup_stem(m.group(1))
 
 
 def fix_object_materials_from_mi_slots(
@@ -10250,12 +10400,42 @@ def fix_object_materials_from_mi_slots(
 
     log = utils.get_logger()
     fixed = 0
-    for slot in obj.material_slots:
+    # Detect shared datablocks across slots (UEModel sometimes links every wall
+    # slot to one material). Force per-slot rebuild from each slot's MI name.
+    mat_users: dict[int, int] = {}
+    for slot in obj.material_slots or []:
+        if not slot.material:
+            continue
+        try:
+            ptr = slot.material.as_pointer()
+        except Exception:
+            continue
+        mat_users[ptr] = mat_users.get(ptr, 0) + 1
+
+    for slot_i, slot in enumerate(obj.material_slots):
         if not slot.material:
             continue
         # Already wired to a shared Arc MI — skip rebuild unless out of context
+        # or the Blender name points at a *different* MI than the stamp (shared
+        # datablock collapse / stale force_rebuild rename).
         existing_key = str(slot.material.get("arc_mi_path", "") or "")
         resolve_stem = _mi_stem_from_blender_name(slot.material.name)
+        stamped_stem = _normalize_mi_lookup_stem(
+            str(slot.material.get("arc_mi_stem") or "")
+        )
+        shared_collapsed = False
+        try:
+            shared_collapsed = mat_users.get(slot.material.as_pointer(), 0) > 1
+        except Exception:
+            shared_collapsed = False
+        name_mismatch = bool(
+            resolve_stem
+            and stamped_stem
+            and resolve_stem.lower() != stamped_stem.lower()
+        )
+        needs_name_rebuild = bool(
+            resolve_stem and (shared_collapsed or name_mismatch)
+        )
         if context == CTX_MAP and material_has_map_forbidden_content(slot.material):
             # Cosmetic MI and/or Characters TEX_IMAGE on a map prop — wipe the
             # slot datablock (do not leave belt/helmet Image Texture nodes).
@@ -10272,10 +10452,18 @@ def fix_object_materials_from_mi_slots(
             if not mi_stem:
                 continue
             # Fall through to resolve below (CTX_MAP will refuse Characters).
-        elif existing_key:
+        elif existing_key and not needs_name_rebuild:
             if path_allowed_for_context(existing_key, context):
-                fixed += 1
-                continue
+                # Stale env paint / leak blend graphs still need a rebuild.
+                if _needs_env_setup_rebuild(slot.material, existing_key):
+                    mi_stem = resolve_stem or stamped_stem
+                    if not mi_stem:
+                        fixed += 1
+                        continue
+                    # Fall through to rebuild from stem
+                else:
+                    fixed += 1
+                    continue
             # Stamped path failed context gate without TEX hits — wipe anyway.
             try:
                 log.warning(
@@ -10292,6 +10480,14 @@ def fix_object_materials_from_mi_slots(
             mi_stem = resolve_stem
             if not mi_stem:
                 continue
+            if shared_collapsed and resolve_stem:
+                try:
+                    log.info(
+                        "per-slot MI rebuild on '%s' slot %d: shared datablock → '%s'",
+                        obj.name, slot_i, resolve_stem,
+                    )
+                except Exception:
+                    pass
         if not mi_stem:
             continue
 
@@ -10444,6 +10640,10 @@ def material_slot_needs_repair(mat) -> tuple[bool, str]:
             mat, mi_path,
         ):
             return True, "stale_trim_setup"
+        if family in (FAMILY_ENVIRONMENT, FAMILY_METAL, FAMILY_ROAD) and _needs_env_setup_rebuild(
+            mat, mi_path,
+        ):
+            return True, "stale_env_setup"
         if _needs_proptrim_or_glass_rebuild(mat, mi_path, str(mat.get("arc_mi_stem") or "")):
             return True, "stale_proptrim_or_glass"
         rgb, linked = _principled_base_color_info(mat)
@@ -11381,6 +11581,7 @@ def invalidate_shared_mi_on_object(obj) -> int:
             _SHARED_MI_MATERIALS.pop(_norm_path_key(key), None)
         for stamp in (
             "arc_proptrim_uv", "arc_trim_setup", "arc_trim_world_uv",
+            "arc_env_setup", "arc_trim_alpha",
             "arc_trim_alpha", "arc_water_setup", "arc_decal_mask_setup",
         ):
             try:
@@ -11709,6 +11910,14 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
                     except Exception:
                         pass
                     # fall through to rebuild
+                elif _needs_env_setup_rebuild(cur, mi_path):
+                    _SHARED_MI_MATERIALS.pop(_norm_path_key(mi_path), None)
+                    try:
+                        base_n = _normalize_mi_lookup_stem(cur.name or "") or (cur.name or "MI")
+                        cur.name = f"{base_n}_stale_env"
+                    except Exception:
+                        pass
+                    # fall through to rebuild
                 elif _needs_proptrim_or_glass_rebuild(cur, mi_path, mi_stem):
                     _SHARED_MI_MATERIALS.pop(_norm_path_key(mi_path), None)
                     try:
@@ -11750,7 +11959,9 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
                     _SHARED_MI_MATERIALS.pop(mi_key, None)
                     if cur is not None:
                         try:
-                            base_n = re.sub(r"(_force_rebuild)+$", "", cur.name or "")
+                            base_n = _normalize_mi_lookup_stem(cur.name or "") or (
+                                re.sub(r"(_force_rebuild)+$", "", cur.name or "") or "MI"
+                            )
                             cur.name = f"{base_n}_force_rebuild"
                         except Exception:
                             pass

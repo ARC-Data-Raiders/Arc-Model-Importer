@@ -1,5 +1,5 @@
-﻿version=2.18.28
-synced=2026-08-05T20:44:18.4321148-06:00
+﻿version=2.18.29
+synced=
 source=C:\Users\Gideon\Documents\GitHub\DataRaiders-BlenderImporter
 pycache=%LOCALAPPDATA%\DataRaiders-BlenderImporter\pycache
-note=MI texture-role inventory (shared with map-importer); SignTexture never base albedo
+note=Per-slot wall MIs: strip _force_rebuild, no slot collapse, paint/leak blend (ported from map-importer)
