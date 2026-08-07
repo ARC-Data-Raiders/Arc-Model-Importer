@@ -50,6 +50,9 @@ $RootFiles = @(
     "rig.py",
     "palette_calibration.py",
     "outfit_reference.csv",
+    # Required for clothing/outfit ColorMask materials — without this, imports
+    # succeed as bare Principled stubs ("Arc Texturer unavailable").
+    "ArcTexturer.blend",
     "add-on-io-scene-psk-psa-v9_1_2.zip",
     "ADDON_SYNC.txt"
 )
