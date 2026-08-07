@@ -165,19 +165,22 @@ def ue_export_entries(data):
     return []
 
 def first_ue_export(data, type_name: str = ""):
-    """Return the first export matching Type, else first export, else {}."""
+    """Return the first export matching Type, else first export, else {}.
+
+    When *type_name* is given and no export matches, return ``{}`` — never fall
+    back to an unrelated Type (e.g. BodySetup/StaticMesh dumped beside an MI).
+    Callers that want any export should omit *type_name* or chain
+    ``first_ue_export(data, "X") or first_ue_export(data)``.
+    """
     entries = ue_export_entries(data)
     if not entries:
         return {}
     if not type_name:
         return entries[0]
-    fallback = None
     for entry in entries:
         if entry.get("Type") == type_name:
             return entry
-        if fallback is None:
-            fallback = entry
-    return fallback or {}
+    return {}
 
 # ---------------------------------------------------------------------------
 # Cache management

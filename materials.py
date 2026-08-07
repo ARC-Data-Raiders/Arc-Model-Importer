@@ -298,7 +298,7 @@ def _get_or_build_shared_mi_material(
             mi_probe = _parse_flat_mi_json(mi_path)
         except Exception:
             mi_probe = {}
-        return classify_mi_family(mi_probe, stem.lower(), slot_l)
+        return classify_mi_family(mi_probe, stem.lower(), slot_l, mi_path or "")
 
     def _stale_decal_misclass(mat) -> bool:
         """Env trim previously stamped as enemy/map decal — must rebuild."""
@@ -308,9 +308,18 @@ def _get_or_build_shared_mi_material(
         expected = _expected_family()
         return expected != FAMILY_DECAL
 
+    def _stale_clothing_misclass(mat) -> bool:
+        """Clothing ColorMask previously stolen into simple/env — must rebuild/skip."""
+        fam = str(mat.get("arc_mi_family") or "")
+        if fam == FAMILY_CLOTHING:
+            return False
+        expected = _expected_family()
+        return expected == FAMILY_CLOTHING
+
     def _stale_shared(mat) -> bool:
         return (
             _stale_decal_misclass(mat)
+            or _stale_clothing_misclass(mat)
             or _needs_map_decal_mask_rebuild(mat, mi_path)
             or _needs_trim_setup_rebuild(mat, mi_path)
             or _needs_env_setup_rebuild(mat, mi_path)
@@ -5044,6 +5053,8 @@ FAMILY_METAL = "metal"
 FAMILY_ENVIRONMENT = "environment"
 FAMILY_WEAPON = "weapon"
 FAMILY_SIMPLE = "simple"
+# Outfit / clothing ColorMask + TextureArray — Arc Texturer only (never env/simple).
+FAMILY_CLOTHING = "clothing"
 
 # World-space metres per texture tile for flat road/plane surfaces (UV-independent).
 _PLANE_ROAD_METERS_PER_TILE = 4.0
@@ -5149,7 +5160,7 @@ _WATER_EXCLUDE_NAME = (
 # decision table picks the setup family. Prefer MI structure over mesh name.
 #
 # Decision table (first match wins among surface families):
-#   clothing ColorMask / TextureArray  → leave Arc Texturer (not remapped here)
+#   clothing ColorMask / TextureArray  → FAMILY_CLOTHING (Arc Texturer only)
 #   Material/Wear/Overlay CR+NOH packs → environment (layered)
 #   base_cr + base_noh / NAO           → environment
 #   CR Texture + NXX/NMX (+ Overlay)   → metal
@@ -5346,6 +5357,49 @@ def _inv_count(inv: dict, *role_names: str) -> int:
     return sum(int(counts.get(r, 0) or 0) for r in role_names)
 
 
+def _path_looks_like_clothing_asset(path_or_stem: str = "") -> bool:
+    """True for Characters/Outfits/clothing asset paths (outfit MIs, not map env)."""
+    blob = (path_or_stem or "").replace("\\", "/").lower()
+    if not blob:
+        return False
+    if "/characters/" in blob or "/outfits/" in blob or "/clothing/" in blob:
+        return True
+    if "/heroes/" in blob and ("/skins/" in blob or "colormask" in blob):
+        return True
+    return False
+
+
+def _is_clothing_outfit_mi(mi: dict, mi_stem_lower: str = "", mi_path: str = "") -> bool:
+    """True when this MI belongs to outfit/clothing Arc Texturer (ColorMask / TA).
+
+    Checked before environment / simple family decisions so map Stage 2 can never
+    steal clothing into layered env or Principled-simple builders.
+    """
+    inv = inventory_mi_textures(mi or {})
+    if _inv_has(inv, _ROLE_CLOTHING):
+        return True
+    stem = (mi_stem_lower or "").lower()
+    path = (mi_path or "").replace("\\", "/").lower()
+    parent = str((mi or {}).get("parent") or "").lower()
+    if "colormask" in stem or "colormask" in path:
+        return True
+    if "texturearray" in stem or "texturearray" in path or "texture array" in parent:
+        return True
+    if any(k in parent for k in ("character_layered", "characterlayered", "clothing", "outfit")):
+        return True
+    # Character / Outfits content paths are exclusive to Arc Texturer even when the
+    # on-disk JSON is a corrupt non-MIC dump (empty tex inventory) — never env/simple.
+    if _path_looks_like_clothing_asset(path) or _path_looks_like_clothing_asset(stem):
+        return True
+    params = inv.get("params") or set()
+    pl = {str(p).lower() for p in params}
+    if any("occlusioncurvature" in p or "specularmask" in p for p in pl):
+        # OcclusionCurvatureMaterialID / SpecularMasks without ColorMask param alias
+        if any(k in stem for k in ("boot", "pant", "shirt", "glove", "helmet", "coat", "armor")):
+            return True
+    return False
+
+
 def _family_from_tex_inventory(inv: dict, mi: dict, mi_stem_lower: str = "") -> str | None:
     """Decision table: texture-role inventory → setup family (or None to continue).
 
@@ -5355,10 +5409,10 @@ def _family_from_tex_inventory(inv: dict, mi: dict, mi_stem_lower: str = "") -> 
     if not inv or not inv.get("map_count"):
         return None
 
-    # Clothing ColorMask / TextureArray — do not remap into env/metal/simple overlays.
-    # Outfit setup uses Arc Texturer; Stage 2 should not steal these MIs.
+    # Clothing ColorMask / TextureArray — exclusive Arc Texturer path.
+    # Never fall through to environment / metal / simple overlays.
     if _inv_has(inv, _ROLE_CLOTHING):
-        return None
+        return FAMILY_CLOTHING
 
     params = inv.get("params") or set()
     stem = (mi_stem_lower or "").lower()
@@ -5850,6 +5904,9 @@ def _is_metal_prop_mi(mi: dict, mi_stem_lower: str = "") -> bool:
 def _is_simple_surface_mi(mi: dict) -> bool:
     """BaseColor/Color+Normal (or CR+Normal / hero RoughnessMetal) without layered packs."""
     inv = inventory_mi_textures(mi)
+    # Clothing ColorMask / TextureArray must never be treated as simple albedo.
+    if _inv_has(inv, _ROLE_CLOTHING) or _is_clothing_outfit_mi(mi):
+        return False
     if _family_from_tex_inventory(inv, mi, "") == FAMILY_SIMPLE:
         return True
     params = inv.get("params") or set()
@@ -5884,16 +5941,22 @@ def _is_graphic_atlas_mi(mi: dict, mi_stem_lower: str = "") -> bool:
     return "Graphic Atlas" in params
 
 
-def classify_mi_family(mi: dict, mi_stem_lower: str = "", slot_lower: str = "") -> str:
+def classify_mi_family(
+    mi: dict, mi_stem_lower: str = "", slot_lower: str = "", mi_path: str = "",
+) -> str:
     """Classify an MI into a setup family. Order matters — specific before general.
 
     Surface families (environment / metal / weapon / simple / mask-decal) are driven by
     ``inventory_mi_textures`` role counts when possible — prefer MI texture structure
-    over mesh-name heuristics. Clothing ColorMask / TextureArray markers are left alone
-    for Arc Texturer.
+    over mesh-name heuristics. Clothing ColorMask / TextureArray is detected first and
+    exclusively routed to Arc Texturer (never env / simple).
     """
     stem = (mi_stem_lower or "").lower()
     slot = (slot_lower or "").lower()
+
+    # Clothing / outfit FIRST — hard gate before env/simple/metal heuristics.
+    if _is_clothing_outfit_mi(mi, stem, mi_path or ""):
+        return FAMILY_CLOTHING
 
     if _is_weapon_emissive_light_mi(stem):
         return FAMILY_EMISSIVE
@@ -6412,6 +6475,14 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     meshes keep a consistent texel density (see ``_PLANE_ROAD_METERS_PER_TILE``).
     """
     mi = _parse_flat_mi_json(mi_path)
+    # Hard gate: clothing ColorMask MIs must never enter the env layered builder.
+    if _is_clothing_outfit_mi(mi, os.path.basename(mi_path or "").lower(), mi_path or ""):
+        utils.get_logger().info(
+            "Refusing env builder for clothing MI '%s'",
+            os.path.basename(mi_path or ""),
+        )
+        _stamp_mi_family(mat, FAMILY_CLOTHING)
+        return
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
     nodes.clear()
@@ -10526,12 +10597,26 @@ def _dispatch_weapon_slot_material(mat, mi_path: str, psk_path: str, mi_stem_low
     log = utils.get_logger()
     try:
         mi_probe = _parse_flat_mi_json(mi_path)
-        family = classify_mi_family(mi_probe, mi_stem_lower, slot_lower)
+        family = classify_mi_family(mi_probe, mi_stem_lower, slot_lower, mi_path or "")
+        # Path-based clothing gate (compact dumps / stem-only classify misses).
+        if family != FAMILY_CLOTHING and _is_clothing_outfit_mi(
+            mi_probe, mi_stem_lower, mi_path or ""
+        ):
+            family = FAMILY_CLOTHING
         _stamp_mi_family(mat, family)
         log.debug(
             "MI family '%s' → %s (slot=%s)",
             os.path.basename(mi_path), family, slot_lower or "(none)",
         )
+
+        # Outfit / clothing ColorMask MIs must NEVER enter env/simple builders.
+        # Arc Texturer is applied only via the clothing/visor import path.
+        if family == FAMILY_CLOTHING:
+            log.info(
+                "Skipping env/simple setup for clothing MI '%s' — use Arc Texturer outfit path",
+                os.path.basename(mi_path or ""),
+            )
+            return
 
         if family == FAMILY_EMISSIVE:
             _setup_weapon_emissive_material(mat, mi_path)
@@ -10562,6 +10647,10 @@ def _dispatch_weapon_slot_material(mat, mi_path: str, psk_path: str, mi_stem_low
             os.path.basename(mi_path or ""), mi_stem_lower, exc,
         )
         try:
+            # Do not simple-fallback clothing MIs after a failed probe.
+            if _is_clothing_outfit_mi({}, mi_stem_lower, mi_path or ""):
+                _stamp_mi_family(mat, FAMILY_CLOTHING)
+                return
             _setup_simple_material(mat, mi_path, psk_path)
         except Exception as exc2:
             log.error("Simple fallback also failed for '%s': %s", mi_path, exc2)
@@ -11445,7 +11534,7 @@ def _score_mi_candidate(
         mi = _parse_flat_mi_json(mi_path) if mi_path else {}
     except Exception:
         mi = {}
-    family = classify_mi_family(mi, stem_l)
+    family = classify_mi_family(mi, stem_l, mi_path=mi_path or "")
     if family_hint and family == family_hint:
         score += 18.0
     elif family_hint == FAMILY_WATER and _is_water_mi(mi, stem_l):
@@ -12128,6 +12217,7 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
                         mi_probe = _parse_flat_mi_json(mi_path)
                         expected = classify_mi_family(
                             mi_probe, mi_stem.lower(), (slot_name or mi_stem).lower(),
+                            mi_path or "",
                         )
                     except Exception:
                         expected = fam
@@ -12345,7 +12435,9 @@ def _analyze_broken_mesh_type(
         if mi_path and os.path.isfile(mi_path):
             try:
                 mi = _parse_flat_mi_json(mi_path)
-                fam = classify_mi_family(mi, (mi_stem or "").lower(), (slot_name or "").lower())
+                fam = classify_mi_family(
+                    mi, (mi_stem or "").lower(), (slot_name or "").lower(), mi_path or "",
+                )
                 row["family"] = fam
                 row["tex_params"] = sorted(_mi_tex_params(mi))
                 local = [os.path.dirname(mi_path)]

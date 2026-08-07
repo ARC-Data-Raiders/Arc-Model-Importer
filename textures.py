@@ -72,13 +72,9 @@ def scan_skins(psk_path: str, manual_folder: str = "") -> list:
         results = []
         for skin_name in get_all_skin_dirs(manual_folder):
             skin_dir = os.path.join(manual_folder, skin_name)
-            try:
-                for fname in sorted(os.listdir(skin_dir)):
-                    if fname.lower().endswith(".json"):
-                        results.append((skin_name, os.path.join(skin_dir, fname)))
-                        break
-            except OSError:
-                pass
+            mi_json = _first_mi_json_in_dir(skin_dir)
+            if mi_json:
+                results.append((skin_name, mi_json))
         results.extend(_scan_mi_jsons_in_folder(manual_folder))
         return results
     
@@ -88,13 +84,9 @@ def scan_skins(psk_path: str, manual_folder: str = "") -> list:
         all_dirs = get_all_skin_dirs(skins_folder)
         for skin_name in all_dirs:
             skin_dir = os.path.join(skins_folder, skin_name)
-            try:
-                for fname in sorted(os.listdir(skin_dir)):
-                    if fname.lower().endswith(".json"):
-                        results.append((skin_name, os.path.join(skin_dir, fname)))
-                        break
-            except OSError:
-                pass
+            mi_json = _first_mi_json_in_dir(skin_dir)
+            if mi_json:
+                results.append((skin_name, mi_json))
     results.extend(_scan_main_folder_skins(psk_path))
     return results
 
@@ -119,6 +111,7 @@ def _scan_mi_jsons_in_folder(folder: str) -> list:
             f for f in os.listdir(folder)
             if f.lower().startswith("mi_") and f.lower().endswith(".json")
             and "persistence" not in f.lower()
+            and ".palette." not in f.lower()
         )
     except OSError:
         return []
@@ -133,12 +126,15 @@ def _scan_mi_jsons_in_folder(folder: str) -> list:
             common = ""
     results = []
     for fname, stem in zip(mi_files, stems):
+        path = os.path.join(folder, fname)
+        if not json_is_clothing_mi(path):
+            continue
         if common and stem.startswith(common):
             suffix = stem[len(common):].lstrip("_")
             skin_name = suffix if suffix else "__DEFAULT__"
         else:
             skin_name = stem
-        results.append((skin_name, os.path.join(folder, fname)))
+        results.append((skin_name, path))
     return results
 
 def _scan_main_folder_skins(psk_path: str) -> list:
@@ -196,18 +192,26 @@ def get_base_skin_json(psk_path: str, manual_folder: str = "") -> str:
         all_dirs = get_all_skin_dirs(skins_folder)
         if all_dirs:
             default_dir = get_default_skin_dir(all_dirs)
-            search_dirs = [default_dir] if default_dir else all_dirs
-            for skin_name in search_dirs:
+            # Prefer default (base) colourway, then any dir with a real MIC JSON.
+            # Skips corrupt non-MIC dumps (e.g. StaticMesh saved as MI_*.json).
+            ordered = []
+            if default_dir:
+                ordered.append(default_dir)
+            ordered.extend(d for d in sorted(all_dirs) if d not in ordered)
+            for skin_name in ordered:
                 skin_dir = os.path.join(skins_folder, skin_name)
-                try:
-                    for fname in sorted(os.listdir(skin_dir)):
-                        if fname.lower().endswith(".json"):
-                            return os.path.join(skin_dir, fname)
-                except OSError:
-                    pass
+                mi_json = _first_mi_json_in_dir(skin_dir)
+                if mi_json:
+                    return mi_json
     fallback_folder = skins_folder if manual_folder else os.path.dirname(bpy.path.abspath(psk_path))
     for skin_name, json_path in _scan_mi_jsons_in_folder(fallback_folder):
+        if not json_is_clothing_mi(json_path):
+            continue
         if skin_name == "__DEFAULT__":
+            return json_path
+    # Last resort: any valid MI beside the mesh
+    for _skin_name, json_path in _scan_mi_jsons_in_folder(fallback_folder):
+        if json_is_clothing_mi(json_path):
             return json_path
     return ""
 
@@ -331,17 +335,118 @@ _ZONE_SCALAR_SUFFIXES = (
 
 
 def load_mi_properties(json_path: str) -> dict:
-    """Load an MI JSON once and return its Properties dict (or {})."""
+    """Load an MI JSON once and return its Properties dict (or {}).
+
+    Accepts:
+      - UE ``MaterialInstanceConstant`` exports (Vector/ScalarParameterValues)
+      - Compact FModel dumps ``{Textures, Parameters}`` (Colors / Scalars maps)
+
+    Never returns Properties from a non-MIC export (e.g. BodySetup/StaticMesh
+    wrongly saved under an MI_*.json name) — that left ColorABC empty while
+    folder PNGs still textured Arc Texturer.
+    """
     if not json_path or not os.path.isfile(json_path):
         return {}
     try:
         with open(json_path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
         entry = utils.first_ue_export(data, "MaterialInstanceConstant")
-        return entry.get("Properties", {}) if entry else {}
+        if entry and entry.get("Type") == "MaterialInstanceConstant":
+            return entry.get("Properties", {}) or {}
+        # Compact dump: {Textures: {...}, Parameters: {Colors, Scalars, ...}}
+        if isinstance(data, dict) and (
+            "Textures" in data or "Parameters" in data
+        ) and not isinstance(data.get("Exports"), list):
+            return _props_from_compact_mi(data)
+        return {}
     except Exception as e:
         print(f"Arc Raiders PSK Importer: Failed to load MI JSON '{json_path}': {e}")
         return {}
+
+
+def _props_from_compact_mi(data: dict) -> dict:
+    """Normalize compact FModel MI JSON into a Properties-like dict."""
+    params = data.get("Parameters") or {}
+    vectors = []
+    for name, rgba in (params.get("Colors") or {}).items():
+        if not isinstance(rgba, (list, tuple)) or len(rgba) < 3:
+            continue
+        vectors.append({
+            "ParameterInfo": {"Name": name},
+            "ParameterValue": {
+                "R": float(rgba[0]),
+                "G": float(rgba[1]),
+                "B": float(rgba[2]),
+                "A": float(rgba[3]) if len(rgba) > 3 else 1.0,
+            },
+        })
+    scalars = []
+    for name, value in (params.get("Scalars") or {}).items():
+        try:
+            scalars.append({
+                "ParameterInfo": {"Name": name},
+                "ParameterValue": float(value),
+            })
+        except (TypeError, ValueError):
+            continue
+    switches = []
+    for name, value in (params.get("Switches") or {}).items():
+        switches.append({
+            "ParameterInfo": {"Name": name},
+            "Value": bool(value),
+        })
+    tex_params = []
+    for name, path in (data.get("Textures") or {}).items():
+        if not name or not path:
+            continue
+        tex_params.append({
+            "ParameterInfo": {"Name": name},
+            "ParameterValue": {"ObjectPath": str(path), "ObjectName": ""},
+        })
+    return {
+        "VectorParameterValues": vectors,
+        "ScalarParameterValues": scalars,
+        "TextureParameterValues": tex_params,
+        "StaticParametersRuntime": {"StaticSwitchParameters": switches},
+    }
+
+
+def json_is_clothing_mi(json_path: str) -> bool:
+    """True when *json_path* is a usable MaterialInstanceConstant / compact MI."""
+    if not json_path or not os.path.isfile(json_path):
+        return False
+    try:
+        with open(json_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        entry = utils.first_ue_export(data, "MaterialInstanceConstant")
+        if entry and entry.get("Type") == "MaterialInstanceConstant":
+            return True
+        if isinstance(data, dict) and ("Textures" in data or "Parameters" in data):
+            if not isinstance(data.get("Exports"), list):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _first_mi_json_in_dir(skin_dir: str) -> str:
+    """Return the first valid MI JSON in *skin_dir* (skips palette / non-MIC dumps)."""
+    try:
+        names = sorted(os.listdir(skin_dir))
+    except OSError:
+        return ""
+    for fname in names:
+        fl = fname.lower()
+        if not fl.endswith(".json"):
+            continue
+        if fl.endswith(".palette.json") or ".palette." in fl:
+            continue
+        if fl.startswith("ta_"):
+            continue
+        path = os.path.join(skin_dir, fname)
+        if json_is_clothing_mi(path):
+            return path
+    return ""
 
 
 def _colours_from_props(props: dict) -> dict:

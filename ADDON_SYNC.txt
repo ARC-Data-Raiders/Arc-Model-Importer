@@ -1,5 +1,5 @@
-﻿version=2.18.29
-synced=
+﻿version=2.18.60
+synced=2026-08-07T16:48:29.1562478-06:00
 source=C:\Users\Gideon\Documents\GitHub\DataRaiders-BlenderImporter
 pycache=%LOCALAPPDATA%\DataRaiders-BlenderImporter\pycache
-note=Per-slot wall MIs: strip _force_rebuild, no slot collapse, paint/leak blend (ported from map-importer)
+note=Outfit ColorMask hard-separated from env/simple; MIC-only skin parse (ported from map-importer)
