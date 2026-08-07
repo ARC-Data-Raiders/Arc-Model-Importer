@@ -62,8 +62,205 @@ def skip_colour(rgba):
     return is_white(rgba) or is_black(rgba) or is_pure_red(rgba)
 
 # ---------------------------------------------------------------------------
-# Skin scanning
+# Skin scanning / clothing MI identity
 # ---------------------------------------------------------------------------
+
+# Corrupt FModel multithread dumps often write the wrong asset under MI_*.json
+# (BodySetup, DialogueBucket, or another character's MIC). Cosmetic Viewer
+# Outfits/<Name>/Parts/ trees frequently keep the good copy — prefer those when
+# Characters/Assets identity fails.
+_CLOTHING_MI_INDEX = None  # stem.lower() -> [paths], Outfits first
+_CLOTHING_MI_INDEX_ROOT = None
+
+
+def _mi_entry_stem(entry: dict) -> str:
+    name = (entry.get("Name") or "").strip()
+    if "." in name:
+        name = name.split(".", 1)[0]
+    package = (entry.get("Package") or "").replace("\\", "/").strip()
+    pkg_leaf = package.rsplit("/", 1)[-1] if package else ""
+    if "." in pkg_leaf:
+        pkg_leaf = pkg_leaf.split(".", 1)[0]
+    return name or pkg_leaf
+
+
+def _load_clothing_mi_entry(json_path: str):
+    """Return (entry_dict_or_None, data) for a clothing MI JSON path."""
+    if not json_path or not os.path.isfile(json_path):
+        return None, None
+    try:
+        with open(json_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return None, None
+    entry = utils.first_ue_export(data, "MaterialInstanceConstant")
+    if not entry:
+        entry = utils.first_ue_export(data, "MaterialInstance")
+    if not entry or entry.get("Type") not in ("MaterialInstanceConstant", "MaterialInstance"):
+        return None, data
+    return entry, data
+
+
+def clothing_mi_json_is_valid(json_path: str, expected_stem: str = "") -> bool:
+    """True when path is a real MIC whose Name matches the filename stem.
+
+    Rejects BodySetup/mesh dumps and cross-wired MIC bodies (e.g. Janitor MIC
+    saved as MI_Goalie_Boots_Leather_CyanWhite.json).
+    """
+    stem = (expected_stem or os.path.splitext(os.path.basename(json_path or ""))[0]).strip()
+    if "." in stem:
+        stem = stem.split(".", 1)[0]
+    if not stem or not stem.lower().startswith("mi_"):
+        return False
+    entry, _data = _load_clothing_mi_entry(json_path)
+    if not entry:
+        return False
+    body_stem = _mi_entry_stem(entry)
+    # Legacy wrappers with no Name/Package cannot be proven wrong.
+    if not body_stem:
+        props = entry.get("Properties") or {}
+        return bool(props.get("VectorParameterValues") or props.get("TextureParameterValues"))
+    return body_stem.lower() == stem.lower()
+
+
+def _clothing_mi_stem_index() -> dict:
+    """Basename index of MI_*.json under Outfits/ + Characters/Assets."""
+    global _CLOTHING_MI_INDEX, _CLOTHING_MI_INDEX_ROOT
+    root = ""
+    try:
+        root = os.path.normcase(os.path.normpath(utils.get_pioneer_root() or ""))
+    except Exception:
+        root = ""
+    if _CLOTHING_MI_INDEX is not None and root == _CLOTHING_MI_INDEX_ROOT:
+        return _CLOTHING_MI_INDEX
+
+    index: dict[str, list[str]] = {}
+    search_roots: list[str] = []
+    pioneer = utils.get_pioneer_root() or ""
+    if pioneer and os.path.isdir(pioneer):
+        outfits = os.path.join(pioneer, "Outfits")
+        if os.path.isdir(outfits):
+            search_roots.append(outfits)
+        chars = os.path.join(
+            pioneer, "PioneerGame", "Content", "Pioneer", "Characters", "Assets",
+        )
+        if os.path.isdir(chars):
+            search_roots.append(chars)
+    try:
+        for content_dir in utils.get_content_dirs() or []:
+            chars = os.path.join(content_dir, "Pioneer", "Characters", "Assets")
+            if os.path.isdir(chars):
+                search_roots.append(chars)
+            # Sibling Outfits next to PioneerGame
+            sibling_outfits = os.path.join(os.path.dirname(content_dir), "Outfits")
+            if not os.path.isdir(sibling_outfits):
+                sibling_outfits = os.path.join(
+                    os.path.dirname(os.path.dirname(content_dir)), "Outfits",
+                )
+            if os.path.isdir(sibling_outfits):
+                search_roots.append(sibling_outfits)
+    except Exception:
+        pass
+
+    seen_roots: set[str] = set()
+    for search_root in search_roots:
+        key = os.path.normcase(os.path.normpath(search_root))
+        if key in seen_roots or not os.path.isdir(search_root):
+            continue
+        seen_roots.add(key)
+        try:
+            for walk_root, _dirs, files in os.walk(search_root):
+                for fname in files:
+                    if not _is_mi_json_filename(fname):
+                        continue
+                    stem = fname[:-5]
+                    path = os.path.join(walk_root, fname)
+                    index.setdefault(stem.lower(), []).append(path)
+        except OSError:
+            continue
+
+    def _rank(path: str) -> tuple:
+        pl = path.replace("\\", "/").lower()
+        # Cosmetic Viewer Outfits export is the reliable colorway source when
+        # Characters/Assets MICs are cross-wired multithread dumps.
+        if "/outfits/" in pl:
+            return (0, len(path))
+        if "/characters/assets/" in pl:
+            return (1, len(path))
+        return (2, len(path))
+
+    for paths in index.values():
+        paths.sort(key=_rank)
+
+    _CLOTHING_MI_INDEX = index
+    _CLOTHING_MI_INDEX_ROOT = root
+    return index
+
+
+def resolve_clothing_mi_json(json_path: str, expected_stem: str = "") -> str:
+    """Return an identity-valid clothing MIC path, searching Outfits if needed."""
+    if not json_path:
+        return ""
+    try:
+        abs_path = os.path.abspath(bpy.path.abspath(json_path))
+    except Exception:
+        abs_path = os.path.abspath(json_path)
+    stem = (expected_stem or os.path.splitext(os.path.basename(abs_path))[0]).strip()
+    if "." in stem:
+        stem = stem.split(".", 1)[0]
+    if clothing_mi_json_is_valid(abs_path, stem):
+        return abs_path
+
+    # Local file wrong/missing — find another copy of the same stem.
+    for cand in _clothing_mi_stem_index().get(stem.lower(), []):
+        if os.path.normcase(os.path.normpath(cand)) == os.path.normcase(abs_path):
+            continue
+        if clothing_mi_json_is_valid(cand, stem):
+            print(
+                f"Arc Raiders PSK Importer: clothing MI identity repair — "
+                f"'{os.path.basename(abs_path)}' invalid at '{abs_path}', "
+                f"using '{cand}'"
+            )
+            return os.path.abspath(cand)
+    if abs_path and os.path.isfile(abs_path):
+        print(
+            f"Arc Raiders PSK Importer: rejecting invalid clothing MI JSON "
+            f"'{abs_path}' (not a matching MaterialInstanceConstant)"
+        )
+    return ""
+
+
+def invalidate_clothing_mi_index() -> None:
+    """Drop the Outfits/Characters MI basename index (tests / root change)."""
+    global _CLOTHING_MI_INDEX, _CLOTHING_MI_INDEX_ROOT
+    _CLOTHING_MI_INDEX = None
+    _CLOTHING_MI_INDEX_ROOT = None
+
+
+def _is_mi_json_filename(fname: str) -> bool:
+    fl = (fname or "").lower()
+    if not fl.startswith("mi_") or not fl.endswith(".json"):
+        return False
+    # Skip sidecar dumps next to the real MIC.
+    if ".palette." in fl or ".metadata." in fl:
+        return False
+    return True
+
+
+def _pick_valid_mi_json_in_dir(skin_dir: str) -> str:
+    """First identity-valid MI_*.json in a skin folder (with Outfits fallback)."""
+    try:
+        names = sorted(os.listdir(skin_dir))
+    except OSError:
+        return ""
+    for fname in names:
+        if not _is_mi_json_filename(fname):
+            continue
+        resolved = resolve_clothing_mi_json(os.path.join(skin_dir, fname))
+        if resolved:
+            return resolved
+    return ""
+
 
 def scan_skins(psk_path: str, manual_folder: str = "") -> list:
     """Scan for all skin/colour options for a part."""
@@ -72,13 +269,9 @@ def scan_skins(psk_path: str, manual_folder: str = "") -> list:
         results = []
         for skin_name in get_all_skin_dirs(manual_folder):
             skin_dir = os.path.join(manual_folder, skin_name)
-            try:
-                for fname in sorted(os.listdir(skin_dir)):
-                    if fname.lower().endswith(".json"):
-                        results.append((skin_name, os.path.join(skin_dir, fname)))
-                        break
-            except OSError:
-                pass
+            path = _pick_valid_mi_json_in_dir(skin_dir)
+            if path:
+                results.append((skin_name, path))
         results.extend(_scan_mi_jsons_in_folder(manual_folder))
         return results
     
@@ -88,13 +281,9 @@ def scan_skins(psk_path: str, manual_folder: str = "") -> list:
         all_dirs = get_all_skin_dirs(skins_folder)
         for skin_name in all_dirs:
             skin_dir = os.path.join(skins_folder, skin_name)
-            try:
-                for fname in sorted(os.listdir(skin_dir)):
-                    if fname.lower().endswith(".json"):
-                        results.append((skin_name, os.path.join(skin_dir, fname)))
-                        break
-            except OSError:
-                pass
+            path = _pick_valid_mi_json_in_dir(skin_dir)
+            if path:
+                results.append((skin_name, path))
     results.extend(_scan_main_folder_skins(psk_path))
     return results
 
@@ -117,8 +306,7 @@ def _scan_mi_jsons_in_folder(folder: str) -> list:
     try:
         mi_files = sorted(
             f for f in os.listdir(folder)
-            if f.lower().startswith("mi_") and f.lower().endswith(".json")
-            and "persistence" not in f.lower()
+            if _is_mi_json_filename(f) and "persistence" not in f.lower()
         )
     except OSError:
         return []
@@ -133,12 +321,15 @@ def _scan_mi_jsons_in_folder(folder: str) -> list:
             common = ""
     results = []
     for fname, stem in zip(mi_files, stems):
+        path = resolve_clothing_mi_json(os.path.join(folder, fname))
+        if not path:
+            continue
         if common and stem.startswith(common):
             suffix = stem[len(common):].lstrip("_")
             skin_name = suffix if suffix else "__DEFAULT__"
         else:
             skin_name = stem
-        results.append((skin_name, os.path.join(folder, fname)))
+        results.append((skin_name, path))
     return results
 
 def _scan_main_folder_skins(psk_path: str) -> list:
@@ -199,12 +390,9 @@ def get_base_skin_json(psk_path: str, manual_folder: str = "") -> str:
             search_dirs = [default_dir] if default_dir else all_dirs
             for skin_name in search_dirs:
                 skin_dir = os.path.join(skins_folder, skin_name)
-                try:
-                    for fname in sorted(os.listdir(skin_dir)):
-                        if fname.lower().endswith(".json"):
-                            return os.path.join(skin_dir, fname)
-                except OSError:
-                    pass
+                path = _pick_valid_mi_json_in_dir(skin_dir)
+                if path:
+                    return path
     fallback_folder = skins_folder if manual_folder else os.path.dirname(bpy.path.abspath(psk_path))
     for skin_name, json_path in _scan_mi_jsons_in_folder(fallback_folder):
         if skin_name == "__DEFAULT__":
@@ -331,16 +519,25 @@ _ZONE_SCALAR_SUFFIXES = (
 
 
 def load_mi_properties(json_path: str) -> dict:
-    """Load an MI JSON once and return its Properties dict (or {})."""
-    if not json_path or not os.path.isfile(json_path):
+    """Load an MI JSON once and return its Properties dict (or {}).
+
+    Resolves corrupt Characters dumps to identity-valid Outfits Parts copies when
+    available. Never returns Properties from a non-MIC export.
+    """
+    if not json_path:
         return {}
+    resolved = resolve_clothing_mi_json(json_path)
+    if not resolved:
+        # Non-clothing MI callers (hair etc.) may still want strict local load.
+        if not os.path.isfile(json_path):
+            return {}
+        entry, _data = _load_clothing_mi_entry(json_path)
+        return (entry.get("Properties", {}) if entry else {}) or {}
     try:
-        with open(json_path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        entry = utils.first_ue_export(data, "MaterialInstanceConstant")
+        entry, _data = _load_clothing_mi_entry(resolved)
         return entry.get("Properties", {}) if entry else {}
     except Exception as e:
-        print(f"Arc Raiders PSK Importer: Failed to load MI JSON '{json_path}': {e}")
+        print(f"Arc Raiders PSK Importer: Failed to load MI JSON '{resolved}': {e}")
         return {}
 
 
@@ -634,24 +831,31 @@ def find_skin_json_for_mi_stem(psk_path: str, mi_stem: str) -> str:
     candidate_dirs.append(part_folder)
     for d in candidate_dirs:
         candidate = os.path.join(d, mi_stem + ".json")
-        if os.path.isfile(candidate):
-            return candidate
+        resolved = resolve_clothing_mi_json(candidate, mi_stem) if os.path.isfile(candidate) else ""
+        if resolved:
+            return resolved
+    # Exact stem elsewhere under Outfits / Characters (identity-verified).
+    resolved = resolve_clothing_mi_json(mi_stem + ".json", mi_stem)
+    if resolved:
+        return resolved
     mi_stem_norm = utils.normalize_folder_name(mi_stem)
     for d in candidate_dirs:
         try:
             for fname in os.listdir(d):
-                if not fname.lower().endswith(".json"):
+                if not _is_mi_json_filename(fname):
                     continue
                 stem = os.path.splitext(fname)[0]
                 if utils.normalize_folder_name(stem) == mi_stem_norm:
-                    return os.path.join(d, fname)
+                    resolved = resolve_clothing_mi_json(os.path.join(d, fname), stem)
+                    if resolved:
+                        return resolved
         except OSError:
             pass
     local_mi_stems = []
     for d in candidate_dirs:
         try:
             for fname in os.listdir(d):
-                if fname.lower().startswith("mi_") and fname.lower().endswith(".json"):
+                if _is_mi_json_filename(fname):
                     local_mi_stems.append((d, fname, os.path.splitext(fname)[0]))
         except OSError:
             pass
@@ -667,5 +871,7 @@ def find_skin_json_for_mi_stem(psk_path: str, mi_stem: str) -> str:
             for d, fname, stem in local_mi_stems:
                 stem_norm = utils.normalize_folder_name(stem)
                 if stem_norm.endswith(suffix_norm):
-                    return os.path.join(d, fname)
+                    resolved = resolve_clothing_mi_json(os.path.join(d, fname), stem)
+                    if resolved:
+                        return resolved
     return ""

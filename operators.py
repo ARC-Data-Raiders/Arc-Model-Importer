@@ -40,6 +40,8 @@ def process_entry(entry) -> tuple:
     json_path = "" if entry.skin_choice == 'NONE' else bpy.path.abspath(entry.skin_choice)
     if not json_path:
         json_path = textures.get_base_skin_json(psk_path, entry.manual_skins_folder)
+    if json_path:
+        json_path = textures.resolve_clothing_mi_json(json_path) or json_path
     body_variant = entry.body_choice if hasattr(entry, 'body_choice') else 'NONE'
     
     if not os.path.isfile(psk_path):
@@ -208,6 +210,16 @@ def apply_materials_to_object(
         json_path = skin_json
         if not json_path:
             json_path = textures.get_base_skin_json(psk_path, manual_skins_folder)
+        if json_path:
+            repaired = textures.resolve_clothing_mi_json(json_path)
+            if repaired:
+                json_path = repaired
+            else:
+                log.warning(
+                    "clothing MI rejected (corrupt/wrong identity): %s", json_path
+                )
+                # Prefer another valid colourway over applying a cross-wired MIC.
+                json_path = textures.get_base_skin_json(psk_path, manual_skins_folder) or ""
         # Only persist real values. Empty/default fallbacks must not erase a prior colorway stamp.
         try:
             if json_path:
@@ -274,7 +286,8 @@ def apply_materials_to_object(
                 return f"sk-slots ({sk_wired})"
 
     # Fall back: MI-named Blender slots (BlenderUMap / PSK slot names) without SK JSON
-    fixed = materials.fix_object_materials_from_mi_slots(obj, folder)
+    ctx = materials.context_from_model_type(model_type, psk_path)
+    fixed = materials.fix_object_materials_from_mi_slots(obj, folder, context=ctx)
     if fixed:
         return f"mi-slots ({fixed})"
 
@@ -778,7 +791,20 @@ def fix_materials_for_object(obj) -> tuple:
             hair_mi=hair_mi,
         )
         folder = os.path.dirname(psk_path)
-        leftover = materials.fix_object_materials_from_mi_slots(obj, folder)
+        # fix_object_materials_from_mi_slots defaults to CTX_MAP and will wipe
+        # Characters/Outfits ColorMask paths as "out of context". Only use it as
+        # a fallback when the primary outfit/clothing path did not wire shaders.
+        leftover = 0
+        outfit_done = status in (
+            "clothing", "visor", "face", "body", "hair", "weapon", "enemy", "misc",
+        ) or str(status).startswith("sk-slots")
+        if not outfit_done:
+            ctx = materials.context_from_model_type(
+                str(obj.get("arc_model_type", "") or ""), psk_path
+            )
+            leftover = materials.fix_object_materials_from_mi_slots(
+                obj, folder, context=ctx,
+            )
         try:
             obj["arc_psk_path"] = psk_path
         except Exception:
@@ -800,7 +826,12 @@ def fix_materials_for_object(obj) -> tuple:
         )
 
     asset_folder = fmdex_folder or ""
-    fixed = materials.fix_object_materials_from_mi_slots(obj, asset_folder)
+    ctx = materials.context_from_model_type(
+        str(obj.get("arc_model_type", "") or ""), asset_folder
+    )
+    fixed = materials.fix_object_materials_from_mi_slots(
+        obj, asset_folder, context=ctx,
+    )
     if fixed:
         via = used_name or "MaterialLibrary/FMDex"
         return True, f"{obj.name}: mi-slots ({fixed}) via {via}; {fmdex_st}"

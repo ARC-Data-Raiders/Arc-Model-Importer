@@ -165,19 +165,21 @@ def ue_export_entries(data):
     return []
 
 def first_ue_export(data, type_name: str = ""):
-    """Return the first export matching Type, else first export, else {}."""
+    """Return the first export matching Type, or first export when untyped.
+
+    When ``type_name`` is set, never fall back to a different Type (e.g. BodySetup
+    under an MI_*.json filename from a corrupt FModel dump). Callers that want any
+    export should omit ``type_name`` or call again without it.
+    """
     entries = ue_export_entries(data)
     if not entries:
         return {}
     if not type_name:
         return entries[0]
-    fallback = None
     for entry in entries:
         if entry.get("Type") == type_name:
             return entry
-        if fallback is None:
-            fallback = entry
-    return fallback or {}
+    return {}
 
 # ---------------------------------------------------------------------------
 # Cache management
@@ -205,6 +207,11 @@ def invalidate_dir_caches_if_root_changed():
         try:
             from . import materials as _mats
             _mats.clear_material_session_caches()
+        except Exception:
+            pass
+        try:
+            from . import textures as _tex
+            _tex.invalidate_clothing_mi_index()
         except Exception:
             pass
 
