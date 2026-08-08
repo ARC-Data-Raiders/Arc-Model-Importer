@@ -11,20 +11,47 @@ __pycache__/
 *_log.txt
 *.tmp
 *.blend1
+*.blend2
 outfit_toggles.txt
 arc_palette_calibration.json
+ADDON_SYNC.txt
 
-# Temp / agent scratch
+# Local-only verify / scratch scripts (never commit machine paths)
+verify_*.py
+*_dryrun*.py
+*_dryrun*.json
+
+# Blend / library backups
+*.bak
+*.bak_*
+*.blend.bak*
+
+# Temp / agent scratch (dry-runs, scans, MCP dumps)
 _tmp_*
 *.csv.bak
+_apply_*_dryrun.json
+_mcp_*.json
+_frozentrail_*.json
+map_tools/_ism_*.json
+map_tools/_decal_*.json
+map_tools/_scan_*.py
+map_tools/_analyze_*.py
+map_tools/_analyze_*.json
+
+# Local reference dumps (may embed absolute texture paths)
+reference/
 
 # Packaging output
 dist/
 *.addon.zip
 DataRaiders-BlenderImporter-*.zip
+DataRaiders-Outfits-*.zip
+DataRaiders-MapImporter-*.zip
 
-# Editor / OS
-.cursor/
+# Editor / OS — keep project rules trackable
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
 .DS_Store
 Thumbs.db
 Desktop.ini
