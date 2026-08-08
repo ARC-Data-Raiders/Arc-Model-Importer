@@ -465,7 +465,8 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
     
     group_node = nodes.new("ShaderNodeGroup")
     group_node.node_tree = bpy.data.node_groups[utils._NODE_GROUP]
-    group_node.location = (0, 0)
+    # Match NodeConnectionTest GoalieShirt Arc Texturer placement.
+    group_node.location = (357.3, 4.4)
     
     # Categorise main folder PNGs
     if main_pngs is None:
@@ -943,7 +944,11 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
     
     # base = mix(ColorMask_XYZ, BaseColorOverlay, factor_from_overlay_colour)
     # Fac 0 → XYZ; Fac 1 → overlay (see base_overlay_mix_factor).
+    # Overlay mix lives inside Arc Texturer (Overlay N / Overlay Fac N) when available.
     # albedo = base * mix(white, ColorTex[ColorTextureID], BaseTextureStrength)
+    _overlay_inside = (
+        "Overlay 1" in group_node.inputs and "Overlay Fac 1" in group_node.inputs
+    )
     for zone_str in [str(z) for z in range(1, 10)]:
         colour_sock = f"Colour {zone_str}"
         if colour_sock not in group_node.inputs:
@@ -957,19 +962,28 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
         if overlay_nd is not None:
             overlay_rgba = (colours or {}).get(f"{zone_str}_BaseColorOverlay")
             mix_fac = base_overlay_mix_factor(overlay_rgba)
-            mat.node_tree.links.remove(colour_in.links[0])
-            base_mix = nodes.new("ShaderNodeMix")
-            base_mix.data_type = 'RGBA'
-            base_mix.blend_type = 'MIX'
-            base_mix.label = f"Base Overlay ↔ XYZ zone {zone_str}"
-            # Column of mix nodes with ≥100px vertical gap (fallback height ~180).
-            base_mix.location = (-700, 200 - int(zone_str) * 280)
-            base_mix.inputs[0].default_value = mix_fac
-            # A = ColorMask_XYZ, B = overlay → Fac 0 favors XYZ, Fac 1 favors overlay.
-            links.new(src, base_mix.inputs[6])
-            links.new(overlay_nd.outputs[0], base_mix.inputs[7])
-            links.new(base_mix.outputs[2], colour_in)
-            src = base_mix.outputs[2]
+            overlay_sock = f"Overlay {zone_str}"
+            fac_sock = f"Overlay Fac {zone_str}"
+            if _overlay_inside and overlay_sock in group_node.inputs and fac_sock in group_node.inputs:
+                # ColorMask stays on Colour N; ArcTexturer mixes Overlay inside.
+                links.new(overlay_nd.outputs[0], group_node.inputs[overlay_sock])
+                try:
+                    group_node.inputs[fac_sock].default_value = mix_fac
+                except Exception:
+                    pass
+            else:
+                # Legacy fallback: external Mix (pre-2.18.26 ArcTexturer).
+                mat.node_tree.links.remove(colour_in.links[0])
+                base_mix = nodes.new("ShaderNodeMix")
+                base_mix.data_type = 'RGBA'
+                base_mix.blend_type = 'MIX'
+                base_mix.label = f"Base Overlay ↔ XYZ zone {zone_str}"
+                base_mix.location = (-700, 200 - int(zone_str) * 280)
+                base_mix.inputs[0].default_value = mix_fac
+                links.new(src, base_mix.inputs[6])
+                links.new(overlay_nd.outputs[0], base_mix.inputs[7])
+                links.new(base_mix.outputs[2], colour_in)
+                src = base_mix.outputs[2]
 
         strength = float(zone_scalars.get((zone_str, "BaseTextureStrength"), 0.0) or 0.0)
         slice_idx = ta_ids.get((zone_str, "ColorTextureID"))
@@ -987,6 +1001,7 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
         mix.location = (-420, 200 - int(zone_str) * 280)
         mix.inputs[0].default_value = min(max(strength, 0.0), 1.0)
         mix.inputs[6].default_value = (1.0, 1.0, 1.0, 1.0)
+        # TA Color slices stay as authored Color → no RGB split.
         links.new(tex_nd.outputs["Color"], mix.inputs[7])
         mul = nodes.new("ShaderNodeMix")
         mul.data_type = 'RGBA'
@@ -1512,6 +1527,9 @@ def setup_decals(nodes, links, group_node, decals: list, decal_folder: str,
             color_mix_node["arc_decal_color_override"] = color_override
             row_y -= 220
 
+        layer_gate_sock = f"Decal LayerGate {idx}"
+        _layer_gate_inside = layer_gate_sock in group_node.inputs
+        mask_ramp = None
         if color_tex_node is not None and not _layer_mask_allows_all_zones(layer_mask_int):
             if ocm_node is None:
                 if not ocm_warned:
@@ -1522,7 +1540,8 @@ def setup_decals(nodes, links, group_node, decals: list, decal_folder: str,
                 if ocm_sep_node is None:
                     ocm_sep_node = nodes.new("ShaderNodeSeparateColor")
                     ocm_sep_node.label = "OCM → Material ID"
-                    ocm_sep_node.location = (950, 1100)
+                    # Match NodeConnectionTest GoalieShirt placement.
+                    ocm_sep_node.location = (-687.5, 351.2)
                     ocm_sep_node.parent = decal_frame
                     links.new(ocm_node.outputs["Color"], ocm_sep_node.inputs["Color"])
 
@@ -1534,13 +1553,22 @@ def setup_decals(nodes, links, group_node, decals: list, decal_folder: str,
                 _build_layer_mask_ramp(mask_ramp.color_ramp, layer_mask_int)
                 links.new(ocm_sep_node.outputs["Blue"], mask_ramp.inputs["Fac"])
 
-                layer_mask_mul = nodes.new("ShaderNodeMath")
-                layer_mask_mul.operation = "MULTIPLY"
-                layer_mask_mul.label = f"Decal {idx} LayerMask × Alpha"
-                layer_mask_mul.location = (col_x + 560, row_y)
-                layer_mask_mul.parent = decal_frame
-                links.new(color_tex_node.outputs["Alpha"], layer_mask_mul.inputs[0])
-                links.new(mask_ramp.outputs["Alpha"], layer_mask_mul.inputs[1])
+                if _layer_gate_inside:
+                    # Multiply lives inside ArcTexturer (Decal Alpha × LayerGate).
+                    links.new(mask_ramp.outputs["Alpha"], group_node.inputs[layer_gate_sock])
+                else:
+                    layer_mask_mul = nodes.new("ShaderNodeMath")
+                    layer_mask_mul.operation = "MULTIPLY"
+                    layer_mask_mul.label = f"Decal {idx} LayerMask × Alpha"
+                    layer_mask_mul.location = (col_x + 560, row_y)
+                    layer_mask_mul.parent = decal_frame
+                    links.new(color_tex_node.outputs["Alpha"], layer_mask_mul.inputs[0])
+                    links.new(mask_ramp.outputs["Alpha"], layer_mask_mul.inputs[1])
+        elif _layer_gate_inside:
+            try:
+                group_node.inputs[layer_gate_sock].default_value = 1.0
+            except Exception:
+                pass
 
         n = idx
         colour_out = None
@@ -1562,8 +1590,11 @@ def setup_decals(nodes, links, group_node, decals: list, decal_folder: str,
                     colour_out = override_out
                 links.new(colour_out, group_node.inputs[f"Decal {n}"])
                 if f"Decal Alpha {n}" in group_node.inputs:
-                    alpha_out = (layer_mask_mul.outputs[0] if layer_mask_mul is not None
-                                 else color_tex_node.outputs["Alpha"])
+                    # Raw sticker alpha into Arc; LayerGate multiplies inside when present.
+                    if _layer_gate_inside or layer_mask_mul is None:
+                        alpha_out = color_tex_node.outputs["Alpha"]
+                    else:
+                        alpha_out = layer_mask_mul.outputs[0]
                     links.new(alpha_out, group_node.inputs[f"Decal Alpha {n}"])
                 if f"Decal Enable {n}" in group_node.inputs:
                     try:
@@ -1584,102 +1615,136 @@ def setup_decals(nodes, links, group_node, decals: list, decal_folder: str,
         rough_out = None
         metal_out = None
         if data_tex_node is not None:
-            # DecalData packing (T_DuctTape_01_M evidence): RG = tangent normal,
-            # B = roughness, A = metallic/specular. Rebuild Z for DN; drive PBR layer.
-            sep = nodes.new("ShaderNodeSeparateColor")
-            sep.label = f"Decal {idx} Data RGB"
-            sep.location = (col_x + 280, row_y)
-            sep.parent = decal_frame
-            links.new(data_tex_node.outputs["Color"], sep.inputs["Color"])
+            # DecalData packing: RG = tangent normal, B = roughness, A = metallic.
+            # Prefer the Decal Data group (same math as NodeConnectionTest Nx/Ny/Nz chain).
+            dd_ok = utils.ensure_decal_data_node_group()
+            if dd_ok and utils._DECAL_DATA_GROUP in bpy.data.node_groups:
+                dd = nodes.new("ShaderNodeGroup")
+                dd.node_tree = bpy.data.node_groups[utils._DECAL_DATA_GROUP]
+                dd.label = f"Decal {idx} Data"
+                dd.location = (col_x + 280, row_y)
+                dd.parent = decal_frame
+                links.new(data_tex_node.outputs["Color"], dd.inputs["Color"])
+                if "Alpha" in dd.inputs:
+                    links.new(data_tex_node.outputs["Alpha"], dd.inputs["Alpha"])
+                if f"DN {n}" in group_node.inputs:
+                    links.new(dd.outputs["Normal"], group_node.inputs[f"DN {n}"])
+                    if f"DN Enable {n}" in group_node.inputs:
+                        try:
+                            group_node.inputs[f"DN Enable {n}"].default_value = 1.0
+                        except Exception:
+                            pass
+                rough_out = dd.outputs["Roughness"] if "Roughness" in dd.outputs else None
+                metal_out = dd.outputs["Metallic"] if "Metallic" in dd.outputs else data_tex_node.outputs["Alpha"]
+            else:
+                # Legacy inline reconstruct (pre-Decal Data group).
+                sep = nodes.new("ShaderNodeSeparateColor")
+                sep.label = f"Decal {idx} Data RGB"
+                sep.location = (col_x + 280, row_y)
+                sep.parent = decal_frame
+                links.new(data_tex_node.outputs["Color"], sep.inputs["Color"])
 
-            # Reconstruct Z from RG and pack back to 0-1 for ArcTexturer DN.
-            r_s = nodes.new("ShaderNodeMath")
-            r_s.operation = "MULTIPLY_ADD"
-            r_s.label = f"Decal {idx} Nx"
-            r_s.location = (col_x + 480, row_y + 80)
-            r_s.parent = decal_frame
-            r_s.inputs[1].default_value = 2.0
-            r_s.inputs[2].default_value = -1.0
-            links.new(sep.outputs["Red"], r_s.inputs[0])
+                r_s = nodes.new("ShaderNodeMath")
+                r_s.operation = "MULTIPLY_ADD"
+                r_s.label = f"Decal {idx} Nx"
+                r_s.location = (col_x + 480, row_y + 80)
+                r_s.parent = decal_frame
+                r_s.inputs[1].default_value = 2.0
+                r_s.inputs[2].default_value = -1.0
+                links.new(sep.outputs["Red"], r_s.inputs[0])
 
-            g_s = nodes.new("ShaderNodeMath")
-            g_s.operation = "MULTIPLY_ADD"
-            g_s.label = f"Decal {idx} Ny"
-            g_s.location = (col_x + 480, row_y - 40)
-            g_s.parent = decal_frame
-            g_s.inputs[1].default_value = 2.0
-            g_s.inputs[2].default_value = -1.0
-            links.new(sep.outputs["Green"], g_s.inputs[0])
+                g_s = nodes.new("ShaderNodeMath")
+                g_s.operation = "MULTIPLY_ADD"
+                g_s.label = f"Decal {idx} Ny"
+                g_s.location = (col_x + 480, row_y - 40)
+                g_s.parent = decal_frame
+                g_s.inputs[1].default_value = 2.0
+                g_s.inputs[2].default_value = -1.0
+                links.new(sep.outputs["Green"], g_s.inputs[0])
 
-            nx2 = nodes.new("ShaderNodeMath")
-            nx2.operation = "MULTIPLY"
-            nx2.location = (col_x + 680, row_y + 80)
-            nx2.parent = decal_frame
-            links.new(r_s.outputs[0], nx2.inputs[0])
-            links.new(r_s.outputs[0], nx2.inputs[1])
+                nx2 = nodes.new("ShaderNodeMath")
+                nx2.operation = "MULTIPLY"
+                nx2.location = (col_x + 680, row_y + 80)
+                nx2.parent = decal_frame
+                links.new(r_s.outputs[0], nx2.inputs[0])
+                links.new(r_s.outputs[0], nx2.inputs[1])
 
-            ny2 = nodes.new("ShaderNodeMath")
-            ny2.operation = "MULTIPLY"
-            ny2.location = (col_x + 680, row_y - 40)
-            ny2.parent = decal_frame
-            links.new(g_s.outputs[0], ny2.inputs[0])
-            links.new(g_s.outputs[0], ny2.inputs[1])
+                ny2 = nodes.new("ShaderNodeMath")
+                ny2.operation = "MULTIPLY"
+                ny2.location = (col_x + 680, row_y - 40)
+                ny2.parent = decal_frame
+                links.new(g_s.outputs[0], ny2.inputs[0])
+                links.new(g_s.outputs[0], ny2.inputs[1])
 
-            nsum = nodes.new("ShaderNodeMath")
-            nsum.operation = "ADD"
-            nsum.location = (col_x + 860, row_y + 20)
-            nsum.parent = decal_frame
-            links.new(nx2.outputs[0], nsum.inputs[0])
-            links.new(ny2.outputs[0], nsum.inputs[1])
+                nsum = nodes.new("ShaderNodeMath")
+                nsum.operation = "ADD"
+                nsum.location = (col_x + 860, row_y + 20)
+                nsum.parent = decal_frame
+                links.new(nx2.outputs[0], nsum.inputs[0])
+                links.new(ny2.outputs[0], nsum.inputs[1])
 
-            one_m = nodes.new("ShaderNodeMath")
-            one_m.operation = "SUBTRACT"
-            one_m.location = (col_x + 1040, row_y + 20)
-            one_m.parent = decal_frame
-            one_m.inputs[0].default_value = 1.0
-            links.new(nsum.outputs[0], one_m.inputs[1])
+                one_m = nodes.new("ShaderNodeMath")
+                one_m.operation = "SUBTRACT"
+                one_m.location = (col_x + 1040, row_y + 20)
+                one_m.parent = decal_frame
+                one_m.inputs[0].default_value = 1.0
+                links.new(nsum.outputs[0], one_m.inputs[1])
 
-            nz = nodes.new("ShaderNodeMath")
-            nz.operation = "SQRT"
-            nz.label = f"Decal {idx} Nz"
-            nz.location = (col_x + 1220, row_y + 20)
-            nz.parent = decal_frame
-            links.new(one_m.outputs[0], nz.inputs[0])
+                nz = nodes.new("ShaderNodeMath")
+                nz.operation = "SQRT"
+                nz.label = f"Decal {idx} Nz"
+                nz.location = (col_x + 1220, row_y + 20)
+                nz.parent = decal_frame
+                links.new(one_m.outputs[0], nz.inputs[0])
 
-            nz01 = nodes.new("ShaderNodeMath")
-            nz01.operation = "MULTIPLY_ADD"
-            nz01.location = (col_x + 1400, row_y + 20)
-            nz01.parent = decal_frame
-            nz01.inputs[1].default_value = 0.5
-            nz01.inputs[2].default_value = 0.5
-            links.new(nz.outputs[0], nz01.inputs[0])
+                nz01 = nodes.new("ShaderNodeMath")
+                nz01.operation = "MULTIPLY_ADD"
+                nz01.location = (col_x + 1400, row_y + 20)
+                nz01.parent = decal_frame
+                nz01.inputs[1].default_value = 0.5
+                nz01.inputs[2].default_value = 0.5
+                links.new(nz.outputs[0], nz01.inputs[0])
 
-            n_combine = nodes.new("ShaderNodeCombineColor")
-            n_combine.label = f"Decal {idx} Normal RG+Z"
-            n_combine.location = (col_x + 1580, row_y + 40)
-            n_combine.parent = decal_frame
-            links.new(sep.outputs["Red"], n_combine.inputs["Red"])
-            links.new(sep.outputs["Green"], n_combine.inputs["Green"])
-            links.new(nz01.outputs[0], n_combine.inputs["Blue"])
+                n_combine = nodes.new("ShaderNodeCombineColor")
+                n_combine.label = f"Decal {idx} Normal RG+Z"
+                n_combine.location = (col_x + 1580, row_y + 40)
+                n_combine.parent = decal_frame
+                links.new(sep.outputs["Red"], n_combine.inputs["Red"])
+                links.new(sep.outputs["Green"], n_combine.inputs["Green"])
+                links.new(nz01.outputs[0], n_combine.inputs["Blue"])
 
-            if f"DN {n}" in group_node.inputs:
-                links.new(n_combine.outputs["Color"], group_node.inputs[f"DN {n}"])
-                if f"DN Enable {n}" in group_node.inputs:
-                    try:
-                        group_node.inputs[f"DN Enable {n}"].default_value = 1.0
-                    except Exception:
-                        pass
+                if f"DN {n}" in group_node.inputs:
+                    links.new(n_combine.outputs["Color"], group_node.inputs[f"DN {n}"])
+                    if f"DN Enable {n}" in group_node.inputs:
+                        try:
+                            group_node.inputs[f"DN Enable {n}"].default_value = 1.0
+                        except Exception:
+                            pass
 
-            rough_out = sep.outputs["Blue"]
-            # Alpha channel of DecalData drives metallic (duct tape ~0.59).
-            metal_out = data_tex_node.outputs["Alpha"]
+                rough_out = sep.outputs["Blue"]
+                metal_out = data_tex_node.outputs["Alpha"]
 
         if colour_out is not None and alpha_out is not None and (
                 rough_out is not None or metal_out is not None):
+            # Mix-shader stack uses zone-gated alpha when LayerGate is inside Arc.
+            stack_alpha = alpha_out
+            if _layer_gate_inside and mask_ramp is not None:
+                # Approximate gated alpha for the external PBR stack.
+                gate_mul = nodes.new("ShaderNodeMath")
+                gate_mul.operation = "MULTIPLY"
+                gate_mul.label = f"Decal {idx} PBR Alpha"
+                gate_mul.location = (col_x + 560, row_y - 40)
+                gate_mul.parent = decal_frame
+                gate_mul.hide = True
+                links.new(color_tex_node.outputs["Alpha"], gate_mul.inputs[0])
+                links.new(mask_ramp.outputs["Alpha"], gate_mul.inputs[1])
+                stack_alpha = gate_mul.outputs[0]
+            elif layer_mask_mul is not None:
+                stack_alpha = layer_mask_mul.outputs[0]
             layer_stack.append({
                 "idx": n,
                 "color": colour_out,
-                "alpha": alpha_out,
+                "alpha": stack_alpha,
                 "rough": rough_out,
                 "metal": metal_out,
                 "col_x": col_x,

@@ -15,6 +15,7 @@ _ADDON_DIR = os.path.dirname(__file__)
 _BLEND_PATH = os.path.join(_ADDON_DIR, "ArcTexturer.blend")
 _NODE_GROUP = "Arc Texturer"
 _COLORMASK_GROUP = "ColorMask_XYZ"
+_DECAL_DATA_GROUP = "Decal Data"
 _DEBUG_LOG_PATH = os.path.join(_ADDON_DIR, "arc_raiders_debug.log")
 _LOGGER = None
 
@@ -523,18 +524,65 @@ def get_weapon_shared_folder() -> str:
 # Node group management
 # ---------------------------------------------------------------------------
 
+def _arc_texturer_has_overlay_sockets(ng) -> bool:
+    """True when bundled Arc Texturer exposes internalized Base Overlay inputs."""
+    try:
+        names = {item.name for item in ng.interface.items_tree if hasattr(item, "name")}
+    except Exception:
+        return False
+    return "Overlay 1" in names and "Decal LayerGate 1" in names and "DN Enable 5" in names
+
+
 def ensure_arc_texturer_node_group() -> bool:
-    if _NODE_GROUP in bpy.data.node_groups:
+    """Load Arc Texturer from ArcTexturer.blend; refresh if missing new sockets."""
+    existing = bpy.data.node_groups.get(_NODE_GROUP)
+    if existing is not None and _arc_texturer_has_overlay_sockets(existing):
+        ensure_decal_data_node_group()
         return True
     if not os.path.isfile(_BLEND_PATH):
         print(f"Arc Raiders PSK Importer: Cannot find bundled blend at '{_BLEND_PATH}'")
         return False
+    # Stale in-memory group (pre-overlay / broken DN5): replace from blend.
+    if existing is not None:
+        try:
+            existing.name = f"{_NODE_GROUP}_stale"
+        except Exception:
+            pass
     with bpy.data.libraries.load(_BLEND_PATH, link=False) as (data_from, data_to):
         if _NODE_GROUP not in data_from.node_groups:
             print(f"Arc Raiders PSK Importer: Node group '{_NODE_GROUP}' not in blend file")
             return False
         data_to.node_groups = [_NODE_GROUP]
-    return _NODE_GROUP in bpy.data.node_groups
+    loaded = bpy.data.node_groups.get(_NODE_GROUP)
+    if loaded is None:
+        # Append may have created Arc Texturer.001 when stale still held the name.
+        for ng in bpy.data.node_groups:
+            if ng.name.startswith(f"{_NODE_GROUP}.") and _arc_texturer_has_overlay_sockets(ng):
+                ng.name = _NODE_GROUP
+                loaded = ng
+                break
+    stale = bpy.data.node_groups.get(f"{_NODE_GROUP}_stale")
+    if stale is not None and stale.users == 0:
+        bpy.data.node_groups.remove(stale)
+    ensure_decal_data_node_group()
+    return _NODE_GROUP in bpy.data.node_groups and _arc_texturer_has_overlay_sockets(
+        bpy.data.node_groups[_NODE_GROUP]
+    )
+
+
+def ensure_decal_data_node_group() -> bool:
+    """Load the Decal Data helper group (RG→Z normal reconstruct + rough/metal)."""
+    if _DECAL_DATA_GROUP in bpy.data.node_groups:
+        return True
+    if not os.path.isfile(_BLEND_PATH):
+        return False
+    with bpy.data.libraries.load(_BLEND_PATH, link=False) as (data_from, data_to):
+        if _DECAL_DATA_GROUP not in data_from.node_groups:
+            print(f"Arc Raiders PSK Importer: Node group '{_DECAL_DATA_GROUP}' not in blend file")
+            return False
+        data_to.node_groups = [_DECAL_DATA_GROUP]
+    return _DECAL_DATA_GROUP in bpy.data.node_groups
+
 
 def ensure_colormask_node_group() -> bool:
     if _COLORMASK_GROUP in bpy.data.node_groups:
