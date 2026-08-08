@@ -50,7 +50,7 @@ $RootFiles = @(
     "rig.py",
     "palette_calibration.py",
     "outfit_reference.csv",
-    # Required for clothing/outfit ColorMask materials — without this, imports
+    # Required for clothing/outfit ColorMask materials ? without this, imports
     # succeed as bare Principled stubs ("Arc Texturer unavailable").
     "ArcTexturer.blend",
     "add-on-io-scene-psk-psa-v9_1_2.zip",
@@ -137,7 +137,7 @@ function Sync-ToAppData([string]$AddonDir) {
         New-Item -ItemType Directory -Path $AppDataAddon -Force | Out-Null
     }
 
-    # Mirror runtime tree; purge extras (.git, verify_*, docs, pycache, logs, â€¦).
+    # Mirror runtime tree; purge extras (.git, verify_*, docs, pycache, logs, ?).
     # /R:1 /W:1 tolerates Blender holding arc_raiders_debug.log open.
     robocopy $AddonDir $AppDataAddon /MIR /NFL /NDL /NJH /NJS /nc /ns /np /R:1 /W:1 `
         /XF arc_raiders_debug.log outfit_toggles.txt | Out-Null
@@ -160,15 +160,19 @@ function Sync-ToAppData([string]$AddonDir) {
 
     $stamp = Get-Date -Format "yyyy-MM-ddTHH:mm:ss.fffffffK"
     $ver = Get-AddonVersion
-    @(
+    # Portable markers only ? never write absolute local user paths into ADDON_SYNC
+    # (repo copy is gitignored; AppData copy is machine-local).
+    $syncLines = @(
         "version=$ver"
         "synced=$stamp"
-        "source=$RepoRoot"
+        "source=."
+        "appdata=%APPDATA%\Blender Foundation\Blender\5.1\scripts\addons\DataRaiders-BlenderImporter"
         "pycache=%LOCALAPPDATA%\DataRaiders-BlenderImporter\pycache"
-    ) | Set-Content -LiteralPath (Join-Path $AppDataAddon "ADDON_SYNC.txt") -Encoding UTF8
+    )
+    $syncLines | Set-Content -LiteralPath (Join-Path $AppDataAddon "ADDON_SYNC.txt") -Encoding UTF8
 
-    # Mirror stamp into repo for agents
-    Copy-Item -LiteralPath (Join-Path $AppDataAddon "ADDON_SYNC.txt") -Destination (Join-Path $RepoRoot "ADDON_SYNC.txt") -Force
+    # Mirror stamp into repo for agents (gitignored; keep portable)
+    $syncLines | Set-Content -LiteralPath (Join-Path $RepoRoot "ADDON_SYNC.txt") -Encoding UTF8
 }
 
 # --- main ---
