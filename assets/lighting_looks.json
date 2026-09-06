@@ -1,0 +1,81 @@
+{
+  "format": 1,
+  "notes": "Curated HDRI / white-temp / exposure defaults per Kodak LUT look (fallback when Scenario has no TAG_TO_HDRI). HDRI is also selectable separately via arc_lighting_hdri. Home SunnyDay uses Default Kodak LUT but outdoor hdri_sky_* (studio_small_* = reflection probes only). Paths are filenames under Pioneer/Lighting/HDRI only.",
+  "looks": {
+    "Default": {
+      "hdri": "studio_small_02_4k.hdr",
+      "white_temp": 5750,
+      "exposure_ev": 0.0
+    },
+    "BrightDay_001": {
+      "hdri": "hdri_sky_013.hdr",
+      "white_temp": 5750,
+      "exposure_ev": 0.25
+    },
+    "BrightOvercast_001": {
+      "hdri": "HFD_HemiOvercast02.png",
+      "white_temp": 6200,
+      "exposure_ev": 0.0
+    },
+    "BuriedDay_001": {
+      "hdri": "hdri_sky_046.hdr",
+      "white_temp": 5600,
+      "exposure_ev": 0.0
+    },
+    "Foggy_001": {
+      "hdri": "hdri_sky_072_8K_Sphere.hdr",
+      "white_temp": 6500,
+      "exposure_ev": -0.25
+    },
+    "GoldenOvercast_001": {
+      "hdri": "HFD_HemiSunset04.png",
+      "white_temp": 4800,
+      "exposure_ev": 0.0
+    },
+    "GoldenOvercast_003": {
+      "hdri": "HFD_HemiSunset01_01.png",
+      "white_temp": 4600,
+      "exposure_ev": 0.0
+    },
+    "HazyDay_002": {
+      "hdri": "hdri_sky_098.hdr",
+      "white_temp": 5900,
+      "exposure_ev": 0.0
+    },
+    "Night_001": {
+      "hdri": "VHDRI_Twilight_Stormy02.hdr",
+      "white_temp": 4500,
+      "exposure_ev": -1.0
+    },
+    "OrangeSunset_001": {
+      "hdri": "HFD_Sunset11.png",
+      "white_temp": 4200,
+      "exposure_ev": -0.25
+    },
+    "PinkMorning_001": {
+      "hdri": "HFD_HemiSunset04.png",
+      "white_temp": 5000,
+      "exposure_ev": 0.0
+    },
+    "PinkSunrise_001": {
+      "hdri": "HFD_HemiSunset01_01.png",
+      "white_temp": 4800,
+      "exposure_ev": 0.0
+    },
+    "RedDawn_001": {
+      "hdri": "HFD_HemiClouds04.hdr",
+      "white_temp": 4000,
+      "exposure_ev": -0.15
+    },
+    "SandStorm_001": {
+      "hdri": "hdri_sky_124.hdr",
+      "white_temp": 5200,
+      "exposure_ev": -0.35
+    },
+    "Thunderstorm_001": {
+      "hdri": "VHDRI_Twilight_Stormy02.hdr",
+      "white_temp": 7000,
+      "exposure_ev": -0.5
+    }
+  }
+}
