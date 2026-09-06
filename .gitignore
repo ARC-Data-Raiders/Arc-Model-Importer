@@ -1,3 +1,6 @@
+# Local scratch / temp (see .local/README.md) — not part of shipped product
+.local/
+
 # Bytecode / caches (also redirected at runtime via sys.pycache_prefix)
 __pycache__/
 *.py[cod]
@@ -14,29 +17,43 @@ __pycache__/
 *.blend2
 outfit_toggles.txt
 arc_palette_calibration.json
+arc_white_materials_inventory.json
 ADDON_SYNC.txt
 
-# Local-only verify / scratch scripts (never commit machine paths)
+# Local-only verify / scratch scripts (prefer .local/scratch/)
 verify_*.py
 *_dryrun*.py
 *_dryrun*.json
+docs/env_probe/_tmp_*
+map_tools/_scan_*.py
+map_tools/_analyze_*.py
+map_tools/_analyze_*.json
 
 # Blend / library backups
 *.bak
 *.bak_*
 *.blend.bak*
+*.pre_restore_backup
 
-# Temp / agent scratch (dry-runs, scans, MCP dumps)
-_tmp_*
+# Vendored third-party toolchains (download locally; too large for git)
+shader_tools/_ext/
+
+# Generated shader disassembly corpus from local probe runs
+docs/env_probe/shader_corpus/
+
+# Prebuilt native libs fetched at setup time
+/oodle-data-shared.dll
+/zlib-ng2.dll
+
+# Gameplay spawn / metadata extraction output (local runs)
+GameplayExtraction/
+
 *.csv.bak
 _apply_*_dryrun.json
 _mcp_*.json
 _frozentrail_*.json
 map_tools/_ism_*.json
 map_tools/_decal_*.json
-map_tools/_scan_*.py
-map_tools/_analyze_*.py
-map_tools/_analyze_*.json
 
 # Local reference dumps (may embed absolute texture paths)
 reference/
@@ -48,10 +65,14 @@ DataRaiders-BlenderImporter-*.zip
 DataRaiders-Outfits-*.zip
 DataRaiders-MapImporter-*.zip
 
-# Editor / OS — keep project rules trackable
-.cursor/*
-!.cursor/rules/
-!.cursor/rules/**
+# Agent / editor config — never publish to the public repo
+.cursor/
+AGENTS.md
+docs/DataRaiders.md
+CLAUDE.md
+.claude/
+.aider*
+.github/copilot-instructions.md
 .DS_Store
 Thumbs.db
 Desktop.ini
