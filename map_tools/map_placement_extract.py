@@ -288,10 +288,28 @@ def resolve_out_dir(
     return placement
 
 
+def is_persistent_level_json(path: Path) -> bool:
+    """True for map persistent ``{Map}_P.json`` (not DDGI/DA/DataLayers stubs)."""
+    name = path.name
+    if not name.endswith("_P.json"):
+        return False
+    low = name.lower()
+    if low.startswith("ddgi_") or low.startswith("da_") or "hlod" in low:
+        return False
+    if "DataLayers" in path.parts:
+        return False
+    return True
+
+
 def is_heightmap_cell(path: Path) -> bool:
     name = path.name.lower()
+    if is_persistent_level_json(path):
+        return False
     if "heightmap" in name or "height_map" in name:
         return True
+    # Size skip applies only to giant World Partition cells under _Generated_/.
+    if "_Generated_" not in path.parts:
+        return False
     try:
         if path.stat().st_size >= HEIGHTMAP_SIZE_BYTES:
             return True
@@ -410,7 +428,16 @@ class ComponentRec:
 
 
 class ActorRec:
-    __slots__ = ("name", "typ", "root_comp", "template_path", "class_path", "source_file")
+    __slots__ = (
+        "name",
+        "typ",
+        "root_comp",
+        "template_path",
+        "class_path",
+        "source_file",
+        "actor_label",
+        "gameplay_tags",
+    )
 
     def __init__(self, name: str, typ: str, source_file: str):
         self.name = name
@@ -419,6 +446,8 @@ class ActorRec:
         self.template_path = ""
         self.class_path = ""
         self.source_file = source_file
+        self.actor_label = ""
+        self.gameplay_tags: list[str] = []
 
 
 def ingest_file(
@@ -457,6 +486,12 @@ def ingest_file(
                 cp = object_path_from_soft(cls)
                 if cp:
                     rec.class_path = cp
+            label = props.get("ActorLabel")
+            if isinstance(label, str) and label.strip():
+                rec.actor_label = label.strip()
+            tags = props.get("GameplayTags")
+            if isinstance(tags, list):
+                rec.gameplay_tags = [str(t) for t in tags if t]
             actors[name] = rec
             continue
 

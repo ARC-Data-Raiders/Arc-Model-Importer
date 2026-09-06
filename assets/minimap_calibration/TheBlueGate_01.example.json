@@ -1,0 +1,11 @@
+{
+  "map_name": "TheBlueGate_01",
+  "source": "z_histogram_valley",
+  "note": "Underground metro path — same XY as surface T_InGameMap.",
+  "underground": {
+    "enabled": true,
+    "z_max": -30000,
+    "texture_suffix": "underground",
+    "exclude_from_surface": true
+  }
+}

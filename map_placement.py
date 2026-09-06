@@ -457,6 +457,21 @@ def load_placements_csv(path: str) -> list[dict[str, str]]:
         return list(csv.DictReader(fh))
 
 
+def draw_map_placement_panel(layout, context):
+    """Map Placement + gameplay import UI (map-importer line)."""
+    scene = context.scene
+    box = layout.box()
+    box.label(text="Map Placement", icon="WORLD")
+    if hasattr(scene, "arc_placement_map"):
+        box.prop(scene, "arc_placement_map", text="Map")
+    row = box.row(align=True)
+    row.prop(scene, "arc_placement_csv", text="")
+    row.operator("arc_outfits.pick_placement_csv", text="", icon="FILEBROWSER")
+    col = box.column(align=True)
+    col.operator("arc_outfits.import_placement_instanced", text="Stage 1: Import (Instanced)", icon="IMPORT")
+    col.operator("arc_outfits.apply_map_materials", text="Stage 2: Apply Materials", icon="MATERIAL")
+
+
 SPLINE_KEY_MARKER = "#spline:"
 
 
@@ -6353,7 +6368,7 @@ def create_spline_guide_empties(
     return created, undeformed
 
 
-class ARC_OT_ImportPlacementBase:
+class ARC_OUTFITS_OT_ImportPlacementBase:
     """Shared modal batch import state for empties / meshes."""
 
     _timer = None
@@ -6551,8 +6566,8 @@ class ARC_OT_ImportPlacementBase:
         return {"RUNNING_MODAL"}
 
 
-class ARC_OT_ImportPlacementEmpties(bpy.types.Operator, ARC_OT_ImportPlacementBase):
-    bl_idname = "arc.import_placement_empties"
+class ARC_OUTFITS_OT_ImportPlacementEmpties(bpy.types.Operator, ARC_OUTFITS_OT_ImportPlacementBase):
+    bl_idname = "arc_outfits.import_placement_empties"
     bl_label = "Import Placement Empties"
     bl_description = "Batched import of placement empties from CSV (ESC cancels)"
     bl_options = {"REGISTER", "UNDO"}
@@ -6564,8 +6579,8 @@ class ARC_OT_ImportPlacementEmpties(bpy.types.Operator, ARC_OT_ImportPlacementBa
         return self.invoke(context, None)
 
 
-class ARC_OT_ImportPlacementMeshes(bpy.types.Operator, ARC_OT_ImportPlacementBase):
-    bl_idname = "arc.import_placement_meshes"
+class ARC_OUTFITS_OT_ImportPlacementMeshes(bpy.types.Operator, ARC_OUTFITS_OT_ImportPlacementBase):
+    bl_idname = "arc_outfits.import_placement_meshes"
     bl_label = "Stage 1: Import Map Geometry"
     bl_description = (
         "Stage 1 — batched geometry only: find UEModel/FModel .uemodel/.psk/.pskx for each "
@@ -6581,10 +6596,10 @@ class ARC_OT_ImportPlacementMeshes(bpy.types.Operator, ARC_OT_ImportPlacementBas
         return self.invoke(context, None)
 
 
-class ARC_OT_ImportPlacementInstanced(bpy.types.Operator):
+class ARC_OUTFITS_OT_ImportPlacementInstanced(bpy.types.Operator):
     """Stage 1 variant that collapses repeated assets into geometry-nodes instances."""
 
-    bl_idname = "arc.import_placement_instanced"
+    bl_idname = "arc_outfits.import_placement_instanced"
     bl_label = "Stage 1: Import Map Geometry (Instanced)"
     bl_description = (
         "Stage 1 — import each unique mesh once and instance it onto a point cloud of "
@@ -7244,9 +7259,9 @@ class ARC_OT_ImportPlacementInstanced(bpy.types.Operator):
         context.workspace.status_text_set(None)
 
 
-class ARC_OT_ApplyMapMaterials(bpy.types.Operator):
+class ARC_OUTFITS_OT_ApplyMapMaterials(bpy.types.Operator):
     """Stage 2 — apply Arc materials to already-imported map meshes (batched)."""
-    bl_idname = "arc.apply_map_materials"
+    bl_idname = "arc_outfits.apply_map_materials"
     bl_label = "Stage 2: Apply Map Materials"
     bl_description = (
         "Stage 2 — rebuild materials on map meshes imported in Stage 1 "
@@ -7664,9 +7679,9 @@ class ARC_OT_ApplyMapMaterials(bpy.types.Operator):
         context.workspace.status_text_set(None)
 
 
-class ARC_OT_FixWhiteUnassignedMaterials(bpy.types.Operator):
+class ARC_OUTFITS_OT_FixWhiteUnassignedMaterials(bpy.types.Operator):
     """Post-pass: repair empty slots and default Principled-white map materials."""
-    bl_idname = "arc.fix_white_unassigned_materials"
+    bl_idname = "arc_outfits.fix_white_unassigned_materials"
     bl_label = "Fix Unassigned/White Materials"
     bl_description = (
         "Scan map meshes for empty material slots or default white Principled "
@@ -7782,10 +7797,10 @@ class ARC_OT_FixWhiteUnassignedMaterials(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_RepairSmaTrimMaterials(bpy.types.Operator):
+class ARC_OUTFITS_OT_RepairSmaTrimMaterials(bpy.types.Operator):
     """Strip leaked preferred stamps and rebuild SMA / PropTrim / architecture trim slots."""
 
-    bl_idname = "arc.repair_sma_trim_materials"
+    bl_idname = "arc_outfits.repair_sma_trim_materials"
     bl_label = "Repair SMA / Trim Materials"
     bl_description = (
         "Clear leaked PropTrim/Vent preferred_mi stamps on opaque meshes, then "
@@ -7892,9 +7907,9 @@ class ARC_OT_RepairSmaTrimMaterials(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_RefreshWaterShoreProximity(bpy.types.Operator):
+class ARC_OUTFITS_OT_RefreshWaterShoreProximity(bpy.types.Operator):
     """Bake shore proximity attribute onto water meshes for Water↔Shore mix."""
-    bl_idname = "arc.refresh_water_shore_proximity"
+    bl_idname = "arc_outfits.refresh_water_shore_proximity"
     bl_label = "Refresh Water Shore Proximity"
     bl_description = (
         "Bake arc_shore_proximity on water mesh vertices from distance to nearby "
@@ -7951,8 +7966,8 @@ class ARC_OT_RefreshWaterShoreProximity(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_ImportPlacementHeightmapPlane(bpy.types.Operator):
-    bl_idname = "arc.import_placement_heightmap_plane"
+class ARC_OUTFITS_OT_ImportPlacementHeightmapPlane(bpy.types.Operator):
+    bl_idname = "arc_outfits.import_placement_heightmap_plane"
     bl_label = "Import Landscape / Heightmap"
     bl_description = (
         "Create a city-core placeholder ground plane from placements AABB. "
@@ -8162,8 +8177,8 @@ class ARC_OT_ImportPlacementHeightmapPlane(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_ReloadPlacementHeightmap(bpy.types.Operator):
-    bl_idname = "arc.reload_placement_heightmap"
+class ARC_OUTFITS_OT_ReloadPlacementHeightmap(bpy.types.Operator):
+    bl_idname = "arc_outfits.reload_placement_heightmap"
     bl_label = "Reload Heightmap Only"
     bl_description = (
         "Rebuild CityGroundPlane displace from on-disk {Map}_heightmap.png + "
@@ -8189,8 +8204,8 @@ class ARC_OT_ReloadPlacementHeightmap(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_ApplyHeightmapSandMaterial(bpy.types.Operator):
-    bl_idname = "arc.apply_heightmap_sand_material"
+class ARC_OUTFITS_OT_ApplyHeightmapSandMaterial(bpy.types.Operator):
+    bl_idname = "arc_outfits.apply_heightmap_sand_material"
     bl_label = "Apply Sand to Heightmap"
     bl_description = (
         "Assign dual-scale South/Dunes sand BRDF to CityGroundPlane without reimport. "
@@ -8274,8 +8289,8 @@ class ARC_OT_ApplyHeightmapSandMaterial(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_PickPlacementInGameMap(bpy.types.Operator):
-    bl_idname = "arc.pick_placement_ingame_map"
+class ARC_OUTFITS_OT_PickPlacementInGameMap(bpy.types.Operator):
+    bl_idname = "arc_outfits.pick_placement_ingame_map"
     bl_label = "Pick In-Game Map Image"
     bl_options = {"REGISTER"}
 
@@ -8293,8 +8308,8 @@ class ARC_OT_PickPlacementInGameMap(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
 
-class ARC_OT_ClearPlacementInGameMap(bpy.types.Operator):
-    bl_idname = "arc.clear_placement_ingame_map"
+class ARC_OUTFITS_OT_ClearPlacementInGameMap(bpy.types.Operator):
+    bl_idname = "arc_outfits.clear_placement_ingame_map"
     bl_label = "Clear In-Game Map Image"
 
     def execute(self, context):
@@ -8302,8 +8317,8 @@ class ARC_OT_ClearPlacementInGameMap(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_PickPlacementHlodColor(bpy.types.Operator):
-    bl_idname = "arc.pick_placement_hlod_color"
+class ARC_OUTFITS_OT_PickPlacementHlodColor(bpy.types.Operator):
+    bl_idname = "arc_outfits.pick_placement_hlod_color"
     bl_label = "Pick HLOD Color Image"
     bl_options = {"REGISTER"}
 
@@ -8321,8 +8336,8 @@ class ARC_OT_PickPlacementHlodColor(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
 
-class ARC_OT_ClearPlacementHlodColor(bpy.types.Operator):
-    bl_idname = "arc.clear_placement_hlod_color"
+class ARC_OUTFITS_OT_ClearPlacementHlodColor(bpy.types.Operator):
+    bl_idname = "arc_outfits.clear_placement_hlod_color"
     bl_label = "Clear HLOD Color Image"
 
     def execute(self, context):
@@ -8330,8 +8345,8 @@ class ARC_OT_ClearPlacementHlodColor(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_ResolveHeightmapGroundRefs(bpy.types.Operator):
-    bl_idname = "arc.resolve_heightmap_ground_refs"
+class ARC_OUTFITS_OT_ResolveHeightmapGroundRefs(bpy.types.Operator):
+    bl_idname = "arc_outfits.resolve_heightmap_ground_refs"
     bl_label = "Auto-Find Map / HLOD Refs"
     bl_description = (
         "Search Pioneer Content / MapPlacement workspace / addon assets for "
@@ -8377,8 +8392,8 @@ class ARC_OT_ResolveHeightmapGroundRefs(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_FixImportSplines(bpy.types.Operator):
-    bl_idname = "arc.fix_import_splines"
+class ARC_OUTFITS_OT_FixImportSplines(bpy.types.Operator):
+    bl_idname = "arc_outfits.fix_import_splines"
     bl_label = "Fix / Guide Splines"
     bl_description = (
         "Tag SplineMesh placements and create start/end guide empties from FModel notes. "
@@ -8415,8 +8430,8 @@ class ARC_OT_FixImportSplines(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_PickPlacementCSV(bpy.types.Operator):
-    bl_idname = "arc.pick_placement_csv"
+class ARC_OUTFITS_OT_PickPlacementCSV(bpy.types.Operator):
+    bl_idname = "arc_outfits.pick_placement_csv"
     bl_label = "Pick Placement CSV"
     bl_options = {"REGISTER"}
 
@@ -8432,8 +8447,8 @@ class ARC_OT_PickPlacementCSV(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
 
-class ARC_OT_PickPlacementBounds(bpy.types.Operator):
-    bl_idname = "arc.pick_placement_bounds"
+class ARC_OUTFITS_OT_PickPlacementBounds(bpy.types.Operator):
+    bl_idname = "arc_outfits.pick_placement_bounds"
     bl_label = "Pick World Bounds JSON"
     bl_options = {"REGISTER"}
 
@@ -8449,8 +8464,8 @@ class ARC_OT_PickPlacementBounds(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
 
-class ARC_OT_PickPlacementHeightmapImage(bpy.types.Operator):
-    bl_idname = "arc.pick_placement_heightmap_image"
+class ARC_OUTFITS_OT_PickPlacementHeightmapImage(bpy.types.Operator):
+    bl_idname = "arc_outfits.pick_placement_heightmap_image"
     bl_label = "Pick Heightmap Image"
     bl_options = {"REGISTER"}
 
@@ -8466,9 +8481,9 @@ class ARC_OT_PickPlacementHeightmapImage(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
 
-class ARC_OT_PickPlacementWorkspace(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
+class ARC_OUTFITS_OT_PickPlacementWorkspace(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
     """Choose the central Map Placement output folder."""
-    bl_idname = "arc.pick_placement_workspace"
+    bl_idname = "arc_outfits.pick_placement_workspace"
     bl_label = "Select Placement Workspace"
     filename_ext = ""
     filter_glob: bpy.props.StringProperty(default="*", options={"HIDDEN"})
@@ -8481,8 +8496,8 @@ class ARC_OT_PickPlacementWorkspace(bpy.types.Operator, bpy_extras.io_utils.Impo
         return {"FINISHED"}
 
 
-class ARC_OT_ClearPlacementWorkspace(bpy.types.Operator):
-    bl_idname = "arc.clear_placement_workspace"
+class ARC_OUTFITS_OT_ClearPlacementWorkspace(bpy.types.Operator):
+    bl_idname = "arc_outfits.clear_placement_workspace"
     bl_label = "Clear Placement Workspace"
 
     def execute(self, context):
@@ -8490,9 +8505,9 @@ class ARC_OT_ClearPlacementWorkspace(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_RefreshPlacementMaps(bpy.types.Operator):
+class ARC_OUTFITS_OT_RefreshPlacementMaps(bpy.types.Operator):
     """Re-scan Pioneer/Maps for the map dropdown."""
-    bl_idname = "arc.refresh_placement_maps"
+    bl_idname = "arc_outfits.refresh_placement_maps"
     bl_label = "Refresh Maps"
     bl_options = {"REGISTER"}
 
@@ -8505,9 +8520,9 @@ class ARC_OT_RefreshPlacementMaps(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_ExtractMapPlacements(bpy.types.Operator):
+class ARC_OUTFITS_OT_ExtractMapPlacements(bpy.types.Operator):
     """Run extract for the selected map into the placement workspace."""
-    bl_idname = "arc.extract_map_placements"
+    bl_idname = "arc_outfits.extract_map_placements"
     bl_label = "Extract Placements"
     bl_description = (
         "Scan the selected map's JSON cells and write placements CSV, "
@@ -8534,9 +8549,9 @@ class ARC_OT_ExtractMapPlacements(bpy.types.Operator):
         return {"CANCELLED"}
 
 
-class ARC_OT_GeneratePlacementOverlay(bpy.types.Operator):
+class ARC_OUTFITS_OT_GeneratePlacementOverlay(bpy.types.Operator):
     """Copy bounds/heightmap assets and build the placements overlay PNG."""
-    bl_idname = "arc.generate_placement_overlay"
+    bl_idname = "arc_outfits.generate_placement_overlay"
     bl_label = "Generate Overlay PNG"
     bl_description = (
         "Gather world_bounds / heightmap refs into {Workspace}/{MapName}/ "
@@ -8561,9 +8576,9 @@ class ARC_OT_GeneratePlacementOverlay(bpy.types.Operator):
         return {"CANCELLED"}
 
 
-class ARC_OT_FramePlacementView(bpy.types.Operator):
+class ARC_OUTFITS_OT_FramePlacementView(bpy.types.Operator):
     """Raise viewport clip end and frame all map placement objects."""
-    bl_idname = "arc.frame_placement_view"
+    bl_idname = "arc_outfits.frame_placement_view"
     bl_label = "Frame Map Placements"
     bl_description = (
         "Placements use Unreal centimeters and sit far from the world origin. "
@@ -8590,9 +8605,9 @@ class ARC_OT_FramePlacementView(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_OpenPlacementWorkspace(bpy.types.Operator):
+class ARC_OUTFITS_OT_OpenPlacementWorkspace(bpy.types.Operator):
     """Reveal the placement workspace folder in the OS file browser."""
-    bl_idname = "arc.open_placement_workspace"
+    bl_idname = "arc_outfits.open_placement_workspace"
     bl_label = "Open Workspace Folder"
     bl_options = {"REGISTER"}
 
@@ -8611,9 +8626,9 @@ class ARC_OT_OpenPlacementWorkspace(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_StartPlacementListener(bpy.types.Operator):
+class ARC_OUTFITS_OT_StartPlacementListener(bpy.types.Operator):
     """Listen for FModel placements_ready on localhost TCP."""
-    bl_idname = "arc.start_placement_listener"
+    bl_idname = "arc_outfits.start_placement_listener"
     bl_label = "Start FModel Listener"
     bl_options = {"REGISTER"}
 
@@ -8626,9 +8641,9 @@ class ARC_OT_StartPlacementListener(bpy.types.Operator):
         return {"FINISHED"} if bridge.is_listening() else {"CANCELLED"}
 
 
-class ARC_OT_StopPlacementListener(bpy.types.Operator):
+class ARC_OUTFITS_OT_StopPlacementListener(bpy.types.Operator):
     """Stop the FModel placement TCP listener."""
-    bl_idname = "arc.stop_placement_listener"
+    bl_idname = "arc_outfits.stop_placement_listener"
     bl_label = "Stop Listener"
     bl_options = {"REGISTER"}
 
@@ -8640,10 +8655,10 @@ class ARC_OT_StopPlacementListener(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_FixPlacementRotations(bpy.types.Operator):
+class ARC_OUTFITS_OT_FixPlacementRotations(bpy.types.Operator):
     """Convert legacy placement eulers to Unreal pass-through (-roll, -pitch, yaw)."""
 
-    bl_idname = "arc.fix_placement_rotations"
+    bl_idname = "arc_outfits.fix_placement_rotations"
     bl_label = "Fix Placement Rotations"
     bl_description = (
         "Remap Fast/instanced arc_rotation attributes (and placement empties) to "
@@ -8701,10 +8716,10 @@ class ARC_OT_FixPlacementRotations(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_FixMapOrientation(bpy.types.Operator):
+class ARC_OUTFITS_OT_FixMapOrientation(bpy.types.Operator):
     """Mirror map Y so Blender top-down matches the in-game map UI."""
 
-    bl_idname = "arc.fix_map_orientation"
+    bl_idname = "arc_outfits.fix_map_orientation"
     bl_label = "Fix Map Orientation"
     bl_description = (
         "Reflect placements / heightmap across XZ (negate Unreal Y). Matches Buried City "
@@ -8737,10 +8752,10 @@ class ARC_OT_FixMapOrientation(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_ScaleMapToMeters(bpy.types.Operator):
+class ARC_OUTFITS_OT_ScaleMapToMeters(bpy.types.Operator):
     """Scale an existing Unreal-cm map scene down to Blender meters (÷100)."""
 
-    bl_idname = "arc.scale_map_to_meters"
+    bl_idname = "arc_outfits.scale_map_to_meters"
     bl_label = "Scale Map to Meters"
     bl_description = (
         "Multiply locations / source scales / heightmap by 0.01 so 1 BU = 1 m. "
@@ -8774,10 +8789,10 @@ class ARC_OT_ScaleMapToMeters(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_RemoveDuplicatePlacements(bpy.types.Operator):
+class ARC_OUTFITS_OT_RemoveDuplicatePlacements(bpy.types.Operator):
     """Dedupe Fast-import points, quiet InstanceSources, drop double-imported instancers."""
 
-    bl_idname = "arc.remove_duplicate_placements"
+    bl_idname = "arc_outfits.remove_duplicate_placements"
     bl_label = "Remove Duplicate Placements"
     bl_description = (
         "In-scene cleanup: near-duplicate points inside instancers (same mesh + epsilon pose), "
@@ -8927,10 +8942,10 @@ class ARC_OT_RemoveDuplicatePlacements(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_GroupMapFoliage(bpy.types.Operator):
+class ARC_OUTFITS_OT_GroupMapFoliage(bpy.types.Operator):
     """Move foliage instancers into Trees/Vines/Bushes/Grass/Overgrowth/Other under the map placements root."""
 
-    bl_idname = "arc.group_map_foliage"
+    bl_idname = "arc_outfits.group_map_foliage"
     bl_label = "Group Map Foliage"
     bl_description = (
         "Classify foliage instancers by asset/name heuristics and move them under "
@@ -9049,10 +9064,10 @@ def realize_decal_instancers_to_unique(map_name: str = "") -> dict[str, int]:
     return stats
 
 
-class ARC_OT_RealizeDecalInstancers(bpy.types.Operator):
+class ARC_OUTFITS_OT_RealizeDecalInstancers(bpy.types.Operator):
     """Convert DecalMesh / poster / plane / branding GN instancers into unique objects."""
 
-    bl_idname = "arc.realize_decal_instancers"
+    bl_idname = "arc_outfits.realize_decal_instancers"
     bl_label = "Realize Unique Instancers (instance fixer)"
     bl_description = (
         "Instance fixer: expand existing DecalMesh / branding-poster / sticker / "
@@ -9078,10 +9093,10 @@ class ARC_OT_RealizeDecalInstancers(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_GroupMapCollections(bpy.types.Operator):
+class ARC_OUTFITS_OT_GroupMapCollections(bpy.types.Operator):
     """Organize foliage, light modifiers, sky spheres, debris, and hide helper meshes."""
 
-    bl_idname = "arc.group_map_collections"
+    bl_idname = "arc_outfits.group_map_collections"
     bl_label = "Group Map Collections"
     bl_description = (
         "Re-runnable organizer: foliage (+ Snow/Overgrowth), Light Modifiers, Skybox/Spheres, "
@@ -9139,10 +9154,10 @@ class ARC_OT_GroupMapCollections(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_AuditMapMaterials(bpy.types.Operator):
+class ARC_OUTFITS_OT_AuditMapMaterials(bpy.types.Operator):
     """List unique mesh types with broken / white / incomplete materials."""
 
-    bl_idname = "arc.audit_map_materials"
+    bl_idname = "arc_outfits.audit_map_materials"
     bl_label = "Audit Map Materials"
     bl_description = (
         "Scan map meshes for missing/white/WorldGrid/incomplete materials; "
@@ -9210,10 +9225,10 @@ class ARC_OT_AuditMapMaterials(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_SimplifyMapSources(bpy.types.Operator):
+class ARC_OUTFITS_OT_SimplifyMapSources(bpy.types.Operator):
     """Decimate unique InstanceSources meshes once — Eevee-friendly global simplify for GN maps."""
 
-    bl_idname = "arc.simplify_map_sources"
+    bl_idname = "arc_outfits.simplify_map_sources"
     bl_label = "Simplify Map Sources (Decimate)"
     bl_description = (
         "Add a Decimate modifier on each unique SRC mesh (InstanceSources). "
@@ -9305,10 +9320,10 @@ class ARC_OT_SimplifyMapSources(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_ClearMapSourceSimplify(bpy.types.Operator):
+class ARC_OUTFITS_OT_ClearMapSourceSimplify(bpy.types.Operator):
     """Remove ARC Map Simplify Decimate modifiers from InstanceSources meshes."""
 
-    bl_idname = "arc.clear_map_source_simplify"
+    bl_idname = "arc_outfits.clear_map_source_simplify"
     bl_label = "Clear Map Source Simplify"
     bl_description = (
         "Remove non-destructive ARC Map Simplify Decimate modifiers from SRC meshes. "
@@ -9326,10 +9341,10 @@ class ARC_OT_ClearMapSourceSimplify(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_StripShellOriginPileDetails(bpy.types.Operator):
+class ARC_OUTFITS_OT_StripShellOriginPileDetails(bpy.types.Operator):
     """Strip detail props piled on building-shell origins (FModel socket AbsoluteTransform bug)."""
 
-    bl_idname = "arc.strip_shell_origin_pile_details"
+    bl_idname = "arc_outfits.strip_shell_origin_pile_details"
     bl_label = "Strip Shell Origin Pile Details"
     bl_description = (
         "Remove non-shell instance points that share a pose with SM_BC_Building_* shells. "
@@ -9352,10 +9367,10 @@ class ARC_OT_StripShellOriginPileDetails(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_UnflipMapSourceMeshes(bpy.types.Operator):
+class ARC_OUTFITS_OT_UnflipMapSourceMeshes(bpy.types.Operator):
     """Bake Y-unflip on map SRC meshes so shells coincide with socket-placed details."""
 
-    bl_idname = "arc.unflip_map_source_meshes"
+    bl_idname = "arc_outfits.unflip_map_source_meshes"
     bl_label = "Unflip Map Source Meshes (Y)"
     bl_description = (
         "UEFormat often stores map meshes with Y negated vs Unreal sockets. Combined with "
@@ -9381,10 +9396,10 @@ class ARC_OT_UnflipMapSourceMeshes(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_DiagnoseShellDetailAlignment(bpy.types.Operator):
+class ARC_OUTFITS_OT_DiagnoseShellDetailAlignment(bpy.types.Operator):
     """Print shell-vs-detail same-side metrics for residential C45."""
 
-    bl_idname = "arc.diagnose_shell_detail_alignment"
+    bl_idname = "arc_outfits.diagnose_shell_detail_alignment"
     bl_label = "Diagnose Shell/Detail Alignment"
     bl_description = (
         "For C45 residential shells, report whether nearby WindowMolding pivots share "
@@ -9412,9 +9427,9 @@ class ARC_OT_DiagnoseShellDetailAlignment(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_ImportLastFModelExport(bpy.types.Operator):
+class ARC_OUTFITS_OT_ImportLastFModelExport(bpy.types.Operator):
     """Find the newest FModel MapPlacements CSV and wire it for import."""
-    bl_idname = "arc.import_last_fmodel_export"
+    bl_idname = "arc_outfits.import_last_fmodel_export"
     bl_label = "Import Last FModel Export"
     bl_options = {"REGISTER"}
 
@@ -9440,7 +9455,7 @@ class ARC_OT_ImportLastFModelExport(bpy.types.Operator):
             scene,
         )
         self.report({"INFO"}, f"Loaded {map_name}: {os.path.basename(dest_csv)}")
-        return bpy.ops.arc.import_placement_instanced("INVOKE_DEFAULT")
+        return bpy.ops.arc_outfits.import_placement_instanced("INVOKE_DEFAULT")
 
 
 _OWNER = object()
@@ -9625,10 +9640,10 @@ def unregister_instancer_material_focus():
     _last_instancer_focus_name[0] = ""
 
 
-class ARC_OT_FocusInstancerSourceMaterial(bpy.types.Operator):
+class ARC_OUTFITS_OT_FocusInstancerSourceMaterial(bpy.types.Operator):
     """Pin Shader Editor to the SRC material of the selected map instancer."""
 
-    bl_idname = "arc.focus_instancer_source_material"
+    bl_idname = "arc_outfits.focus_instancer_source_material"
     bl_label = "Focus Instancer Material"
     bl_description = (
         "Pin Shader Node Editors to the Instance Source mesh material for the active "
@@ -9648,10 +9663,10 @@ class ARC_OT_FocusInstancerSourceMaterial(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_SelectInstancerSource(bpy.types.Operator):
+class ARC_OUTFITS_OT_SelectInstancerSource(bpy.types.Operator):
     """Select the InstanceSources SRC mesh for the active GN instancer."""
 
-    bl_idname = "arc.select_instancer_source"
+    bl_idname = "arc_outfits.select_instancer_source"
     bl_label = "Select Instance Source"
     bl_description = (
         "Select the SRC_* mesh in InstanceSources that this Fast-import instancer instances. "
@@ -9681,49 +9696,54 @@ class ARC_OT_SelectInstancerSource(bpy.types.Operator):
         return {"FINISHED"}
 
 
-OPERATOR_CLASSES = (
-    ARC_OT_ImportPlacementEmpties,
-    ARC_OT_ImportPlacementMeshes,
-    ARC_OT_ImportPlacementInstanced,
-    ARC_OT_ApplyMapMaterials,
-    ARC_OT_FixWhiteUnassignedMaterials,
-    ARC_OT_RepairSmaTrimMaterials,
-    ARC_OT_RefreshWaterShoreProximity,
-    ARC_OT_AuditMapMaterials,
-    ARC_OT_FixPlacementRotations,
-    ARC_OT_FixMapOrientation,
-    ARC_OT_ScaleMapToMeters,
-    ARC_OT_RemoveDuplicatePlacements,
-    ARC_OT_ImportPlacementHeightmapPlane,
-    ARC_OT_ReloadPlacementHeightmap,
-    ARC_OT_ApplyHeightmapSandMaterial,
-    ARC_OT_PickPlacementInGameMap,
-    ARC_OT_ClearPlacementInGameMap,
-    ARC_OT_PickPlacementHlodColor,
-    ARC_OT_ClearPlacementHlodColor,
-    ARC_OT_ResolveHeightmapGroundRefs,
-    ARC_OT_FixImportSplines,
-    ARC_OT_GroupMapFoliage,
-    ARC_OT_GroupMapCollections,
-    ARC_OT_RealizeDecalInstancers,
-    ARC_OT_FocusInstancerSourceMaterial,
-    ARC_OT_SelectInstancerSource,
-    ARC_OT_SimplifyMapSources,
-    ARC_OT_ClearMapSourceSimplify,
-    ARC_OT_StripShellOriginPileDetails,
-    ARC_OT_UnflipMapSourceMeshes,
-    ARC_OT_DiagnoseShellDetailAlignment,
-    ARC_OT_PickPlacementCSV,
-    ARC_OT_PickPlacementBounds,
-    ARC_OT_PickPlacementHeightmapImage,
-    ARC_OT_PickPlacementWorkspace,
-    ARC_OT_ClearPlacementWorkspace,
-    ARC_OT_RefreshPlacementMaps,
-    ARC_OT_ExtractMapPlacements,
-    ARC_OT_GeneratePlacementOverlay,
-    ARC_OT_FramePlacementView,
-    ARC_OT_OpenPlacementWorkspace,
-    ARC_OT_StartPlacementListener,
-    ARC_OT_StopPlacementListener,
-    ARC_OT_ImportLastFModelExport,
+# Outfits line: FModel TCP for single models / outfits only (no map UI).
+BRIDGE_OPERATOR_CLASSES = (
+    ARC_OUTFITS_OT_StartPlacementListener,
+    ARC_OUTFITS_OT_StopPlacementListener,
+)
+
+# Map-importer line: full Map Placement / GroundPlane / organize / audit suite.
+OPERATOR_CLASSES = BRIDGE_OPERATOR_CLASSES + (
+    ARC_OUTFITS_OT_ImportPlacementEmpties,
+    ARC_OUTFITS_OT_ImportPlacementMeshes,
+    ARC_OUTFITS_OT_ImportPlacementInstanced,
+    ARC_OUTFITS_OT_ApplyMapMaterials,
+    ARC_OUTFITS_OT_FixWhiteUnassignedMaterials,
+    ARC_OUTFITS_OT_RepairSmaTrimMaterials,
+    ARC_OUTFITS_OT_RefreshWaterShoreProximity,
+    ARC_OUTFITS_OT_AuditMapMaterials,
+    ARC_OUTFITS_OT_FixPlacementRotations,
+    ARC_OUTFITS_OT_FixMapOrientation,
+    ARC_OUTFITS_OT_ScaleMapToMeters,
+    ARC_OUTFITS_OT_RemoveDuplicatePlacements,
+    ARC_OUTFITS_OT_ImportPlacementHeightmapPlane,
+    ARC_OUTFITS_OT_ReloadPlacementHeightmap,
+    ARC_OUTFITS_OT_ApplyHeightmapSandMaterial,
+    ARC_OUTFITS_OT_PickPlacementInGameMap,
+    ARC_OUTFITS_OT_ClearPlacementInGameMap,
+    ARC_OUTFITS_OT_PickPlacementHlodColor,
+    ARC_OUTFITS_OT_ClearPlacementHlodColor,
+    ARC_OUTFITS_OT_ResolveHeightmapGroundRefs,
+    ARC_OUTFITS_OT_FixImportSplines,
+    ARC_OUTFITS_OT_GroupMapFoliage,
+    ARC_OUTFITS_OT_GroupMapCollections,
+    ARC_OUTFITS_OT_RealizeDecalInstancers,
+    ARC_OUTFITS_OT_FocusInstancerSourceMaterial,
+    ARC_OUTFITS_OT_SelectInstancerSource,
+    ARC_OUTFITS_OT_SimplifyMapSources,
+    ARC_OUTFITS_OT_ClearMapSourceSimplify,
+    ARC_OUTFITS_OT_StripShellOriginPileDetails,
+    ARC_OUTFITS_OT_UnflipMapSourceMeshes,
+    ARC_OUTFITS_OT_DiagnoseShellDetailAlignment,
+    ARC_OUTFITS_OT_PickPlacementCSV,
+    ARC_OUTFITS_OT_PickPlacementBounds,
+    ARC_OUTFITS_OT_PickPlacementHeightmapImage,
+    ARC_OUTFITS_OT_PickPlacementWorkspace,
+    ARC_OUTFITS_OT_ClearPlacementWorkspace,
+    ARC_OUTFITS_OT_RefreshPlacementMaps,
+    ARC_OUTFITS_OT_ExtractMapPlacements,
+    ARC_OUTFITS_OT_GeneratePlacementOverlay,
+    ARC_OUTFITS_OT_FramePlacementView,
+    ARC_OUTFITS_OT_OpenPlacementWorkspace,
+    ARC_OUTFITS_OT_ImportLastFModelExport,
 )

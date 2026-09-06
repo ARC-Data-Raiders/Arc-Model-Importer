@@ -7,6 +7,7 @@ Blender's main thread (Surf-style socket + timer pump).
 
 Primary command: `import_models` (PSK/PSKX + auto materials from Snooper).
 Outfit command: `import_outfit` (manifest with colorways / explicit skin JSON paths).
+Animation command: `import_animation` (one PSA + optional notify sidecar; apply to selected armature).
 Secondary: `placements_ready` (umap CSV → Stage 1 geometry; Stage 2 is manual).
 
 Port 28563 (SurfBlender uses 28562 — do not clash).
@@ -211,6 +212,19 @@ def handle_request(request: dict) -> dict:
         _ensure_pump()
         return _snapshot(True, message_id, f"Queued outfit ({len(colorways)} colorway(s))")
 
+    if command == "import_animation":
+        data = request.get("Data") or request.get("data") or {}
+        psa = data.get("PsaPath") or data.get("psaPath") or data.get("psa_path") or ""
+        if not str(psa).strip():
+            return _snapshot(False, message_id, "Missing Data.PsaPath")
+        with _listener_lock:
+            _pending.append(
+                {"command": "import_animation", "data": data, "message_id": message_id}
+            )
+            _last_status = "queued"
+        _ensure_pump()
+        return _snapshot(True, message_id, f"Queued animation {os.path.basename(str(psa))}")
+
     if command == "placements_ready":
         data = request.get("Data") or request.get("data") or {}
         if not data:
@@ -286,6 +300,12 @@ def _pump_queue():
             _last_map = data.get("DisplayName") or data.get("displayName") or data.get("OutfitName") or "outfit"
             _last_status = "imported"
             _last_error = ""
+        elif command == "import_animation":
+            imported = import_animation_payload(data)
+            _last_import = imported[0] if imported else ""
+            _last_map = data.get("AnimName") or data.get("animName") or "animation"
+            _last_status = "imported"
+            _last_error = ""
         else:
             csv_path, map_name = ingest_fmodel_payload(data, bpy.context.scene)
             _last_import = csv_path
@@ -302,13 +322,13 @@ def _pump_queue():
                 )
                 print(f"Arc Raiders FModel bridge: {_last_error}")
             elif mode in {"instanced", "fast", "instances"}:
-                bpy.ops.arc.import_placement_instanced("INVOKE_DEFAULT")
+                bpy.ops.arc_outfits.import_placement_instanced("INVOKE_DEFAULT")
             elif mode == "meshes":
-                bpy.ops.arc.import_placement_meshes("INVOKE_DEFAULT")
+                bpy.ops.arc_outfits.import_placement_meshes("INVOKE_DEFAULT")
             elif mode in {"empties", "empty"}:
-                bpy.ops.arc.import_placement_empties("INVOKE_DEFAULT")
+                bpy.ops.arc_outfits.import_placement_empties("INVOKE_DEFAULT")
             else:
-                bpy.ops.arc.import_placement_instanced("INVOKE_DEFAULT")
+                bpy.ops.arc_outfits.import_placement_instanced("INVOKE_DEFAULT")
         _tag_redraw()
     except Exception as e:
         _last_status = "error"
@@ -357,6 +377,53 @@ def import_model_paths(data: dict[str, Any]) -> list[str]:
         # Partial success still counts as imported; keep first error for status.
         _last_error = "; ".join(errors[:3])
     return imported
+
+
+def import_animation_payload(data: dict[str, Any]) -> list[str]:
+    """Apply one FModel-exported PSA (+ notify sidecar) onto the scene armature."""
+    global _last_error
+    try:
+        import bpy
+    except ImportError as e:
+        raise RuntimeError(f"Blender API unavailable: {e}") from e
+
+    try:
+        from .. import animation_import as aimp
+        from .. import animation_catalog as acat
+    except ImportError:
+        import animation_import as aimp  # type: ignore
+        import animation_catalog as acat  # type: ignore
+
+    psa = os.path.abspath(str(data.get("PsaPath") or data.get("psaPath") or data.get("psa_path") or "").strip())
+    notify = str(data.get("NotifyPath") or data.get("notifyPath") or data.get("notify_path") or "").strip()
+    if notify:
+        notify = os.path.abspath(notify)
+    notifies = data.get("Notifies") or data.get("notifies")
+    if not isinstance(notifies, list):
+        notifies = None
+    spawn = data.get("SpawnNotifies")
+    if spawn is None:
+        spawn = data.get("spawnNotifies", True)
+    replace = data.get("ReplaceAction")
+    if replace is None:
+        replace = data.get("replaceAction", True)
+
+    inline = None
+    if notifies:
+        inline = acat.parse_notify_document({"Notifies": notifies, "AnimName": data.get("AnimName")})
+        notifies = inline.get("notifies") or notifies
+
+    ok, msg = aimp.apply_animation(
+        bpy.context,
+        psa_path=psa,
+        notify_path=notify if notify and os.path.isfile(notify) else "",
+        notifies=notifies,
+        spawn_notifies_flag=bool(spawn),
+        replace_action=bool(replace),
+    )
+    if not ok:
+        raise RuntimeError(msg)
+    return [psa]
 
 
 def import_outfit_manifest(data: dict[str, Any]) -> list[str]:

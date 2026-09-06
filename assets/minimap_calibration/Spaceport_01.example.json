@@ -1,0 +1,11 @@
+{
+  "map_name": "Spaceport_01",
+  "source": "z_histogram_deep_tail",
+  "note": "Deepest Z band (~93 markers) for small underground art; tune if needed.",
+  "underground": {
+    "enabled": true,
+    "z_max": -43500,
+    "texture_suffix": "underground",
+    "exclude_from_surface": true
+  }
+}

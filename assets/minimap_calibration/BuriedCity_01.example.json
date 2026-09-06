@@ -1,0 +1,6 @@
+{
+  "map_name": "BuriedCity_01",
+  "source": "manual_fine_tune",
+  "note": "Widget WorldSize is correct; slight shrink so markers match painted art density.",
+  "content_scale": 0.97
+}

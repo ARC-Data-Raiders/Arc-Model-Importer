@@ -16,7 +16,7 @@ Writes:
 Example::
 
     python map_tools/prepare_blender_heightmap.py ^
-      --map-dir "C:/Users/.../Desktop/Arc_Raiders_Current/MapPlacements/BuriedCity_01_P"
+      --map-dir "$ARC_RAIDERS_ROOT/MapPlacements/BuriedCity_01_P"
 
 Then in Blender: **Reload Heightmap Only** (no Stage 1).
 """

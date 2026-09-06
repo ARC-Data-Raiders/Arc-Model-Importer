@@ -49,6 +49,9 @@ via **Export Placements** in Snooper (umap worlds).
     "MapName": "FrozenTrail_01",
     "CsvPath": "C:\\...\\placements.csv",
     "ManifestPath": "C:\\...\\placements_manifest.json",
+    "GameplayCsvPath": "C:\\...\\GameplayExtraction\\FrozenTrail_01\\gameplay_spawns_all.csv",
+    "GameplayImportMode": "instanced",
+    "ImportGameplay": true,
     "Count": 1234,
     "Units": "unreal_cm",
     "Axes": "passthrough",
@@ -56,6 +59,20 @@ via **Export Placements** in Snooper (umap worlds).
   }
 }
 ```
+
+**Gameplay spawns (optional):** FModel does not extract gameplay JSON — pass a
+pre-built `gameplay_spawns_all.csv` from the offline batch
+(`map_tools/extract_gameplay_spawns.py`). When `ImportGameplay` is true (default
+when `GameplayCsvPath` exists and scene toggle **Import gameplay on FModel push**
+is on), Blender copies the CSV to the placement workspace and imports instanced
+markers + optional `InGameMapPlane` after Stage 1 (or immediately for CSV-only
+mode).
+
+| Field | Purpose |
+|-------|---------|
+| `GameplayCsvPath` | Absolute path to `gameplay_spawns_all.csv` |
+| `ImportGameplay` | Run gameplay import after placements ingest (default: on when path exists) |
+| `GameplayImportMode` | `instanced` (default), `empties`, or `mesh` |
 
 ### Units and orientation (Blender)
 
@@ -215,3 +232,41 @@ dialog, no DA_OI folder rescan.
 - Manual Single PSK / Folder import remains available as backup
 
 Bridge `import_models` still never opens the outfit dialog (single-model auto materials).
+
+## Animations (on-demand PSA)
+
+Snooper **Send to Blender** also exports any animations currently loaded on the
+timeline as **PSA** into `ModelDirectory/animations/`, writes a
+`{name}.notifies.json` sidecar, and pushes `import_animation`.
+
+Blender applies **one** Action to the selected armature (replacing the previous
+applied Action by default) instead of importing the whole animation library.
+
+```json
+{
+  "Command": "import_animation",
+  "MessageId": "...",
+  "ProtocolVersion": 1,
+  "Data": {
+    "PsaPath": "C:\\\\...\\\\AS_Character_Emote.psa",
+    "NotifyPath": "C:\\\\...\\\\AS_Character_Emote.notifies.json",
+    "AnimName": "AS_Character_Emote",
+    "ReplaceAction": true,
+    "SpawnNotifies": true,
+    "Source": "snooper"
+  }
+}
+```
+
+Notify sidecar `kind` values:
+
+| kind | Blender |
+|------|---------|
+| `prop` | Import `SkeletalMeshProp` / `StaticMeshProp` PSK and bone-parent to `socket` |
+| `fx` | Empty marker named after the Niagara / particle template |
+| `other` | Skipped unless **Spawn Other Notifies** is on |
+
+The N-panel **Animations** picker lists FMDex `AnimSequence` / `AnimMontage`
+names without importing them. Apply looks up a cached `.psa` (Animation Cache
+folder, typically FModel `Save → animations`) or uses the TCP path above.
+

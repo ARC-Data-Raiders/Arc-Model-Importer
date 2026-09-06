@@ -1,0 +1,6 @@
+{
+  "map_name": "TheDam_02",
+  "source": "manual_editor_calibration",
+  "note": "Optional fine-tune only. Default is widget bounds + content_scale 1.0 (no overlay stretch).",
+  "uv_offset_px": [0, 0]
+}

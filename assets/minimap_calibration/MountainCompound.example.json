@@ -1,0 +1,11 @@
+{
+  "map_name": "MountainCompound",
+  "source": "z_histogram_valley",
+  "note": "Stella Montis bottom layer — same XY widget bounds as surface.",
+  "underground": {
+    "enabled": true,
+    "z_max": 2400,
+    "texture_suffix": "Bottom",
+    "exclude_from_surface": true
+  }
+}
