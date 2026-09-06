@@ -9,7 +9,7 @@
   Two SEPARATE Blender addons (different AppData folders — never overwrite each other):
 
     outfits       folder: DataRaiders-Outfits
-                  bl_info: "Arc Raiders Outfits Importer"
+                  bl_info: "Arc Model Importer"
                   branches: outfits-stable / pre-map-importer
                   AppData: %APPDATA%\Blender Foundation\Blender\5.1\scripts\addons\DataRaiders-Outfits
                   zip dir: dist/outfits/
@@ -56,7 +56,7 @@ $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 # Folder names under Blender scripts/addons (also zip inner root).
 $script:AddonFolderOutfits = "DataRaiders-Outfits"
 $script:AddonFolderMap = "DataRaiders-MapImporter"
-$script:BlInfoNameOutfits = "Arc Raiders Outfits Importer"
+$script:BlInfoNameOutfits = "Arc Model Importer"
 $script:BlInfoNameMap = "Arc Raiders Map Importer"
 
 # Runtime files/dirs that Blender needs. Everything else stays in git but out of the zip.
@@ -67,13 +67,24 @@ $RootFilesShared = @(
     "operators.py",
     "ui.py",
     "importing.py",
-    "materials.py",
     "textures.py",
     "utils.py",
     "fmdex.py",
     "rig.py",
     "palette_calibration.py",
     "outfit_reference.csv",
+    "asset_domain.py",
+    "group_hotswap.py",
+    "mask_debug.py",
+    "ocm_zone_cache.py",
+    "prop_assemble.py",
+    "weapon_catalog.py",
+    "weapon_catalog_data.py",
+    "animation_catalog.py",
+    "animation_import.py",
+    "lighting_looks.py",
+    "lighting_atmosphere.py",
+    "niagara_curves.py",
     # Required for clothing/outfit ColorMask materials — without this, imports
     # succeed as bare Principled stubs ("Arc Texturer unavailable").
     "ArcTexturer.blend",
@@ -90,7 +101,9 @@ $RootFilesMapExtra = @(
 
 $RootDirs = @(
     "assets",
-    "map_tools"
+    "materials",
+    "map_tools",
+    "reference"
 )
 
 # Under map_tools: ship runtime helpers only (exclude analyze dumps / docs).
@@ -104,7 +117,8 @@ $MapToolsExcludeAlways = @(
     "_decal_override_scan.json",
     "_decal_actor_overrides_full.json",
     "FMODEL_BRIDGE.md",
-    "__pycache__"
+    "__pycache__",
+    "_tmp_airbag_extract"
 )
 
 # Map-only tooling — never ship inside the outfits addon folder.
@@ -212,6 +226,7 @@ function New-StagingDir {
             New-Item -ItemType Directory -Path $dst -Force | Out-Null
             Get-ChildItem -LiteralPath $src -Force | ForEach-Object {
                 if ($mapToolsExclude -contains $_.Name) { return }
+                if ($_.Name -like "_tmp*") { return }
                 if ($_.PSIsContainer -and $_.Name -eq "__pycache__") { return }
                 if ($_.Name -like "*.pyc") { return }
                 Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dst $_.Name) -Recurse -Force
@@ -303,7 +318,7 @@ function Update-StagedBlInfo([string]$AddonDir, [string]$ReleaseLine) {
         $desc = "Import Arc Raiders map placements, geometry, and ground materials."
     }
     else {
-        $desc = "Import Arc Raiders outfits / models by selecting an outfit folder."
+        $desc = "Import Arc Raiders outfits, weapons, and models by selecting content folders."
     }
     $text = Get-Content -LiteralPath $initPath -Raw
     $updated = [regex]::Replace($text, '("name"\s*:\s*")([^"]*)(")', "`${1}$name`${3}", 1)
@@ -362,6 +377,11 @@ function Sync-ToAppData([string]$AddonDir, [string]$ReleaseLine, [string]$GitBra
             if (Test-Path -LiteralPath $p) {
                 Remove-Item -LiteralPath $p -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
             }
+        }
+        if (Test-Path -LiteralPath $mt) {
+            Get-ChildItem -LiteralPath $mt -Force -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like "_tmp*" } |
+                ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue }
         }
         foreach ($mapOnly in @("map_hybrid.py", "map_family.py")) {
             $p = Join-Path $TargetAppData $mapOnly
