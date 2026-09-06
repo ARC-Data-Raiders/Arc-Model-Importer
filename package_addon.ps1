@@ -85,6 +85,7 @@ $RootFilesShared = @(
     "lighting_looks.py",
     "lighting_atmosphere.py",
     "niagara_curves.py",
+    "niagara_fx.py",
     # Required for clothing/outfit ColorMask materials — without this, imports
     # succeed as bare Principled stubs ("Arc Texturer unavailable").
     "ArcTexturer.blend",

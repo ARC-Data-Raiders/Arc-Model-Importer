@@ -4,12 +4,12 @@ Import Arc Raiders models by selecting an outfit folder.
 """
 
 bl_info = {
-    "name": "Arc Raiders Model Importer",
+    "name": "Arc Model Importer",
     "author": "Silarious (Ai Vibe Code)/ Naryun & Zebulon Core Functions",
-    "version": (2, 18, 26),
+    "version": (2, 18, 236),
     "blender": (5, 1, 0),
-    "location": "View3D > Sidebar > Arc Raiders",
-    "description": "Import Arc Raiders models by selecting an outfit folder.",
+    "location": "View3D > Sidebar > Arc Model Importer",
+    "description": "Import Arc Raiders outfits, weapons, animations, and models by selecting content folders.",
     "category": "Import-Export",
 }
 
@@ -24,7 +24,10 @@ _addon_dir = os.path.dirname(__file__)
 
 def _configure_pycache_prefix():
     local = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or os.path.expanduser("~")
-    prefix = os.path.join(local, "DataRaiders-BlenderImporter", "pycache")
+    # Per-addon folder (DataRaiders-Outfits vs DataRaiders-MapImporter) so the
+    # two installs never share bytecode.
+    folder = os.path.basename(_addon_dir) or "DataRaiders-Outfits"
+    prefix = os.path.join(local, folder, "pycache")
     try:
         os.makedirs(prefix, exist_ok=True)
         sys.pycache_prefix = prefix
@@ -57,6 +60,7 @@ addon_dir = _addon_dir
 if addon_dir not in sys.path:
     sys.path.insert(0, addon_dir)
 
+from . import addon_line
 from . import properties
 from . import operators
 from . import ui
@@ -64,16 +68,16 @@ from . import importing
 from . import materials
 from . import textures
 from . import utils
-from . import map_placement  # noqa: F401 — FModel-first placement lane (empties/meshes), not outfit paths
+from . import map_placement  # noqa: F401 â€” map-importer lane; bridge helpers shared with outfits
 
-_last_search_value = [""]
+_last_search_value = [("", "")]
 
 
 def _safe_register_class(cls):
     """Register ``cls``, or replace an existing RNA type of the same name.
 
     Handles Preferences reinstall / reload where unregister was skipped or a
-    stale flat copy of the addon left ``ArcPSKEntry`` (etc.) already registered.
+    stale flat copy of the addon left ``ArcOutfitsPSKEntry`` (etc.) already registered.
     """
     try:
         bpy.utils.register_class(cls)
@@ -107,7 +111,11 @@ def _safe_unregister_class(cls):
 
 def _search_poll():
     try:
-        current = bpy.context.scene.arc_outfit_search
+        scene = bpy.context.scene
+        current = (
+            getattr(scene, "arc_outfit_search", "") or "",
+            getattr(scene, "arc_anim_search", "") or "",
+        )
         if current != _last_search_value[0]:
             _last_search_value[0] = current
             for area in bpy.context.screen.areas:
@@ -115,12 +123,12 @@ def _search_poll():
                     area.tag_redraw()
     except Exception:
         pass
-    return 0.05
+    return 0.5
 
 
 def register():
     """Register all modules and properties (idempotent on reinstall/reload)."""
-    # Clean slate so Preferences → Install over an enabled copy cannot double-register.
+    # Clean slate so Preferences â†’ Install over an enabled copy cannot double-register.
     try:
         unregister()
     except Exception:
@@ -134,21 +142,39 @@ def register():
     for cls in ui.classes:
         _safe_register_class(cls)
 
-    utils.ensure_psk_addon()
+    try:
+        if not utils.ensure_psk_addon():
+            print(
+                "Arc Raiders PSK Importer: warning â€” PSK import ops missing; "
+                "mesh import will fail until Unreal PSK/PSA is enabled."
+            )
+    except Exception as e:
+        print(f"Arc Raiders PSK Importer: ensure_psk_addon failed: {e}")
+
+    try:
+        utils.preload_arc_node_groups()
+    except Exception as e:
+        print(f"Arc Raiders PSK Importer: ArcTexturer preload failed (non-fatal): {e}")
 
     try:
         if not bpy.app.timers.is_registered(_search_poll):
             bpy.app.timers.register(_search_poll, first_interval=0.5, persistent=True)
     except Exception:
         bpy.app.timers.register(_search_poll, first_interval=0.5, persistent=True)
-    bpy.app.timers.register(_auto_start_listener, first_interval=0.25, persistent=False)
+    if addon_line.is_map_importer_line():
+        bpy.app.timers.register(_auto_start_listener, first_interval=0.25, persistent=False)
 
-    try:
-        map_placement.register_instancer_material_focus()
-    except Exception as e:
-        print(f"Arc Raiders instancer material focus: register failed: {e}")
+    # Instancer material focus is map Fast-import only.
+    if addon_line.is_map_importer_line():
+        try:
+            map_placement.register_instancer_material_focus()
+        except Exception as e:
+            print(f"Arc Raiders instancer material focus: register failed: {e}")
 
-    print("Arc Raiders PSK Importer registered successfully.")
+    print(
+        f"Arc Raiders PSK Importer registered successfully "
+        f"(line={addon_line.normalize_line(addon_line.ADDON_LINE)})."
+    )
 
 
 def _auto_start_listener():
@@ -172,7 +198,8 @@ def _auto_start_listener():
 def unregister():
     """Unregister all modules and properties (safe if partially registered)."""
     try:
-        map_placement.unregister_instancer_material_focus()
+        if addon_line.is_map_importer_line():
+            map_placement.unregister_instancer_material_focus()
     except Exception:
         pass
 
