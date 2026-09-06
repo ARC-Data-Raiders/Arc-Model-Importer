@@ -1,13 +1,11 @@
-"""Release line for this install (outfits vs map-importer).
+﻿"""Release line for this install (outfits vs map-importer).
 
-``package_addon.ps1`` overwrites ``ADDON_LINE`` / ``ADDON_FOLDER`` in the
-staged/AppData copy so each zip matches ``-Line`` / the git branch.
+Baked by package_addon.ps1 (line=outfits, folder=DataRaiders-Outfits). Do not edit AppData copies by hand;
+re-run packaging with -Line / from the correct branch.
 
-Source-tree default on ``outfits-stable`` / ``pre-map-importer`` is ``outfits``.
-
-Hard separation (two Blender addons):
-  outfits      -> AppData .../addons/DataRaiders-Outfits
-  map-importer -> AppData .../addons/DataRaiders-MapImporter
+AppData paths (Blender 5.1):
+  outfits      -> .../addons/DataRaiders-Outfits
+  map-importer -> .../addons/DataRaiders-MapImporter
 """
 
 from __future__ import annotations

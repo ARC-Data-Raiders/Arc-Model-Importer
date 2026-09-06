@@ -6,33 +6,202 @@ import os
 import re
 import json
 import csv
+import importlib
 import bpy
 import mathutils
 from . import utils
 from . import textures
 
 _OUTFIT_CSV_CACHE = {}
+_log = utils.get_logger()
+
+# Skip flags: we replace materials immediately; outfits don't use VCols / shape keys.
+# Keep extra UVs (EXTRAUV0 → UV1). components='ALL' keeps armature for rig.merge.
+# Phase 2: consider first-part components='ALL' + rest 'MESH' to cut armature edit-mode cost.
+# Materials off: PSK blank mats are discarded; setup_weapon_material / map Stage 2
+# grow mesh.materials from SK/SM JSON so face material_index still binds.
+_PSK_IMPORT_KWARGS = {
+    "should_import_materials": False,
+    "should_import_vertex_colors": False,
+    "should_import_shape_keys": False,
+    "should_import_vertex_normals": False,
+    "should_import_extra_uvs": True,
+    "components": "ALL",
+}
 
 # ---------------------------------------------------------------------------
 # PSK Import
 # ---------------------------------------------------------------------------
 
-def import_psk(filepath: str) -> list:
-    before = set(bpy.data.objects.keys())
+def _get_read_psk_from_file():
+    """Return ``read_psk_from_file`` from psk_psa_py when importable, else None."""
     try:
-        result = bpy.ops.psk.import_file(filepath=filepath)
-    except AttributeError:
-        raise RuntimeError(
-            "The 'io_scene_psk_psa' extension is not installed or enabled."
-        )
-    if 'FINISHED' not in result:
-        raise RuntimeError(f"PSK import operator returned: {result}")
+        from psk_psa_py.psk.reader import read_psk_from_file
+        return read_psk_from_file
+    except ImportError:
+        pass
+    for base in (
+        "bl_ext.blender_org.io_scene_psk_psa",
+        "bl_ext.user_default.io_scene_psk_psa",
+        "io_scene_psk_psa",
+    ):
+        try:
+            mod = importlib.import_module(f"{base}.psk.import_.operators")
+            reader = getattr(mod, "read_psk_from_file", None)
+            if callable(reader):
+                return reader
+        except ImportError:
+            continue
+    return None
+
+
+def _get_psk_importer_api():
+    """Return ``(import_psk_fn, PskImportOptions)`` from the PSK addon, or (None, None)."""
+    for base in (
+        "bl_ext.blender_org.io_scene_psk_psa",
+        "bl_ext.user_default.io_scene_psk_psa",
+        "io_scene_psk_psa",
+    ):
+        try:
+            mod = importlib.import_module(f"{base}.psk.importer")
+            fn = getattr(mod, "import_psk", None)
+            opts_cls = getattr(mod, "PskImportOptions", None)
+            if callable(fn) and opts_cls is not None:
+                return fn, opts_cls
+        except ImportError:
+            continue
+    return None, None
+
+
+def read_psk_safe(filepath: str):
+    """Parse a PSK file off-main (no bpy). Returns a Psk object or None."""
+    reader = _get_read_psk_from_file()
+    if reader is None or not filepath:
+        return None
+    name = os.path.splitext(os.path.basename(filepath))[0]
+    try:
+        with utils.timed(f"psk.parse:{name}"):
+            return reader(filepath)
+    except Exception as exc:
+        _log.debug("read_psk_safe(%s) failed: %s", filepath, exc)
+        return None
+
+
+def _psk_options_from_kwargs(opts_cls):
+    options = opts_cls()
+    options.should_import_materials = False
+    options.should_import_vertex_colors = False
+    options.should_import_shape_keys = False
+    options.should_import_vertex_normals = False
+    options.should_import_extra_uvs = True
+    options.should_import_mesh = True
+    options.should_import_armature = True  # components='ALL'; phase-2 hook for MESH-only
+    return options
+
+
+def _finalize_imported_objects(before_keys: set) -> list:
     after = set(bpy.data.objects.keys())
-    objs = [bpy.data.objects[k] for k in after - before]
+    objs = [bpy.data.objects[k] for k in after - before_keys]
     # PSK names UV1 as EXTRAUV0; materials (GraphicAtlas Use UV1) expect UV1.
     for obj in objs:
         utils.normalize_object_ue_uv_layers(obj)
+    _apply_ue_import_unit_scale(objs)
     return objs
+
+
+def ue_import_unit_scale(scene=None) -> float:
+    """Blender units per Unreal centimeter for outfit/PSK imports (0.01 when toggle on)."""
+    if scene is None:
+        try:
+            scene = bpy.context.scene
+        except Exception:
+            scene = None
+    if scene is not None and not bool(getattr(scene, "arc_ue_to_blender_units", True)):
+        return 1.0
+    return 0.01
+
+
+def _apply_ue_import_unit_scale(objs: list) -> None:
+    """Scale newly imported roots by UE→Blender factor (default ×0.01)."""
+    scale = ue_import_unit_scale()
+    if abs(scale - 1.0) < 1e-12 or not objs:
+        return
+    obj_set = set(objs)
+    roots = [o for o in objs if o.parent is None or o.parent not in obj_set]
+    targets = roots or list(objs)
+    for obj in targets:
+        try:
+            if obj.get("arc_ue_unit_scale") is not None:
+                continue
+            obj.scale = (
+                float(obj.scale[0]) * scale,
+                float(obj.scale[1]) * scale,
+                float(obj.scale[2]) * scale,
+            )
+            obj["arc_ue_unit_scale"] = scale
+        except Exception:
+            pass
+
+
+def import_psk(filepath: str, *, psk=None, context=None) -> list:
+    """Import a PSK/PSKX file; prefer pre-parsed ``psk`` when provided.
+
+    Uses the addon's ``import_psk(psk, context, name, options)`` when available,
+    else ``bpy.ops.psk.import_file`` with skip flags. UV normalize always runs after.
+    """
+    before = set(bpy.data.objects.keys())
+    if not utils.psk_import_available():
+        # Reinstall / prefs reset often leaves the bundled extension disabled.
+        utils.ensure_psk_addon()
+
+    ctx = context if context is not None else bpy.context
+    name = os.path.splitext(os.path.basename(filepath))[0]
+    import_fn, opts_cls = _get_psk_importer_api()
+
+    # Prefer direct importer with a pre-parsed (or freshly read) Psk object.
+    if import_fn is not None and opts_cls is not None:
+        parsed = psk
+        if parsed is None:
+            parsed = read_psk_safe(filepath)
+        if parsed is not None:
+            try:
+                with utils.timed(f"psk.create:{name}"):
+                    import_fn(parsed, ctx, name, _psk_options_from_kwargs(opts_cls))
+                return _finalize_imported_objects(before)
+            except Exception as exc:
+                _log.warning(
+                    "direct import_psk failed for %s (%s); falling back to operator",
+                    filepath, exc,
+                )
+
+    try:
+        with utils.timed(f"psk.ops:{name}"):
+            result = bpy.ops.psk.import_file(filepath=filepath, **_PSK_IMPORT_KWARGS)
+    except TypeError:
+        # Older PSK addon builds may lack some kwargs — retry with filepath only.
+        try:
+            with utils.timed(f"psk.ops:{name}"):
+                result = bpy.ops.psk.import_file(filepath=filepath)
+        except Exception as exc:
+            raise RuntimeError(
+                "The 'Unreal PSK/PSA' (io_scene_psk_psa) extension is not installed "
+                "or enabled. Enable it in Preferences → Extensions, or re-enable "
+                f"the Outfits addon. ({type(exc).__name__}: {exc})"
+            ) from exc
+    except Exception as exc:
+        raise RuntimeError(
+            "The 'Unreal PSK/PSA' (io_scene_psk_psa) extension is not installed "
+            "or enabled. Enable it in Preferences → Extensions, or re-enable "
+            f"the Outfits addon. ({type(exc).__name__}: {exc})"
+        ) from exc
+    if 'FINISHED' not in result:
+        raise RuntimeError(f"PSK import operator returned: {result}")
+    return _finalize_imported_objects(before)
+
+
+def psk_reader_available() -> bool:
+    """True when ``psk_psa_py`` ``read_psk_from_file`` can be imported."""
+    return _get_read_psk_from_file() is not None
 
 # ---------------------------------------------------------------------------
 # Outfit CSV handling
@@ -113,11 +282,70 @@ def outfit_display_label(row: dict) -> str:
 
     return f"{flavour}({'/'.join(parts)})"
 
+
+def outfit_group_label_for_character(character_name: str, context=None) -> str:
+    """Flavour(CodeName) label matching the outfit selector, e.g. Bonecrown(AntlerShaman)."""
+    char = (character_name or "").strip()
+    if not char:
+        return "Outfit"
+    try:
+        csv_path = get_outfit_csv_path(context) if context is not None else default_outfit_csv_path()
+    except Exception:
+        csv_path = default_outfit_csv_path()
+    rows = load_outfit_csv(csv_path)
+    char_norm = utils.normalize_folder_name(char)
+    for row in rows or []:
+        model = (row.get("Model Folder Name") or "").strip().split(";")[0].strip()
+        ui = (row.get("Item/UI Folder Name") or "").strip().split(";")[0].strip()
+        if utils.normalize_folder_name(model) == char_norm or utils.normalize_folder_name(ui) == char_norm:
+            return outfit_display_label(row)
+    return char
+
+
+def character_sk_name(character_name: str) -> str:
+    """Armature object name: SK_AntlerShaman (no body-part suffix)."""
+    char = (character_name or "").strip()
+    if not char:
+        return "SK_Outfit"
+    if char.upper().startswith("SK_"):
+        return char
+    return f"SK_{char}"
+
 def find_outfit_row(rows: list, key: str) -> dict:
     for row in rows:
         if outfit_row_key(row) == key:
             return row
     return None
+
+
+def colorways_for_outfit_row(root: str, row: dict) -> list:
+    """Return ``[(preset_name, json_path), ...]`` for a CSV outfit row.
+
+    Scans ``Items/Characters/Skins/Outfit/<Item/UI Folder>`` (and Model Folder
+    as fallback) for DA_OI colourway JSONs — same discovery the batch UI uses.
+    """
+    if not root or not row:
+        return []
+    outfit_root = utils.find_relative_dir(root, ["Items", "Characters", "Skins", "Outfit"])
+    if not outfit_root or not os.path.isdir(outfit_root):
+        return []
+    folders = []
+    for f in (row.get("Item/UI Folder Name") or "").split(";"):
+        f = f.strip()
+        if f and f not in folders:
+            folders.append(f)
+    model = (row.get("Model Folder Name") or "").strip().split(";")[0].strip()
+    if model and model not in folders:
+        folders.append(model)
+    for folder_name in folders:
+        candidate = os.path.join(outfit_root, folder_name)
+        if not os.path.isdir(candidate):
+            continue
+        presets = scan_outfit_presets_in_folder(candidate)
+        if presets:
+            return presets
+    return []
+
 
 # ---------------------------------------------------------------------------
 # Outfit scanning
@@ -137,6 +365,16 @@ def get_outfit_folder(character_name: str) -> str:
             candidate = os.path.join(outfit_root, csv_folder)
             if os.path.isdir(candidate):
                 return candidate
+    outfit_root = utils.find_relative_dir(root, ["Items", "Characters", "Skins", "Outfit"])
+    if outfit_root and os.path.isdir(outfit_root):
+        want = utils.normalize_folder_name(character_name)
+        try:
+            for name in os.listdir(outfit_root):
+                full = os.path.join(outfit_root, name)
+                if os.path.isdir(full) and utils.normalize_folder_name(name) == want:
+                    return full
+        except OSError:
+            pass
     char_map = build_outfit_character_map(root)
     return char_map.get(utils.normalize_folder_name(character_name), "")
 
@@ -207,61 +445,194 @@ _BACKPACK_SLOT_MAP = {
 }
 
 # Cosmetic DA_OI colourways: DA_OI_Outfit_X_Color_Y OR DA_OI_BackpackContainer_X_Color_Y
+# FModel dumps after a game patch often write the wrong asset into a matching
+# filename (TickHunter Color_Red.json may be Angler, while TickHunter Green
+# lives in Hoplomachus_Color_Red.json). Identity comes from Name/Package.
 _COLORWAY_RE = re.compile(
-    r'^DA_OI_(?:Outfit_)?(.+)_Color(?:_(.+))?$',
+    r'^DA_OI_(?:Outfit_|BackpackContainer_|BackpackAttachment_|BackpackCharm_|BackpackFrame_|RaiderTool_)?(.+)_Color(?:_(.+))?$',
     re.IGNORECASE,
 )
+_COLOURWAY_INDEX_CACHE: dict[str, dict[str, list]] = {}
+_COLOURWAY_PART_TYPES = {
+    "CharacterVisualPartOnlineItemDataAsset",
+}
+_COLOURWAY_MOD_TYPES = {
+    "CustomizationVisualPartSetMaterialModifier",
+    "CustomizationVisualPartSetMaterialPropertyModifier",
+}
 
 
 def scan_outfit_presets(character_name: str, manual_folder: str = "") -> list:
     if manual_folder and os.path.isdir(bpy.path.abspath(manual_folder)):
-        return scan_outfit_presets_in_folder(bpy.path.abspath(manual_folder))
+        char_norm = utils.normalize_folder_name(character_name) if character_name else ""
+        return scan_outfit_presets_in_folder(bpy.path.abspath(manual_folder), char_norm)
     folder = get_outfit_folder(character_name)
-    if not folder or not os.path.isdir(folder):
-        return []
     char_norm = utils.normalize_folder_name(character_name)
-    return scan_outfit_presets_in_folder(folder, char_norm)
+    if folder and os.path.isdir(folder):
+        return scan_outfit_presets_in_folder(folder, char_norm)
+    if not char_norm:
+        return []
+    root = utils.get_pioneer_root()
+    outfit_root = utils.find_relative_dir(root, ["Items", "Characters", "Skins", "Outfit"]) if root else ""
+    if not outfit_root:
+        return []
+    return list(_index_colourways(outfit_root).get(char_norm, []))
+
 
 def scan_outfit_presets_in_folder(folder: str, char_norm: str = "") -> list:
-    """Scan DA_OI_*_Color_* colourway JSONs (outfits + backpack/cosmetic slots)."""
+    """Scan DA_OI_*_Color_* colourways by inner Name/Package, not filename.
+
+    When ``folder`` is an item under Items/Characters/Skins/<Slot>/, sibling
+    folders are searched too so a misnamed FModel dump still matches.
+    """
     if not folder or not os.path.isdir(folder):
         return []
-    results = []
+    slot_root = _skins_slot_root(folder)
+    want = char_norm or (
+        utils.normalize_folder_name(os.path.basename(folder))
+        if os.path.normcase(os.path.abspath(folder)) != os.path.normcase(slot_root)
+        else ""
+    )
+    if not want:
+        return []
+    return list(_index_colourways(slot_root).get(want, []))
+
+
+def _skins_slot_root(folder: str) -> str:
+    """.../Skins/Outfit/Abyss → Outfit; .../Skins/Outfit → Outfit."""
+    folder = os.path.abspath(folder)
+    parent = os.path.dirname(folder)
+    if os.path.basename(os.path.dirname(parent)).lower() == "skins":
+        return parent
+    if os.path.basename(parent).lower() == "skins":
+        return folder
+    return folder
+
+
+def _index_colourways(slot_root: str) -> dict:
+    """Map normalized item name → [(preset_name, json_path), ...]."""
+    slot_root = os.path.abspath(slot_root)
+    cached = _COLOURWAY_INDEX_CACHE.get(slot_root)
+    if cached is not None:
+        return cached
+    best: dict[tuple[str, str], tuple[int, str, str]] = {}
+    folders = [slot_root]
     try:
-        for fname in sorted(os.listdir(folder)):
-            if not fname.lower().endswith(".json"):
-                continue
-            if "persistence" in fname.lower():
-                continue
-            stem = os.path.splitext(fname)[0]
-            m = _COLORWAY_RE.match(stem)
-            if not m:
-                continue
-            item_segment, preset_suffix = m.group(1), m.group(2)
-            # Outfit mode: optionally require the character segment to match
-            if char_norm:
-                # DA_OI_Outfit_Beekeeper_Color_Blue → item_segment == Beekeeper
-                # DA_OI_BackpackContainer_TechBag_Color_Green → skip char filter
-                # (cosmetic folders are already item-scoped)
-                if "outfit" in stem.lower() or stem.lower().startswith("da_oi_outfit"):
-                    # With (?:Outfit_)? stripped, item_segment is the character name for outfits
-                    if utils.normalize_folder_name(item_segment) != char_norm:
-                        continue
-            if preset_suffix:
-                preset_name = preset_suffix
-            else:
-                # DA_OI_…_Color.json (no variant suffix) → Default
-                preset_name = "Default"
-            if preset_name:
-                json_path = os.path.join(folder, fname)
-                # Skip DA_OI colourways that don't carry a material modifier
-                # (e.g. slot-only Color.json or incomplete Grey dumps).
-                if not _mi_stems_from_colourway_json(json_path):
-                    continue
-                results.append((preset_name, json_path))
+        for name in os.listdir(slot_root):
+            full = os.path.join(slot_root, name)
+            if os.path.isdir(full):
+                folders.append(full)
     except OSError:
         pass
-    return results
+    for folder in folders:
+        folder_norm = utils.normalize_folder_name(os.path.basename(folder))
+        for path in _iter_colourway_json_paths(folder):
+            rec = _colourway_record_from_json(path)
+            if not rec:
+                continue
+            item_norm, preset, json_path = rec
+            preset_norm = utils.normalize_folder_name(preset)
+            score = 0
+            if folder_norm == item_norm:
+                score += 2
+            fname_ident = _parse_colourway_identity(os.path.splitext(os.path.basename(path))[0])
+            if fname_ident and utils.normalize_folder_name(fname_ident[0]) == item_norm:
+                score += 1
+            key = (item_norm, preset_norm)
+            prev = best.get(key)
+            if prev is None or score > prev[0]:
+                best[key] = (score, preset, json_path)
+    result: dict[str, list] = {}
+    for (item_norm, _pn), (_score, preset, path) in best.items():
+        result.setdefault(item_norm, []).append((preset, path))
+    for key in result:
+        result[key].sort(key=lambda row: row[0].lower())
+    _COLOURWAY_INDEX_CACHE[slot_root] = result
+    return result
+
+
+def _iter_colourway_json_paths(folder: str):
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    for fname in names:
+        low = fname.lower()
+        if not low.endswith(".json"):
+            continue
+        if "persistence" in low:
+            continue
+        if not low.startswith("da_oi"):
+            continue
+        if "_color" not in low:
+            continue
+        yield os.path.join(folder, fname)
+
+
+def _parse_colourway_identity(stem: str):
+    if not stem:
+        return None
+    stem = re.sub(r'_Persistence$', '', stem, flags=re.IGNORECASE)
+    m = _COLORWAY_RE.match(stem)
+    if not m:
+        return None
+    item_segment, suffix = m.group(1), m.group(2)
+    if not item_segment:
+        return None
+    return item_segment, (suffix or "Default")
+
+
+def _colourway_record_from_json(json_path: str):
+    """Return (item_norm, preset_name, json_path) from inner Name/Package."""
+    data = _load_ue_json(json_path)
+    if data is None:
+        return None
+    identity = None
+    has_mod = False
+    for entry in utils.ue_export_entries(data):
+        t = entry.get("Type") or ""
+        if t in _COLOURWAY_PART_TYPES and identity is None:
+            ident = _parse_colourway_identity(_colourway_stem_from_entry(entry))
+            if ident:
+                identity = ident
+        if t in _COLOURWAY_MOD_TYPES:
+            mat = _soft_asset_path(entry.get("Properties", {}).get("Material"))
+            if mat:
+                has_mod = True
+                if identity:
+                    break
+    if not identity or not has_mod:
+        return None
+    item_segment, preset = identity
+    return utils.normalize_folder_name(item_segment), preset, json_path
+
+
+def _colourway_stem_from_entry(entry: dict) -> str:
+    name = (entry.get("Name") or "").strip()
+    if name:
+        return name
+    pkg = (entry.get("Package") or "").replace("\\", "/").strip()
+    if pkg:
+        return pkg.split("/")[-1].split(".")[0]
+    return ""
+
+
+def _soft_asset_path(val) -> str:
+    if isinstance(val, dict):
+        return val.get("AssetPathName") or val.get("ObjectPath") or ""
+    if isinstance(val, str):
+        return val
+    return ""
+
+
+def _load_ue_json(json_path: str):
+    if not json_path or not os.path.isfile(json_path):
+        return None
+    try:
+        with open(json_path, "r", encoding="utf-8-sig") as fh:
+            return json.load(fh)
+    except Exception:
+        return None
 
 
 def find_cosmetic_colourway_folder(psk_path: str) -> str:
@@ -377,19 +748,16 @@ def parse_outfit_preset(json_path: str) -> dict:
     result = {}
     if not json_path or not os.path.isfile(json_path):
         return result
-    _VALID_TYPES = {
-        "CustomizationVisualPartSetMaterialModifier",
-        "CustomizationVisualPartSetMaterialPropertyModifier",
-    }
     try:
-        with open(json_path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
+        data = _load_ue_json(json_path)
+        if not data:
+            return result
         for entry in utils.ue_export_entries(data):
-            if entry.get("Type") not in _VALID_TYPES:
+            if entry.get("Type") not in _COLOURWAY_MOD_TYPES:
                 continue
             props = entry.get("Properties", {})
-            mat_path = props.get("Material", {}).get("AssetPathName", "")
-            part_path = props.get("Part", {}).get("AssetPathName", "")
+            mat_path = _soft_asset_path(props.get("Material"))
+            part_path = _soft_asset_path(props.get("Part"))
             if not mat_path or not part_path:
                 continue
             part_key = get_part_key_from_asset_path(part_path) or get_characters_rel_key(part_path)
@@ -406,26 +774,18 @@ def parse_outfit_preset(json_path: str) -> dict:
 def _mi_stems_from_colourway_json(json_path: str) -> list:
     """Collect Material MI stems from a DA_OI colourway JSON (outfit or cosmetic)."""
     stems = []
-    if not json_path or not os.path.isfile(json_path):
+    data = _load_ue_json(json_path)
+    if not data:
         return stems
-    _VALID_TYPES = {
-        "CustomizationVisualPartSetMaterialModifier",
-        "CustomizationVisualPartSetMaterialPropertyModifier",
-    }
-    try:
-        with open(json_path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        for entry in utils.ue_export_entries(data):
-            if entry.get("Type") not in _VALID_TYPES:
-                continue
-            mat_path = entry.get("Properties", {}).get("Material", {}).get("AssetPathName", "")
-            if not mat_path:
-                continue
-            stem = mat_path.split("/")[-1].split(".")[0]
-            if stem and stem not in stems:
-                stems.append(stem)
-    except Exception:
-        pass
+    for entry in utils.ue_export_entries(data):
+        if entry.get("Type") not in _COLOURWAY_MOD_TYPES:
+            continue
+        mat_path = _soft_asset_path(entry.get("Properties", {}).get("Material"))
+        if not mat_path:
+            continue
+        stem = mat_path.split("/")[-1].split(".")[0]
+        if stem and stem not in stems:
+            stems.append(stem)
     return stems
 
 def get_part_key(psk_path: str) -> str:
@@ -468,9 +828,31 @@ def get_characters_rel_key(path: str) -> str:
         return "/".join(segs) if segs else ""
     return ""
 
-def collect_psks_for_outfit_row(root: str, item_ui_folders: list) -> list:
+def _part_folder_has_uemodel(part_folder: str) -> bool:
+    """True when a non-skeleton .uemodel exists (mesh exported as UEFormat, not ActorX)."""
+    try:
+        for fname in os.listdir(part_folder):
+            fl = fname.lower()
+            if not fl.endswith(".uemodel"):
+                continue
+            if fl.endswith("_skeleton.uemodel"):
+                continue
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def collect_psks_for_outfit_row(root: str, item_ui_folders: list) -> tuple:
+    """Collect PSK paths for DA_OI parts; also report parts missing ActorX meshes.
+
+    Returns ``(psk_paths, missing_notes)`` where each missing note is a short
+    human-readable string (part key + reason). Shared MaterialLibrary textures
+    are unrelated — this only covers skeletal mesh exports under each part folder.
+    """
     seen_keys = set()
     psks = []
+    missing = []
     for folder_name in item_ui_folders:
         for asset_path in read_oi_parts_asset_paths(root, folder_name):
             key = get_part_key_from_asset_path(asset_path)
@@ -480,21 +862,65 @@ def collect_psks_for_outfit_row(root: str, item_ui_folders: list) -> list:
             character, part = key.split("/", 1)
             part_folder = utils.find_relative_dir(root, ["Characters", "Assets", character, part])
             if not part_folder:
+                missing.append(f"{key} (folder missing)")
                 continue
             psk = find_psk_in_specific_folder(part_folder)
             if psk:
                 psks.append(psk)
-    return psks
+                continue
+            if _part_folder_has_uemodel(part_folder):
+                missing.append(f"{key} (.uemodel only — re-export as ActorX .psk)")
+            else:
+                missing.append(f"{key} (no .psk)")
+    return psks, missing
 
-def collect_psks_from_model_folder(root: str, model_folder_name: str) -> list:
+
+def collect_psks_from_model_folder(root: str, model_folder_name: str) -> tuple:
+    """Collect PSKs under Characters/Assets/<model>/; report part dirs lacking .psk.
+
+    Returns ``(psk_paths, missing_notes)``.
+    """
     model_folder_name = (model_folder_name or "").strip()
     if not model_folder_name:
-        return []
+        return [], []
     char_dir = utils.find_relative_dir(root, ["Characters", "Assets", model_folder_name])
     if not char_dir:
-        return []
+        return [], [f"{model_folder_name} (model folder missing)"]
     paths, _ = utils.find_psks_in_folder(char_dir)
-    return paths
+    missing = []
+    try:
+        part_dirs = sorted(
+            d for d in os.listdir(char_dir)
+            if os.path.isdir(os.path.join(char_dir, d))
+        )
+    except OSError:
+        part_dirs = []
+    found_parts = set()
+    for psk in paths:
+        # .../Character/Part/SK_....psk → Part
+        part_name = os.path.basename(os.path.dirname(psk))
+        if part_name:
+            found_parts.add(utils.normalize_folder_name(part_name))
+    for part in part_dirs:
+        if utils.normalize_folder_name(part) in found_parts:
+            continue
+        part_folder = os.path.join(char_dir, part)
+        key = f"{model_folder_name}/{part}"
+        if _part_folder_has_uemodel(part_folder):
+            missing.append(f"{key} (.uemodel only — re-export as ActorX .psk)")
+        else:
+            # Skip empty/non-mesh dirs (no SK_/DA_VP_ sidecar).
+            try:
+                names = os.listdir(part_folder)
+            except OSError:
+                continue
+            if not any(
+                n.lower().startswith(("sk_", "da_vp_", "sm_"))
+                for n in names
+            ):
+                continue
+            missing.append(f"{key} (no .psk)")
+    return paths, missing
 
 def read_oi_parts_asset_paths(root: str, outfit_folder_name: str) -> list:
     outfit_root = utils.find_relative_dir(root, ["Items", "Characters", "Skins", "Outfit"])
@@ -594,29 +1020,20 @@ def populate_outfit_selections(context) -> int:
     if added:
         return added
 
-    # 2) Character outfit colourways (DA_OI_Outfit_*)
-    root = utils.get_pioneer_root()
-    if not root:
-        return 0
-    outfit_root = utils.find_relative_dir(root, ["Items", "Characters", "Skins", "Outfit"])
-    if not outfit_root:
-        return 0
-    from .properties import _csv_model_to_ui_folder, rebuild_csv_outfit_map
-    if not _csv_model_to_ui_folder:
-        rebuild_csv_outfit_map()
-    char_names = set()
+    # 2) Character outfit colourways (DA_OI_Outfit_*) — identity index, not CSV/filename
+    char_names = []
+    seen_chars = set()
     for entry in context.scene.arc_psk_entries:
         cn = get_character_name(bpy.path.abspath(entry.psk_path))
-        if cn:
-            char_names.add(cn)
+        if not cn:
+            continue
+        key = utils.normalize_folder_name(cn)
+        if key in seen_chars:
+            continue
+        seen_chars.add(key)
+        char_names.append(cn)
     for cn in char_names:
-        folder_name = _csv_model_to_ui_folder.get(utils.normalize_folder_name(cn), "")
-        if not folder_name:
-            continue
-        candidate = os.path.join(outfit_root, folder_name)
-        if not os.path.isdir(candidate):
-            continue
-        presets = scan_outfit_presets_in_folder(candidate)
+        presets = scan_outfit_presets(cn)
         if not presets:
             continue
         for preset_name, json_path in presets:

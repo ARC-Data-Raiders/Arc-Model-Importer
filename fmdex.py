@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 log = logging.getLogger("arc_raiders.fmdex")
 
@@ -614,16 +614,14 @@ def status() -> Dict[str, Any]:
 def ensure_loaded(force: bool = False) -> bool:
     """Discover + load the best FMDex index. Returns True if usable."""
     root = get_fmdex_directory()
+    if not force and _cache["root"] == root:
+        if _cache["flat"] is not None:
+            return True
+        if _cache.get("error"):
+            return False
+
     files = find_fmdex_index_files(root) if root else []
     best = _pick_best_index(files)
-
-    if (
-        not force
-        and _cache["flat"] is not None
-        and _cache["index_path"] == best
-        and _cache["root"] == root
-    ):
-        return True
 
     invalidate_cache()
     _cache["root"] = root
@@ -690,6 +688,45 @@ def lookup_asset_path(stem: str) -> Tuple[str, List[str]]:
                 return hit[0], list(hit[1] or [])
 
     return "", []
+
+
+def iter_all_assets():
+    """Yield ``(stem, package_key, tags)`` for every loaded FMDex package."""
+    if not ensure_loaded():
+        return
+    by_stem: Dict[str, Tuple[str, List[str]]] = _cache.get("by_stem") or {}
+    for stem_l, (package_key, found_tags) in by_stem.items():
+        stem = _stem_from_package_key(package_key) or stem_l
+        yield stem, package_key, [str(t) for t in (found_tags or []) if t]
+
+
+def last_error() -> str:
+    """Last FMDex load error (empty when the index is usable)."""
+    return str(_cache.get("error") or "")
+
+
+def iter_assets_by_tags(tags: Iterable[str]):
+    """Yield ``(stem, package_key, tags)`` for packages matching any of ``tags``.
+
+    Tag compare is case-insensitive substring (FMDex stores class names like
+    ``AnimSequence`` / ``AnimMontage``). Used by the animation picker.
+    """
+    if not tags:
+        return
+    wanted = {str(t).strip().lower() for t in tags if str(t).strip()}
+    if not wanted:
+        return
+    if not ensure_loaded():
+        return
+    by_stem: Dict[str, Tuple[str, List[str]]] = _cache.get("by_stem") or {}
+    for stem_l, (package_key, found_tags) in by_stem.items():
+        found = [str(t) for t in (found_tags or []) if t]
+        found_l = {t.lower() for t in found}
+        if not found_l:
+            continue
+        if found_l & wanted or any(any(w in t for w in wanted) for t in found_l):
+            stem = _stem_from_package_key(package_key) or stem_l
+            yield stem, package_key, found
 
 
 def package_to_game_path(package_key: str) -> str:
