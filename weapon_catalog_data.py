@@ -1,0 +1,77 @@
+"""Hard ST-derived weapon / mod catalog (generated; do not hand-edit).
+
+Regenerate with: python tools/regen_weapon_catalog.py
+(requires ARC_PIONEER_ROOT or pioneer Content/Pioneer).
+"""
+
+# flake8: noqa
+
+WEAPONS = [
+    {'key': 'ST_ITEMNAME_FIREARM_HANDCANNON_SINGLEACTION_01', 'name': 'Anvil', 'stem': 'HandCannon_SingleAction_01', 'kind': 'Firearms', 'tooltip': 'Has high damage output and headshot damage, but slow handling.'},
+    {'key': 'ST_ITEMNAME_FIREARM_BATTLERIFLE_ENERGYBURST_01', 'name': 'Aphelion', 'stem': 'BattleRifle_EnergyBurst_01', 'kind': 'Firearms', 'tooltip': 'Fires high velocity energy rounds.'},
+    {'key': 'ST_ITEMNAME_FIREARM_ASSAULTRIFLE_BURST_01', 'name': 'Arpeggio', 'stem': 'AssaultRifle_Burst_01', 'kind': 'Firearms', 'tooltip': 'Has decent damage output and accuracy.'},
+    {'key': 'ST_ITEMNAME_FIREARM_ASSAULTRIFLE_HEAVY_01', 'name': 'Bettina', 'stem': 'AssaultRifle_Heavy_01', 'kind': 'Firearms', 'tooltip': 'Has slow fire rate and high damage output.'},
+    {'key': 'ST_ITEMNAME_FIREARM_SMG_01', 'name': 'Bobcat', 'stem': 'SMG_01', 'kind': 'Firearms', 'tooltip': 'Has high fire rate but low accuracy.'},
+    {'key': 'ST_ITEMNAME_FIREARM_PISTOL_01', 'name': 'Burletta', 'stem': 'Pistol_01', 'kind': 'Firearms', 'tooltip': 'Has decent damage output and accuracy.'},
+    {'key': 'ST_ITEMNAME_FIREARM_SMG_MEDIUM_01', 'name': 'Canto', 'stem': 'SMG_Medium_01', 'kind': 'Firearms', 'tooltip': 'Fully automatic submachine gun with a larger caliber.'},
+    {'key': 'ST_ITEMNAME_FIREARM_SHOTGUN_ENERGY_ADJUSTABLE_01', 'name': 'Dolabra', 'stem': 'Shotgun_Energy_Adjustable_01', 'kind': 'Firearms', 'tooltip': 'An experimental weapon that can either fire a wide short range blast, or be focused to fire a tight medium range beam of heat.'},
+    {'key': 'ST_ITEMNAME_FIREARM_SPECIAL_BEAMRIFLE_01', 'name': 'Equalizer', 'stem': 'Special_BeamRifle_01', 'kind': 'Firearms', 'tooltip': 'A high capacity experimental beam rifle.'},
+    {'key': 'ST_ITEMNAME_FIREARM_BATTLERIFLE_BREACHACTION_01', 'name': 'Ferro', 'stem': 'BattleRifle_BreachAction_01', 'kind': 'Firearms', 'tooltip': 'Packs a punch, but must be reloaded between every shot.'},
+    {'key': 'ST_ITEMNAME_FIREARM_PISTOL_SILENCED_01', 'name': 'Hairpin', 'stem': 'Pistol_Silenced_01', 'kind': 'Firearms', 'tooltip': 'Has a built-in silencer. Great for stealth, but tricky in combat.'},
+    {'key': 'ST_ITEMNAME_FIREARM_SPECIAL_GRENADELAUNCHER_ANTIARCLAUNCHER', 'name': 'Hullcracker', 'stem': 'Launcher_AntiArc_Medium_01', 'kind': 'Launchers', 'tooltip': 'Fires explosive projectiles that only detonate when hitting ARC.'},
+    {'key': 'ST_ITEMNAME_FIREARM_SHOTGUN_PUMPACTION_01', 'name': 'Il Toro', 'stem': 'Shotgun_PumpAction_01', 'kind': 'Firearms', 'tooltip': 'Has a large bullet spread, sharp falloff, and high damage output.'},
+    {'key': 'ST_ITEMNAME_FIREARM_LAUNCHER_ANTIARC_SINGLESHOT_01', 'name': 'Junior', 'stem': 'Launcher_AntiArc_SingleShot_01', 'kind': 'Launchers', 'tooltip': ''},
+    {'key': 'ST_ITEMNAME_FIREARM_SPECIAL_SNIPERRIFLE_RAILGUN_01', 'name': 'Jupiter', 'stem': 'Special_Railgun_01', 'kind': 'Firearms', 'tooltip': 'Fires projectiles at an incredible velocity, capable of damaging multiple targets with one shot.'},
+    {'key': 'ST_ITEMNAME_FIREARM_ASSAULTRIFLE_PNEUMATIC_01', 'name': 'Kettle', 'stem': 'AssaultRifle_Pneumatic_01', 'kind': 'Firearms', 'tooltip': 'Quick and accurate, but has low bullet velocity and takes a long time to reload.'},
+    {'key': 'ST_ITEMNAME_FIREARM_SNIPERRIFLE_BOLTACTION_MEDIUM_01', 'name': 'Osprey', 'stem': 'SniperRifle_BoltAction_Medium_01', 'kind': 'Firearms', 'tooltip': 'Has reliable damage output and accuracy.'},
+    {'key': 'ST_ITEMNAME_FIREARM_ASSAULTRIFLE_LOWTIER_01', 'name': 'Rattler', 'stem': 'AssaultRifle_LowTier_01', 'kind': 'Firearms', 'tooltip': 'A cheap offensive option, but has to be reloaded 2 bullets at a time.'},
+    {'key': 'ST_ITEMNAME_FIREARM_BATTLERIFLE_LEVERACTION_01', 'name': 'Renegade', 'stem': 'BattleRifle_LeverAction_01', 'kind': 'Firearms', 'tooltip': 'Lever-action battle rifle with high damage output, accuracy, and headshot damage.'},
+    {'key': 'ST_ITEMNAME_FIREARM_SMG_LOWTIER_01', 'name': 'Stitcher', 'stem': 'SMG_LowTier_01', 'kind': 'Firearms', 'tooltip': 'Has a good damage output, but has a low fire-rate for an SMG, and can be hard to control.'},
+    {'key': 'ST_ITEMNAME_FIREARM_ASSAULTRIFLE_BULLPUP_01', 'name': 'Tempest', 'stem': 'AssaultRifle_Bullpup_01', 'kind': 'Firearms', 'tooltip': 'Has moderate fire rate and accuracy.'},
+    {'key': 'ST_ITEMNAME_FIREARM_LMG_MEDIUM_01', 'name': 'Torrente', 'stem': 'LMG_Medium_01', 'kind': 'Firearms', 'tooltip': 'Has a large ammo capacity, but is only accurate while crouched.'},
+    {'key': 'ST_ITEMNAME_FIREARM_PISTOL_HIGHPOWER_01', 'name': 'Venator', 'stem': 'Pistol_HighPower_01', 'kind': 'Firearms', 'tooltip': 'Fires two shots at a time.'},
+    {'key': 'ST_ITEMNAME_FIREARM_SHOTGUN_SEMIAUTO_01', 'name': 'Vulcano', 'stem': 'Shotgun_SemiAuto_01', 'kind': 'Firearms', 'tooltip': 'Has good bullet spread but sharp falloff.'},
+]
+
+MODS = [
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_ANGLED_GRIP_I', 'name': 'Angled Grip I', 'stem': 'UnderBarrel_AngledGrip_01', 'mod_type': 'UnderBarrel', 'tooltip': 'Slightly reduces horizontal recoil.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_ANGLED_GRIP_II', 'name': 'Angled Grip II', 'stem': 'UnderBarrel_AngledGrip_02', 'mod_type': 'UnderBarrel', 'tooltip': 'Moderately reduces horizontal recoil.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_ANGLED_GRIP_III', 'name': 'Angled Grip III', 'stem': 'UnderBarrel_AngledGrip_03', 'mod_type': 'UnderBarrel', 'tooltip': 'Significantly reduces horizontal recoil.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_ANVIL_SPLITTER', 'name': 'Anvil Splitter', 'stem': 'Tech_ProjectileSplitter', 'mod_type': 'Tech', 'tooltip': 'Tech mod for the Anvil that replaces its bullets with ones that split into 4 weaker projectiles.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_COMPENSATOR_I', 'name': 'Compensator I', 'stem': 'Muzzle_Compensator_01', 'mod_type': 'Muzzle', 'tooltip': 'Slightly reduces per-shot dispersion.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_COMPENSATOR_II', 'name': 'Compensator II', 'stem': 'Muzzle_Compensator_02', 'mod_type': 'Muzzle', 'tooltip': 'Moderately reduces per-shot dispersion.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_COMPENSATOR_III', 'name': 'Compensator III', 'stem': 'Muzzle_Compensator_03', 'mod_type': 'Muzzle', 'tooltip': 'Significantly reduces per-shot dispersion.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_EXTENDED_BARREL_I', 'name': 'Extended Barrel I', 'stem': 'Muzzle_ExtendedBarrel_01', 'mod_type': 'Muzzle', 'tooltip': 'Slightly increases bullet velocity & distance until damage falloff.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_EXTENDED_BARREL_II', 'name': 'Extended Barrel II', 'stem': 'Muzzle_ExtendedBarrel_02', 'mod_type': 'Muzzle', 'tooltip': 'Moderately increases bullet velocity & distance until damage falloff.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_EXTENDED_BARREL_III', 'name': 'Extended Barrel III', 'stem': 'Muzzle_ExtendedBarrel_03', 'mod_type': 'Muzzle', 'tooltip': 'Significantly increases bullet velocity & distance until damage falloff.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_EXTENDED_LIGHT_MAG_I', 'name': 'Extended Light Mag I', 'stem': 'MagazineLight_Extended_01', 'mod_type': 'Magazine', 'tooltip': 'Slightly extends the ammo capacity of compatible weapons that use light ammo.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_EXTENDED_LIGHT_MAG_II', 'name': 'Extended Light Mag II', 'stem': 'MagazineLight_Extended_02', 'mod_type': 'Magazine', 'tooltip': 'Moderately extends the ammo capacity of compatible weapons that use light ammo.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_EXTENDED_LIGHT_MAG_III', 'name': 'Extended Light Mag III', 'stem': 'MagazineLight_Extended_03', 'mod_type': 'Magazine', 'tooltip': 'Significantly extends the ammo capacity of compatible weapons that use light ammo.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_EXTENDED_MEDIUM_MAG_I', 'name': 'Extended Medium Mag I', 'stem': 'MagazineMedium_Extended_01', 'mod_type': 'Magazine', 'tooltip': 'Slightly extends the ammo capacity of compatible weapons that use medium ammo.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_EXTENDED_MEDIUM_MAG_II', 'name': 'Extended Medium Mag II', 'stem': 'MagazineMedium_Extended_02', 'mod_type': 'Magazine', 'tooltip': 'Moderately extends the ammo capacity of compatible weapons that use medium ammo.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_EXTENDED_MEDIUM_MAG_III', 'name': 'Extended Medium Mag III', 'stem': 'MagazineMedium_Extended_03', 'mod_type': 'Magazine', 'tooltip': 'Significantly extends the ammo capacity of compatible weapons that use medium ammo.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_EXTENDED_SHOTGUN_MAG_I', 'name': 'Extended Shotgun Mag I', 'stem': 'MagazineShotgun_Extended_01', 'mod_type': 'Magazine', 'tooltip': 'Slightly extends the ammo capacity of shotguns.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_EXTENDED_SHOTGUN_MAG_II', 'name': 'Extended Shotgun Mag II', 'stem': 'MagazineShotgun_Extended_02', 'mod_type': 'Magazine', 'tooltip': 'Moderately extends the ammo capacity of shotguns.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_EXTENDED_SHOTGUN_MAG_III', 'name': 'Extended Shotgun Mag III', 'stem': 'MagazineShotgun_Extended_03', 'mod_type': 'Magazine', 'tooltip': 'Significantly extends the ammo capacity of shotguns.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_HORIZONTAL_GRIP', 'name': 'Horizontal Grip', 'stem': 'UnderBarrel_FoldableGrip_01', 'mod_type': 'UnderBarrel', 'tooltip': 'Moderately reduces both vertical recoil and horizontal recoil.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_KINETIC_CONVERTER', 'name': 'Kinetic Converter', 'stem': 'Stock_ActiveStabilizer_01', 'mod_type': 'Stock', 'tooltip': 'Moderately increases fire rate.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_LIGHTWEIGHT_STOCK', 'name': 'Lightweight Stock', 'stem': 'Stock_Lightweight_01', 'mod_type': 'Stock', 'tooltip': 'Moderately improves ADS & draw speed.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_MUZZLE_BRAKE_I', 'name': 'Muzzle Brake I', 'stem': 'Muzzle_Brake_01', 'mod_type': 'Muzzle', 'tooltip': 'Slightly reduces both vertical recoil & horizontal recoil.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_MUZZLE_BRAKE_II', 'name': 'Muzzle Brake II', 'stem': 'Muzzle_Brake_02', 'mod_type': 'Muzzle', 'tooltip': 'Moderately reduces both vertical recoil & horizontal recoil.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_MUZZLE_BRAKE_III', 'name': 'Muzzle Brake III', 'stem': 'Muzzle_Brake_03', 'mod_type': 'Muzzle', 'tooltip': 'Significantly reduces both vertical recoil & horizontal recoil.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_PADDED_STOCK', 'name': 'Padded Stock', 'stem': 'Stock_Padded_01', 'mod_type': 'Stock', 'tooltip': 'Significantly improves stability.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_SHOTGUN_CHOKE_I', 'name': 'Shotgun Choke I', 'stem': 'ShotgunMuzzle_Choke_01', 'mod_type': 'Muzzle', 'tooltip': 'Slightly reduces base dispersion.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_SHOTGUN_CHOKE_II', 'name': 'Shotgun Choke II', 'stem': 'ShotgunMuzzle_Choke_02', 'mod_type': 'Muzzle', 'tooltip': 'Moderately reduces base dispersion.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_SHOTGUN_CHOKE_III', 'name': 'Shotgun Choke III', 'stem': 'ShotgunMuzzle_Choke_03', 'mod_type': 'Muzzle', 'tooltip': 'Significantly reduces base dispersion.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_SHOTGUN_SILENCER', 'name': 'Shotgun Silencer', 'stem': 'ShotgunMuzzle_Silencer_01', 'mod_type': 'Muzzle', 'tooltip': 'Moderately reduces the amount of noise produced when firing.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_SILENCER_I', 'name': 'Silencer I', 'stem': 'Muzzle_Silencer_01', 'mod_type': 'Muzzle', 'tooltip': 'Slightly reduces the amount of noise produced when firing.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_SILENCER_II', 'name': 'Silencer II', 'stem': 'Muzzle_Silencer_02', 'mod_type': 'Muzzle', 'tooltip': 'Moderately reduces the amount of noise produced when firing.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_SILENCER_III', 'name': 'Silencer III', 'stem': 'Muzzle_Silencer_03', 'mod_type': 'Muzzle', 'tooltip': 'Significantly reduces the amount of noise produced when firing.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_STABLE_STOCK_I', 'name': 'Stable Stock I', 'stem': 'Stock_Stable_01', 'mod_type': 'Stock', 'tooltip': 'Slightly improves dispersion & recoil recovery time.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_STABLE_STOCK_II', 'name': 'Stable Stock II', 'stem': 'Stock_Stable_02', 'mod_type': 'Stock', 'tooltip': 'Moderately improves dispersion & recoil recovery time.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_STABLE_STOCK_III', 'name': 'Stable Stock III', 'stem': 'Stock_Stable_03', 'mod_type': 'Stock', 'tooltip': 'Significantly improves dispersion & recoil recovery time.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_VERTICAL_GRIP_I', 'name': 'Vertical Grip I', 'stem': 'UnderBarrel_VerticalGrip_01', 'mod_type': 'UnderBarrel', 'tooltip': 'Slightly reduces vertical recoil.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_VERTICAL_GRIP_II', 'name': 'Vertical Grip II', 'stem': 'UnderBarrel_VerticalGrip_02', 'mod_type': 'UnderBarrel', 'tooltip': 'Moderately reduces vertical recoil.'},
+    {'key': 'ID_ITEMNAMES_FIREARMMODS_VERTICAL_GRIP_III', 'name': 'Vertical Grip III', 'stem': 'UnderBarrel_VerticalGrip_03', 'mod_type': 'UnderBarrel', 'tooltip': 'Significantly reduces vertical recoil.'},
+]
+
