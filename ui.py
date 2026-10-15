@@ -60,6 +60,8 @@ def _draw_offset_settings(layout, context):
             row.prop(scene, "arc_import_slot_row_spacing", text="Y")
     if hasattr(scene, "arc_inherit_shape_key"):
         layout.prop(scene, "arc_inherit_shape_key", text="Inherit Shape Key")
+    layout.operator("arc_outfits.group_by_asset_type", text="Group by Asset Type", icon="OUTLINER_COLLECTION")
+    layout.operator("arc_outfits.group_by_outfit_slot", text="Group by Outfit Slot", icon="OUTLINER_COLLECTION")
 
 
 # Head/Hair previews: ~128px (template_icon scale unit ≈ 32px).

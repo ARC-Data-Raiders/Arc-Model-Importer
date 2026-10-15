@@ -282,7 +282,7 @@ class ARC_OUTFITS_OT_AddAllAppearance(Operator):
         self._wm = context.window_manager
         self._window = context.window
         self._view_layer = context.view_layer
-        self._collection = context.collection
+        self._collection = context.scene.collection
         self._reference = bool(context.scene.arc_include_reference)
         self._hair_color = context.scene.arc_appearance_hair_color
         self._backpack_colorway = getattr(context.scene, "arc_appearance_backpack_colorway", "BASE")

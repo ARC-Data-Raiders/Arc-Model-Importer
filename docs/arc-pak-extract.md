@@ -312,3 +312,35 @@ paths and native UNC paths remain valid. Four colorway-enum checks verify that
 explicit options retain stable numeric identities before/after default metadata
 loads; Game Default remains distinct from explicitly named variants. Final ZIP
 runtime/source/installed payload checks pass, alongside release GUI queue checks.
+
+## Collection organization and asset names (2.19.15)
+
+Group by Asset Type and Group by Outfit Slot organize imported meshes, rigs and
+reference cards under Arc Assets. Type groups contain matching reference
+subcollections; slot groups contain all types on that numbered character slot
+plus its reference cards. Slot labels start at001 while the internal slot IDs
+remain zero-based. Props without a character slot use Unassigned Assets.
+Regrouping changes collections only after the initial legacy name upgrade;
+subsequent switches preserve custom display names. New imports follow the last
+selected scene grouping mode, with Asset Type as the default. Both buttons are
+disabled while a bulk queue is active. The queue imports through the scene root
+so removing an emptied grouping collection cannot invalidate its context.
+
+Names start with the asset type: SK_CurlyShort becomes Hair_CurlyShort and
+Head_Face_20_Pio_Base becomes Head_Face_20. Frames, straps and facial hair retain
+independent type prefixes. Rigs/pivots/cards receive Rig/Pivot/Reference suffixes.
+Original names are kept in arc_source_object_name / arc_source_data_name and
+original source file paths stay intact. Material repair includes the source
+identity; reference-anchor and body-inheritance strings, scene animation/weapon
+targets and queued object-name lists are updated. Bones and material identities
+are unchanged. Shared mesh data is not renamed. Empty former collection trees
+are removed while unrelated objects and shared-scene collection links remain.
+
+Verification:1220 checks across all240actualsceneobjects andanewCurlyShort
+import;12driver/shared-data/legacy-tree/custom-name/queuepoll checks;62existing
+Pak regressions;ZIP install/overwrite/disable/re-enable and16packaged GUI queue
+checks. LiveMCP verifies806checks across240objects with geometry,transforms,
+materials,parenting,visibility,selection andsourcepaths unchanged. Current queue
+summary is28/28backpacks with0failures; the supplied screenshot showedtheearlier
+summary. Backup:dist/.local/scene-live-before-21915.blend; organized copy:
+dist/.local/scene-live-organized-21915.blend. Reports:dist/.local/*21915*.

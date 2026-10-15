@@ -1461,7 +1461,11 @@ def _mesh_name_body(name: str) -> str:
 
 def _name_candidates_for_object(obj) -> list:
     """Collect likely UE mesh names from an object (UMap / Blender suffixes / parents)."""
-    raws = [obj.name]
+    raws = [obj.name, str(obj.get("arc_source_object_name") or "")]
+    for prop in ("arc_psk_path", "arc_source_mesh"):
+        source = str(obj.get(prop) or "").replace("\\", "/")
+        if source:
+            raws.append(os.path.splitext(source.rsplit("/", 1)[-1])[0])
     if getattr(obj, "data", None) is not None:
         raws.append(obj.data.name)
     if obj.parent is not None:
@@ -3200,6 +3204,8 @@ class ARC_OUTFITS_OT_ConfirmPSKImport(Operator):
             if layout_msg:
                 self.report({'INFO'}, layout_msg)
 
+        from . import asset_organization
+        asset_organization.organize_objects(all_new_objs, context.scene)
         self.report({'INFO'}, f"Arc Raiders: {ok_count}/{total} part(s) imported.")
         context.scene.arc_psk_entries.clear()
         context.scene.arc_outfit_selections.clear()
@@ -4441,6 +4447,7 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
 
 
 from .appearance_queue import ARC_OUTFITS_OT_AddAllAppearance, ARC_OUTFITS_OT_CancelAppearanceQueue
+from .asset_organization import ARC_OUTFITS_OT_GroupByAssetType, ARC_OUTFITS_OT_GroupByOutfitSlot
 
 
 _outfit_classes = (
@@ -4458,6 +4465,8 @@ _outfit_classes = (
     ARC_OUTFITS_OT_DeepPathSearch,
     ARC_OUTFITS_OT_ClearDeepPathSearch,
     ARC_OUTFITS_OT_AddAppearancePart,
+    ARC_OUTFITS_OT_GroupByAssetType,
+    ARC_OUTFITS_OT_GroupByOutfitSlot,
     ARC_OUTFITS_OT_AddAllAppearance,
     ARC_OUTFITS_OT_CancelAppearanceQueue,
     ARC_OUTFITS_OT_ImportReference,

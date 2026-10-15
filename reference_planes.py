@@ -168,20 +168,12 @@ def bind_legacy_reference_planes(scene=None, *, legacy_linear=False) -> int:
 def categorize_reference_planes(scene=None) -> int:
     """Move existing cards into their type collection, preserving their poses."""
     sc = scene or bpy.context.scene
-    count = 0
-    for plane in list(sc.objects):
-        if not plane.get("arc_reference_plane"):
-            continue
-        role = _reference_role(plane)
-        col = _reference_collection(role)
-        for old in list(plane.users_collection):
-            if old != col:
-                old.objects.unlink(plane)
-        if plane.name not in col.objects:
-            col.objects.link(plane)
-        plane["arc_reference_role"] = role
-        count += 1
-    return count
+    from . import asset_organization
+    planes = [o for o in sc.objects if o.get("arc_reference_plane")]
+    for plane in planes:
+        plane["arc_reference_role"] = _reference_role(plane)
+    asset_organization.organize_objects(planes, sc)
+    return len(planes)
 
 
 def _depsgraph_update() -> None:
@@ -255,6 +247,8 @@ def _anchor_plane(plane, anchor) -> None:
             plane["arc_import_slot"] = int(anchor["arc_import_slot"])
     except Exception:
         pass
+    from . import asset_organization
+    asset_organization.organize_objects([plane], bpy.context.scene)
 
 
 def _load_image(path: str):
@@ -408,6 +402,8 @@ def create_image_plane(
         plane.pass_index = int(REF_PASS_INDEX)
     except Exception:
         pass
+    from . import asset_organization
+    asset_organization.organize_objects([plane], bpy.context.scene)
     return plane
 
 
@@ -570,6 +566,8 @@ def place_head_reference(objects, image_path: str) -> bpy.types.Object | None:
             break
     _anchor_plane(plane, anchor or (meshes[0].parent or meshes[0] if meshes else None)
                   or _outfit_anchor(objects))
+    from . import asset_organization
+    asset_organization.organize_objects([plane], bpy.context.scene)
     return plane
 
 
@@ -597,6 +595,8 @@ def place_hair_reference(objects, image_path: str) -> bpy.types.Object | None:
             break
     _anchor_plane(plane, anchor or (meshes[0].parent or meshes[0] if meshes else None)
                   or _outfit_anchor(objects))
+    from . import asset_organization
+    asset_organization.organize_objects([plane], bpy.context.scene)
     return plane
 
 
@@ -618,6 +618,8 @@ def place_asset_reference(objects, image_path: str, role: str) -> bpy.types.Obje
     _anchor_plane(plane, anchor)
     if plane is not None and "arc_import_slot" in meshes[0]:
         plane["arc_import_slot"] = int(meshes[0]["arc_import_slot"])
+    from . import asset_organization
+    asset_organization.organize_objects([plane], bpy.context.scene)
     return plane
 
 

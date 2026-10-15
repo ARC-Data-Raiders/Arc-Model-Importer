@@ -326,9 +326,13 @@ def place_imported(
     if attach_to is not None:
         stamp_objects(objects, slot=slot, role=role)
         stamp_objects([attach_to], slot=slot, role="")
+        from . import asset_organization
+        asset_organization.organize_objects(objects, scene)
         _sync_character_fit(scene)
         return slot
     place_objects_at_slot(objects, slot, scene=scene, role=role)
+    from . import asset_organization
+    asset_organization.organize_objects(objects, scene)
     _sync_character_fit(scene)
     return slot
 

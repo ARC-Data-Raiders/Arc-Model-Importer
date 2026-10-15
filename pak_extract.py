@@ -611,6 +611,8 @@ class ARC_OT_import_from_pak(Operator, ImportHelper):
             if not ok:
                 self.report({"ERROR"}, msg or "Import failed")
                 return {"CANCELLED"}
+            from . import asset_organization
+            asset_organization.organize_objects(_objs, scene)
             imported += 1
             last = msg or os.path.basename(mesh)
         from . import character_fit
