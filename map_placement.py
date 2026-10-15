@@ -1788,70 +1788,17 @@ def _coerce_imported_meshes(result) -> list:
 
 
 def _import_uemodel(mesh_path: str) -> list:
-    """Try known UEFormat importers (standalone io_scene_ueformat or BlenderUmap2).
+    """Import .uemodel via the addon's native UEFormat v10 reader (no external add-ons).
 
     Map placements CSV is Unreal cm; Blender map space uses ``map_unit_scale()``
-    (default 0.01 → meters). Pass that as UEFormat ``scale_factor``.
+    (default 0.01 → meters). Pass that as the reader ``scale``.
     """
+    from . import uemodel_import
+
     scale = map_unit_scale()
-
-    # 1) Standalone io_scene_ueformat add-on
-    try:
-        from io_scene_ueformat.importer import import_file as import_ueformat  # type: ignore
-
-        try:
-            return _coerce_imported_meshes(import_ueformat(mesh_path, scale_factor=scale))
-        except TypeError:
-            return _coerce_imported_meshes(import_ueformat(mesh_path))
-    except Exception:
-        pass
-
-    # 2) BlenderUmap2 wrapper — build importer with map unit scale
-    for mod_name in (
-        "bl_ext.user_default.blenderumap2.ueformat.ue_format",
-        "ueformat.ue_format",
-    ):
-        try:
-            import importlib
-
-            mod = importlib.import_module(mod_name)
-            UEFormatImport = getattr(mod, "UEFormatImport", None)
-            UEModelOptions = getattr(mod, "UEModelOptions", None)
-            if UEFormatImport is None or UEModelOptions is None:
-                continue
-            importer = UEFormatImport(
-                UEModelOptions(False, scale_factor=scale, import_morph_targets=False)
-            )
-            return _coerce_imported_meshes(importer.import_file(mesh_path))
-        except Exception:
-            continue
-
-    # 3) wrapper.import_model (often defaults to 0.01 — rescale to map unit)
-    for mod_name in (
-        "bl_ext.user_default.blenderumap2.ueformat.wrapper",
-        "ueformat.wrapper",
-    ):
-        try:
-            import importlib
-
-            mod = importlib.import_module(mod_name)
-            fn = getattr(mod, "import_model", None)
-            if not callable(fn):
-                continue
-            meshes = _coerce_imported_meshes(fn(mesh_path))
-            # Wrapper commonly imports at 0.01; normalize object scale to map unit.
-            target = scale / 0.01 if scale > 0 else 1.0
-            for obj in meshes:
-                try:
-                    obj.scale = tuple(float(s) * target for s in obj.scale)
-                except Exception:
-                    obj.scale = (target, target, target)
-            return meshes
-        except Exception:
-            continue
-
-    return []
-
+    return _coerce_imported_meshes(
+        uemodel_import.try_import_uemodel_v10(mesh_path, scale=scale)
+    )
 
 def _import_map_mesh(mesh_path: str) -> list:
     """Import a map mesh. Prefer UEModel via UEFormat when available; else PSK/PSKX."""

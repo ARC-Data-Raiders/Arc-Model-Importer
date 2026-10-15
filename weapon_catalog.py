@@ -24,6 +24,7 @@ MOD_BONE_RULES: tuple[tuple[str, str], ...] = (
 _WEAPON_ENUM_ITEMS: list[tuple[str, str, str]] | None = None
 _MOD_ENUM_ITEMS: dict[str, list[tuple[str, str, str]]] = {}
 _PATTERN_ENUM_CACHE: dict = {"root": None, "items": None}
+_SKIN_ENUM_CACHE: dict = {"key": None, "items": None}
 
 
 def weapons() -> list[dict]:
@@ -57,6 +58,8 @@ def invalidate_enum_caches() -> None:
     _MOD_ENUM_ITEMS.clear()
     _PATTERN_ENUM_CACHE["root"] = None
     _PATTERN_ENUM_CACHE["items"] = None
+    _SKIN_ENUM_CACHE["key"] = None
+    _SKIN_ENUM_CACHE["items"] = None
 
 
 def _catalog_display_label(entry: dict) -> str:
@@ -174,6 +177,128 @@ def patterns_dir(pioneer_root: str) -> Optional[str]:
         pioneer_root,
         ["MaterialLibrary", "Textures", "Weapons", "Patterns"],
     )
+
+
+def weapon_skins_dir(pioneer_root: str, entry: dict | None = None) -> Optional[str]:
+    """Return Items/Firearms|Launchers/<stem>/Skins when present."""
+    folder = resolve_weapon_folder(pioneer_root, entry or {})
+    if not folder:
+        return None
+    skins = os.path.join(folder, "Skins")
+    return skins if os.path.isdir(skins) else None
+
+
+def list_weapon_skins(pioneer_root: str, entry: dict | None = None) -> list[tuple[str, str]]:
+    """Return [(skin_folder_name, mi_json_path), ...] for a gun's Skins/ tree."""
+    from . import textures
+
+    folder = resolve_weapon_folder(pioneer_root, entry or {})
+    if not folder:
+        return []
+    skins_dir = os.path.join(folder, "Skins")
+    if not os.path.isdir(skins_dir):
+        return []
+
+    # Prefer scan_skins via any SK_/SM_ mesh in the gun folder.
+    mesh = ""
+    try:
+        for fname in sorted(os.listdir(folder)):
+            fl = fname.lower()
+            if fl.endswith(".psk") or fl.endswith(".pskx"):
+                mesh = os.path.join(folder, fname)
+                break
+    except OSError:
+        mesh = ""
+    if mesh:
+        seen: set[str] = set()
+        out: list[tuple[str, str]] = []
+        for name, path in textures.scan_skins(mesh):
+            if not name or name in seen or not path or not os.path.isfile(path):
+                continue
+            # scan_skins can also return main-folder MIs; keep Skins/ colourways only.
+            if "skins" not in os.path.normcase(path).replace("\\", "/"):
+                continue
+            seen.add(name)
+            out.append((name, os.path.abspath(path)))
+        if out:
+            return sorted(out, key=lambda t: t[0].lower())
+
+    # Fallback: walk Skins/<Name>/MI_*.json directly.
+    out = []
+    try:
+        names = sorted(
+            d
+            for d in os.listdir(skins_dir)
+            if os.path.isdir(os.path.join(skins_dir, d))
+            and "persistence" not in d.lower()
+        )
+    except OSError:
+        return []
+    for name in names:
+        skin_dir = os.path.join(skins_dir, name)
+        path = ""
+        try:
+            for fname in sorted(os.listdir(skin_dir)):
+                if fname.lower().startswith("mi_") and fname.lower().endswith(".json"):
+                    path = os.path.join(skin_dir, fname)
+                    break
+        except OSError:
+            path = ""
+        if path and os.path.isfile(path):
+            out.append((name, os.path.abspath(path)))
+    return out
+
+
+def resolve_weapon_skin_mi(
+    pioneer_root: str, entry: dict | None, skin_name: str,
+) -> str:
+    """Resolve Skins/<skin_name>/MI_*.json for a catalog gun, or ''."""
+    name = (skin_name or "").strip()
+    if not name or name == "NONE":
+        return ""
+    for folder_name, mi_path in list_weapon_skins(pioneer_root, entry):
+        if folder_name == name:
+            return mi_path
+    return ""
+
+
+def skin_enum_items(_self=None, context=None):
+    """Enum for scene.arc_weapon_skin — colourways under the selected gun's Skins/."""
+    pioneer = ""
+    weapon_key = "NONE"
+    try:
+        from . import utils
+
+        pioneer = utils.get_pioneer_root() or ""
+        scene = getattr(context, "scene", None) if context is not None else None
+        if not pioneer and scene is not None:
+            pioneer = getattr(scene, "arc_pioneer_root", "") or ""
+        if scene is not None:
+            weapon_key = getattr(scene, "arc_weapon_key", "NONE") or "NONE"
+        pioneer = os.path.normcase(os.path.normpath(pioneer)) if pioneer else ""
+    except Exception:
+        pioneer = ""
+        weapon_key = "NONE"
+
+    cache_key = (pioneer, weapon_key)
+    if _SKIN_ENUM_CACHE["items"] is not None and _SKIN_ENUM_CACHE["key"] == cache_key:
+        return _SKIN_ENUM_CACHE["items"]
+
+    items: list[tuple[str, str, str]] = [
+        ("NONE", "Default (base MI)", "Use the gun's base MI — no Skins/ colourway"),
+    ]
+    entry = weapon_by_key(weapon_key) if weapon_key and weapon_key != "NONE" else None
+    if entry and pioneer:
+        for name, mi_path in list_weapon_skins(pioneer, entry):
+            items.append((name, name, os.path.basename(mi_path)))
+    elif entry and not pioneer:
+        items.append(
+            ("NONE", "Default (set Pioneer root)", "Point Settings → Pioneer at Content/Pioneer"),
+        )
+
+    _SKIN_ENUM_CACHE["key"] = cache_key
+    _SKIN_ENUM_CACHE["items"] = items
+    return items
 
 
 def pattern_enum_items(_self=None, context=None):

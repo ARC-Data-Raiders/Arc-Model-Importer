@@ -67,12 +67,20 @@ $RootFilesShared = @(
     "operators.py",
     "ui.py",
     "importing.py",
+    "appearance.py",
+    "pose_presets.py",
+    "reference_planes.py",
+    "revamped_bridge.py",
+    "import_layout.py",
+    "uemodel_import.py",
+    "pak_extract.py",
     "textures.py",
     "utils.py",
     "fmdex.py",
     "rig.py",
     "palette_calibration.py",
     "outfit_reference.csv",
+    "appearance_reference.csv",
     "asset_domain.py",
     "group_hotswap.py",
     "mask_debug.py",
@@ -86,6 +94,7 @@ $RootFilesShared = @(
     "lighting_atmosphere.py",
     "niagara_curves.py",
     "niagara_fx.py",
+    "niagara_catalog.py",
     # Required for clothing/outfit ColorMask materials — without this, imports
     # succeed as bare Principled stubs ("Arc Texturer unavailable").
     "ArcTexturer.blend",
@@ -104,7 +113,8 @@ $RootDirs = @(
     "assets",
     "materials",
     "map_tools",
-    "reference"
+    "reference",
+    "surface_rebuild"
 )
 
 # Under map_tools: ship runtime helpers only (exclude analyze dumps / docs).
@@ -178,7 +188,7 @@ function Resolve-ReleaseLine {
     if ($b -eq "feature/map-importer" -or $b -eq "map-importer") {
         return "map-importer"
     }
-    if ($b -eq "outfits-stable" -or $b -eq "pre-map-importer" -or $b -eq "outfits") {
+    if ($b -eq "outfits-stable" -or $b -eq "pre-map-importer" -or $b -eq "outfits" -or $b -eq "pakdirect") {
         return "outfits"
     }
     # Heuristic for other local branch names
@@ -186,6 +196,35 @@ function Resolve-ReleaseLine {
     if ($b -match "outfit|pre-map") { return "outfits" }
     Write-Warning "Could not map git branch '$Branch' to a release line; defaulting to 'outfits'. Pass -Line outfits|map-importer to override."
     return "outfits"
+}
+
+function Copy-ArcPakRuntime {
+    param([string]$AddonDir, [string]$ReleaseLine)
+    if ($ReleaseLine -eq "map-importer") { return }
+    $proj = Join-Path $RepoRoot "ArcPak\ArcPak.Export.csproj"
+    if (-not (Test-Path -LiteralPath $proj)) { return }
+    $publish = Join-Path $RepoRoot "ArcPak\publish"
+    $exe = Join-Path $publish "ArcPak.Export.exe"
+    if (-not (Test-Path -LiteralPath $exe)) {
+        Write-Host "Publishing ArcPak.Export (win-x64 self-contained)..."
+        & dotnet publish $proj -c Release -r win-x64 --self-contained true -m:4 -o $publish --nologo
+        if ($LASTEXITCODE -ne 0) { throw "ArcPak.Export publish failed ($LASTEXITCODE)" }
+    }
+    $dst = Join-Path $AddonDir "ArcPak"
+    New-Item -ItemType Directory -Path $dst -Force | Out-Null
+    Get-ChildItem -LiteralPath $publish -File | Where-Object { $_.Extension -ne ".pdb" } | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dst $_.Name) -Force
+    }
+    $mapSrc = Join-Path $RepoRoot "ArcPak\mappings"
+    if (Test-Path -LiteralPath $mapSrc) {
+        $mapDst = Join-Path $dst "mappings"
+        New-Item -ItemType Directory -Path $mapDst -Force | Out-Null
+        Get-ChildItem -LiteralPath $mapSrc -File -ErrorAction SilentlyContinue | Where-Object {
+            $_.Extension -eq ".usmap" -or $_.Name -eq "pak-index.bin"
+        } | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $mapDst $_.Name) -Force
+        }
+    }
 }
 
 function New-StagingDir {
@@ -261,6 +300,8 @@ function New-StagingDir {
         }
     }
 
+    Copy-ArcPakRuntime -AddonDir $addonStage -ReleaseLine $ReleaseLine
+
     return @{ StageRoot = $stage; AddonDir = $addonStage; FolderName = $folderName }
 }
 
@@ -307,6 +348,25 @@ def is_map_importer_line() -> bool:
 
 def is_outfits_line() -> bool:
     return not is_map_importer_line()
+
+
+def sibling_addon_module_candidates() -> tuple[str, ...]:
+    if is_map_importer_line():
+        return ("DataRaiders-Outfits",)
+    return ("DataRaiders-MapImporter",)
+
+
+def sibling_addon_enabled() -> bool:
+    try:
+        import addon_utils
+
+        for mod in sibling_addon_module_candidates():
+            _default, loaded = addon_utils.check(mod)
+            if loaded:
+                return True
+    except Exception:
+        pass
+    return False
 "@
     Set-Content -LiteralPath $path -Value $content -Encoding UTF8
 }

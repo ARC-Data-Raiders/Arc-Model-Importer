@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import struct
 from pathlib import Path
 
@@ -651,20 +652,109 @@ def import_ns_json(json_path, asset_root=None, bake=True):
 # --------------------------------------------------------------------------- #
 
 def draw_niagara_fx_box(layout, context) -> None:
+    from . import niagara_catalog as ncat
+
     scene = context.scene
     col = layout.column(align=True)
 
-    col.prop(scene, "arc_ns_json_path", text="NS JSON")
+    # --- paths ---------------------------------------------------------------
+    col.prop(scene, "arc_ns_catalog_root", text="Catalog Folder")
     col.prop(scene, "arc_ns_asset_root", text="Asset Root")
-    col.prop(scene, "arc_ns_bake_curves")
+    if hasattr(scene, "arc_ns_bake_curves"):
+        col.prop(scene, "arc_ns_bake_curves")
 
-    col.separator()
-    col.operator("arc_outfits.import_niagara_fx", text="Import NS Effect",
-                 icon="PARTICLES")
+    catalog_root = getattr(scene, "arc_ns_catalog_root", "") or ""
+    stats = ncat.catalog_stats(catalog_root)
+    root = stats.get("catalog_root") or ""
+    total = int(stats.get("total") or 0)
+    with_lut = int(stats.get("with_lut") or 0)
+
+    if root:
+        col.label(
+            text="Catalog: {total} NS  ·  {lut} with ShaderLUT  ·  {folder}".format(
+                total=total,
+                lut=with_lut,
+                folder=os.path.basename(root.rstrip("/\\")) or root,
+            ),
+            icon="CHECKMARK" if total else "INFO",
+        )
+    else:
+        col.label(
+            text="Set Catalog Folder or PioneerGame Folder (…/Effects)",
+            icon="INFO",
+        )
+    if total and with_lut == 0:
+        col.label(
+            text="No ShaderLUT in these files — use niagara-ns-dump for curves",
+            icon="ERROR",
+        )
+
+    # --- searchable list -----------------------------------------------------
+    if hasattr(scene, "arc_ns_lut_only"):
+        col.prop(scene, "arc_ns_lut_only", text="LUT dumps only")
+
+    search_row = col.row(align=True)
+    if hasattr(scene, "arc_ns_search"):
+        search_row.prop(scene, "arc_ns_search", text="", icon="VIEWZOOM")
+        if scene.arc_ns_search:
+            search_row.operator("arc_outfits.clear_ns_search", text="", icon="X")
+
+    query = getattr(scene, "arc_ns_search", "") or ""
+    lut_only = bool(getattr(scene, "arc_ns_lut_only", False))
+    selected = getattr(scene, "arc_ns_selected", "") or ""
+
+    if len(query.strip()) < 2:
+        col.label(text="Type 2+ characters to search (shield, breakable, …)", icon="INFO")
+        matches = []
+        match_total = 0
+    else:
+        matches = ncat.filter_entries(
+            query, catalog_root=catalog_root, lut_only=lut_only, limit=10
+        )
+        match_total = ncat.count_entries(
+            query, catalog_root=catalog_root, lut_only=lut_only
+        )
+
+    if matches:
+        list_box = col.box()
+        for entry in matches:
+            key = entry.get("key") or ""
+            label = ncat.display_label(entry)
+            row = list_box.row()
+            icon = "RADIOBUT_ON" if key == selected else "RADIOBUT_OFF"
+            op = row.operator("arc_outfits.select_ns", text=label[:64], icon=icon)
+            op.ns_key = key
+        if match_total > len(matches):
+            list_box.label(text=f"... and {match_total - len(matches)} more (refine search)")
+    elif query.strip():
+        if total == 0:
+            col.label(text="Catalog empty — set Catalog Folder to a dump of NS_*.json", icon="ERROR")
+        else:
+            col.label(text=f"No match in {total} systems", icon="INFO")
+
+    entry = ncat.get_entry(selected, catalog_root) if selected else None
+    if entry:
+        bits = [entry.get("stem") or selected]
+        if entry.get("folder"):
+            bits.append(entry["folder"])
+        bits.append("ShaderLUT" if entry.get("has_lut") else "no ShaderLUT")
+        col.label(text=" · ".join(bits)[:72])
+        col.operator(
+            "arc_outfits.import_niagara_fx",
+            text="Import Selected",
+            icon="PARTICLES",
+        )
+    else:
+        col.separator()
+        col.prop(scene, "arc_ns_json_path", text="Or NS JSON file")
+        col.operator(
+            "arc_outfits.import_niagara_fx",
+            text="Import NS File",
+            icon="FILEBROWSER",
+        )
 
     if not psk_available():
-        col.label(text="PSK reader unavailable - meshes become placeholders",
-                  icon="INFO")
+        col.label(text="PSK reader unavailable — meshes become placeholders", icon="INFO")
 
     info = scene.get("arc_ns_last_report")
     if info:

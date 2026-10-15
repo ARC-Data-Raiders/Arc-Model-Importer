@@ -40,8 +40,8 @@ _GT_FINISH_X = _GT_COLOUR_X0
 _GT_BSDF_GAP = 800.0
 _GT_OUTPUT_GAP = 414.0
 _GT_DECAL_ORIGIN_X = 23033.0
-# Snooper / ArcTexturer TA UVs: uArc.ArrayUvScale (ArcMaterial.cs).
-_GT_ARRAY_UV_SCALE = 25.0
+# Texture arrays sample UV1 with MI Tiling * DetailTiling * stage tiling.
+# ArrayUvScale 25 was a Snooper visualization scale, not the character shader.
 
 # Shared process rows (world Y). Colour columns and Decal columns use these.
 # Half-rows from Shirt 003: e/c metal and e/c rough must NOT share one Y with base.
@@ -742,11 +742,11 @@ def _collapse_broadcast(sock):
 def ensure_gt_zone_eq1_group():
     """Single-zone COMPARE: Eq = (ZoneIndex == Match).
 
-    One instance per Colour column (Match = zone-1). Replaces the fat GT_ZoneEq
-    that emitted Eq0..Eq7 from one node.
+    One instance per Colour column (Match = Colour N = OCM floor 1–8).
+    Matches ARC Texturer Revamped ``COMPARE(layer_id, layer)``.
     """
     name = "GT_ZoneEq1"
-    ng, created = _gt_ng_fresh(name, 1)
+    ng, created = _gt_ng_fresh(name, 2)
     if not created:
         return ng
     _gt_ng_sock(ng, "ZoneIndex", "INPUT", "NodeSocketFloat", 0.0)
@@ -826,16 +826,16 @@ def _wire_zone_eq(nodes, links, zone_idx, x, y):
         nd = nodes.new("ShaderNodeGroup")
         nd.node_tree = ng
         nd.name = f"GT_ZoneEq_z{zone}"
-        nd.label = f"zone == {zone - 1}"
+        nd.label = f"zone == {zone}"
         place(nd, colour_col_x(zone), shared_row_y("zone_eq"), lock=True)
         try:
             links.new(zone_idx, nd.inputs["ZoneIndex"])
-            nd.inputs["Match"].default_value = float(zone - 1)
+            nd.inputs["Match"].default_value = float(zone)
         except Exception:
             if nd.inputs:
                 links.new(zone_idx, nd.inputs[0])
                 if len(nd.inputs) > 1:
-                    nd.inputs[1].default_value = float(zone - 1)
+                    nd.inputs[1].default_value = float(zone)
         try:
             eqs[zone] = nd.outputs["Eq"]
         except Exception:
@@ -895,7 +895,7 @@ def ensure_gt_decal_layer_group(mask_int: int):
     """Legacy baked-bit tree. Prefer :func:`ensure_gt_decal_layer_edit_group`."""
     bits = int(mask_int) & 0xFF
     name = f"GT_DecalLayer_{bits}"
-    ng, created = _gt_ng_fresh(name, 1)
+    ng, created = _gt_ng_fresh(name, 2)
     if not created:
         return ng
     _gt_ng_sock(ng, "ZoneIndex", "INPUT", "NodeSocketFloat", 0.0)
@@ -911,13 +911,14 @@ def ensure_gt_decal_layer_group(mask_int: int):
     for z0 in range(8):
         if (bits & (1 << z0)) == 0:
             continue
+        z1 = z0 + 1
         cmp = ng.nodes.new("ShaderNodeMath")
         cmp.operation = "COMPARE"
-        cmp.label = f"z{z0}"
+        cmp.label = f"Colour {z1}"
         cmp.location = (x, 80.0)
         links.new(gi.outputs["ZoneIndex"], cmp.inputs[0])
         try:
-            cmp.inputs[1].default_value = float(z0)
+            cmp.inputs[1].default_value = float(z1)
             cmp.inputs[2].default_value = 0.45
         except Exception:
             pass
@@ -952,11 +953,11 @@ def ensure_gt_decal_layer_group(mask_int: int):
 def ensure_gt_decal_layer_edit_group():
     """Editable LayerMask gate: cooked Allow1..8 × optional Excl1..8 checkboxes.
 
-    Zone index is 0-based (OCM mid×8). Colour N in the UI is 1-based (Allow1/Excl1
-    = Colour 1 = zone 0). ``Masked = Alpha × OR_z(match_z × Allow × (1−Excl))``.
+    ZoneIndex is OCM ``floor(B*8+0.5)`` (Colour N = 1–8). AllowN / ExclN map to
+    cooked bit ``N-1``. ``Masked = Alpha × OR_z(match_z × Allow × (1−Excl))``.
     """
     name = "GT_DecalLayerEdit"
-    ng, created = _gt_ng_fresh(name, 1)
+    ng, created = _gt_ng_fresh(name, 2)
     if not created:
         return ng
     _gt_ng_sock(ng, "ZoneIndex", "INPUT", "NodeSocketFloat", 0.0)
@@ -969,7 +970,7 @@ def ensure_gt_decal_layer_edit_group():
         except Exception:
             pass
         try:
-            excl_item.description = f"Exclude decal from Colour {z} (OCM zone {z - 1})"
+            excl_item.description = f"Exclude decal from Colour {z} (OCM layer {z})"
         except Exception:
             pass
     _gt_ng_sock(ng, "Masked", "OUTPUT", "NodeSocketFloat")
@@ -989,7 +990,7 @@ def ensure_gt_decal_layer_edit_group():
         cmp.location = (x, y)
         links.new(gi.outputs["ZoneIndex"], cmp.inputs[0])
         try:
-            cmp.inputs[1].default_value = float(z0)
+            cmp.inputs[1].default_value = float(z1)
             cmp.inputs[2].default_value = 0.45
         except Exception:
             pass
@@ -1183,35 +1184,29 @@ def apply_decal_exclude_mask_to_material(mat, exclude_mask: int, *, slot: int = 
 
 
 def ensure_gt_colour_n_group():
-    """One Colour-N assemble: ColorMask×Swatch×amt, fold-from-white A→B→C, ×Overlay.
-
-    Engine math: ``default.frag`` ArcZoneColor (no Blender UV conversion).
-    """
+    """Colour-N assemble with PackedR A/A2 lerp. Prefer per-zone baked groups."""
     import bpy
 
     name = "GT_ColourN"
-    ng = bpy.data.node_groups.get(name)
-    if ng is not None and ng.get("arc_gt_ver") == 2:
+    ng, created = _gt_ng_fresh(name, 4)
+    if not created:
         return ng
-    if ng is not None:
-        try:
-            ng.name = f"{name}_stale"
-        except Exception:
-            pass
-    ng = bpy.data.node_groups.new(name, "ShaderNodeTree")
-    ng["arc_gt_ver"] = 2
     _gt_ng_sock(ng, "ColorMask", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
-    _gt_ng_sock(ng, "Swatch", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
+    _gt_ng_sock(ng, "PackedR", "INPUT", "NodeSocketFloat", 0.0)
     _gt_ng_sock(ng, "Amt", "INPUT", "NodeSocketFloat", 1.0)
+    _gt_ng_sock(ng, "Swatch", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     _gt_ng_sock(ng, "ColorA", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
+    _gt_ng_sock(ng, "ColorA2", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     _gt_ng_sock(ng, "ColorB", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
+    _gt_ng_sock(ng, "ColorB2", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     _gt_ng_sock(ng, "ColorC", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
+    _gt_ng_sock(ng, "ColorC2", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     _gt_ng_sock(ng, "Overlay", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     _gt_ng_sock(ng, "Colour", "OUTPUT", "NodeSocketColor")
     gi = ng.nodes.new("NodeGroupInput")
-    gi.location = (-900.0, 0.0)
+    gi.location = (-1100.0, 0.0)
     go = ng.nodes.new("NodeGroupOutput")
-    go.location = (900.0, 0.0)
+    go.location = (1100.0, 0.0)
     links = ng.links
 
     def gmix(blend, loc, dtype="RGBA"):
@@ -1225,36 +1220,42 @@ def ensure_gt_colour_n_group():
         m.location = loc
         return m
 
-    mul_sw = gmix("MULTIPLY", (-620.0, 80.0))
+    mul_sw = gmix("MULTIPLY", (-820.0, 80.0))
     _link_mix(links, mul_sw, None, gi.outputs["ColorMask"], gi.outputs["Swatch"])
     try:
         mix_io(mul_sw)[0].default_value = 1.0
     except Exception:
         pass
     amt3 = ng.nodes.new("ShaderNodeCombineColor")
-    amt3.location = (-620.0, -160.0)
+    amt3.location = (-820.0, -180.0)
     links.new(gi.outputs["Amt"], amt3.inputs[0])
     links.new(gi.outputs["Amt"], amt3.inputs[1])
     links.new(gi.outputs["Amt"], amt3.inputs[2])
-    mul_amt = gmix("MULTIPLY", (-400.0, 40.0))
+    mul_amt = gmix("MULTIPLY", (-580.0, 40.0))
     w = _link_mix(links, mul_amt, None, mix_io(mul_sw)[3], amt3.outputs[0])
     try:
         mix_io(mul_amt)[0].default_value = 1.0
     except Exception:
         pass
     sep = ng.nodes.new("ShaderNodeSeparateColor")
-    sep.location = (-180.0, 40.0)
+    sep.location = (-340.0, 40.0)
     links.new(w, sep.inputs[0])
     white = ng.nodes.new("ShaderNodeRGB")
     white.outputs[0].default_value = (1.0, 1.0, 1.0, 1.0)
-    white.location = (-400.0, 260.0)
+    white.location = (-580.0, 260.0)
+    out_a = gmix("MIX", (-340.0, 220.0))
+    _link_mix(links, out_a, gi.outputs["PackedR"], gi.outputs["ColorA"], gi.outputs["ColorA2"])
+    out_b = gmix("MIX", (-340.0, 40.0))
+    _link_mix(links, out_b, gi.outputs["PackedR"], gi.outputs["ColorB"], gi.outputs["ColorB2"])
+    out_c = gmix("MIX", (-340.0, -140.0))
+    _link_mix(links, out_c, gi.outputs["PackedR"], gi.outputs["ColorC"], gi.outputs["ColorC2"])
     mix_a = gmix("MIX", (40.0, 160.0))
-    _link_mix(links, mix_a, sep.outputs[0], white.outputs[0], gi.outputs["ColorA"])
+    _link_mix(links, mix_a, sep.outputs[0], white.outputs[0], mix_io(out_a)[3])
     mix_b = gmix("MIX", (260.0, 80.0))
-    _link_mix(links, mix_b, sep.outputs[1], mix_io(mix_a)[3], gi.outputs["ColorB"])
+    _link_mix(links, mix_b, sep.outputs[1], mix_io(mix_a)[3], mix_io(out_b)[3])
     mix_c = gmix("MIX", (480.0, 0.0))
-    folded = _link_mix(links, mix_c, sep.outputs[2], mix_io(mix_b)[3], gi.outputs["ColorC"])
-    mul_ov = gmix("MULTIPLY", (700.0, 0.0))
+    folded = _link_mix(links, mix_c, sep.outputs[2], mix_io(mix_b)[3], mix_io(out_c)[3])
+    mul_ov = gmix("MULTIPLY", (720.0, 0.0))
     outc = _link_mix(links, mul_ov, None, folded, gi.outputs["Overlay"])
     try:
         mix_io(mul_ov)[0].default_value = 1.0
@@ -1323,9 +1324,12 @@ def build_gt_colour_n_zone_group(
     color_c,
     overlay,
     tree_key: str,
-    secondary: bool,
+    secondary: bool = False,
+    color_a2=None,
+    color_b2=None,
+    color_c2=None,
 ):
-    """Node group whose internals are only this Colour N chain (baked colorway)."""
+    """Per-zone Colour N: lerp(A,A2,PackedR) then ColorMask x Swatch x Amt fold."""
     import bpy
 
     key = "".join(ch for ch in str(tree_key or "mat") if ch.isalnum() or ch in "_-")[:28] or "mat"
@@ -1335,39 +1339,24 @@ def build_gt_colour_n_zone_group(
         ng = bpy.data.node_groups.new(name, "ShaderNodeTree")
     else:
         _reset_ng(ng)
-    ng["arc_gt_ver"] = 3
+    ng["arc_gt_ver"] = 4
     ng["arc_gt_zone"] = int(zone)
     _gt_ng_sock(ng, "ColorMask", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
+    _gt_ng_sock(ng, "PackedR", "INPUT", "NodeSocketFloat", 0.0)
+    _gt_ng_sock(ng, "Amt", "INPUT", "NodeSocketFloat", float(amt))
     _gt_ng_sock(ng, "Colour", "OUTPUT", "NodeSocketColor")
     gi = ng.nodes.new("NodeGroupInput")
-    gi.location = (-1100.0, 40.0)
+    gi.location = (-1200.0, 40.0)
     go = ng.nodes.new("NodeGroupOutput")
-    go.location = (1100.0, 40.0)
+    go.location = (1180.0, 40.0)
     links = ng.links
-    scheme = "ColorA2/B2/C2 (secondary)" if secondary else "ColorA/B/C (primary)"
     add_gt_note(
         ng.nodes,
         "NOTE_weights",
-        f"Colour {zone} — weights",
-        "ColorMask.rgb × ColorMaskSwatch × Amt (BaseColorMaskStrength). "
-        "These are wA/wB/wC for the fold. Engine: ArcZoneColor, not BaseColor.r.",
-        -1100.0,
-        420.0,
-    )
-    add_gt_note(
-        ng.nodes,
-        "NOTE_fold",
-        f"Colour {zone} — fold from white",
-        f"lerp(white, {scheme}) R then G then B. Tab into this group to read one zone only.",
-        40.0,
-        420.0,
-    )
-    add_gt_note(
-        ng.nodes,
-        "NOTE_ov",
-        f"Colour {zone} — overlay",
-        "Multiply BaseColorOverlay. Pattern / hue / wet stay outside this group.",
-        780.0,
+        f"Colour {zone} - palette",
+        "lerp(ColorX, ColorX2, packed BaseColor.R) then ColorMask.rgb x Swatch x Amt "
+        "fold from white. Amt is wear-modulated Base/Edge/Crease ColorMaskStrength.",
+        -1200.0,
         420.0,
     )
 
@@ -1386,23 +1375,19 @@ def build_gt_colour_n_zone_group(
     sw = ng.nodes.new("ShaderNodeRGB")
     sw.label = f"{zone}_ColorMaskSwatch"
     sw.outputs[0].default_value = _as_rgba(swatch)
-    sw.location = (-820.0, -40.0)
-    amt_nd = ng.nodes.new("ShaderNodeValue")
-    amt_nd.label = f"Amt={float(amt):.3f}"
-    amt_nd.outputs[0].default_value = float(amt)
-    amt_nd.location = (-820.0, -280.0)
-    mul_sw = gmix("MULTIPLY", (-560.0, 80.0))
+    sw.location = (-920.0, -40.0)
+    mul_sw = gmix("MULTIPLY", (-680.0, 80.0))
     _link_mix(links, mul_sw, None, gi.outputs["ColorMask"], sw.outputs[0])
     try:
         mix_io(mul_sw)[0].default_value = 1.0
     except Exception:
         pass
     amt3 = ng.nodes.new("ShaderNodeCombineColor")
-    amt3.location = (-560.0, -200.0)
-    links.new(amt_nd.outputs[0], amt3.inputs[0])
-    links.new(amt_nd.outputs[0], amt3.inputs[1])
-    links.new(amt_nd.outputs[0], amt3.inputs[2])
-    mul_amt = gmix("MULTIPLY", (-320.0, 40.0))
+    amt3.location = (-680.0, -200.0)
+    links.new(gi.outputs["Amt"], amt3.inputs[0])
+    links.new(gi.outputs["Amt"], amt3.inputs[1])
+    links.new(gi.outputs["Amt"], amt3.inputs[2])
+    mul_amt = gmix("MULTIPLY", (-440.0, 40.0))
     w = _link_mix(links, mul_amt, None, mix_io(mul_sw)[3], amt3.outputs[0])
     try:
         mix_io(mul_amt)[0].default_value = 1.0
@@ -1410,35 +1395,53 @@ def build_gt_colour_n_zone_group(
         pass
     sep = ng.nodes.new("ShaderNodeSeparateColor")
     sep.label = "wA wB wC"
-    sep.location = (-80.0, 40.0)
+    sep.location = (-200.0, 40.0)
     links.new(w, sep.inputs[0])
     white = ng.nodes.new("ShaderNodeRGB")
     white.label = "white canvas"
     white.outputs[0].default_value = (1.0, 1.0, 1.0, 1.0)
-    white.location = (-320.0, 280.0)
+    white.location = (-440.0, 280.0)
     na = ng.nodes.new("ShaderNodeRGB")
-    na.label = "ColorA2" if secondary else "ColorA"
+    na.label = "ColorA"
     na.outputs[0].default_value = _as_rgba(color_a)
-    na.location = (40.0, 280.0)
+    na.location = (-200.0, 320.0)
+    na2 = ng.nodes.new("ShaderNodeRGB")
+    na2.label = "ColorA2"
+    na2.outputs[0].default_value = _as_rgba(color_a2 if color_a2 is not None else color_a)
+    na2.location = (-200.0, 180.0)
     nb = ng.nodes.new("ShaderNodeRGB")
-    nb.label = "ColorB2" if secondary else "ColorB"
+    nb.label = "ColorB"
     nb.outputs[0].default_value = _as_rgba(color_b)
-    nb.location = (280.0, 200.0)
+    nb.location = (80.0, 320.0)
+    nb2 = ng.nodes.new("ShaderNodeRGB")
+    nb2.label = "ColorB2"
+    nb2.outputs[0].default_value = _as_rgba(color_b2 if color_b2 is not None else color_b)
+    nb2.location = (80.0, 180.0)
     nc = ng.nodes.new("ShaderNodeRGB")
-    nc.label = "ColorC2" if secondary else "ColorC"
+    nc.label = "ColorC"
     nc.outputs[0].default_value = _as_rgba(color_c)
-    nc.location = (520.0, 120.0)
-    mix_a = gmix("MIX", (40.0, 40.0))
-    _link_mix(links, mix_a, sep.outputs[0], white.outputs[0], na.outputs[0])
-    mix_b = gmix("MIX", (280.0, -40.0))
-    _link_mix(links, mix_b, sep.outputs[1], mix_io(mix_a)[3], nb.outputs[0])
-    mix_c = gmix("MIX", (520.0, -120.0))
-    folded = _link_mix(links, mix_c, sep.outputs[2], mix_io(mix_b)[3], nc.outputs[0])
+    nc.location = (360.0, 320.0)
+    nc2 = ng.nodes.new("ShaderNodeRGB")
+    nc2.label = "ColorC2"
+    nc2.outputs[0].default_value = _as_rgba(color_c2 if color_c2 is not None else color_c)
+    nc2.location = (360.0, 180.0)
+    out_a = gmix("MIX", (-200.0, 40.0))
+    _link_mix(links, out_a, gi.outputs["PackedR"], na.outputs[0], na2.outputs[0])
+    out_b = gmix("MIX", (80.0, 40.0))
+    _link_mix(links, out_b, gi.outputs["PackedR"], nb.outputs[0], nb2.outputs[0])
+    out_c = gmix("MIX", (360.0, 40.0))
+    _link_mix(links, out_c, gi.outputs["PackedR"], nc.outputs[0], nc2.outputs[0])
+    mix_a = gmix("MIX", (80.0, -120.0))
+    _link_mix(links, mix_a, sep.outputs[0], white.outputs[0], mix_io(out_a)[3])
+    mix_b = gmix("MIX", (360.0, -120.0))
+    _link_mix(links, mix_b, sep.outputs[1], mix_io(mix_a)[3], mix_io(out_b)[3])
+    mix_c = gmix("MIX", (640.0, -120.0))
+    folded = _link_mix(links, mix_c, sep.outputs[2], mix_io(mix_b)[3], mix_io(out_c)[3])
     ov = ng.nodes.new("ShaderNodeRGB")
     ov.label = f"{zone}_BaseColorOverlay"
     ov.outputs[0].default_value = _as_rgba(overlay)
-    ov.location = (760.0, 200.0)
-    mul_ov = gmix("MULTIPLY", (760.0, 0.0))
+    ov.location = (880.0, 200.0)
+    mul_ov = gmix("MULTIPLY", (880.0, 0.0))
     outc = _link_mix(links, mul_ov, None, folded, ov.outputs[0])
     try:
         mix_io(mul_ov)[0].default_value = 1.0
@@ -1608,7 +1611,7 @@ def mux_by_zone(nodes, links, zone_idx, zone_socks: dict, *, dtype, start, prefi
                 f"{prefix}_eq_z{zone}",
                 x,
                 yy,
-                value=float(zone - 1),
+                value=float(zone),
                 hide=True,
             )
             try:
@@ -1735,6 +1738,325 @@ def _mask_float(color_sock):
     return color_sock
 
 
+def orient_uv(nodes, links, uv_sock, name, x, y, *, hide=True):
+    """Revamped ``UV orientation``: sample ``(u, 1-v, w)`` (Unreal V from PSK)."""
+    if uv_sock is None:
+        return None
+    sep = nodes.new("ShaderNodeSeparateXYZ")
+    sep.name = f"{name}_sep"
+    sep.label = "UV → XYZ"
+    place(sep, x - 180.0, y, hide=hide)
+    try:
+        links.new(uv_sock, sep.inputs[0])
+    except Exception:
+        return uv_sock
+    inv = _math(nodes, "SUBTRACT", f"{name}_1v", x, y, hide=hide)
+    try:
+        inv.inputs[0].default_value = 1.0
+    except Exception:
+        pass
+    try:
+        links.new(sep.outputs[1], inv.inputs[1])
+    except Exception:
+        return uv_sock
+    comb = nodes.new("ShaderNodeCombineXYZ")
+    comb.name = name
+    comb.label = "UV (Unreal V)"
+    place(comb, x + 180.0, y, hide=hide)
+    try:
+        links.new(sep.outputs[0], comb.inputs[0])
+        links.new(inv.outputs[0], comb.inputs[1])
+        links.new(sep.outputs[2], comb.inputs[2])
+    except Exception:
+        return uv_sock
+    return comb.outputs[0]
+
+
+def uv_map_socket(nodes, layer_name, name, x, y, *, hide=False, links=None, orient=True):
+    """Named UV Map socket (PSK layers are renamed to UV0 / UV1).
+
+    When ``orient`` and ``links`` are set, apply Revamped V-flip (1-v).
+    """
+    n = nodes.new("ShaderNodeUVMap")
+    n.name = name
+    n.label = layer_name
+    try:
+        n.uv_map = str(layer_name or "UV0")
+    except Exception:
+        pass
+    place(n, x, y, hide=hide, lock=True)
+    sock = n.outputs["UV"]
+    if orient and links is not None:
+        sock = orient_uv(nodes, links, sock, f"{name}_orient", x + 200.0, y, hide=True)
+    return sock
+
+
+def ensure_gt_dx_decode_group():
+    """DX RG normal: n.xy = tex.rg*2-1, n.z = sqrt(max(1-dot(xy,xy),0))."""
+    ng, created = _gt_ng_fresh("GT_DxNormalDecode", 1)
+    if not created:
+        return ng
+    _gt_ng_sock(ng, "Color", "INPUT", "NodeSocketColor", (0.5, 0.5, 1.0, 1.0))
+    _gt_ng_sock(ng, "Normal", "OUTPUT", "NodeSocketVector", (0.0, 0.0, 1.0))
+    gi = ng.nodes.new("NodeGroupInput")
+    gi.location = (-720.0, 0.0)
+    go = ng.nodes.new("NodeGroupOutput")
+    go.location = (1060.0, 0.0)
+    links = ng.links
+    sep = ng.nodes.new("ShaderNodeSeparateColor")
+    sep.location = (-500.0, 0.0)
+    links.new(gi.outputs["Color"], sep.inputs[0])
+
+    def twice_minus_one(src, loc):
+        mul = ng.nodes.new("ShaderNodeMath")
+        mul.operation = "MULTIPLY"
+        mul.location = loc
+        mul.inputs[1].default_value = 2.0
+        links.new(src, mul.inputs[0])
+        sub = ng.nodes.new("ShaderNodeMath")
+        sub.operation = "SUBTRACT"
+        sub.location = (loc[0] + 180.0, loc[1])
+        links.new(mul.outputs[0], sub.inputs[0])
+        sub.inputs[1].default_value = 1.0
+        return sub.outputs[0]
+
+    x = twice_minus_one(sep.outputs[0], (-280.0, 80.0))
+    y = twice_minus_one(sep.outputs[1], (-280.0, -80.0))
+    xx = ng.nodes.new("ShaderNodeMath")
+    xx.operation = "MULTIPLY"
+    xx.location = (140.0, 80.0)
+    links.new(x, xx.inputs[0])
+    links.new(x, xx.inputs[1])
+    yy = ng.nodes.new("ShaderNodeMath")
+    yy.operation = "MULTIPLY"
+    yy.location = (140.0, -80.0)
+    links.new(y, yy.inputs[0])
+    links.new(y, yy.inputs[1])
+    add = ng.nodes.new("ShaderNodeMath")
+    add.operation = "ADD"
+    add.location = (320.0, 0.0)
+    links.new(xx.outputs[0], add.inputs[0])
+    links.new(yy.outputs[0], add.inputs[1])
+    one_m = ng.nodes.new("ShaderNodeMath")
+    one_m.operation = "SUBTRACT"
+    one_m.location = (500.0, 40.0)
+    one_m.inputs[0].default_value = 1.0
+    links.new(add.outputs[0], one_m.inputs[1])
+    mx = ng.nodes.new("ShaderNodeMath")
+    mx.operation = "MAXIMUM"
+    mx.location = (500.0, -80.0)
+    links.new(one_m.outputs[0], mx.inputs[0])
+    mx.inputs[1].default_value = 0.0
+    sq = ng.nodes.new("ShaderNodeMath")
+    sq.operation = "SQRT"
+    sq.location = (680.0, 0.0)
+    links.new(mx.outputs[0], sq.inputs[0])
+    comb = ng.nodes.new("ShaderNodeCombineXYZ")
+    comb.location = (860.0, 0.0)
+    links.new(x, comb.inputs[0])
+    links.new(y, comb.inputs[1])
+    links.new(sq.outputs[0], comb.inputs[2])
+    links.new(comb.outputs[0], go.inputs["Normal"])
+    return ng
+
+
+def ensure_gt_rnm_group():
+    """Reoriented normal mapping: t=base+(0,0,1), u=detail*(-1,-1,1)."""
+    ng, created = _gt_ng_fresh("GT_RnmNormals", 1)
+    if not created:
+        return ng
+    _gt_ng_sock(ng, "Base", "INPUT", "NodeSocketVector", (0.0, 0.0, 1.0))
+    _gt_ng_sock(ng, "Detail", "INPUT", "NodeSocketVector", (0.0, 0.0, 1.0))
+    _gt_ng_sock(ng, "Normal", "OUTPUT", "NodeSocketVector", (0.0, 0.0, 1.0))
+    gi = ng.nodes.new("NodeGroupInput")
+    gi.location = (-640.0, 0.0)
+    go = ng.nodes.new("NodeGroupOutput")
+    go.location = (880.0, 0.0)
+    links = ng.links
+    t = ng.nodes.new("ShaderNodeVectorMath")
+    t.operation = "ADD"
+    t.location = (-360.0, 80.0)
+    links.new(gi.outputs["Base"], t.inputs[0])
+    t.inputs[1].default_value = (0.0, 0.0, 1.0)
+    u = ng.nodes.new("ShaderNodeVectorMath")
+    u.operation = "MULTIPLY"
+    u.location = (-360.0, -80.0)
+    links.new(gi.outputs["Detail"], u.inputs[0])
+    u.inputs[1].default_value = (-1.0, -1.0, 1.0)
+    dot = ng.nodes.new("ShaderNodeVectorMath")
+    dot.operation = "DOT_PRODUCT"
+    dot.location = (-80.0, 80.0)
+    links.new(t.outputs[0], dot.inputs[0])
+    links.new(u.outputs[0], dot.inputs[1])
+    split = ng.nodes.new("ShaderNodeSeparateXYZ")
+    split.location = (-80.0, -80.0)
+    links.new(t.outputs[0], split.inputs[0])
+    div = ng.nodes.new("ShaderNodeMath")
+    div.operation = "DIVIDE"
+    div.location = (140.0, 40.0)
+    links.new(dot.outputs["Value"], div.inputs[0])
+    links.new(split.outputs[2], div.inputs[1])
+    scaled = ng.nodes.new("ShaderNodeVectorMath")
+    scaled.operation = "SCALE"
+    scaled.location = (340.0, 80.0)
+    links.new(t.outputs[0], scaled.inputs[0])
+    try:
+        links.new(div.outputs[0], scaled.inputs[3])
+    except Exception:
+        links.new(div.outputs[0], scaled.inputs[1])
+    sub = ng.nodes.new("ShaderNodeVectorMath")
+    sub.operation = "SUBTRACT"
+    sub.location = (520.0, 20.0)
+    links.new(scaled.outputs[0], sub.inputs[0])
+    links.new(u.outputs[0], sub.inputs[1])
+    nrm = ng.nodes.new("ShaderNodeVectorMath")
+    nrm.operation = "NORMALIZE"
+    nrm.location = (700.0, 20.0)
+    links.new(sub.outputs[0], nrm.inputs[0])
+    links.new(nrm.outputs[0], go.inputs["Normal"])
+    return ng
+
+
+def _decode_dx_color(nodes, links, color_sock, name, x, y):
+    if color_sock is None:
+        return None
+    g = nodes.new("ShaderNodeGroup")
+    g.node_tree = ensure_gt_dx_decode_group()
+    g.name = name
+    g.label = "DX RG decode"
+    place(g, x, y, hide=True)
+    try:
+        links.new(color_sock, g.inputs["Color"])
+    except Exception:
+        return color_sock
+    try:
+        return g.outputs["Normal"]
+    except Exception:
+        return g.outputs[0]
+
+
+def _tangent_up(nodes, name, x, y):
+    c = nodes.new("ShaderNodeCombineXYZ")
+    c.name = name
+    c.label = "tangent +Z"
+    c.inputs[0].default_value = 0.0
+    c.inputs[1].default_value = 0.0
+    c.inputs[2].default_value = 1.0
+    place(c, x, y, hide=True)
+    return c.outputs[0]
+
+
+def _clamp_signed(nodes, links, sock, name, x, y):
+    mn = _math(nodes, "MINIMUM", f"{name}_hi", x - 160.0, y, value=1.0, hide=True)
+    links.new(sock, mn.inputs[0])
+    mx = _math(nodes, "MAXIMUM", f"{name}_lo", x, y, value=-1.0, hide=True)
+    links.new(mn.outputs[0], mx.inputs[0])
+    return mx.outputs[0]
+
+
+def _wear_mask(nodes, links, raw, amount, softness, name, x, y):
+    """threshold = amount*(1+softness)-softness; then 1 - (raw-threshold)/softness."""
+    kind = "Crease" if "crease" in (name or "").casefold() else "Edge"
+    amt = _value(nodes, f"{name}_amt", f"{kind} amount", float(amount), x - 720.0, y)
+    sof = _value(nodes, f"{name}_soft", f"{kind} softness", float(softness), x - 720.0, y - 40.0)
+    one_s = _math(nodes, "ADD", f"{name}_1s", x - 520.0, y, value=1.0, hide=True)
+    links.new(sof, one_s.inputs[0])
+    mul = _math(nodes, "MULTIPLY", f"{name}_mul", x - 360.0, y, hide=True)
+    links.new(amt, mul.inputs[0])
+    links.new(one_s.outputs[0], mul.inputs[1])
+    thr = _math(nodes, "SUBTRACT", f"{name}_thr", x - 200.0, y, hide=True)
+    links.new(mul.outputs[0], thr.inputs[0])
+    links.new(sof, thr.inputs[1])
+    if float(softness) <= 1e-6:
+        lt = _math(nodes, "LESS_THAN", name, x, y, hide=True)
+        links.new(raw, lt.inputs[0])
+        links.new(thr.outputs[0], lt.inputs[1])
+        return lt.outputs[0]
+    sub = _math(nodes, "SUBTRACT", f"{name}_d", x - 40.0, y, hide=True)
+    links.new(raw, sub.inputs[0])
+    links.new(thr.outputs[0], sub.inputs[1])
+    div = _math(nodes, "DIVIDE", f"{name}_div", x + 120.0, y, hide=True)
+    links.new(sub.outputs[0], div.inputs[0])
+    links.new(sof, div.inputs[1])
+    inv = _math(nodes, "SUBTRACT", f"{name}_inv", x + 280.0, y, hide=True)
+    inv.inputs[0].default_value = 1.0
+    links.new(div.outputs[0], inv.inputs[1])
+    return _clamp01(nodes, links, inv.outputs[0], name, x + 440.0, y)
+
+
+def _quarter_turn_normal(nodes, links, vec, uv0, name, x, y):
+    """Rotate tangent XY by floor(UV0.u) * pi/2 (M_Character_Layered)."""
+    sep = nodes.new("ShaderNodeSeparateXYZ")
+    sep.name = f"{name}_uv"
+    place(sep, x - 520.0, y, hide=True)
+    links.new(uv0, sep.inputs[0])
+    flr = _math(nodes, "FLOOR", f"{name}_floor", x - 360.0, y, hide=True)
+    links.new(sep.outputs[0], flr.inputs[0])
+    ang = _math(nodes, "MULTIPLY", f"{name}_ang", x - 200.0, y, value=1.5707963267948966, hide=True)
+    links.new(flr.outputs[0], ang.inputs[0])
+    sn = _math(nodes, "SINE", f"{name}_sin", x - 40.0, y + 40.0, hide=True)
+    links.new(ang.outputs[0], sn.inputs[0])
+    co = _math(nodes, "COSINE", f"{name}_cos", x - 40.0, y - 40.0, hide=True)
+    links.new(ang.outputs[0], co.inputs[0])
+    nsep = nodes.new("ShaderNodeSeparateXYZ")
+    nsep.name = f"{name}_n"
+    place(nsep, x - 200.0, y + 160.0, hide=True)
+    links.new(vec, nsep.inputs[0])
+    nx_co = _math(nodes, "MULTIPLY", f"{name}_nxco", x + 120.0, y + 80.0, hide=True)
+    links.new(nsep.outputs[0], nx_co.inputs[0])
+    links.new(co.outputs[0], nx_co.inputs[1])
+    ny_sn = _math(nodes, "MULTIPLY", f"{name}_nysn", x + 120.0, y + 20.0, hide=True)
+    links.new(nsep.outputs[1], ny_sn.inputs[0])
+    links.new(sn.outputs[0], ny_sn.inputs[1])
+    nx = _math(nodes, "SUBTRACT", f"{name}_nx", x + 280.0, y + 80.0, hide=True)
+    links.new(nx_co.outputs[0], nx.inputs[0])
+    links.new(ny_sn.outputs[0], nx.inputs[1])
+    nx_sn = _math(nodes, "MULTIPLY", f"{name}_nxsn", x + 120.0, y - 40.0, hide=True)
+    links.new(nsep.outputs[0], nx_sn.inputs[0])
+    links.new(sn.outputs[0], nx_sn.inputs[1])
+    ny_co = _math(nodes, "MULTIPLY", f"{name}_nyco", x + 120.0, y - 100.0, hide=True)
+    links.new(nsep.outputs[1], ny_co.inputs[0])
+    links.new(co.outputs[0], ny_co.inputs[1])
+    ny = _math(nodes, "ADD", f"{name}_ny", x + 280.0, y - 40.0, hide=True)
+    links.new(nx_sn.outputs[0], ny.inputs[0])
+    links.new(ny_co.outputs[0], ny.inputs[1])
+    comb = nodes.new("ShaderNodeCombineXYZ")
+    comb.name = name
+    place(comb, x + 440.0, y, hide=True)
+    links.new(nx.outputs[0], comb.inputs[0])
+    links.new(ny.outputs[0], comb.inputs[1])
+    links.new(nsep.outputs[2], comb.inputs[2])
+    return comb.outputs[0]
+
+
+def _encode_dx_for_nmap(nodes, links, vec, name, x, y):
+    """Encode DX tangent vector to Blender Normal Map color (Y inverted)."""
+    sep = nodes.new("ShaderNodeSeparateXYZ")
+    sep.name = f"{name}_sep"
+    place(sep, x - 280.0, y, hide=True)
+    links.new(vec, sep.inputs[0])
+    hx = _math(nodes, "MULTIPLY", f"{name}_hx", x - 80.0, y + 80.0, value=0.5, hide=True)
+    links.new(sep.outputs[0], hx.inputs[0])
+    px = _math(nodes, "ADD", f"{name}_px", x + 80.0, y + 80.0, value=0.5, hide=True)
+    links.new(hx.outputs[0], px.inputs[0])
+    hy = _math(nodes, "MULTIPLY", f"{name}_hy", x - 80.0, y, value=0.5, hide=True)
+    links.new(sep.outputs[1], hy.inputs[0])
+    py = _math(nodes, "SUBTRACT", f"{name}_py", x + 80.0, y, hide=True)
+    py.inputs[0].default_value = 0.5
+    links.new(hy.outputs[0], py.inputs[1])
+    hz = _math(nodes, "MULTIPLY", f"{name}_hz", x - 80.0, y - 80.0, value=0.5, hide=True)
+    links.new(sep.outputs[2], hz.inputs[0])
+    pz = _math(nodes, "ADD", f"{name}_pz", x + 80.0, y - 80.0, value=0.5, hide=True)
+    links.new(hz.outputs[0], pz.inputs[0])
+    comb = nodes.new("ShaderNodeCombineColor")
+    comb.name = name
+    place(comb, x + 260.0, y, hide=True)
+    links.new(px.outputs[0], comb.inputs[0])
+    links.new(py.outputs[0], comb.inputs[1])
+    links.new(pz.outputs[0], comb.inputs[2])
+    return comb.outputs[0]
+
+
 def _link_zone_picks(nodes, links, zone_idx, zone_outputs, rough_socks, metal_socks, n_base, zone_eq=None):
     """Pick active Colour N without instancing the same node group in a chain.
 
@@ -1775,14 +2097,11 @@ def _link_zone_picks(nodes, links, zone_idx, zone_outputs, rough_socks, metal_so
         dtype="FLOAT", start=m0, prefix="GT_mux_metal",
         zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("mux_metal"), hide_mix=False,
     )
-    n_flat = _rgb(
-        nodes, "GT_n_flat", "neutral normal", (0.5, 0.5, 1.0, 1.0),
-        start_x, colour_row_y("mux_n"),
-    )
-    _hide_start(n_flat.outputs[0])
+    n_flat = _tangent_up(nodes, "GT_n_flat", start_x, colour_row_y("mux_n"))
+    _hide_start(n_flat)
     detail = mux_by_zone(
         nodes, links, zone_idx, n_base or {},
-        dtype="RGBA", start=n_flat.outputs[0], prefix="GT_mux_nBase",
+        dtype="VECTOR", start=n_flat, prefix="GT_mux_nBase",
         zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("mux_n"), hide_mix=False,
     )
     return albedo, roughness, metallic, detail
@@ -1845,6 +2164,8 @@ def finish_gt_outfit_graph(
     decal_folder: str,
     search_dirs: list,
     sparse_colormask: bool = False,
+    breakup_node=None,
+    colortex_outputs: dict | None = None,
 ):
     """Mux cooked colour + PBR into Principled. Returns the BSDF node."""
     from . import clothing as C
@@ -1864,28 +2185,27 @@ def finish_gt_outfit_graph(
     if base_tex is not None:
         place(base_tex, mx_cm, colour_row_y("tex"), lock=True)
 
-    texcoord = nodes.new("ShaderNodeTexCoord")
-    texcoord.name = "GT_UV"
-    texcoord.label = "GT UV (mesh)"
-    place(texcoord, mx_uv, shared_row_y("metal"), lock=True)
-    uv_mesh = texcoord.outputs["UV"]
-    array_scale = _value(
-        nodes, "GT_ArrayUvScale", "ArrayUvScale (TA UV×25)",
-        _GT_ARRAY_UV_SCALE, mx_uv, shared_row_y("c_rough"),
+    texcoord = None
+    uv0 = uv_map_socket(
+        nodes, "UV0", "GT_UV0", mx_uv, shared_row_y("metal"), links=links, orient=True,
     )
-    uv_ta = _uv_scaled(
-        nodes, links, uv_mesh, array_scale,
-        "GT_TA_ArrayUv", mx_uv, shared_row_y("e_rough"), z_one=False, hide=False,
+    uv1 = uv_map_socket(
+        nodes, "UV1", "GT_UV1", mx_uv, shared_row_y("c_rough"), links=links, orient=True,
     )
-    # Per-row ArrayUv reroutes are built after TA images exist (_wire_array_uv_reroutes).
+    tiling = C._mi_global_float(zone_scalars, "Tiling", 1.0, mi_data=mi_data)
+    if tiling <= 1e-6:
+        tiling = 1.0
     uv_bus = {
-        "e_rough": uv_ta,
-        "c_rough": uv_ta,
-        "rough": uv_ta,
-        "n_base": uv_ta,
-        "n_crease": uv_ta,
-        "n_edge": uv_ta,
-        "n_med": uv_ta,
+        "e_rough": uv1,
+        "c_rough": uv1,
+        "rough": uv1,
+        "n_base": uv1,
+        "n_crease": uv1,
+        "n_edge": uv1,
+        "n_med": uv1,
+        "uv0": uv0,
+        "uv1": uv1,
+        "tiling": tiling,
     }
 
     mid_sock = None
@@ -1922,150 +2242,192 @@ def finish_gt_outfit_graph(
         flr = nodes.new("ShaderNodeMath")
         flr.operation = "FLOOR"
         flr.name = "GT_zone_floor"
-        flr.label = "floor(mid×8+0.5)"
-        flr.hide = True
-        place(flr, zx - 300.0, shared_row_y("zone_eq"), hide=True)
+        # Revamped: raw floor(mid×8+0.5); COMPARE to Layer N (1–8), no 0-based shift.
+        flr.label = "zone 1–8 (floor)"
+        flr.hide = False
+        place(flr, zx, shared_row_y("zone_eq"), hide=False)
         links.new(add.outputs[0], flr.inputs[0])
-        mn = _math(nodes, "MINIMUM", "GT_zone_max7", zx - 150.0, shared_row_y("zone_eq"), value=7.0, hide=True)
-        links.new(flr.outputs[0], mn.inputs[0])
-        mx = _math(nodes, "MAXIMUM", "GT_zone_min0", zx, shared_row_y("zone_eq"), value=0.0, hide=False)
-        mx.label = "zone 0–7"
-        links.new(mn.outputs[0], mx.inputs[0])
-        zone_idx = mx.outputs[0]
+        zone_idx = flr.outputs[0]
         zeq_node, zone_eq = _wire_zone_eq(nodes, links, zone_idx, mx_ocm, shared_row_y("zone_eq"))
         zone_broadcast = zone_idx
         _ = zeq_node
 
-    # Shirt 003: duplicate OCM near finish column for crease/edge clamps (clean local wiring).
     crease_fac = None
     edge_fac = None
-    if ocm_node is not None and getattr(ocm_node, "outputs", None):
-        ocm_wear = nodes.new("ShaderNodeTexImage")
-        ocm_wear.name = "GT_OCM_Wear"
-        ocm_wear.label = ocm_node.label or "OCM (wear)"
-        try:
-            ocm_wear.image = ocm_node.image
-        except Exception:
-            pass
-        place(ocm_wear, gx - 900.0, shared_row_y("ocm_wear"), lock=True)
-        ocm_wear_sep = nodes.new("ShaderNodeSeparateColor")
-        ocm_wear_sep.name = "GT_OCM_Wear_Separate"
-        ocm_wear_sep.label = "OCM R=occ G=curv B=mid"
-        place(ocm_wear_sep, gx - 550.0, shared_row_y("ocm_wear"), lock=True)
-        try:
-            links.new(ocm_wear.outputs["Color"], ocm_wear_sep.inputs[0])
-        except Exception:
-            links.new(ocm_wear.outputs[0], ocm_wear_sep.inputs[0])
-        try:
-            wear_r = ocm_wear_sep.outputs["Red"]
-            wear_g = ocm_wear_sep.outputs["Green"]
-        except Exception:
-            wear_r = ocm_wear_sep.outputs[0]
-            wear_g = ocm_wear_sep.outputs[1] if len(ocm_wear_sep.outputs) > 1 else wear_r
-        crease_fac = _clamp01(nodes, links, wear_g, "GT_creaseFac", gx - 200.0, shared_row_y("ocm_wear"))
-        edge_fac = _clamp01(nodes, links, wear_r, "GT_edgeFac", gx, shared_row_y("ocm_wear") + 250.0)
-    elif ocm_g is not None:
-        crease_fac = _clamp01(nodes, links, ocm_g, "GT_creaseFac", mx_ocm, colour_row_y("c_rough"))
-        if ocm_r is not None:
-            edge_fac = _clamp01(nodes, links, ocm_r, "GT_edgeFac", mx_ocm, colour_row_y("e_rough"))
-
-    apply_ce = False
+    body = None
+    # Revamped always applies Crease/EdgeColorOverlay; scene toggle defaults on.
     try:
         apply_ce = bool(C.crease_edge_color_enabled_from_scene())
     except Exception:
-        apply_ce = False
+        apply_ce = True
+
+    packed_sep = None
+    packed_r = packed_g = packed_b = None
+    if base_tex is not None and getattr(base_tex, "outputs", None):
+        packed_sep = nodes.new("ShaderNodeSeparateColor")
+        packed_sep.name = "GT_Packed_Separate"
+        packed_sep.label = "packed R=A/A2 G=crease B=edge"
+        place(packed_sep, mx_cm, colour_row_y("tex"), hide=True)
+        try:
+            links.new(base_tex.outputs["Color"], packed_sep.inputs[0])
+        except Exception:
+            links.new(base_tex.outputs[0], packed_sep.inputs[0])
+        packed_r = packed_sep.outputs[0]
+        packed_g = packed_sep.outputs[1] if len(packed_sep.outputs) > 1 else packed_r
+        packed_b = packed_sep.outputs[2] if len(packed_sep.outputs) > 2 else packed_r
+
+    br = None
+    if breakup_node is not None:
+        br_tile = C._mi_global_float(zone_scalars, "BreakupMaskTiling", 1.0, mi_data=mi_data)
+        br_uv = uv1
+        if abs(float(br_tile) * tiling - 1.0) > 1e-3:
+            brs = _value(
+                nodes, "GT_BreakupTile", "BreakupMaskTiling",
+                max(1e-6, float(br_tile) * tiling), mx_uv, shared_row_y("ocm_wear"),
+            )
+            br_uv = _uv_scaled(
+                nodes, links, uv1, brs, "GT_Breakup_uv", mx_uv, shared_row_y("ocm_wear"),
+                z_one=True, hide=True,
+            )
+        try:
+            links.new(br_uv, breakup_node.inputs["Vector"])
+        except Exception:
+            pass
+        bsep = nodes.new("ShaderNodeSeparateColor")
+        bsep.name = "GT_Breakup_sep"
+        place(bsep, gx - 900.0, shared_row_y("ocm_wear"), hide=True)
+        try:
+            links.new(breakup_node.outputs["Color"], bsep.inputs[0])
+        except Exception:
+            pass
+        br = bsep.outputs[0]
+    if br is None:
+        br = _value(nodes, "GT_Breakup1", "breakup=1", 1.0, gx - 900.0, shared_row_y("ocm_wear"))
 
     ta_cache = {}
     rough_socks = {}
     crease_r_socks = {}
     edge_r_socks = {}
+    crease_mask_socks = {}
+    edge_mask_socks = {}
     metal_socks = {}
     n_base = {}
     n_crease = {}
     n_edge = {}
-    n_med = {}
+    uv1 = uv_bus["uv1"]
     uv_layer = {
-        "base": uv_bus["rough"],
-        "mask": uv_bus["rough"],
+        "base": uv1,
+        "mask": uv1,
     }
     for zone in range(1, 9):
         tx = colour_col_x(zone)
         bid = C._gt_ta_id(ta_ids, zone, "BaseRoughnessID")
         cid = C._gt_ta_id(ta_ids, zone, "CreaseRoughnessID")
         eid = C._gt_ta_id(ta_ids, zone, "EdgeRoughnessID")
+        cmid = C._gt_ta_id(ta_ids, zone, "CreaseMaskID")
+        emid = C._gt_ta_id(ta_ids, zone, "EdgeMaskID")
         bn = C._gt_ta_id(ta_ids, zone, "BaseNormalID")
         cn = C._gt_ta_id(ta_ids, zone, "CreaseNormalID")
         en = C._gt_ta_id(ta_ids, zone, "EdgeNormalID")
-        mn = C._gt_ta_id(ta_ids, zone, "MediumNormalID")
-        ctile = max(1.0, C._mi_layer_float(zone_scalars, zone, "CreaseNormalTiling", 1.0) or 1.0)
-        etile = max(1.0, C._mi_layer_float(zone_scalars, zone, "EdgeNormalTiling", 1.0) or 1.0)
-        mtile = max(1.0, C._mi_layer_float(zone_scalars, zone, "MediumNormalTiling", 1.0) or 1.0)
-        c_key = ("crease", round(ctile, 4))
-        e_key = ("edge", round(etile, 4))
-        m_key = ("med", round(mtile, 4))
-        if c_key not in uv_layer:
-            if abs(ctile - 1.0) <= 1e-3:
-                uv_layer[c_key] = uv_bus["n_crease"]
-            else:
-                csv = _value(
-                    nodes, f"GT_z{zone}_CreaseNTile", f"{zone}_CreaseNormalTiling",
-                    ctile, mx_uv, colour_row_y("n_crease"),
-                )
-                uv_layer[c_key] = _uv_scaled(
-                    nodes, links, uv_bus["n_crease"], csv,
-                    f"GT_z{zone}_CreaseN_uv", mx_uv, colour_row_y("n_crease"),
-                    z_one=True, hide=False,
-                )
-        if e_key not in uv_layer:
-            if abs(etile - 1.0) <= 1e-3:
-                uv_layer[e_key] = uv_bus["n_edge"]
-            else:
-                esv = _value(
-                    nodes, f"GT_z{zone}_EdgeNTile", f"{zone}_EdgeNormalTiling",
-                    etile, mx_uv, colour_row_y("n_edge"),
-                )
-                uv_layer[e_key] = _uv_scaled(
-                    nodes, links, uv_bus["n_edge"], esv,
-                    f"GT_z{zone}_EdgeN_uv", mx_uv, colour_row_y("n_edge"),
-                    z_one=True, hide=False,
-                )
-        if m_key not in uv_layer:
-            if abs(mtile - 1.0) <= 1e-3:
-                uv_layer[m_key] = uv_bus["n_med"]
-            else:
-                msv = _value(
-                    nodes, f"GT_z{zone}_MedNTile", f"{zone}_MediumNormalTiling",
-                    mtile, mx_uv, colour_row_y("n_med"),
-                )
-                uv_layer[m_key] = _uv_scaled(
-                    nodes, links, uv_bus["n_med"], msv,
-                    f"GT_z{zone}_MedN_uv", mx_uv, colour_row_y("n_med"),
-                    z_one=True, hide=False,
-                )
+        detail_t = C._mi_layer_float(zone_scalars, zone, "DetailTiling", 1.0) or 1.0
+        if detail_t <= 1e-6:
+            detail_t = 1.0
+        base_scale = tiling * detail_t
+
+        def _stage_uv(stage_tile, row, tag):
+            scale = base_scale * max(float(stage_tile) or 1.0, 1e-6)
+            key = (tag, round(scale, 4))
+            if key in uv_layer:
+                return uv_layer[key]
+            if abs(scale - 1.0) <= 1e-3:
+                uv_layer[key] = uv1
+                return uv1
+            sv = _value(
+                nodes, f"GT_z{zone}_{tag}Tile", tag, scale,
+                mx_uv, colour_row_y(row) if row in ("n_crease", "n_edge", "n_med", "c_rough", "e_rough") else shared_row_y("ta_rough"),
+            )
+            uv_layer[key] = _uv_scaled(
+                nodes, links, uv1, sv, f"GT_z{zone}_{tag}_uv", mx_uv,
+                colour_row_y(row) if row in ("n_crease", "n_edge", "n_med", "c_rough", "e_rough") else shared_row_y("ta_rough"),
+                z_one=True, hide=False,
+            )
+            return uv_layer[key]
+
+        uv_base = _stage_uv(C._mi_layer_float(zone_scalars, zone, "BaseRoughnessTiling", 1.0) or 1.0, "rough", "Base")
+        uv_crough = _stage_uv(
+            C._mi_layer_float(zone_scalars, zone, "CreaseRougnessTiling", 1.0) or 1.0, "c_rough", "CRough",
+        )
+        uv_erough = _stage_uv(
+            C._mi_layer_float(zone_scalars, zone, "EdgeRougnessTiling", 1.0) or 1.0, "e_rough", "ERough",
+        )
+        uv_cmask = _stage_uv(
+            C._mi_layer_float(zone_scalars, zone, "CreaseMaskTiling", 1.0) or 1.0, "c_rough", "CMask",
+        )
+        uv_emask = _stage_uv(
+            C._mi_layer_float(zone_scalars, zone, "EdgeMaskTiling", 1.0) or 1.0, "e_rough", "EMask",
+        )
+        uv_cn = _stage_uv(C._mi_layer_float(zone_scalars, zone, "CreaseNormalTiling", 1.0) or 1.0, "n_crease", "CreaseN")
+        uv_en = _stage_uv(C._mi_layer_float(zone_scalars, zone, "EdgeNormalTiling", 1.0) or 1.0, "n_edge", "EdgeN")
+        # Revamped: clamp(Masks.r + Base/Crease/EdgeRoughness offset).
         nd = _slice_sample(
-            nodes, links, ta_cache, base_masks, bid, uv_bus["rough"], 1.0,
+            nodes, links, ta_cache, base_masks, bid, uv_base, 1.0,
             non_color=True, name=f"GT_z{zone}_BaseRough", x=tx, y=shared_row_y("ta_rough"),
         )
+        base_off = C._gt_param_float(mi_data, f"{zone}_BaseRoughness", 0.5)
         if nd is not None:
-            rough_socks[zone] = _mask_float(_sock_color(nd))
+            add_r = _math(
+                nodes, "ADD", f"GT_z{zone}_BaseRough_add", tx, shared_row_y("ta_rough"),
+                value=float(base_off), hide=True,
+            )
+            links.new(_mask_float(_sock_color(nd)), add_r.inputs[0])
+            rough_socks[zone] = _clamp01(
+                nodes, links, add_r.outputs[0], f"GT_z{zone}_BaseRough_c", tx, shared_row_y("ta_rough"),
+            )
         else:
             rough_socks[zone] = _value(
                 nodes, f"GT_z{zone}_BaseRough_v", f"{zone}_BaseRoughness",
-                C._gt_param_float(mi_data, f"{zone}_BaseRoughness", 0.5),
-                subcol_x(tx), colour_row_y("rough"),
+                base_off, subcol_x(tx), colour_row_y("rough"),
             )
         nd = _slice_sample(
-            nodes, links, ta_cache, base_masks, cid, uv_bus["c_rough"], 1.0,
+            nodes, links, ta_cache, base_masks, cid, uv_crough, 1.0,
             non_color=True, name=f"GT_z{zone}_CreaseRough", x=tx, y=colour_row_y("c_rough"),
         )
         if nd is not None:
-            crease_r_socks[zone] = _mask_float(_sock_color(nd))
+            c_off = C._gt_param_float(mi_data, f"{zone}_CreaseRoughness", 0.5)
+            add_c = _math(
+                nodes, "ADD", f"GT_z{zone}_CreaseRough_add", tx, colour_row_y("c_rough"),
+                value=float(c_off), hide=True,
+            )
+            links.new(_mask_float(_sock_color(nd)), add_c.inputs[0])
+            crease_r_socks[zone] = _clamp01(
+                nodes, links, add_c.outputs[0], f"GT_z{zone}_CreaseRough_c", tx, colour_row_y("c_rough"),
+            )
         nd = _slice_sample(
-            nodes, links, ta_cache, base_masks, eid, uv_bus["e_rough"], 1.0,
+            nodes, links, ta_cache, base_masks, eid, uv_erough, 1.0,
             non_color=True, name=f"GT_z{zone}_EdgeRough", x=tx, y=colour_row_y("e_rough"),
         )
         if nd is not None:
-            edge_r_socks[zone] = _mask_float(_sock_color(nd))
+            e_off = C._gt_param_float(mi_data, f"{zone}_EdgeRoughness", 0.5)
+            add_e = _math(
+                nodes, "ADD", f"GT_z{zone}_EdgeRough_add", tx, colour_row_y("e_rough"),
+                value=float(e_off), hide=True,
+            )
+            links.new(_mask_float(_sock_color(nd)), add_e.inputs[0])
+            edge_r_socks[zone] = _clamp01(
+                nodes, links, add_e.outputs[0], f"GT_z{zone}_EdgeRough_c", tx, colour_row_y("e_rough"),
+            )
+        nd = _slice_sample(
+            nodes, links, ta_cache, base_masks, cmid, uv_cmask, 1.0,
+            non_color=True, name=f"GT_z{zone}_CreaseMask", x=tx, y=colour_row_y("c_rough"),
+        )
+        if nd is not None:
+            crease_mask_socks[zone] = _mask_float(_sock_color(nd))
+        nd = _slice_sample(
+            nodes, links, ta_cache, base_masks, emid, uv_emask, 1.0,
+            non_color=True, name=f"GT_z{zone}_EdgeMask", x=tx, y=colour_row_y("e_rough"),
+        )
+        if nd is not None:
+            edge_mask_socks[zone] = _mask_float(_sock_color(nd))
         metal_v = C._gt_param_float(mi_data, f"{zone}_BaseMetallicity", 0.0)
         if abs(float(metal_v)) > 1e-6:
             metal_socks[zone] = _value(
@@ -2073,105 +2435,274 @@ def finish_gt_outfit_graph(
                 metal_v, subcol_x(tx), colour_row_y("metal"),
             )
         nd = _slice_sample(
-            nodes, links, ta_cache, base_normals, bn, uv_bus["n_base"], 1.0,
+            nodes, links, ta_cache, base_normals, bn, uv_base, 1.0,
             non_color=True, name=f"GT_z{zone}_BaseN", x=tx, y=shared_row_y("ta_n_base"),
         )
         if nd is not None:
-            n_base[zone] = _sock_color(nd)
+            n_base[zone] = _decode_dx_color(nodes, links, _sock_color(nd), f"GT_z{zone}_BaseN_dx", tx, shared_row_y("ta_n_base"))
         nd = _slice_sample(
-            nodes, links, ta_cache, base_normals, cn, uv_layer[c_key], 1.0,
+            nodes, links, ta_cache, base_normals, cn, uv_cn, 1.0,
             non_color=True, name=f"GT_z{zone}_CreaseN", x=tx, y=colour_row_y("n_crease"),
         )
         if nd is not None:
-            n_crease[zone] = _sock_color(nd)
+            n_crease[zone] = _decode_dx_color(nodes, links, _sock_color(nd), f"GT_z{zone}_CreaseN_dx", tx, colour_row_y("n_crease"))
         nd = _slice_sample(
-            nodes, links, ta_cache, base_normals, en, uv_layer[e_key], 1.0,
+            nodes, links, ta_cache, base_normals, en, uv_en, 1.0,
             non_color=True, name=f"GT_z{zone}_EdgeN", x=tx, y=colour_row_y("n_edge"),
         )
         if nd is not None:
-            n_edge[zone] = _sock_color(nd)
-        nd = _slice_sample(
-            nodes, links, ta_cache, base_normals, mn, uv_layer[m_key], 1.0,
-            non_color=True, name=f"GT_z{zone}_MedN", x=tx, y=colour_row_y("n_med"),
+            n_edge[zone] = _decode_dx_color(nodes, links, _sock_color(nd), f"GT_z{zone}_EdgeN_dx", tx, colour_row_y("n_edge"))
+        # MediumNormal omitted (Revamped warn-only).
+
+    # Wear: packed G/B + curvature + TA crease/edge masks + BreakupMask (Revamped character.py).
+    if ocm_g is not None:
+        curv_m = _math(nodes, "MULTIPLY", "GT_curv_x2", gx - 900.0, shared_row_y("ocm_wear"), value=2.0, hide=True)
+        links.new(ocm_g, curv_m.inputs[0])
+        curvature = _clamp01(nodes, links, curv_m.outputs[0], "GT_curvature", gx - 700.0, shared_row_y("ocm_wear"))
+        if packed_g is not None:
+            pg2 = _math(nodes, "MULTIPLY", "GT_pg2", gx - 900.0, shared_row_y("ocm_wear") - 80.0, value=2.0, hide=True)
+            links.new(packed_g, pg2.inputs[0])
+            pg1 = _math(nodes, "SUBTRACT", "GT_pg1", gx - 740.0, shared_row_y("ocm_wear") - 80.0, value=1.0, hide=True)
+            links.new(pg2.outputs[0], pg1.inputs[0])
+            two_br = _math(nodes, "SUBTRACT", "GT_2br", gx - 900.0, shared_row_y("ocm_wear") - 160.0, value=2.0, hide=True)
+            two_br.inputs[0].default_value = 2.0
+            links.new(br, two_br.inputs[1])
+            sc_m = _math(nodes, "MULTIPLY", "GT_signed_c_m", gx - 580.0, shared_row_y("ocm_wear") - 80.0, hide=True)
+            links.new(pg1.outputs[0], sc_m.inputs[0])
+            links.new(two_br.outputs[0], sc_m.inputs[1])
+            signed_c = _clamp_signed(nodes, links, sc_m.outputs[0], "GT_signed_c", gx - 400.0, shared_row_y("ocm_wear") - 80.0)
+        else:
+            signed_c = _value(nodes, "GT_signed_c0", "signed crease 0", 0.0, gx - 400.0, shared_row_y("ocm_wear") - 80.0)
+        if packed_b is not None:
+            pb2 = _math(nodes, "MULTIPLY", "GT_pb2", gx - 900.0, shared_row_y("ocm_wear") + 120.0, value=2.0, hide=True)
+            links.new(packed_b, pb2.inputs[0])
+            pb1 = _math(nodes, "SUBTRACT", "GT_pb1", gx - 740.0, shared_row_y("ocm_wear") + 120.0, value=1.0, hide=True)
+            links.new(pb2.outputs[0], pb1.inputs[0])
+            one_br = _math(nodes, "ADD", "GT_1br", gx - 900.0, shared_row_y("ocm_wear") + 200.0, value=1.0, hide=True)
+            links.new(br, one_br.inputs[0])
+            se_m = _math(nodes, "MULTIPLY", "GT_signed_e_m", gx - 580.0, shared_row_y("ocm_wear") + 120.0, hide=True)
+            links.new(pb1.outputs[0], se_m.inputs[0])
+            links.new(one_br.outputs[0], se_m.inputs[1])
+            signed_e = _clamp_signed(nodes, links, se_m.outputs[0], "GT_signed_e", gx - 400.0, shared_row_y("ocm_wear") + 120.0)
+        else:
+            signed_e = _value(nodes, "GT_signed_e0", "signed edge 0", 0.0, gx - 400.0, shared_row_y("ocm_wear") + 120.0)
+        if ocm_r is not None:
+            g05 = _math(nodes, "SUBTRACT", "GT_g05", gx - 900.0, shared_row_y("ocm_wear") + 280.0, value=0.5, hide=True)
+            links.new(ocm_g, g05.inputs[0])
+            g2 = _math(nodes, "MULTIPLY", "GT_g2", gx - 740.0, shared_row_y("ocm_wear") + 280.0, value=2.0, hide=True)
+            links.new(g05.outputs[0], g2.inputs[0])
+            gr = _math(nodes, "MULTIPLY", "GT_gr", gx - 580.0, shared_row_y("ocm_wear") + 280.0, hide=True)
+            links.new(g2.outputs[0], gr.inputs[0])
+            links.new(ocm_r, gr.inputs[1])
+            grc = _clamp01(nodes, links, gr.outputs[0], "GT_grc", gx - 400.0, shared_row_y("ocm_wear") + 280.0)
+            edge_base = _math(nodes, "SUBTRACT", "GT_edge_base", gx - 220.0, shared_row_y("ocm_wear") + 280.0, hide=True)
+            edge_base.inputs[0].default_value = 1.0
+            links.new(grc, edge_base.inputs[1])
+            edge_base = edge_base.outputs[0]
+        else:
+            edge_base = _value(nodes, "GT_edge_base1", "edge base 1", 1.0, gx - 220.0, shared_row_y("ocm_wear") + 280.0)
+        crease_z = {}
+        edge_z = {}
+        for zone in range(1, 9):
+            ctex = crease_mask_socks.get(zone)
+            etex = edge_mask_socks.get(zone)
+            if ctex is None:
+                ctex = _value(nodes, f"GT_z{zone}_cMask0", "crease mask 0", 0.0, colour_col_x(zone), shared_row_y("ocm_wear"))
+            if etex is None:
+                etex = _value(nodes, f"GT_z{zone}_eMask0", "edge mask 0", 0.0, colour_col_x(zone), shared_row_y("ocm_wear"))
+            csum = _math(nodes, "ADD", f"GT_z{zone}_csum", colour_col_x(zone), shared_row_y("ocm_wear"), hide=True)
+            links.new(curvature, csum.inputs[0])
+            links.new(ctex, csum.inputs[1])
+            cmul = _math(nodes, "MULTIPLY", f"GT_z{zone}_cmul", colour_col_x(zone), shared_row_y("ocm_wear"), hide=True)
+            links.new(curvature, cmul.inputs[0])
+            links.new(csum.outputs[0], cmul.inputs[1])
+            craw = _math(nodes, "ADD", f"GT_z{zone}_craw", colour_col_x(zone), shared_row_y("ocm_wear"), hide=True)
+            links.new(cmul.outputs[0], craw.inputs[0])
+            links.new(signed_c, craw.inputs[1])
+            amount_c = C._mi_layer_float(zone_scalars, zone, "CreaseAmount", 0.0)
+            # Softness 0 → hard LESS_THAN (Revamped); do not coerce to 1.0.
+            soft_c = C._mi_layer_float(zone_scalars, zone, "CreaseMaskSoftness", 1.0)
+            crease_z[zone] = _wear_mask(
+                nodes, links, craw.outputs[0], amount_c, soft_c,
+                f"GT_z{zone}_crease", colour_col_x(zone), shared_row_y("ocm_wear"),
+            )
+            e1 = _math(nodes, "ADD", f"GT_z{zone}_e1", colour_col_x(zone), shared_row_y("ocm_wear") + 200.0, value=1.0, hide=True)
+            e1.inputs[0].default_value = 1.0
+            links.new(edge_base, e1.inputs[1])
+            e2 = _math(nodes, "SUBTRACT", f"GT_z{zone}_e2", colour_col_x(zone), shared_row_y("ocm_wear") + 200.0, hide=True)
+            links.new(e1.outputs[0], e2.inputs[0])
+            links.new(etex, e2.inputs[1])
+            emul = _math(nodes, "MULTIPLY", f"GT_z{zone}_emul", colour_col_x(zone), shared_row_y("ocm_wear") + 200.0, hide=True)
+            links.new(edge_base, emul.inputs[0])
+            links.new(e2.outputs[0], emul.inputs[1])
+            eraw = _math(nodes, "ADD", f"GT_z{zone}_eraw", colour_col_x(zone), shared_row_y("ocm_wear") + 200.0, hide=True)
+            links.new(emul.outputs[0], eraw.inputs[0])
+            links.new(signed_e, eraw.inputs[1])
+            amount_e = C._mi_layer_float(zone_scalars, zone, "EdgeAmount", 0.0)
+            soft_e = C._mi_layer_float(zone_scalars, zone, "EdgeMaskSoftness", 1.0)
+            edge_z[zone] = _wear_mask(
+                nodes, links, eraw.outputs[0], amount_e, soft_e,
+                f"GT_z{zone}_edge", colour_col_x(zone), shared_row_y("ocm_wear") + 200.0,
+            )
+        z0c = _value(nodes, "GT_crease0", "crease 0", 0.0, colour_col_x(1) - _GT_GRID_DX, shared_row_y("ocm_wear"))
+        z0e = _value(nodes, "GT_edge0", "edge 0", 0.0, colour_col_x(1) - _GT_GRID_DX, shared_row_y("ocm_wear") + 200.0)
+        crease_fac = mux_by_zone(
+            nodes, links, zone_idx, crease_z, dtype="FLOAT", start=z0c, prefix="GT_mux_crease",
+            zone_eq=zone_eq, x_fn=colour_col_x, y=shared_row_y("ocm_wear"),
         )
-        if nd is not None:
-            n_med[zone] = _sock_color(nd)
+        edge_fac = mux_by_zone(
+            nodes, links, zone_idx, edge_z, dtype="FLOAT", start=z0e, prefix="GT_mux_edge",
+            zone_eq=zone_eq, x_fn=colour_col_x, y=shared_row_y("ocm_wear") + 200.0,
+        )
+        # Clear user knobs (Revamped exposes "Crease/Edge amount"; these scale the
+        # muxed wear fac after MI amounts). Default 1.0 = MI parity.
+        str_x = gx + 40.0
+        crease_str = _value(
+            nodes, "GT_CreaseStrength", "Crease Strength", 1.0,
+            str_x, shared_row_y("ocm_wear") - 40.0,
+        )
+        edge_str = _value(
+            nodes, "GT_EdgeStrength", "Edge Strength", 1.0,
+            str_x, shared_row_y("ocm_wear") + 240.0,
+        )
+        for _nm in ("GT_CreaseStrength", "GT_EdgeStrength"):
+            nd = nodes.get(_nm)
+            if nd is not None:
+                nd.hide = False
+                try:
+                    nd.hide_preview = False
+                except Exception:
+                    pass
+        cm = _math(nodes, "MULTIPLY", "GT_crease_x_str", str_x + 180.0, shared_row_y("ocm_wear"), hide=True)
+        links.new(crease_fac, cm.inputs[0])
+        links.new(crease_str, cm.inputs[1])
+        crease_fac = _clamp01(nodes, links, cm.outputs[0], "GT_crease_fac", str_x + 360.0, shared_row_y("ocm_wear"))
+        em = _math(nodes, "MULTIPLY", "GT_edge_x_str", str_x + 180.0, shared_row_y("ocm_wear") + 200.0, hide=True)
+        links.new(edge_fac, em.inputs[0])
+        links.new(edge_str, em.inputs[1])
+        edge_fac = _clamp01(nodes, links, em.outputs[0], "GT_edge_fac", str_x + 360.0, shared_row_y("ocm_wear") + 200.0)
+
+    if crease_fac is not None and edge_fac is not None:
+        ce = _math(nodes, "ADD", "GT_ce", gx, shared_row_y("ocm_wear"), hide=True)
+        links.new(crease_fac, ce.inputs[0])
+        links.new(edge_fac, ce.inputs[1])
+        one_ce = _math(nodes, "SUBTRACT", "GT_1ce", gx + 160.0, shared_row_y("ocm_wear"), hide=True)
+        one_ce.inputs[0].default_value = 1.0
+        links.new(ce.outputs[0], one_ce.inputs[1])
+        body2 = _math(nodes, "MULTIPLY", "GT_body2", gx + 320.0, shared_row_y("ocm_wear"), value=2.0, hide=True)
+        links.new(one_ce.outputs[0], body2.inputs[0])
+        body = _clamp01(nodes, links, body2.outputs[0], "GT_body", gx + 500.0, shared_row_y("ocm_wear"))
+        for zone in range(1, 9):
+            gnode = nodes.get(f"GT_ColourN_z{zone}")
+            if gnode is None or "Amt" not in getattr(gnode, "inputs", {}):
+                continue
+            bs = C._mi_layer_float(zone_scalars, zone, "BaseColorMaskStrength", 1.0)
+            es = C._mi_layer_float(zone_scalars, zone, "EdgeColorMaskStrength", 0.0)
+            cs = C._mi_layer_float(zone_scalars, zone, "CreaseColorMaskStrength", 0.0)
+            mb = _math(nodes, "MULTIPLY", f"GT_z{zone}_amtB", colour_col_x(zone), shared_row_y("ocm_wear") - 120.0, value=bs, hide=True)
+            links.new(body, mb.inputs[0])
+            me = _math(nodes, "MULTIPLY", f"GT_z{zone}_amtE", colour_col_x(zone), shared_row_y("ocm_wear") - 120.0, value=es, hide=True)
+            links.new(edge_fac, me.inputs[0])
+            mc = _math(nodes, "MULTIPLY", f"GT_z{zone}_amtC", colour_col_x(zone), shared_row_y("ocm_wear") - 120.0, value=cs, hide=True)
+            links.new(crease_fac, mc.inputs[0])
+            s1 = _math(nodes, "ADD", f"GT_z{zone}_amt1", colour_col_x(zone), shared_row_y("ocm_wear") - 120.0, hide=True)
+            links.new(mb.outputs[0], s1.inputs[0])
+            links.new(me.outputs[0], s1.inputs[1])
+            s2 = _math(nodes, "ADD", f"GT_z{zone}_amt2", colour_col_x(zone), shared_row_y("ocm_wear") - 120.0, hide=True)
+            links.new(s1.outputs[0], s2.inputs[0])
+            links.new(mc.outputs[0], s2.inputs[1])
+            amt = _clamp01(nodes, links, s2.outputs[0], f"GT_z{zone}_amt", colour_col_x(zone), shared_row_y("ocm_wear") - 120.0)
+            try:
+                for lnk in list(gnode.inputs["Amt"].links):
+                    links.remove(lnk)
+                links.new(amt, gnode.inputs["Amt"])
+            except Exception:
+                pass
+        if packed_r is not None:
+            for zone in range(1, 9):
+                gnode = nodes.get(f"GT_ColourN_z{zone}")
+                if gnode is None:
+                    continue
+                try:
+                    if "PackedR" in gnode.inputs:
+                        links.new(packed_r, gnode.inputs["PackedR"])
+                except Exception:
+                    pass
 
     albedo, roughness, metallic, detail = _link_zone_picks(
         nodes, links, zone_idx, zone_outputs, rough_socks, metal_socks, n_base,
         zone_eq=zone_eq,
     )
 
-    crease_ov = {}
-    edge_ov = {}
-    if apply_ce:
+    # Revamped order: overlay×ColorTex×palette, then crease/edge color overlays.
+    if colortex_outputs:
+        white = nodes.get("GT_canvas_white")
+        white_s = white.outputs[0] if white is not None else _rgb(
+            nodes, "GT_canvas_white", "GT canvas white", (1.0, 1.0, 1.0, 1.0),
+            gx, colour_row_y("tex"),
+        ).outputs[0]
+        ct = mux_by_zone(
+            nodes, links, zone_idx, colortex_outputs, dtype="RGBA", start=white_s,
+            prefix="GT_mux_colortex", zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("tex"),
+        )
+        bs_vals, es_vals, cs_vals = {}, {}, {}
         for zone in range(1, 9):
-            ck = f"{zone}_CreaseColorOverlay"
-            ek = f"{zone}_EdgeColorOverlay"
-            cr = (colours or {}).get(ck)
-            er = (colours or {}).get(ek)
-            if cr is not None and not textures.skip_colour(cr):
-                nd = nodes.get(ck) or _rgb(nodes, ck, ck, cr, 0.0, 0.0)
-                crease_ov[zone] = nd.outputs[0]
-            if er is not None and not textures.skip_colour(er):
-                nd = nodes.get(ek) or _rgb(nodes, ek, ek, er, 0.0, 0.0)
-                edge_ov[zone] = nd.outputs[0]
-        zero = None
-        if crease_ov or edge_ov:
-            zero = _rgb(
-                nodes, "GT_overlay_zero", "overlay idle", (0.0, 0.0, 0.0, 0.0),
-                colour_col_x(1) - _GT_GRID_DX, colour_row_y("ov_crease"),
+            if zone not in colortex_outputs:
+                continue
+            bs_vals[zone] = _value(
+                nodes, f"GT_z{zone}_bts", "BaseTextureStrength",
+                max(0.0, min(1.0, C._mi_layer_float(zone_scalars, zone, "BaseTextureStrength", 0.0))),
+                subcol_x(colour_col_x(zone)), colour_row_y("tex"),
             )
-            zero.hide = True
-            _quiet_node(zero)
-        if crease_ov and zero is not None:
-            crease_col = mux_by_zone(
-                nodes, links, zone_idx, crease_ov,
-                dtype="RGBA", start=zero.outputs[0], prefix="GT_mux_creaseOv",
-                zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("ov_crease"),
+            es_vals[zone] = _value(
+                nodes, f"GT_z{zone}_ets", "EdgeTextureStrength",
+                max(0.0, min(1.0, C._mi_layer_float(zone_scalars, zone, "EdgeTextureStrength", 0.0))),
+                subcol_x(colour_col_x(zone)), colour_row_y("tex"),
             )
-            if crease_fac is not None:
-                sep = nodes.new("ShaderNodeSeparateColor")
-                sep.name = "GT_creaseOv_sep"
-                place(sep, gx, colour_row_y("ov_crease"), hide=True)
-                links.new(crease_col, sep.inputs[0])
-                mul = _math(nodes, "MULTIPLY", "GT_creaseOv_fac", gx, colour_row_y("ov_crease"))
-                links.new(crease_fac, mul.inputs[0])
-                try:
-                    links.new(sep.outputs["Alpha"], mul.inputs[1])
-                except Exception:
-                    mul.inputs[1].default_value = 1.0
-                mix = _new_mix(nodes, "GT_apply_creaseOv", "crease overlay", gx, colour_row_y("ov_crease"))
-                albedo = _link_mix(links, mix, mul.outputs[0], albedo, crease_col)
-            for zone, sock in crease_ov.items():
-                nd = getattr(sock, "node", None)
-                if nd is not None:
-                    nd.hide = True
-                    place(nd, colour_col_x(zone), colour_row_y("ov_crease"), hide=True)
-        if edge_ov and zero is not None:
-            edge_col = mux_by_zone(
-                nodes, links, zone_idx, edge_ov,
-                dtype="RGBA", start=zero.outputs[0], prefix="GT_mux_edgeOv",
-                zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("ov_edge"),
+            cs_vals[zone] = _value(
+                nodes, f"GT_z{zone}_cts", "CreaseTextureStrength",
+                max(0.0, min(1.0, C._mi_layer_float(zone_scalars, zone, "CreaseTextureStrength", 0.0))),
+                subcol_x(colour_col_x(zone)), colour_row_y("tex"),
             )
-            if edge_fac is not None:
-                sep = nodes.new("ShaderNodeSeparateColor")
-                sep.name = "GT_edgeOv_sep"
-                place(sep, gx, colour_row_y("ov_edge"), hide=True)
-                links.new(edge_col, sep.inputs[0])
-                mul = _math(nodes, "MULTIPLY", "GT_edgeOv_fac", gx, colour_row_y("ov_edge"))
-                links.new(edge_fac, mul.inputs[0])
-                try:
-                    links.new(sep.outputs["Alpha"], mul.inputs[1])
-                except Exception:
-                    mul.inputs[1].default_value = 1.0
-                mix = _new_mix(nodes, "GT_apply_edgeOv", "edge overlay", gx, colour_row_y("ov_edge"))
-                albedo = _link_mix(links, mix, mul.outputs[0], albedo, edge_col)
-            for zone, sock in edge_ov.items():
-                nd = getattr(sock, "node", None)
-                if nd is not None:
-                    nd.hide = True
-                    place(nd, colour_col_x(zone), colour_row_y("ov_edge"), hide=True)
+        z0 = _value(nodes, "GT_texStr0", "tex 0", 0.0, colour_col_x(1) - _GT_GRID_DX, colour_row_y("tex"))
+        mux_bs = mux_by_zone(nodes, links, zone_idx, bs_vals, dtype="FLOAT", start=z0, prefix="GT_mux_bts", zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("tex")) if bs_vals else z0
+        mux_es = mux_by_zone(nodes, links, zone_idx, es_vals, dtype="FLOAT", start=z0, prefix="GT_mux_ets", zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("tex")) if es_vals else z0
+        mux_cs = mux_by_zone(nodes, links, zone_idx, cs_vals, dtype="FLOAT", start=z0, prefix="GT_mux_cts", zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("tex")) if cs_vals else z0
+        body_s = mux_bs
+        if body is not None:
+            bm = _math(nodes, "MULTIPLY", "GT_tex_body", gx, colour_row_y("tex"), hide=True)
+            links.new(body, bm.inputs[0])
+            links.new(mux_bs, bm.inputs[1])
+            body_s = _clamp01(nodes, links, bm.outputs[0], "GT_tex_body_c", gx, colour_row_y("tex"))
+        detail_c = _link_mix(
+            links, _new_mix(nodes, "GT_tex_body_mix", "lerp(1,ColorTex,body)", gx, colour_row_y("tex")),
+            body_s, white_s, ct,
+        )
+        if edge_fac is not None:
+            em = _math(nodes, "MULTIPLY", "GT_tex_edge", gx, colour_row_y("tex"), hide=True)
+            links.new(edge_fac, em.inputs[0])
+            links.new(mux_es, em.inputs[1])
+            ef = _clamp01(nodes, links, em.outputs[0], "GT_tex_edge_c", gx, colour_row_y("tex"))
+            detail_c = _link_mix(
+                links, _new_mix(nodes, "GT_tex_edge_mix", "ColorTex edge", gx, colour_row_y("tex")),
+                ef, detail_c, ct,
+            )
+        if crease_fac is not None:
+            cm = _math(nodes, "MULTIPLY", "GT_tex_crease", gx, colour_row_y("tex"), hide=True)
+            links.new(crease_fac, cm.inputs[0])
+            links.new(mux_cs, cm.inputs[1])
+            cf = _clamp01(nodes, links, cm.outputs[0], "GT_tex_crease_c", gx, colour_row_y("tex"))
+            detail_c = _link_mix(
+                links, _new_mix(nodes, "GT_tex_crease_mix", "ColorTex crease", gx, colour_row_y("tex")),
+                cf, detail_c, ct,
+            )
+        mul = _new_mix(nodes, "GT_albedo_x_tex", "albedo x ColorTex", gx, colour_row_y("tex"))
+        mul.blend_type = "MULTIPLY"
+        try:
+            mix_io(mul)[0].default_value = 1.0
+        except Exception:
+            pass
+        albedo = _link_mix(links, mul, None, albedo, detail_c)
 
     if sparse_colormask and cm_src is not None and base_tex is not None:
         cm_sep = nodes.new("ShaderNodeSeparateColor")
@@ -2198,29 +2729,94 @@ def finish_gt_outfit_graph(
         mix = _new_mix(nodes, "GT_basecolor_fallback", "sparse ColorMask → BaseColor", gx, colour_row_y("mux_col"))
         albedo = _link_mix(links, mix, cov, _sock_color(base_tex), albedo)
 
-    if ocm_r is not None and albedo is not None:
-        occ_g = None
-        try:
-            occ_g = ensure_gt_albedo_occ_group()
-        except Exception:
-            occ_g = None
-        if occ_g is not None:
-            occ = nodes.new("ShaderNodeGroup")
-            occ.node_tree = occ_g
-            occ.name = "GT_albedo_x_occ"
-            occ.label = "albedo × OCM.R"
-            place(occ, gx, colour_row_y("occ"), lock=True)
-            try:
-                links.new(albedo, occ.inputs["Albedo"])
-                links.new(ocm_r, occ.inputs["Occ"])
-                albedo = occ.outputs["Result"]
-            except Exception:
-                albedo = _link_mix(
-                    links,
-                    _new_mix(nodes, "GT_albedo_x_occ_fb", "albedo × OCM.R", gx, colour_row_y("occ")),
-                    None, albedo, albedo,
+    crease_ov = {}
+    edge_ov = {}
+    crease_ov_a = {}
+    edge_ov_a = {}
+    if apply_ce:
+        for zone in range(1, 9):
+            ck = f"{zone}_CreaseColorOverlay"
+            ek = f"{zone}_EdgeColorOverlay"
+            cr = (colours or {}).get(ck)
+            er = (colours or {}).get(ek)
+            if cr is not None and not textures.skip_colour(cr):
+                nd = nodes.get(ck) or _rgb(nodes, ck, ck, cr, 0.0, 0.0)
+                crease_ov[zone] = nd.outputs[0]
+                # Separate Color has no Alpha — bake MI A into a float (Revamped
+                # uses overlay[3]; falling back to 1.0 was over-applying wear colour).
+                a = float(cr[3]) if len(cr) > 3 else 0.0
+                crease_ov_a[zone] = _value(
+                    nodes, f"GT_z{zone}_creaseOvA", "Crease overlay α", a,
+                    subcol_x(colour_col_x(zone)), colour_row_y("ov_crease"),
                 )
-        # else leave albedo un-occluded rather than invent Combine Color on the parent graph
+            if er is not None and not textures.skip_colour(er):
+                nd = nodes.get(ek) or _rgb(nodes, ek, ek, er, 0.0, 0.0)
+                edge_ov[zone] = nd.outputs[0]
+                a = float(er[3]) if len(er) > 3 else 0.0
+                edge_ov_a[zone] = _value(
+                    nodes, f"GT_z{zone}_edgeOvA", "Edge overlay α", a,
+                    subcol_x(colour_col_x(zone)), colour_row_y("ov_edge"),
+                )
+        zero = None
+        if crease_ov or edge_ov:
+            zero = _rgb(
+                nodes, "GT_overlay_zero", "overlay idle", (0.0, 0.0, 0.0, 0.0),
+                colour_col_x(1) - _GT_GRID_DX, colour_row_y("ov_crease"),
+            )
+            zero.hide = True
+            _quiet_node(zero)
+        if crease_ov and zero is not None:
+            crease_col = mux_by_zone(
+                nodes, links, zone_idx, crease_ov,
+                dtype="RGBA", start=zero.outputs[0], prefix="GT_mux_creaseOv",
+                zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("ov_crease"),
+            )
+            if crease_fac is not None:
+                z0a = _value(
+                    nodes, "GT_creaseOvA0", "crease α 0", 0.0,
+                    colour_col_x(1) - _GT_GRID_DX, colour_row_y("ov_crease"),
+                )
+                crease_a = mux_by_zone(
+                    nodes, links, zone_idx, crease_ov_a, dtype="FLOAT", start=z0a,
+                    prefix="GT_mux_creaseOvA", zone_eq=zone_eq,
+                    x_fn=colour_col_x, y=colour_row_y("ov_crease"),
+                ) if crease_ov_a else z0a
+                mul = _math(nodes, "MULTIPLY", "GT_creaseOv_fac", gx, colour_row_y("ov_crease"), hide=True)
+                links.new(crease_fac, mul.inputs[0])
+                links.new(crease_a, mul.inputs[1])
+                mix = _new_mix(nodes, "GT_apply_creaseOv", "crease overlay", gx, colour_row_y("ov_crease"))
+                albedo = _link_mix(links, mix, mul.outputs[0], albedo, crease_col)
+            for zone, sock in crease_ov.items():
+                nd = getattr(sock, "node", None)
+                if nd is not None:
+                    nd.hide = True
+                    place(nd, colour_col_x(zone), colour_row_y("ov_crease"), hide=True)
+        if edge_ov and zero is not None:
+            edge_col = mux_by_zone(
+                nodes, links, zone_idx, edge_ov,
+                dtype="RGBA", start=zero.outputs[0], prefix="GT_mux_edgeOv",
+                zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("ov_edge"),
+            )
+            if edge_fac is not None:
+                z0a = _value(
+                    nodes, "GT_edgeOvA0", "edge α 0", 0.0,
+                    colour_col_x(1) - _GT_GRID_DX, colour_row_y("ov_edge"),
+                )
+                edge_a = mux_by_zone(
+                    nodes, links, zone_idx, edge_ov_a, dtype="FLOAT", start=z0a,
+                    prefix="GT_mux_edgeOvA", zone_eq=zone_eq,
+                    x_fn=colour_col_x, y=colour_row_y("ov_edge"),
+                ) if edge_ov_a else z0a
+                mul = _math(nodes, "MULTIPLY", "GT_edgeOv_fac", gx, colour_row_y("ov_edge"), hide=True)
+                links.new(edge_fac, mul.inputs[0])
+                links.new(edge_a, mul.inputs[1])
+                mix = _new_mix(nodes, "GT_apply_edgeOv", "edge overlay", gx, colour_row_y("ov_edge"))
+                albedo = _link_mix(links, mix, mul.outputs[0], albedo, edge_col)
+            for zone, sock in edge_ov.items():
+                nd = getattr(sock, "node", None)
+                if nd is not None:
+                    nd.hide = True
+                    place(nd, colour_col_x(zone), colour_row_y("ov_edge"), hide=True)
 
     if crease_r_socks and crease_fac is not None:
         rc = mux_by_zone(
@@ -2281,7 +2877,7 @@ def finish_gt_outfit_graph(
     if n_crease and crease_fac is not None:
         first_c = next((z for z in range(1, 9) if z in n_crease), None)
         nc = mux_by_zone(
-            nodes, links, zone_idx, n_crease, dtype="RGBA", start=detail,
+            nodes, links, zone_idx, n_crease, dtype="VECTOR", start=detail,
             prefix="GT_mux_nCrease", zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("n_crease"),
         )
         if first_c is not None:
@@ -2291,12 +2887,12 @@ def finish_gt_outfit_graph(
                 gx - 200.0, colour_row_y("n_crease") + 300.0,
                 colour_col_x(1) - 150.0, colour_row_y("n_crease") + 260.0,
             )
-        mix = _new_mix(nodes, "GT_n_crease", "N Base→Crease", gx, colour_row_y("n_crease"))
+        mix = _new_mix(nodes, "GT_n_crease", "N Base→Crease", gx, colour_row_y("n_crease"), dtype="VECTOR")
         detail = _link_mix(links, mix, crease_fac, detail, nc)
     if n_edge and edge_fac is not None:
         first_e = next((z for z in range(1, 9) if z in n_edge), None)
         ne = mux_by_zone(
-            nodes, links, zone_idx, n_edge, dtype="RGBA", start=detail,
+            nodes, links, zone_idx, n_edge, dtype="VECTOR", start=detail,
             prefix="GT_mux_nEdge", zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("n_edge"),
         )
         if first_e is not None:
@@ -2306,70 +2902,32 @@ def finish_gt_outfit_graph(
                 gx + 100.0, colour_row_y("n_edge") + 300.0,
                 colour_col_x(1) - 150.0, colour_row_y("n_edge") + 300.0,
             )
-        mix = _new_mix(nodes, "GT_n_edge", "N →Edge", gx, colour_row_y("n_edge") + 150.0)
+        mix = _new_mix(nodes, "GT_n_edge", "N →Edge", gx, colour_row_y("n_edge") + 150.0, dtype="VECTOR")
         detail = _link_mix(links, mix, edge_fac, detail, ne)
-    if n_med:
-        med_facs = {}
-        for zone in range(1, 9):
-            s = max(0.0, min(1.0, C._mi_layer_float(zone_scalars, zone, "MediumNormalStrength", 0.0)))
-            if s <= 1e-5 or zone not in n_med:
-                continue
-            med_facs[zone] = _value(
-                nodes, f"GT_z{zone}_medStr", "MediumNormalStrength", s,
-                subcol_x(colour_col_x(zone)), colour_row_y("n_med"),
-            )
-            if getattr(med_facs[zone], "node", None) is not None:
-                med_facs[zone].node.hide = True
-        nm = mux_by_zone(
-            nodes, links, zone_idx, n_med, dtype="RGBA", start=detail,
-            prefix="GT_mux_nMed", zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("n_med"),
-        )
-        first_m = next((z for z in range(1, 9) if z in n_med), None)
-        if first_m is not None:
-            _uturn_feed(
-                nodes, links, f"GT_mux_nMed_z{first_m}",
-                "GT_RR_nMed_R", "GT_RR_nMed_L",
-                gx + 380.0, colour_row_y("n_med") + 400.0,
-                colour_col_x(1) - 110.0, colour_row_y("n_med") + 320.0,
-            )
-        med0 = _value(
-            nodes, "GT_medStr0", "med 0", 0.0,
-            colour_col_x(1) - _GT_GRID_DX, colour_row_y("n_med"),
-        ) if med_facs else None
-        if med0 is not None and getattr(med0, "node", None) is not None:
-            med0.node.hide = True
-        fac_m = mux_by_zone(
-            nodes, links, zone_idx, med_facs, dtype="FLOAT",
-            start=med0,
-            prefix="GT_mux_medStr", zone_eq=zone_eq, x_fn=colour_col_x, y=colour_row_y("n_med"),
-        ) if med_facs else None
-        if fac_m is not None:
-            mix = _new_mix(nodes, "GT_n_medium", "N →Medium", gx, colour_row_y("n_med"))
-            detail = _link_mix(links, mix, fac_m, detail, nm)
-    mesh_n = _sock_color(normal_node) if normal_node is not None else None
+    # Revamped omits MediumNormalStrength (warn-only); keep Base/Crease/Edge only.
+    mesh_n = _decode_dx_color(
+        nodes, links, _sock_color(normal_node), "GT_meshN_dx", gx, colour_row_y("mux_n"),
+    ) if normal_node is not None else None
     if mesh_n is None:
-        n_flat = nodes.get("GT_n_flat")
-        if n_flat is not None:
-            mesh_n = n_flat.outputs[0]
-        else:
-            n_flat = _rgb(
-                nodes, "GT_n_flat", "neutral normal", (0.5, 0.5, 1.0, 1.0),
-                colour_col_x(1) - _GT_GRID_DX, colour_row_y("mux_n"),
-            )
-            mesh_n = n_flat.outputs[0]
-    n_mix = _new_mix(
-        nodes, "GT_n_mesh_detail", "mesh N Overlay (EnableNormalMask)",
-        gx, colour_row_y("mux_n"),
+        mesh_n = _tangent_up(nodes, "GT_meshN_flat", gx, colour_row_y("mux_n"))
+    detail = _quarter_turn_normal(
+        nodes, links, detail, uv_bus["uv0"], "GT_n_qturn", gx, colour_row_y("mux_n"),
     )
-    n_mix.blend_type = "OVERLAY"
+    rnm = nodes.new("ShaderNodeGroup")
+    rnm.node_tree = ensure_gt_rnm_group()
+    rnm.name = "GT_n_rnm"
+    rnm.label = "RNM mesh + detail"
+    place(rnm, gx, colour_row_y("mux_n"), lock=True)
     try:
-        n_mix.inputs[0].default_value = 1.0
+        links.new(mesh_n, rnm.inputs["Base"])
+        links.new(detail, rnm.inputs["Detail"])
+        blended = rnm.outputs["Normal"]
     except Exception:
-        pass
-    n_color = _link_mix(links, n_mix, None, mesh_n, detail)
+        blended = detail
+    n_color = _encode_dx_for_nmap(nodes, links, blended, "GT_n_encode", gx + 280.0, colour_row_y("mux_n"))
 
-    # Dynamic ArrayUv bus: one reroute per TA image row (Shirt 003 style).
-    _wire_array_uv_reroutes(nodes, links, uv_ta, bus_x=maps_ocm_x() + 560.0)
+    # UV1 bus: one reroute per TA image row.
+    _wire_array_uv_reroutes(nodes, links, uv_bus["uv1"], bus_x=maps_ocm_x() + 560.0)
 
     # Decals (FMODEL / ArcDecalUv), mixed here — not Arc sockets.
     albedo, n_color, roughness, metallic = _apply_gt_decals(
@@ -2422,13 +2980,14 @@ def finish_gt_outfit_graph(
     note_y = shared_row_y("decal_rot") + _GT_GRID_DY
     add_gt_note(
         nodes, "NOTE_UV", "UV / ArrayUvScale",
-        "Mesh UV × 25 for TextureArray extras (Snooper ArrayUvScale). Engine math, not a Blender conversion.",
+        "UV0/UV1 use Revamped (u, 1-v) orientation. UV1 for TextureArray "
+        "(Tiling x DetailTiling x stage tiling). Packed maps stay on UV0.",
         mx_uv, note_y,
     )
     add_gt_note(
         nodes, "NOTE_ZONE", "OCM zone index",
-        "floor(mid×8+0.5) clamped 0–7. One GT_ZoneEq1 per Colour column "
-        "(Match = zone id); Maximum only links once into those groups.",
+        "floor(mid×8+0.5) as Revamped Layer N (1–8). One GT_ZoneEq1 per "
+        "Colour column (Match = N); Maximum only links once into those groups.",
         mx_ocm, note_y,
     )
     add_gt_note(
@@ -2439,7 +2998,7 @@ def finish_gt_outfit_graph(
     )
     add_gt_note(
         nodes, "NOTE_N", "Normals",
-        "Overlay extra TA onto the mesh normal (EnableNormalMask), then one Normal Map (*2-1 + TBN).",
+        "DX RG decode, wear-mix, UV0 quarter-turn, RNM onto mesh normal, then Normal Map.",
         bsdf_x - _GT_GRID_DX, note_y,
     )
     add_gt_note(

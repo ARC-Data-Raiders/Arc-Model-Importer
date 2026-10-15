@@ -100,11 +100,30 @@ def _activate_armature(context, armature) -> None:
     view.objects.active = armature
 
 
+def _action_slot_for(armature, action):
+    """Blender 5 stores curves on an Action slot. Match this armature's slot."""
+    slots = getattr(action, "slots", None)
+    if not slots:
+        return None
+    ident = f"OB{armature.name}"
+    for slot in slots:
+        if getattr(slot, "identifier", "") == ident:
+            return slot
+    return slots[0]
+
+
 def _assign_action(armature, action, *, replace_previous: bool) -> None:
     if armature.animation_data is None:
         armature.animation_data_create()
     old_name = armature.get("arc_applied_action") or ""
-    armature.animation_data.action = action
+    ad = armature.animation_data
+    ad.action = action
+    slot = _action_slot_for(armature, action)
+    if slot is not None and hasattr(ad, "action_slot"):
+        try:
+            ad.action_slot = slot
+        except Exception:
+            pass
     armature["arc_applied_action"] = action.name
     if not replace_previous or not old_name or old_name == action.name:
         return
@@ -126,23 +145,52 @@ def _set_preview_range(context, action) -> None:
         pass
 
 
-def _import_psa_direct(filepath: str, context, armature) -> bool:
+def _psa_reader(filepath: str):
+    try:
+        from psk_psa_py.psa.reader import PsaReader
+        return PsaReader.from_path(filepath)
+    except Exception:
+        reader = _get_read_psa_from_file()
+        if reader is None:
+            return None
+        return reader(filepath)
+
+
+def _import_psa_direct(filepath: str, context, armature, *, action_name_prefix: str = "") -> bool:
     import_fn, opts_cls = _get_psa_importer_api()
-    reader = _get_read_psa_from_file()
-    if import_fn is None or opts_cls is None or reader is None:
+    if import_fn is None or opts_cls is None:
+        return False
+    parsed = _psa_reader(filepath)
+    if parsed is None:
         return False
     options = opts_cls()
     for name, value in (
+        ("should_overwrite", True),
         ("should_overwrite_existing", True),
         ("should_use_fake_user", False),
         ("should_stash", False),
+        ("should_use_config_file", False),
     ):
         if hasattr(options, name):
             setattr(options, name, value)
-    if hasattr(options, "armature"):
-        options.armature = armature
-    parsed = reader(filepath)
-    import_fn(parsed, context, options)
+    # PSA translations are already in the armature's unit. 0.01 here collapses the pose.
+    if hasattr(options, "translation_scale"):
+        options.translation_scale = 1.0
+    if action_name_prefix and hasattr(options, "action_name_prefix"):
+        options.action_name_prefix = action_name_prefix
+    try:
+        keys = list(parsed.sequences.keys())
+    except Exception:
+        keys = []
+    if hasattr(options, "sequence_names") and keys:
+        options.sequence_names = keys
+    # Current io_scene_psk_psa: import_psa(context, reader, armature, options).
+    try:
+        import_fn(context, parsed, armature, options)
+    except TypeError:
+        if hasattr(options, "armature"):
+            options.armature = armature
+        import_fn(parsed, context, options)
     return True
 
 
@@ -173,6 +221,7 @@ def import_psa_onto_armature(
     context=None,
     *,
     replace_previous: bool = True,
+    action_name_prefix: str = "",
 ) -> tuple:
     """Import a PSA and assign the new action to ``armature``.
 
@@ -192,7 +241,9 @@ def import_psa_onto_armature(
     try:
         used_direct = False
         try:
-            used_direct = _import_psa_direct(filepath, context, armature)
+            used_direct = _import_psa_direct(
+                filepath, context, armature, action_name_prefix=action_name_prefix,
+            )
         except Exception as exc:
             log.warning("direct PSA import failed (%s); falling back to operator: %s", filepath, exc)
         if not used_direct:

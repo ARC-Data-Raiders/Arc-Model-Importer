@@ -800,12 +800,16 @@ def _parse_flat_mi_json(json_path: str) -> dict:
     try:
         with open(json_path, 'r', encoding='utf-8') as fh:
             data = json.load(fh)
-        if isinstance(data, list):
-            data = data[0]
-        for param, path in data.get('Textures', {}).items():
+        # Keep the full dump (Exports + Metadata) so ImportMap fallback works.
+        # Thin dumps may be a bare list or a single export dict.
+        root = data
+        thin = data[0] if isinstance(data, list) and data else data
+        if not isinstance(thin, dict):
+            thin = {}
+        for param, path in thin.get('Textures', {}).items():
             obj_path = path.rsplit('.', 1)[0] if '.' in path.split('/')[-1] else path
             result['textures'].append((param, obj_path))
-        params = data.get('Parameters', {}) or {}
+        params = thin.get('Parameters', {}) or {}
         for param, val in params.get('Colors', {}).items():
             result['colours'].append((param, (
                 float(val.get('R', 1.0)),
@@ -824,7 +828,7 @@ def _parse_flat_mi_json(json_path: str) -> dict:
 
         # Full FModel Exports dump — fill gaps + always capture Parent / BPO flags.
         parent_obj_path = ""
-        entry = utils.first_ue_export(data, "MaterialInstanceConstant")
+        entry = utils.first_ue_export(root, "MaterialInstanceConstant")
         if entry:
             eprops = entry.get("Properties") or {}
             parent_ref = eprops.get("Parent")
@@ -853,6 +857,20 @@ def _parse_flat_mi_json(json_path: str) -> dict:
                         if name and obj_path:
                             clean = obj_path.rsplit(".", 1)[0] if "." in obj_path.split("/")[-1] else obj_path
                             result['textures'].append((name, clean))
+                    # Pioneer cooked MIs: texture refs often only in Metadata.ImportMap.
+                    if not result['textures']:
+                        meta = root.get("Metadata") if isinstance(root, dict) else None
+                        for imp in (meta or {}).get("ImportMap") or []:
+                            if not isinstance(imp, dict):
+                                continue
+                            oname = str(imp.get("ObjectName") or "")
+                            opath = str(imp.get("ObjectPath") or "")
+                            m = re.search(r"Texture2D'([^']+)'", oname, re.I)
+                            if not m or not opath:
+                                continue
+                            stem = m.group(1)
+                            clean = opath.rsplit(".", 1)[0] if "." in opath.split("/")[-1] else opath
+                            result['textures'].append((stem, clean))
                 if need_scalars:
                     for s in eprops.get("ScalarParameterValues") or []:
                         info = s.get("ParameterInfo") or {}
@@ -898,9 +916,108 @@ def _parse_flat_mi_json(json_path: str) -> dict:
     _enrich_parent_material_textures(
         result, json_path, result.get("parent_object_path") or "",
     )
+    _enrich_weapon_stencil_parent(result, json_path)
     _enrich_broken_glass_default_textures(result, stem)
     _FLAT_MI_CACHE[cache_key] = result
     return result
+
+
+def _enrich_weapon_stencil_parent(mi: dict, mi_path: str = "") -> None:
+    """Merge Paintjob Pattern / Base Color vectors from MI_WeaponStencil_* parents.
+
+    Skin MIs under Items/Firearms/*/Skins/* only override gun CR/ID/Wear (+ a few
+    zone colours). Pattern maps and the rest of the ID-zone palette live on the
+    Shared/Skin stencil parent.
+    """
+    if not mi:
+        return
+    parent = str(mi.get("parent") or "")
+    if "weaponstencil" not in parent.lower().replace("_", ""):
+        return
+    obj_path = str(mi.get("parent_object_path") or "").strip()
+    parent_json = ""
+    if obj_path:
+        parent_json = textures.find_asset_from_object_path(obj_path, ".json")
+        if not parent_json and obj_path.endswith(".0"):
+            parent_json = textures.find_asset_from_object_path(obj_path[:-2], ".json")
+    if (not parent_json or not os.path.isfile(parent_json)) and parent and mi_path:
+        # Sibling resolve via ObjectPath failed; try Shared/Skin/<Name>/ beside Firearms.
+        folder = os.path.dirname(mi_path or "")
+        cand = os.path.join(folder, parent + ".json")
+        if os.path.isfile(cand):
+            parent_json = cand
+    if not parent_json or not os.path.isfile(parent_json):
+        return
+    if os.path.normcase(os.path.normpath(parent_json)) == os.path.normcase(
+        os.path.normpath(mi_path or "")
+    ):
+        return
+    # Parse parent (cached). Stencil parents Material M_WeaponPreset, not another stencil.
+    parent_mi = _parse_flat_mi_json(parent_json)
+    have_tex = {p for p, _ in (mi.get("textures") or [])}
+    added_tex = 0
+    for param, path in parent_mi.get("textures") or []:
+        if not param or not path or param in have_tex:
+            continue
+        pl = str(param).lower()
+        # Inherit pattern / mask (and any non-gun maps the child omitted).
+        inherit = (
+            "paintjob" in pl
+            or "pattern" in pl
+            or param in ("Paintjob Pattern", "Paintjob Pattern Mask")
+        )
+        if not inherit:
+            continue
+        mi.setdefault("textures", []).append((param, path))
+        have_tex.add(param)
+        added_tex += 1
+    have_col = {p for p, _ in (mi.get("colours") or [])}
+    added_col = 0
+    for param, rgba in parent_mi.get("colours") or []:
+        if not param or param in have_col:
+            continue
+        pl = str(param).lower()
+        inherit = (
+            pl.startswith("base - color")
+            or pl.startswith("paintjob")
+            or pl.startswith("mid layer - color")
+            or "pattern - color" in pl
+            or "roughness tweak" in pl
+        )
+        if not inherit:
+            continue
+        mi.setdefault("colours", []).append((param, rgba))
+        have_col.add(param)
+        added_col += 1
+    # Inherit Enable * Mask / Use Pattern switches the child did not override.
+    have_sw = set((mi.get("switches") or {}).keys())
+    added_sw = 0
+    for name, val in (parent_mi.get("switches") or {}).items():
+        if not name or name in have_sw:
+            continue
+        nl = str(name).lower()
+        if not (
+            nl.startswith("enable ")
+            or nl.startswith("use pattern")
+            or "paintjob" in nl
+            or "mask" in nl
+        ):
+            continue
+        mi.setdefault("switches", {})[name] = bool(val)
+        have_sw.add(name)
+        added_sw += 1
+    if added_tex or added_col or added_sw:
+        try:
+            utils.get_logger().info(
+                "Weapon stencil inherit %s <- %s (+%d tex +%d col +%d sw)",
+                os.path.splitext(os.path.basename(mi_path or ""))[0],
+                os.path.basename(parent_json),
+                added_tex,
+                added_col,
+                added_sw,
+            )
+        except Exception:
+            pass
 
 
 
@@ -1740,10 +1857,17 @@ def _mesh_stem_variants(psk_stem: str) -> list[str]:
             _add(lod_stripped)
 
     for base in list(variants):
-        if base.upper().startswith("SM_"):
-            _add(base[3:])
-        elif base.upper().startswith("SK_"):
-            _add(base[3:])
+        bu = base.upper()
+        if bu.startswith("SM_"):
+            bare = base[3:]
+            _add(bare)
+            # 2.0 Frozen Trail SK dumps often null SkeletalMaterials; sibling SM_
+            # JSON still has StaticMaterials. Cross-prefix so SK meshes find them.
+            _add("SK_" + bare)
+        elif bu.startswith("SK_"):
+            bare = base[3:]
+            _add(bare)
+            _add("SM_" + bare)
 
     return variants
 

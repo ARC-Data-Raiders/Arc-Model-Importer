@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+    <DefineConstants>$(DefineConstants);ARC_ONLY</DefineConstants>
+    <RootNamespace>CUE4Parse</RootNamespace>
+    <AssemblyName>CUE4Parse.Arc</AssemblyName>
+    <Description>CUE4Parse compiled for Arc Raiders 5.7 only (no other games, no audio).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Blake3" />
+    <PackageReference Include="BouncyCastle.Cryptography" />
+    <PackageReference Include="FixedMathSharp" />
+    <PackageReference Include="GenericReader" />
+    <PackageReference Include="Infrablack.UE4Config" />
+    <PackageReference Include="LZMA-SDK" />
+    <PackageReference Include="Newtonsoft.Json" />
+    <PackageReference Include="OffiUtils" />
+    <PackageReference Include="OodleSharp" />
+    <PackageReference Include="Oodle.NET" />
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="K4os.Compression.LZ4.Streams" />
+    <PackageReference Include="SubstreamSharp" />
+    <PackageReference Include="System.IO.Hashing" />
+    <PackageReference Include="System.Numerics.Tensors" />
+    <PackageReference Include="Zlib-ng.NET" />
+    <PackageReference Include="ZstdSharp.Port" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse\**\*.cs"
+             Exclude="..\..\FModel-Vibe\CUE4Parse\CUE4Parse\GameTypes\**\*.cs;
+                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\Wwise\**\*.cs;
+                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\FMod\**\*.cs;
+                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\CriWare\**\*.cs;
+                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\Assets\Exports\Wwise\**\*.cs;
+                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\Assets\Exports\Sound\**\*.cs;
+                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\Assets\Exports\MetaSound\**\*.cs;
+                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\Assets\Exports\CriWare\**\*.cs;
+                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\Assets\Exports\Component\UAudioComponent.cs;
+                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\obj\**\*.cs;
+                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\bin\**\*.cs" />
+    <Compile Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse\GameTypes\ArcRaiders\**\*.cs" />
+    <Compile Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse\GameTypes\Embark\**\*.cs" />
+    <Compile Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse\GameTypes\Theia\**\*.cs" />
+  </ItemGroup>
+</Project>

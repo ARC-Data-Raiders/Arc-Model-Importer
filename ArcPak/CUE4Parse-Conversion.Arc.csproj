@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+    <DefineConstants>$(DefineConstants);ARC_ONLY</DefineConstants>
+    <RootNamespace>CUE4Parse_Conversion</RootNamespace>
+    <AssemblyName>CUE4Parse.Conversion.Arc</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AssetRipper.TextureDecoder" />
+    <PackageReference Include="SharpGLTF.Core" />
+    <PackageReference Include="SharpGLTF.Toolkit" />
+    <PackageReference Include="SixLabors.ImageSharp" />
+    <PackageReference Include="SkiaSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="CUE4Parse.Arc.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\**\*.cs"
+             Exclude="..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\obj\**\*.cs;
+                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\bin\**\*.cs;
+                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\Sounds\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\Resources\Detex.dll">
+      <LogicalName>CUE4Parse_Conversion.Resources.Detex.dll</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\Resources\tegra_swizzle_x64.dll">
+      <LogicalName>CUE4Parse_Conversion.Resources.tegra_swizzle_x64.dll</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\Resources\crunch.dll">
+      <LogicalName>CUE4Parse_Conversion.Resources.crunch.dll</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+</Project>

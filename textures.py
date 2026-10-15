@@ -104,6 +104,17 @@ def _load_clothing_mi_entry(json_path: str):
             data = json.load(fh)
     except Exception:
         return None, None
+    if _is_thin_fmodel_mi_data(data):
+        params = data.get("Parameters") or {}
+        props = dict(params.get("Properties") or {})
+        props["ScalarParameterValues"] = [{"ParameterInfo": {"Name": k}, "ParameterValue": v} for k, v in (params.get("Scalars") or {}).items()]
+        props["VectorParameterValues"] = [{"ParameterInfo": {"Name": k}, "ParameterValue": v} for k, v in (params.get("Colors") or {}).items()]
+        props["TextureParameterValues"] = [{"ParameterInfo": {"Name": k}, "ParameterValue": {"ObjectPath": v, "ObjectName": "Texture2D'" + v.split("/")[-1].split(".")[0] + "'"}} for k, v in (data.get("Textures") or {}).items()]
+        props["StaticParametersRuntime"] = {"StaticSwitchParameters": [{"ParameterInfo": {"Name": k}, "Value": bool(v)} for k, v in (params.get("Switches") or {}).items()]}
+        if data.get("Parent"):
+            props["Parent"] = data["Parent"]
+        entry = {"Type": "MaterialInstanceConstant", "Name": os.path.splitext(os.path.basename(json_path))[0], "Properties": props}
+        return entry, data
     entry = utils.first_ue_export(data, "MaterialInstanceConstant")
     if not entry:
         entry = utils.first_ue_export(data, "MaterialInstance")
@@ -193,6 +204,9 @@ def _clothing_mi_stem_index() -> dict:
             chars = os.path.join(content_dir, "Pioneer", "Characters", "Assets")
             if os.path.isdir(chars):
                 search_roots.append(chars)
+            backpacks = os.path.join(content_dir, "Pioneer", "Characters", "Backpacks")
+            if os.path.isdir(backpacks):
+                search_roots.append(backpacks)
             # Sibling Outfits next to PioneerGame
             sibling_outfits = os.path.join(os.path.dirname(content_dir), "Outfits")
             if not os.path.isdir(sibling_outfits):
@@ -229,6 +243,8 @@ def _clothing_mi_stem_index() -> dict:
             return (0, len(path))
         if "/characters/assets/" in pl:
             return (1, len(path))
+        if "/characters/backpacks/" in pl:
+            return (1, len(path))
         return (2, len(path))
 
     for paths in index.values():
@@ -257,6 +273,13 @@ def resolve_clothing_mi_json(json_path: str, expected_stem: str = "") -> str:
     for cand in _clothing_mi_stem_index().get(stem.lower(), []):
         if os.path.normcase(os.path.normpath(cand)) == os.path.normcase(abs_path):
             continue
+        # Generic preview names repeat across outfits; require the same
+        # Characters/... package before considering a repaired copy.
+        original = abs_path.replace("\\", "/").lower()
+        candidate = cand.replace("\\", "/").lower()
+        if "/characters/" in original and "/characters/" in candidate:
+            if original.split("/characters/", 1)[1] != candidate.split("/characters/", 1)[1]:
+                continue
         if clothing_mi_json_is_valid(cand, stem):
             print(
                 f"Arc Raiders PSK Importer: clothing MI identity repair — "
@@ -442,8 +465,20 @@ def _fs_abspath(path: str) -> str:
 
 def get_skins_folder(psk_path: str):
     part_folder = os.path.dirname(_fs_abspath(psk_path))
-    skins_folder = os.path.join(part_folder, "Skins")
-    return skins_folder if os.path.isdir(skins_folder) else None
+    candidates = [os.path.join(part_folder, "Skins")]
+    normalized = part_folder.replace("\\", "/")
+    for boundary in ("/PioneerGame/Content/", "/RemappedPlugins/Content/"):
+        if boundary.lower() not in normalized.lower():
+            continue
+        offset = normalized.lower().index(boundary.lower())
+        root, tail = normalized[:offset], normalized[offset + len(boundary):]
+        for mount in ("PioneerGame/Content", "RemappedPlugins/Content"):
+            candidates.append(os.path.join(root, *mount.split("/"), *tail.split("/"), "Skins"))
+    candidates = [p for p in dict.fromkeys(candidates) if os.path.isdir(p)]
+    def revision(folder):
+        return max((os.path.getmtime(os.path.join(base, name)) for base, _dirs, files in os.walk(folder) for name in files if name.lower().startswith("mi_") and name.lower().endswith(".json")), default=0)
+    return max(candidates, key=revision) if candidates else None
+
 
 def get_all_skin_dirs(skins_folder: str) -> list:
     try:
@@ -548,7 +583,7 @@ def scan_base_skin_textures(psk_path: str, selected_skin_name: str = "", manual_
                 return []
         return []
     default_dir = get_default_skin_dir(all_dirs)
-    scan_dirs = [default_dir] if default_dir else [d for d in all_dirs if not is_variant(d, all_dirs)]
+    scan_dirs = [selected_skin_name] if selected_skin_name in all_dirs else ([default_dir] if default_dir else [d for d in all_dirs if not is_variant(d, all_dirs)])
     pngs = []
     for skin_name in scan_dirs:
         skin_dir = os.path.join(skins_folder, skin_name)
@@ -747,6 +782,8 @@ def identify_texture(fname: str):
         return "normal"
     if stem.endswith("occlusioncurvaturematerialid"):
         return "occlusion"
+    if "breakupmask" in stem:
+        return "breakup"
     return None
 
 def base_skin_texture_group(fname: str) -> str:
@@ -799,6 +836,14 @@ def find_asset_from_object_path(obj_path: str, extension: str) -> str:
     if cache_key in _OBJECT_PATH_ASSET_CACHE:
         return _OBJECT_PATH_ASSET_CACHE[cache_key]
 
+    # Prefer current extraction payloads over old full-dump donor trees.
+    for cache_root in reversed(getattr(utils, "_pak_cache_roots", [])):
+        candidates = [os.path.join(cache_root, *mount.split("/"), rel.replace('/', os.sep)) + extension for mount in ("PioneerGame/Content", "RemappedPlugins/Content", "Game")]
+        candidates = [p for p in candidates if os.path.isfile(p)]
+        if candidates:
+            candidate = max(candidates, key=os.path.getmtime)
+            _OBJECT_PATH_ASSET_CACHE[cache_key] = candidate
+            return candidate
     content_dirs = utils.get_content_dirs()
     if not content_dirs:
         root = utils.get_pioneer_root()
@@ -854,6 +899,7 @@ _TA_ID_SUFFIXES = (
 _MI_KEEP_TOKENS = (
     "Roughness", "Metallic", "Specular", "BaseTextureStrength", "ColorSchemeBlend",
     "Wet", "Snow", "Emissive", "HueVariation", "PatternTiling",
+    "Tiling", "BreakupMask", "DetailTiling", "MaskSoftness",
 )
 _ZONE_SCALAR_SUFFIXES = (
     'BaseTextureStrength',
@@ -876,6 +922,15 @@ _ZONE_SCALAR_SUFFIXES = (
     'CreaseAmount',
     'EdgeAmount',
     'MaxWetAmount',
+    'DetailTiling',
+    'CreaseMaskSoftness',
+    'EdgeMaskSoftness',
+    'CreaseMaskTiling',
+    'EdgeMaskTiling',
+    'BaseRoughnessTiling',
+    'CreaseRougnessTiling',
+    'EdgeRougnessTiling',
+    'DetailNormalOverride',
 )
 
 
@@ -972,6 +1027,8 @@ def _zone_scalars_from_props(props: dict) -> dict:
             "OverallEmissive",
             "HueVariationStrength",
             "HueVariationTiling",
+            "Tiling",
+            "BreakupMaskTiling",
         ):
             try:
                 result[name] = float(param.get("ParameterValue", 0))
@@ -1406,6 +1463,11 @@ def detect_model_type(psk_path: str) -> str:
             return "hair"
         if is_visor(psk_path):
             return "visor"
+        # Backpack shells and raider tools ship a preview albedo (CR or BaseColor).
+        # Occlusion on those folders used to force the outfit ArcTexturer, which
+        # stays black when the only colour map is the shell BaseColor.
+        if _is_gear_shell(psk_path) and _folder_has_gear_albedo(folder) and not folder_has_occlusion_png(folder):
+            return "misc"
         if folder_has_occlusion_png(folder):
             return "clothing"
         if is_fur_part(psk_path):
@@ -1418,6 +1480,50 @@ def detect_model_type(psk_path: str) -> str:
         if is_misc(psk_path):
             return "misc"
     return "unknown"
+
+
+def _is_gear_shell(psk_path: str) -> bool:
+    """Backpack frame/strap/container/attachment/charm, or a raider tool."""
+    norm = (psk_path or "").replace("\\", "/").lower()
+    return "/characters/backpacks/" in norm or "/characters/raidertool/" in norm
+
+
+def _folder_has_gear_albedo(folder: str) -> bool:
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return False
+    for fname in names:
+        fl = fname.lower()
+        if fl.endswith("_cr.png") or fl.endswith("_basecolor.png") or fl.endswith("_basecolour.png"):
+            return True
+    return False
+
+
+def gear_shell_has_colorway(psk_path: str) -> bool:
+    """True when a backpack/tool folder has a Skins/ MI the outfit batch can apply."""
+    if not _is_gear_shell(psk_path):
+        return False
+    skins = os.path.join(os.path.dirname(psk_path), "Skins")
+    if not os.path.isdir(skins):
+        return False
+    try:
+        children = os.listdir(skins)
+    except OSError:
+        return False
+    for child in children:
+        folder = os.path.join(skins, child)
+        if not os.path.isdir(folder):
+            continue
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            continue
+        for name in names:
+            low = name.lower()
+            if low.startswith("mi_") and low.endswith(".json"):
+                return True
+    return False
 
 
 def is_body(psk_path: str) -> bool:
@@ -1548,21 +1654,31 @@ def is_visor(psk_path: str, mat_slot_name: str = "") -> bool:
     return False
 
 def is_misc(psk_path: str) -> bool:
-    """Outfit/item misc (NOM/NEM packs). Never classifies env/gun/arc paths."""
+    """Outfit/item misc (CR, NOM/NEM packs, or a lone albedo). Never classifies env/gun/arc paths."""
     from . import asset_domain as _ad
     if _ad.classify_asset_domain(psk_path) in (
         _ad.DOMAIN_ENVIRONMENT, _ad.DOMAIN_WEAPON, _ad.DOMAIN_ENEMY,
     ):
         return False
     folder = os.path.dirname(psk_path)
+    if folder_has_occlusion_png(folder):
+        return False
     try:
-        for fname in os.listdir(folder):
-            fl = fname.lower()
-            if any(fl.endswith(f"_{t}.png") for t in ("nom", "nem", "nxm", "nam")):
-                return True
+        names = os.listdir(folder)
     except OSError:
-        pass
-    return False
+        return False
+    has_color = False
+    for fname in names:
+        fl = fname.lower()
+        if not fl.endswith(".png"):
+            continue
+        if fl.endswith("_colormask.png") or fl.endswith("_colourmask.png"):
+            return False
+        if any(fl.endswith(f"_{t}.png") for t in ("nom", "nem", "nxm", "nam", "cr")):
+            has_color = True
+        if fl.endswith("_basecolor.png") or fl.endswith("_basecolour.png"):
+            has_color = True
+    return has_color
 
 def scan_hair_mis(psk_path: str) -> list:
     folder = os.path.dirname(psk_path)

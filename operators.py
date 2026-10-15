@@ -7,7 +7,7 @@ import re
 import bpy
 import bpy_extras
 import mathutils
-from bpy.props import StringProperty
+from bpy.props import EnumProperty, StringProperty
 from bpy.types import Operator
 
 from . import utils
@@ -59,6 +59,18 @@ def process_entry(entry, *, psk=None, context=None, skip_materials=False) -> tup
         if not os.path.isfile(psk_path):
             return False, f"PSK not found: {psk_path}", []
 
+        if psk_path.casefold().endswith(".uemodel"):
+            from . import appearance
+
+            hair_mi = entry.hair_mi if hasattr(entry, "hair_mi") else "NONE"
+            return appearance.import_appearance_mesh(
+                psk_path,
+                body_variant=body_variant if body_variant else "NONE",
+                hair_mi=hair_mi if hair_mi else "NONE",
+                skin_json=json_path, manual_skins_folder=entry.manual_skins_folder,
+                skin_choice=entry.skin_choice,
+            )
+
         model_type = textures.detect_model_type(psk_path)
         try:
             from . import asset_domain as _ad
@@ -87,7 +99,7 @@ def process_entry(entry, *, psk=None, context=None, skip_materials=False) -> tup
                 pass
             if skip_materials:
                 continue
-            apply_materials_to_object(
+            mat_status = apply_materials_to_object(
                 obj, psk_path,
                 body_variant=body_variant,
                 hair_mi=hair_mi,
@@ -95,6 +107,10 @@ def process_entry(entry, *, psk=None, context=None, skip_materials=False) -> tup
                 manual_skins_folder=entry.manual_skins_folder,
                 skin_choice=entry.skin_choice,
             )
+            try:
+                obj["arc_material_status"] = str(mat_status or "")[:900]
+            except Exception:
+                pass
         kind = model_type
         if skip_materials:
             kind = f"{model_type}, materials deferred"
@@ -107,7 +123,13 @@ def process_entry(entry, *, psk=None, context=None, skip_materials=False) -> tup
             kind = "with skin colours" if mi_data.get("colours") else "default skin"
         elif model_type == "body":
             kind = f"body, {body_variant if body_variant != 'NONE' else 'no skin'}"
-        return True, f"Imported ({kind}): {os.path.basename(psk_path)}", new_objects
+        status_bits = [
+            str(o.get("arc_material_status") or "")
+            for o in mesh_objects
+            if o.get("arc_material_status")
+        ]
+        status = (" | " + " | ".join(status_bits)) if status_bits else ""
+        return True, f"Imported ({kind}): {os.path.basename(psk_path)}{status}", new_objects
 
 
 def _process_entries_pipelined(entries, context=None, *, skip_materials=False) -> list:
@@ -202,7 +224,7 @@ def import_psk_with_materials(
             obj["arc_hair_mi"] = hair_mi if hair_mi else "NONE"
         except Exception:
             pass
-        apply_materials_to_object(
+        mat_status = apply_materials_to_object(
             obj, psk_path,
             body_variant=body_variant,
             hair_mi=hair_mi,
@@ -210,7 +232,17 @@ def import_psk_with_materials(
             manual_skins_folder=manual_skins_folder,
             skin_choice=skin_choice,
         )
-    return True, f"Imported ({model_type}): {os.path.basename(psk_path)}", new_objects
+        try:
+            obj["arc_material_status"] = str(mat_status or "")[:900]
+        except Exception:
+            pass
+    status_bits = [
+        str(o.get("arc_material_status") or "")
+        for o in mesh_objects
+        if o.get("arc_material_status")
+    ]
+    status = (" | " + " | ".join(status_bits)) if status_bits else ""
+    return True, f"Imported ({model_type}): {os.path.basename(psk_path)}{status}", new_objects
 
 
 def assign_cached_materials(obj, materials: list) -> bool:
@@ -300,7 +332,18 @@ def _apply_materials_to_object_impl(
             obj["arc_asset_domain"] = domain
         except Exception:
             pass
-        materials.setup_weapon_material(obj, psk_path)
+        weapon_skin = ""
+        if skin_choice and skin_choice != "NONE":
+            weapon_skin = bpy.path.abspath(skin_choice)
+        if (not weapon_skin or not os.path.isfile(weapon_skin)) and skin_json:
+            weapon_skin = skin_json if os.path.isfile(skin_json) else ""
+        if weapon_skin and os.path.isfile(weapon_skin):
+            try:
+                obj["arc_skin_json"] = os.path.abspath(weapon_skin)
+                obj["arc_skin_choice"] = os.path.abspath(weapon_skin)
+            except Exception:
+                pass
+        materials.setup_weapon_material(obj, psk_path, skin_json=weapon_skin or "")
         return "weapon"
     if domain == _ad.DOMAIN_ENVIRONMENT:
         try:
@@ -308,8 +351,14 @@ def _apply_materials_to_object_impl(
             obj["arc_asset_domain"] = domain
         except Exception:
             pass
-        fixed = materials.setup_map_material(obj, psk_path)
-        return f"map ({fixed})" if fixed else "unresolved"
+        # Named MI slots first. The surface rebuild replaces those graphs.
+        # Calling the rebuild first used to no-op on empty slots and leave
+        # the old simple Principled materials in place.
+        materials.setup_map_material(obj, psk_path)
+        from . import revamped_bridge
+
+        report = revamped_bridge.texture_environment_object(obj, psk_path)
+        return f"prop {report}"
 
     # Outfit / unknown: refine subtype (stamp kept when still in-domain).
     outfit_types = ("clothing", "visor", "body", "hair", "face", "fur", "misc")
@@ -349,15 +398,28 @@ def _apply_materials_to_object_impl(
         if not hair_json:
             mis = textures.scan_hair_mis(psk_path)
             hair_json = mis[0][1] if mis else ""
+        colour_json = ""
+        try:
+            from . import appearance as _appearance
+            cid = getattr(bpy.context.scene, "arc_appearance_hair_color", "NONE") or "NONE"
+            choice = _appearance.resolve_choice(cid) if cid != "NONE" else None
+            colour_json = (choice or {}).get("path") or ""
+        except Exception:
+            colour_json = ""
+        if not colour_json:
+            # Keep stamped colour when the sidebar enum is NONE (Update Materials).
+            colour_json = str(obj.get("arc_hair_color_mi", "") or "")
         try:
             if hair_json:
                 obj["arc_hair_mi"] = hair_json
                 obj["arc_skin_json"] = os.path.abspath(hair_json)
+            if colour_json and colour_json != "NONE" and os.path.isfile(colour_json):
+                obj["arc_hair_color_mi"] = os.path.abspath(colour_json)
             if skin_choice and skin_choice != "NONE":
                 obj["arc_skin_choice"] = skin_choice
         except Exception:
             pass
-        materials.setup_hair_material(obj, hair_json)
+        materials.setup_hair_material(obj, hair_json, colour_json=colour_json)
         return "hair"
 
     # A visor is a clothing shell plus a glass slot, so it takes the same ArcTexturer path and
@@ -463,8 +525,11 @@ def _apply_materials_to_object_impl(
 
     # Stamped map without env path (e.g. Map Stage 1 remapped asset path).
     if model_type == "map":
-        fixed = materials.setup_map_material(obj, psk_path)
-        return f"map ({fixed})" if fixed else "unresolved"
+        materials.setup_map_material(obj, psk_path)
+        from . import revamped_bridge
+
+        report = revamped_bridge.texture_environment_object(obj, psk_path)
+        return f"prop {report}"
 
     # Unknown domain: multi-slot SK/SM before single folder MI.
     # Do not invent weapon/map here when path domain is already known (gated above).
@@ -488,12 +553,22 @@ def _apply_materials_to_object_impl(
         if not folder_mi:
             folder_mi = textures.get_base_skin_json(psk_path, manual_skins_folder)
         if folder_mi and textures.is_hair_cards_mi(folder_mi):
+            colour_json = ""
+            try:
+                from . import appearance as _appearance
+                cid = getattr(bpy.context.scene, "arc_appearance_hair_color", "NONE") or "NONE"
+                choice = _appearance.resolve_choice(cid) if cid != "NONE" else None
+                colour_json = (choice or {}).get("path") or ""
+            except Exception:
+                pass
             try:
                 obj["arc_skin_json"] = os.path.abspath(folder_mi)
                 obj["arc_hair_mi"] = os.path.abspath(folder_mi)
+                if colour_json:
+                    obj["arc_hair_color_mi"] = os.path.abspath(colour_json)
             except Exception:
                 pass
-            materials.setup_hair_material(obj, folder_mi)
+            materials.setup_hair_material(obj, folder_mi, colour_json=colour_json)
             return "hair-cards"
         if folder_mi and textures.is_fur_mi(folder_mi):
             n = materials.apply_fur_materials_to_object(obj, psk_path, skin_json=folder_mi)
@@ -523,7 +598,15 @@ def _apply_materials_to_object_impl(
         if not folder_mi:
             folder_mi = textures.get_base_skin_json(psk_path, manual_skins_folder)
         if folder_mi and textures.is_hair_cards_mi(folder_mi):
-            materials.setup_hair_material(obj, folder_mi)
+            colour_json = ""
+            try:
+                from . import appearance as _appearance
+                cid = getattr(bpy.context.scene, "arc_appearance_hair_color", "NONE") or "NONE"
+                choice = _appearance.resolve_choice(cid) if cid != "NONE" else None
+                colour_json = (choice or {}).get("path") or ""
+            except Exception:
+                pass
+            materials.setup_hair_material(obj, folder_mi, colour_json=colour_json)
             return "hair-cards"
         if folder_mi and materials.setup_part_folder_mi_material(obj, folder_mi, psk_path):
             return "part-folder-mi"
@@ -691,6 +774,10 @@ def _collect_batch_io_jobs(context, entries, selected_presets) -> list:
             for entry in entries:
                 psk_path = bpy.path.abspath(entry.psk_path)
                 model_type = textures.detect_model_type(psk_path)
+                # Appearance import shows the shell albedo. A batch colourway
+                # still builds the clothing graph when Skins/ is present.
+                if model_type == "misc" and textures.gear_shell_has_colorway(psk_path):
+                    model_type = "clothing"
                 if model_type not in ("clothing", "visor"):
                     continue
                 json_path = (
@@ -864,8 +951,16 @@ def _shift_instance_on_x(
     margin_frac: float = 0.25,
     *,
     update_view: bool = True,
+    snap_left_edge: bool = True,
 ) -> float:
-    """Lay out colourway instances along X; return updated cursor."""
+    """Lay out colourway instances along X; return updated cursor.
+
+    ``snap_left_edge=True`` (extra colourways): translate so the mesh bbox
+    left edge lands at ``x_cursor``.
+    ``snap_left_edge=False`` (first colourway): leave PSK import origin alone
+    so the outfit lines up with body/head/hair at world origin; only advance
+    the cursor past the right edge for the next instance.
+    """
     if update_view:
         bpy.context.view_layer.update()
     minx = maxx = None
@@ -879,11 +974,14 @@ def _shift_instance_on_x(
     if minx is None:
         return x_cursor
     width = max(maxx - minx, 1e-4)
-    shift = x_cursor - minx
-    for o in objects:
-        if _still_alive(o) and o.parent is None:
-            o.location.x += shift
-    return x_cursor + width * (1.0 + margin_frac)
+    if snap_left_edge:
+        shift = x_cursor - minx
+        for o in objects:
+            if _still_alive(o) and o.parent is None:
+                o.location.x += shift
+        return x_cursor + width * (1.0 + margin_frac)
+    # First instance: keep import origin (body/hair stay at 0,0,0 the same way).
+    return maxx + width * margin_frac
 
 
 def _hide_imported_armatures(objects) -> int:
@@ -1025,12 +1123,35 @@ def _frame_viewport_on_outfit_models(context, instance_groups: list) -> int:
     return framed
 
 
-def _post_import_outfit_ux(context, instance_groups: list) -> None:
+def _maybe_import_references(context, objects, *, roles: set[str] | None = None) -> None:
+    """Honor scene Include Reference toggle after outfit / appearance import."""
+    if not bool(getattr(context.scene, "arc_include_reference", True)):
+        return
+    try:
+        from . import reference_planes
+
+        msgs = reference_planes.import_references_for_objects(
+            context, objects, roles=roles,
+        )
+        for m in msgs:
+            print(f"Arc Raiders PSK Importer: {m}")
+    except Exception as exc:
+        print(f"Arc Raiders PSK Importer: reference planes skipped: {exc}")
+
+
+# Reference cards are outfit / cosmetic UI art. Props, weapons, and map
+# meshes must not grow a REF plane just because an outfit is selected.
+_REFERENCE_MODEL_TYPES = {"clothing", "face", "body", "hair", "visor", "fur"}
+
+
+def _post_import_outfit_ux(context, instance_groups: list, *, references: bool = True) -> None:
     """After rig/rename/layout: hide armatures and frame the viewport on models."""
     if not instance_groups:
         return
     for group in instance_groups:
         _hide_imported_armatures(group)
+        if references:
+            _maybe_import_references(context, group, roles={"Outfit"})
     _frame_viewport_on_outfit_models(context, instance_groups)
 
 
@@ -1243,16 +1364,29 @@ def batch_import_instances(context, selected_presets) -> tuple:
                 except Exception:
                     pass
 
-            x_cursor = 0.0
             instances = 0
             instance_groups = []
-            with utils.timed("layout_x"):
+            with utils.timed("layout_slots"):
+                from . import import_layout as _layout
+
                 for _preset_idx, _preset_name, _preset_path, inst_objs in pending:
-                    x_cursor = _shift_instance_on_x(
-                        inst_objs, x_cursor, update_view=False
+                    alive = [o for o in inst_objs if _still_alive(o)]
+                    for o in alive:
+                        try:
+                            if not o.get("arc_assembly_role"):
+                                o["arc_assembly_role"] = "Outfit"
+                        except Exception:
+                            pass
+                    slot = _layout.place_imported(
+                        alive, "Outfit", scene=context.scene,
                     )
                     instances += 1
-                    instance_groups.append([o for o in inst_objs if _still_alive(o)])
+                    instance_groups.append(alive)
+                    if _layout.offset_enabled(context.scene):
+                        print(
+                            f"    [{_preset_name}] slot {slot} @ "
+                            f"X={_layout.slot_world_x(slot, context.scene):.1f} m"
+                        )
 
             with utils.timed("post_import_ux"):
                 _post_import_outfit_ux(context, instance_groups)
@@ -1810,6 +1944,10 @@ class ARC_OUTFITS_OT_ImportSinglePSK(Operator):
             self.report({'ERROR'}, f"File not found: {psk_path}")
             return {'CANCELLED'}
         scene = context.scene
+        try:
+            del scene["arc_import_folder_layout"]
+        except Exception:
+            pass
         scene.arc_psk_entries.clear()
         entry = scene.arc_psk_entries.add()
         entry.psk_path = psk_path
@@ -1839,6 +1977,7 @@ class ARC_OUTFITS_OT_ImportOutfitFolder(Operator):
             self.report({'ERROR'}, f"No .psk/.pskx files found in folder (or its subfolders): {folder}")
             return {'CANCELLED'}
         scene = context.scene
+        scene["arc_import_folder_layout"] = os.path.abspath(folder)
         scene.arc_psk_entries.clear()
         for psk_path in psks:
             entry = scene.arc_psk_entries.add()
@@ -1947,8 +2086,6 @@ def _queue_selected_outfit_psks(context):
     """
     scene = context.scene
     root = utils.get_pioneer_root()
-    if not root:
-        return False, None, "", [], "Set the PioneerGame root folder first."
     choice = scene.arc_selected_outfit
     if not choice:
         return False, None, "", [], "No outfit selected — click one in the list first."
@@ -1957,6 +2094,26 @@ def _queue_selected_outfit_psks(context):
     if not row:
         return False, None, "", [], "No outfit selected."
     label = row.get("Flavour") or row.get("ST") or choice
+    from . import pak_extract
+    if pak_extract.configured_dir(scene) or not root:
+        if not pak_extract.configured_dir(scene):
+            return False, row, label, [], "Set the PioneerGame root folder or the Paks folder."
+        model = (row.get("Model Folder Name") or "").strip()
+        parts = [p.strip() for p in (row.get("Model Folder Parts") or "").split(",") if p.strip()]
+        rels = []
+        if model and parts:
+            rels = [f"Characters/Assets/{model}/{part}" for part in parts]
+        elif model:
+            rels = [f"Characters/Assets/{model}"]
+        meshes = pak_extract.ensure_rels(scene, rels) if rels else []
+        if not meshes:
+            return False, row, label, [], f"No meshes for '{label}' in the paks."
+        scene.arc_psk_entries.clear()
+        for mesh in meshes:
+            entry = scene.arc_psk_entries.add()
+            entry.psk_path = mesh
+            entry.display_name = os.path.basename(mesh)
+        return True, row, label, [], ""
     item_ui_folders = [f.strip() for f in row.get("Item/UI Folder Name", "").split(";") if f.strip()]
     if not item_ui_folders:
         return False, row, label, [], "Selected outfit has no Item/UI Folder Name to import from."
@@ -2017,6 +2174,316 @@ class ARC_OUTFITS_OT_LoadOutfit(Operator):
         return {'FINISHED'}
 
 
+class ARC_OUTFITS_OT_RescanAppearance(Operator):
+    """Clear body/head/hair catalog cache and rebuild enum items (kept for scripts)."""
+    bl_idname = "arc_outfits.rescan_appearance"
+    bl_label = "Rescan Appearance"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        from . import appearance
+
+        appearance.invalidate_cache()
+        heads = appearance.list_head_choices()
+        hairs = appearance.list_hair_choices()
+        body = appearance.list_body_mesh()
+        packs = appearance.list_gear_choices("backpack")
+        atts = appearance.list_gear_choices("attachment")
+        charms = appearance.list_gear_choices("charm")
+        tools = appearance.list_gear_choices("raider_tool")
+        hair_ready = sum(1 for h in hairs if h.get("has_mesh"))
+        hair_missing = len(hairs) - hair_ready
+        self.report(
+            {'INFO'},
+            f"Appearance: {len(heads)} head(s), {len(hairs)} hair style(s) "
+            f"({hair_ready} with mesh, {hair_missing} JSON-only), "
+            f"body={'yes' if body else 'missing'}, "
+            f"{len(packs)} backpack(s), {len(atts)} attachment(s), "
+            f"{len(charms)} charm(s), {len(tools)} raider tool(s).",
+        )
+        return {'FINISHED'}
+
+
+class ARC_OUTFITS_OT_DeepPathSearch(Operator, bpy_extras.io_utils.ImportHelper):
+    """Consent to an expensive folder walk when the standard Pioneer layout is missing."""
+    bl_idname = "arc_outfits.deep_path_search"
+    bl_label = "Search Selected Folder"
+    bl_description = (
+        "Pick a folder to allow a deep Content/Characters search. "
+        "Only runs after you confirm — known PioneerGame/Content/Pioneer "
+        "paths are tried first without this"
+    )
+    bl_options = {'REGISTER'}
+
+    filename_ext = ""
+    filter_glob: StringProperty(default="*", options={'HIDDEN'})
+    directory: StringProperty(subtype='DIR_PATH', options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        root = utils.get_pioneer_root() or ""
+        if root and os.path.isdir(root):
+            self.directory = root.rstrip("/\\") + os.sep
+            self.filepath = self.directory
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from . import appearance
+
+        folder = _picked_folder(self)
+        if not folder:
+            folder = bpy.path.abspath(self.filepath)
+        if not os.path.isdir(folder):
+            self.report({'ERROR'}, f"Not a valid folder: {folder}")
+            return {'CANCELLED'}
+        # Confirm via operator execute = user agreed to the expensive walk.
+        granted = utils.set_deep_search_root(folder)
+        chars = utils.find_relative_dir(utils.get_pioneer_root() or folder, ["Characters"])
+        appearance.invalidate_cache()
+        if chars:
+            self.report(
+                {'INFO'},
+                f"Deep search enabled under '{os.path.basename(granted)}' — "
+                f"found Characters at {os.path.basename(chars)}",
+            )
+        else:
+            self.report(
+                {'WARNING'},
+                f"Deep search enabled under '{os.path.basename(granted)}' — "
+                f"Characters still not found. Pick a closer parent folder.",
+            )
+        return {'FINISHED'}
+
+
+class ARC_OUTFITS_OT_ClearDeepPathSearch(Operator):
+    """Disable consent for expensive path discovery."""
+    bl_idname = "arc_outfits.clear_deep_path_search"
+    bl_label = "Clear Deep Path Search"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        utils.clear_deep_search_root()
+        self.report({'INFO'}, "Deep path search disabled")
+        return {'FINISHED'}
+
+
+class ARC_OUTFITS_OT_UpdateHairColor(Operator):
+    """Re-apply the selected Hair Color MI to selected hair meshes (no re-import)."""
+    bl_idname = "arc_outfits.update_hair_color"
+    bl_label = "Update Hair Color"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        from . import appearance as _appearance
+
+        cid = getattr(context.scene, "arc_appearance_hair_color", "NONE") or "NONE"
+        if cid == "NONE":
+            self.report({'ERROR'}, "Select a Hair Color first")
+            return {'CANCELLED'}
+        choice = _appearance.resolve_choice(cid)
+        colour_json = (choice or {}).get("path") or ""
+        if not colour_json or not os.path.isfile(colour_json):
+            self.report({'ERROR'}, f"Hair Color MI not found for '{cid}'")
+            return {'CANCELLED'}
+
+        copy_lashes = bool(
+            getattr(context.scene, "arc_appearance_eyelash_copy_hair_color", True)
+        )
+
+        def _is_head_mesh(obj) -> bool:
+            mtype = str(obj.get("arc_model_type", "") or "").lower()
+            role = str(obj.get("arc_assembly_role", "") or "")
+            name_l = (obj.name or "").lower()
+            return mtype in ("face", "head") or role == "Head" or "head_face" in name_l
+
+        targets = []
+        head_targets = []
+        for obj in context.selected_objects or []:
+            if obj.type != "MESH":
+                continue
+            mtype = str(obj.get("arc_model_type", "") or "").lower()
+            name_l = (obj.name or "").lower()
+            if mtype == "hair" or "hair" in name_l or "facial" in name_l:
+                targets.append(obj)
+            elif _is_head_mesh(obj):
+                head_targets.append(obj)
+        if not targets and not (copy_lashes and head_targets):
+            self.report(
+                {'ERROR'},
+                "Select hair mesh(es), or a head when Eyelash copy Hair Color is on",
+            )
+            return {'CANCELLED'}
+
+        done = 0
+        lash_done = 0
+        for obj in targets:
+            hair_json = str(obj.get("arc_hair_mi", "") or obj.get("arc_skin_json", "") or "")
+            if not hair_json or hair_json == "NONE" or not os.path.isfile(hair_json):
+                psk = str(obj.get("arc_psk_path", "") or "")
+                if psk and os.path.isfile(psk):
+                    mis = textures.scan_hair_mis(psk)
+                    hair_json = mis[0][1] if mis else ""
+            if not hair_json or not os.path.isfile(hair_json):
+                print(f"Arc Raiders: Update Hair Color skipped '{obj.name}' (no hair MI)")
+                continue
+            try:
+                obj["arc_hair_color_mi"] = os.path.abspath(colour_json)
+                obj["arc_hair_mi"] = os.path.abspath(hair_json)
+            except Exception:
+                pass
+            materials.setup_hair_material(obj, hair_json, colour_json=colour_json)
+            done += 1
+
+        # Tint eyelash materials on selected / paired heads when the checkbox is on.
+        from .materials import character as _character
+
+        if copy_lashes:
+            if not head_targets:
+                for hair in targets:
+                    slot = hair.get("arc_import_slot")
+                    for other in bpy.data.objects:
+                        if other.type != "MESH" or other in head_targets:
+                            continue
+                        if slot is not None and other.get("arc_import_slot") != slot:
+                            continue
+                        if _is_head_mesh(other):
+                            head_targets.append(other)
+            for head in head_targets:
+                try:
+                    head["arc_hair_color_mi"] = os.path.abspath(colour_json)
+                except Exception:
+                    pass
+                for slot in head.material_slots:
+                    mat = slot.material
+                    if mat is None:
+                        continue
+                    role = str(mat.get("arc_head_role") or "")
+                    if role != "eyelashes" and "eyelash" not in (mat.name or "").lower():
+                        continue
+                    if _character._apply_hair_color_to_eyelash_material(
+                        mat, colour_json=colour_json, use_hair_color=True,
+                    ):
+                        lash_done += 1
+
+        try:
+            _character.sync_face_shader_hair(
+                "",
+                _character._resolve_scene_hair_color_rgba(colour_json),
+            )
+        except Exception:
+            pass
+
+        if done <= 0 and lash_done <= 0:
+            self.report({'ERROR'}, "No hair MI / eyelash mats found on selection")
+            return {'CANCELLED'}
+        msg = f"Updated hair color on {done} mesh(es)"
+        if lash_done:
+            msg += f", {lash_done} eyelash mat(s)"
+        elif copy_lashes and head_targets:
+            msg += " (no eyelash mats on paired head)"
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
+class ARC_OUTFITS_OT_AddAppearancePart(Operator):
+    """Import one appearance part (Hair / Head / Body / gear), optionally onto the selected outfit."""
+    bl_idname = "arc_outfits.add_appearance_part"
+    bl_label = "Add Appearance Part"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    part: EnumProperty(
+        name="Part",
+        items=(
+            ('HAIR', "Hair", "Import the selected hair style"),
+            ('HEAD', "Head", "Import the selected head"),
+            ('BODY', "Body", "Import the shared body mesh"),
+            ('BACKPACK', "Backpack", "Import the selected backpack"),
+            ('ATTACHMENT', "Attachment", "Import the selected backpack attachment"),
+            ('CHARM', "Charm", "Import the selected backpack charm"),
+            ('RAIDER_TOOL', "Raider Tool", "Import the selected raider tool"),
+        ),
+        default='HAIR',
+    )
+
+    def execute(self, context):
+        from . import appearance
+
+        from . import pak_extract
+
+        if not utils.get_pioneer_root() and not pak_extract.configured_dir(context.scene):
+            self.report({'ERROR'}, "Set PioneerGame Folder or the Paks folder in Settings")
+            return {'CANCELLED'}
+
+        role = {
+            "HAIR": "Hair",
+            "HEAD": "Head",
+            "BODY": "Body",
+            "BACKPACK": "Backpack",
+            "ATTACHMENT": "Attachment",
+            "CHARM": "Charm",
+            "RAIDER_TOOL": "RaiderTool",
+        }.get(self.part, "Hair")
+        replace = bool(getattr(context.scene, "arc_appearance_replace_selected", False))
+        attach = bool(getattr(context.scene, "arc_appearance_attach_to_outfit", False))
+        attach_to = None
+        # Replace also needs the pad armature so we can find the old part on it.
+        if attach or replace:
+            attach_to = appearance.find_target_armature(context)
+            if attach and attach_to is None:
+                self.report(
+                    {'ERROR'},
+                    "Select an outfit armature (or a mesh skinned to one) first",
+                )
+                return {'CANCELLED'}
+        # Only merge when Add to Selected Outfit is on (replace may only swap).
+        merge_target = attach_to if attach else None
+
+        count, msgs, objs = appearance.import_appearance_parts(
+            context,
+            roles={role},
+            attach_to=merge_target,
+            replace_selected=replace,
+        )
+        for m in msgs:
+            print(f"Arc Raiders PSK Importer: {m}")
+        if count <= 0:
+            self.report({'ERROR'}, "; ".join(msgs[:3]) or f"Nothing imported ({role})")
+            return {'CANCELLED'}
+        if role in ("Head", "Hair"):
+            _maybe_import_references(context, objs, roles={role})
+        verb = "Replaced" if replace else "Added" if attach_to is not None else "Imported"
+        if attach_to is not None:
+            self.report(
+                {'INFO'},
+                f"{verb} {role} on '{attach_to.name}'. " + "; ".join(msgs[:4]),
+            )
+        else:
+            self.report(
+                {'INFO'},
+                f"{verb} {role}. " + "; ".join(msgs[:4]),
+            )
+        return {'FINISHED'}
+
+
+class ARC_OUTFITS_OT_ImportReference(Operator):
+    """Place UI reference image planes for the selected outfit / head / hair."""
+    bl_idname = "arc_outfits.import_reference"
+    bl_label = "Import Reference"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        from . import reference_planes
+
+        made, msgs = reference_planes.import_references_from_scene(context)
+        for m in msgs:
+            print(f"Arc Raiders PSK Importer: {m}")
+        if made <= 0:
+            self.report({'ERROR'}, "; ".join(msgs[:3]) or "No reference planes created")
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Created {made} reference plane(s). " + "; ".join(msgs[:4]))
+        return {'FINISHED'}
+
+
 class ARC_OUTFITS_OT_ImportColorBenchmark(Operator):
     """Import curated B1–B8 body parts with a flat inspection material (no ArcTexturer)."""
     bl_idname = "arc_outfits.import_color_benchmark"
@@ -2037,9 +2504,11 @@ class ARC_OUTFITS_OT_ImportColorBenchmark(Operator):
     def execute(self, context):
         from .materials import benchmark_graph as bg
 
+        from . import pak_extract
+
         root = utils.get_pioneer_root()
-        if not root or not os.path.isdir(root):
-            self.report({'ERROR'}, "Set PioneerGame Folder in Settings first")
+        if (not root or not os.path.isdir(root)) and not pak_extract.configured_dir(context.scene):
+            self.report({'ERROR'}, "Set PioneerGame Folder or the Paks folder in Settings")
             return {'CANCELLED'}
 
         bid = (self.benchmark_id or "ALL").strip().upper()
@@ -2080,14 +2549,17 @@ class ARC_OUTFITS_OT_LoadAllColorways(Operator):
         choice = getattr(scene, "arc_selected_outfit", "") or ""
         if not choice:
             return False
-        root = utils.get_pioneer_root()
-        if not root:
-            return False
         rows = importing.load_outfit_csv(importing.get_outfit_csv_path(context))
         row = importing.find_outfit_row(rows, choice)
         if not row:
             return False
-        return bool(importing.colorways_for_outfit_row(root, row))
+        root = utils.get_pioneer_root()
+        if root:
+            return bool(importing.colorways_for_outfit_row(root, row))
+        from . import pak_extract
+        if not pak_extract.configured_dir(scene):
+            return False
+        return bool((row.get("Item/UI Folder Name") or row.get("Model Folder Name") or "").strip())
 
     def execute(self, context):
         ok, row, label, missing, err = _queue_selected_outfit_psks(context)
@@ -2174,9 +2646,11 @@ class ARC_OUTFITS_OT_FixMaterials(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        from . import pak_extract
+
         root = utils.get_pioneer_root()
-        if not root or not os.path.isdir(root):
-            self.report({'ERROR'}, "Set PioneerGame Folder in Settings first")
+        if (not root or not os.path.isdir(root)) and not pak_extract.configured_dir(context.scene):
+            self.report({'ERROR'}, "Set PioneerGame Folder or the Paks folder in Settings")
             return {'CANCELLED'}
 
         objs = [o for o in context.selected_objects if o.type == 'MESH']
@@ -2278,9 +2752,11 @@ class ARC_OUTFITS_OT_ReimportSelected(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        from . import pak_extract
+
         root = utils.get_pioneer_root()
-        if not root or not os.path.isdir(root):
-            self.report({'ERROR'}, "Set PioneerGame Folder in Settings first")
+        if (not root or not os.path.isdir(root)) and not pak_extract.configured_dir(context.scene):
+            self.report({'ERROR'}, "Set PioneerGame Folder or the Paks folder in Settings")
             return {'CANCELLED'}
 
         objs = [o for o in context.selected_objects if o.type == 'MESH']
@@ -2382,6 +2858,46 @@ class ARC_OUTFITS_OT_PickManualSkinsFolder(Operator, bpy_extras.io_utils.ImportH
             self.report({'WARNING'}, f"No skin JSONs found in '{os.path.basename(folder)}'.")
         bpy.ops.arc_outfits.confirm_psk_import('INVOKE_DEFAULT')
         return {'FINISHED'}
+
+
+def _apply_folder_prop_layout(context) -> str:
+    """Place folder props onto StaticMesh socket coordinates, duplicating shared meshes.
+
+    Runs only for Import Folder. A folder with no sockets imports as before.
+    """
+    scene = context.scene
+    folder = str(scene.get("arc_import_folder_layout") or "")
+    try:
+        del scene["arc_import_folder_layout"]
+    except Exception:
+        pass
+    if not folder or not os.path.isdir(folder):
+        return ""
+    folder_norm = os.path.abspath(folder).replace("\\", "/").lower().rstrip("/")
+    entries = list(scene.arc_psk_entries)
+    if not entries:
+        return ""
+    for entry in entries:
+        src = os.path.abspath(entry.psk_path).replace("\\", "/")
+        if not src.lower().startswith(folder_norm + "/"):
+            return ""
+    try:
+        from . import prop_assemble
+
+        stats = prop_assemble.apply_detected_folder_layout(folder)
+    except Exception as exc:
+        print(f"Arc Raiders: prop coordinate detection failed: {exc}")
+        return ""
+    if stats.get("error"):
+        print(f"Arc Raiders: prop layout: {stats['error']}")
+        return ""
+    summary = str(stats.get("summary") or "")
+    if not summary:
+        return ""
+    return (
+        f"{summary}. Placed {stats.get('placed', 0)}, "
+        f"duplicated {stats.get('duplicated', 0)}."
+    )
 
 
 class ARC_OUTFITS_OT_ConfirmPSKImport(Operator):
@@ -2581,15 +3097,13 @@ class ARC_OUTFITS_OT_ConfirmPSKImport(Operator):
             all_new_objs.extend(new_objs)
             if ok:
                 ok_count += 1
-                self.report({'INFO'}, msg)
+                self.report({'WARNING'} if "FAIL" in msg else {'INFO'}, msg)
             else:
                 self.report({'WARNING'}, msg)
 
-        any_clothing = any(
-            textures.detect_model_type(bpy.path.abspath(e.psk_path)) == "clothing"
-            for e in entries
-        )
         types = [textures.detect_model_type(bpy.path.abspath(e.psk_path)) for e in entries]
+        any_clothing = any(t == "clothing" for t in types)
+        cosmetic_import = any(t in _REFERENCE_MODEL_TYPES for t in types)
         dominant_type = "weapon" if all(t == "weapon" for t in types) else ""
         rig.fix_rig_all(all_new_objs, merge=any_clothing, model_type=dominant_type)
         all_new_objs = [o for o in all_new_objs if _still_alive(o)]
@@ -2602,8 +3116,35 @@ class ARC_OUTFITS_OT_ConfirmPSKImport(Operator):
             _rename_outfit_base_objects(all_new_objs, char)
 
         # One model = whole imported outfit (same grouping as a single batch instance).
-        if all_new_objs:
-            _post_import_outfit_ux(context, [all_new_objs])
+        if all_new_objs and cosmetic_import:
+            try:
+                from . import import_layout as _layout
+
+                for o in all_new_objs:
+                    if _still_alive(o) and not o.get("arc_assembly_role"):
+                        try:
+                            o["arc_assembly_role"] = "Outfit"
+                        except Exception:
+                            pass
+                slot = _layout.place_imported(
+                    [o for o in all_new_objs if _still_alive(o)],
+                    "Outfit",
+                    scene=context.scene,
+                )
+                if _layout.offset_enabled(context.scene):
+                    self.report(
+                        {'INFO'},
+                        f"Outfit slot {slot} @ X={_layout.slot_world_x(slot, context.scene):.1f} m",
+                    )
+            except Exception as exc:
+                print(f"Arc Raiders PSK Importer: slot layout skipped: {exc}")
+            _post_import_outfit_ux(context, [all_new_objs], references=True)
+        elif all_new_objs:
+            layout_msg = _apply_folder_prop_layout(context)
+            _hide_imported_armatures(all_new_objs)
+            _frame_viewport_on_outfit_models(context, [all_new_objs])
+            if layout_msg:
+                self.report({'INFO'}, layout_msg)
 
         self.report({'INFO'}, f"Arc Raiders: {ok_count}/{total} part(s) imported.")
         context.scene.arc_psk_entries.clear()
@@ -3076,6 +3617,21 @@ class ARC_OUTFITS_OT_UpdateSelectedGroupNodes(Operator):
         return {'FINISHED'}
 
 
+def _queue_mesh_paths(context, paths: list[str]) -> int:
+    """Queue already extracted mesh files (.psk or .uemodel)."""
+    scene = context.scene
+    scene.arc_psk_entries.clear()
+    count = 0
+    for path in paths or []:
+        if not path or not os.path.isfile(path):
+            continue
+        entry = scene.arc_psk_entries.add()
+        entry.psk_path = path
+        entry.display_name = os.path.basename(path)
+        count += 1
+    return count
+
+
 def _queue_folder_psks(context, folder: str):
     """Clear and fill arc_psk_entries from a folder. Returns (count, skipped_pskx)."""
     psks, skipped = utils.find_psks_in_folder(folder)
@@ -3177,20 +3733,40 @@ class ARC_OUTFITS_OT_ImportWeapon(Operator):
         pioneer = utils.get_pioneer_root() or getattr(scene, "arc_pioneer_root", "") or ""
         folder = wcat.resolve_weapon_folder(pioneer, entry)
         if not folder:
-            stem = entry.get("stem") or "?"
+            from . import pak_extract
+
+            stem = entry.get("stem") or ""
             kind = entry.get("kind") or "Firearms"
-            root_hint = pioneer or "(not set)"
-            self.report(
-                {"ERROR"},
-                f"Content folder missing: Items/{kind}/{stem} under Pioneer root ({root_hint}). "
-                f"Set Pioneer to PioneerGame or Content/Pioneer in Settings.",
-            )
-            return {"CANCELLED"}
+            meshes = pak_extract.ensure_rels(scene, [f"Items/{kind}/{stem}"]) if stem else []
+            if not meshes:
+                root_hint = pioneer or "paks"
+                self.report(
+                    {"ERROR"},
+                    f"Content folder missing: Items/{kind}/{stem} ({root_hint}). "
+                    f"Set PioneerGame Folder or the Paks folder in Settings.",
+                )
+                return {"CANCELLED"}
+            n = _queue_mesh_paths(context, meshes)
+            if not n:
+                self.report({"ERROR"}, f"No mesh extracted for {entry.get('name') or stem}")
+                return {"CANCELLED"}
+            bpy.ops.arc_outfits.confirm_psk_import("INVOKE_DEFAULT")
+            self.report({"INFO"}, f"Imported {entry.get('name')} ({n} mesh(es)) from paks")
+            return {"FINISHED"}
         before_arms = {o.name for o in bpy.data.objects if o.type == "ARMATURE"}
         n, _skipped = _queue_folder_psks(context, folder)
         if not n:
             self.report({"ERROR"}, f"No .psk/.pskx in {folder}")
             return {"CANCELLED"}
+        # Stamp Weapons-panel skin onto import entries (Skins/<Colourway>/MI_*.json).
+        skin_name = getattr(scene, "arc_weapon_skin", "NONE") or "NONE"
+        skin_mi = wcat.resolve_weapon_skin_mi(pioneer, entry, skin_name)
+        if skin_mi:
+            for ent in scene.arc_psk_entries:
+                try:
+                    ent.skin_choice = skin_mi
+                except Exception:
+                    pass
         bpy.ops.arc_outfits.confirm_psk_import("INVOKE_DEFAULT")
         new_arms = [
             o
@@ -3201,7 +3777,8 @@ class ARC_OUTFITS_OT_ImportWeapon(Operator):
             arm["arc_model_type"] = "weapon"
         if new_arms:
             scene.arc_last_weapon_armature = new_arms[-1].name
-        self.report({"INFO"}, f"Imported {entry.get('name')} ({n} mesh(es))")
+        skin_note = f", skin {skin_name}" if skin_mi else ""
+        self.report({"INFO"}, f"Imported {entry.get('name')} ({n} mesh(es){skin_note})")
         return {"FINISHED"}
 
 
@@ -3237,11 +3814,40 @@ class ARC_OUTFITS_OT_ImportWeaponMod(Operator):
         pioneer = utils.get_pioneer_root() or getattr(scene, "arc_pioneer_root", "") or ""
         folder = wcat.resolve_mod_folder(pioneer, entry)
         if not folder:
-            self.report(
-                {"ERROR"},
-                f"Content folder missing: Items/WeaponMod/{entry.get('stem')} under Pioneer root",
-            )
-            return {"CANCELLED"}
+            from . import pak_extract
+
+            stem = entry.get("stem") or ""
+            meshes = pak_extract.ensure_rels(scene, [f"Items/WeaponMod/{stem}"]) if stem else []
+            if not meshes:
+                self.report(
+                    {"ERROR"},
+                    f"Content folder missing: Items/WeaponMod/{stem}. "
+                    f"Set PioneerGame Folder or the Paks folder in Settings.",
+                )
+                return {"CANCELLED"}
+            n = _queue_mesh_paths(context, meshes)
+            if not n:
+                self.report({"ERROR"}, f"No mesh extracted for {entry.get('name') or stem}")
+                return {"CANCELLED"}
+            before = set(bpy.data.objects)
+            bpy.ops.arc_outfits.confirm_psk_import("INVOKE_DEFAULT")
+            new_objs = [o for o in bpy.data.objects if o not in before]
+            if any(o.type == "ARMATURE" for o in new_objs):
+                rig.fix_rig_all(new_objs, merge=False, model_type="weapon")
+            gun = _find_weapon_armature(context)
+            bone = wcat.attachment_bone_for_stem(stem)
+            snapped = _snap_mod_to_gun(new_objs, gun, bone) if gun else 0
+            if gun is None:
+                self.report(
+                    {"WARNING"},
+                    f"Imported {entry.get('name')} but no gun armature found to snap to",
+                )
+            else:
+                self.report(
+                    {"INFO"},
+                    f"Imported {entry.get('name')} → bone '{bone}' on {gun.name} ({snapped} obj)",
+                )
+            return {"FINISHED"}
 
         gun = _find_weapon_armature(context)
         before = set(bpy.data.objects)
@@ -3266,6 +3872,142 @@ class ARC_OUTFITS_OT_ImportWeaponMod(Operator):
                 f"Imported {entry.get('name')} → bone '{bone}' on {gun.name} ({snapped} obj)",
             )
         return {"FINISHED"}
+
+
+def _weapon_mesh_targets(context):
+    """Selected weapon meshes, else all meshes stamped arc_model_type=weapon."""
+    objs = [o for o in context.selected_objects if o.type == "MESH"]
+    if not objs:
+        objs = [
+            o
+            for o in bpy.data.objects
+            if o.type == "MESH" and str(o.get("arc_model_type", "")).lower() == "weapon"
+        ]
+    return objs
+
+
+class ARC_OUTFITS_OT_ApplyWeaponSkin(Operator):
+    """Rebuild weapon materials from the selected Skins/<colourway> MI."""
+    bl_idname = "arc_outfits.apply_weapon_skin"
+    bl_label = "Apply Weapon Skin"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        from . import weapon_catalog as wcat
+        from .materials import weapon as weapon_mats
+        from .materials import common as mat_common
+        from .materials import dispatch as mat_dispatch
+
+        scene = context.scene
+        skin_name = getattr(scene, "arc_weapon_skin", "NONE") or "NONE"
+        pioneer = utils.get_pioneer_root() or getattr(scene, "arc_pioneer_root", "") or ""
+        key = getattr(scene, "arc_weapon_key", "NONE") or "NONE"
+        entry = wcat.weapon_by_key(key) if key != "NONE" else None
+
+        skin_mi = ""
+        if skin_name != "NONE":
+            if entry:
+                skin_mi = wcat.resolve_weapon_skin_mi(pioneer, entry, skin_name)
+            if not skin_mi:
+                # Fallback: resolve from selected mesh's Skins/ tree.
+                for obj in _weapon_mesh_targets(context):
+                    psk = str(obj.get("arc_psk_path", "") or "")
+                    if not psk:
+                        continue
+                    for name, path in textures.scan_skins(psk):
+                        if name == skin_name:
+                            skin_mi = path
+                            break
+                    if skin_mi:
+                        break
+            if not skin_mi:
+                self.report(
+                    {"ERROR"},
+                    f"Skin '{skin_name}' not found under gun Skins/ "
+                    f"(Pioneer root + selected Gun required)",
+                )
+                return {"CANCELLED"}
+
+        objs = _weapon_mesh_targets(context)
+        if not objs:
+            self.report({"ERROR"}, "No weapon meshes selected / in scene")
+            return {"CANCELLED"}
+
+        # Drop shared MI / ObjectPath caches so colourways rebuild and Pattern
+        # Mask lookups retry across Content roots (2.0 Unpack + Steam dump).
+        try:
+            mat_common._FLAT_MI_CACHE.clear()
+            mat_common._SK_SLOTS_CACHE.clear()
+            if hasattr(mat_dispatch, "_SHARED_MI_MATERIALS"):
+                mat_dispatch._SHARED_MI_MATERIALS.clear()
+            if hasattr(textures, "_OBJECT_PATH_ASSET_CACHE"):
+                textures._OBJECT_PATH_ASSET_CACHE.clear()
+        except Exception:
+            pass
+
+        n = 0
+        paint_ok = 0
+        for obj in objs:
+            psk = str(obj.get("arc_psk_path", "") or "")
+            if not psk or not os.path.isfile(psk):
+                continue
+            # Per-mesh skin when gun catalog skin doesn't match this mesh's stem.
+            mi = skin_mi
+            if skin_name != "NONE" and mi:
+                gun_folder = os.path.dirname(psk).replace("\\", "/").lower()
+                if entry and (entry.get("stem") or "").lower() not in gun_folder:
+                    mi = ""
+                    for name, path in textures.scan_skins(psk):
+                        if name == skin_name:
+                            mi = path
+                            break
+            wired = weapon_mats.setup_weapon_material(obj, psk, skin_json=mi or "")
+            if wired:
+                n += 1
+                try:
+                    if mi:
+                        obj["arc_skin_json"] = os.path.abspath(mi)
+                        obj["arc_skin_choice"] = os.path.abspath(mi)
+                    else:
+                        obj["arc_skin_json"] = ""
+                        obj["arc_skin_choice"] = "NONE"
+                except Exception:
+                    pass
+                # Count materials that got Use Pattern enabled (paintjob skins).
+                for slot in obj.material_slots:
+                    mat = slot.material
+                    node = weapon_mats._find_weapon_texturer_instance(mat) if mat else None
+                    if node is None:
+                        continue
+                    sock = node.inputs.get("Use Pattern R")
+                    if sock is not None and float(sock.default_value or 0.0) > 0.5:
+                        paint_ok += 1
+                        break
+        label = skin_name if skin_name != "NONE" else "base MI"
+        extra = f", paintjob on {paint_ok}" if paint_ok else ""
+        if skin_name != "NONE" and n and not paint_ok:
+            extra = (
+                ", no paintjob pattern (export MaterialLibrary/"
+                "Textures/Weapons/Patterns PNGs if this skin needs one)"
+            )
+        self.report({"INFO"}, f"Applied skin '{label}' to {n} mesh(es){extra}")
+        return {"FINISHED"} if n else {"CANCELLED"}
+
+
+class ARC_OUTFITS_OT_ClearWeaponSkin(Operator):
+    """Rebuild weapon materials with the base MI (no Skins/ colourway)."""
+    bl_idname = "arc_outfits.clear_weapon_skin"
+    bl_label = "Clear Weapon Skin"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        scene = context.scene
+        if hasattr(scene, "arc_weapon_skin"):
+            try:
+                scene.arc_weapon_skin = "NONE"
+            except Exception:
+                pass
+        return bpy.ops.arc_outfits.apply_weapon_skin()
 
 
 class ARC_OUTFITS_OT_ApplyWeaponPattern(Operator):
@@ -3353,6 +4095,27 @@ class ARC_OUTFITS_OT_ClearWeaponPattern(Operator):
                     n += 1
         self.report({"INFO"}, f"Cleared pattern on {n} material(s)")
         return {"FINISHED"} if n else {"CANCELLED"}
+
+
+class ARC_OUTFITS_OT_ApplyPosePreset(Operator):
+    """Apply one still pose (A-pose, idle, tool, or gun hold) to the character."""
+    bl_idname = "arc_outfits.apply_pose_preset"
+    bl_label = "Apply Pose"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        from . import pose_presets
+
+        pose_id = getattr(context.scene, "arc_pose_preset", "APOSE") or "APOSE"
+        if pose_presets.applying():
+            return {"CANCELLED"}
+        pose_presets.set_applying(True)
+        try:
+            ok, msg = pose_presets.apply_preset(context, pose_id)
+        finally:
+            pose_presets.set_applying(False)
+        self.report({"INFO"} if ok else {"ERROR"}, msg)
+        return {"FINISHED"} if ok else {"CANCELLED"}
 
 
 class ARC_OUTFITS_OT_SelectAnim(Operator):
@@ -3501,6 +4264,38 @@ class ARC_OUTFITS_OT_ClearAnimationCache(Operator):
 # Registration
 # ---------------------------------------------------------------------------
 
+class ARC_OUTFITS_OT_SelectNS(Operator):
+    """Select a Niagara system from the searchable catalog (does not import it)."""
+    bl_idname = "arc_outfits.select_ns"
+    bl_label = "Select Niagara System"
+    bl_options = {"INTERNAL"}
+
+    ns_key: StringProperty(name="NS Key", default="")
+
+    def execute(self, context):
+        from . import niagara_catalog as ncat
+
+        scene = context.scene
+        scene.arc_ns_selected = self.ns_key
+        entry = ncat.get_entry(
+            self.ns_key, getattr(scene, "arc_ns_catalog_root", "") or ""
+        )
+        if entry and entry.get("path"):
+            scene.arc_ns_json_path = entry["path"]
+        return {"FINISHED"}
+
+
+class ARC_OUTFITS_OT_ClearNSSearch(Operator):
+    """Clear the Niagara catalog search filter."""
+    bl_idname = "arc_outfits.clear_ns_search"
+    bl_label = "Clear NS Search"
+    bl_options = {"INTERNAL"}
+
+    def execute(self, context):
+        context.scene.arc_ns_search = ""
+        return {"FINISHED"}
+
+
 class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
     """Import a cooked Niagara system (NS_*.json) as inspectable scene data.
 
@@ -3516,7 +4311,18 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
 
     def invoke(self, context, event):
-        existing = bpy.path.abspath(context.scene.arc_ns_json_path or "")
+        from . import niagara_catalog as ncat
+
+        scene = context.scene
+        selected = getattr(scene, "arc_ns_selected", "") or ""
+        entry = ncat.get_entry(
+            selected, getattr(scene, "arc_ns_catalog_root", "") or ""
+        )
+        if entry and entry.get("path") and os.path.isfile(entry["path"]):
+            self.filepath = entry["path"]
+            return self.execute(context)
+
+        existing = bpy.path.abspath(scene.arc_ns_json_path or "")
         if os.path.isfile(existing):
             self.filepath = existing
             return self.execute(context)
@@ -3524,6 +4330,7 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
         return {'RUNNING_MODAL'}
 
     def execute(self, context):
+        from . import niagara_catalog as ncat
         from . import niagara_fx
 
         scene = context.scene
@@ -3533,30 +4340,45 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
             return {'CANCELLED'}
         scene.arc_ns_json_path = path
 
-        asset_root = bpy.path.abspath(scene.arc_ns_asset_root or "") or None
-        if asset_root and not os.path.isdir(asset_root):
-            self.report({'WARNING'},
-                        f"Asset root missing, meshes will be placeholders: {asset_root}")
+        asset_root = ncat.resolved_asset_root(
+            bpy.path.abspath(scene.arc_ns_asset_root or "") or ""
+        )
+        if scene.arc_ns_asset_root and not asset_root:
+            self.report(
+                {'WARNING'},
+                f"Asset root missing, meshes will be placeholders: {scene.arc_ns_asset_root}",
+            )
+        elif not asset_root:
             asset_root = None
 
         try:
             root, stats, missing = niagara_fx.import_ns_json(
-                path, asset_root=asset_root, bake=bool(scene.arc_ns_bake_curves))
+                path,
+                asset_root=asset_root or None,
+                bake=bool(scene.arc_ns_bake_curves),
+            )
         except Exception as exc:  # noqa: BLE001 - surface to the user, not the console
             self.report({'ERROR'}, f"NS import failed: {exc}")
             print(f"Arc Raiders: NS import failed for {path}: {exc}")
             return {'CANCELLED'}
 
-        lines = [f"{root.name}: {stats.get('emitters', 0)} emitters, "
-                 f"{stats.get('renderers', 0)} renderers"]
+        lines = [
+            f"{root.name}: {stats.get('emitters', 0)} emitters, "
+            f"{stats.get('renderers', 0)} renderers"
+        ]
         if stats.get("curves"):
-            lines.append(f"{stats['curves']} curves, "
-                         f"{stats.get('curveKeys', 0)} keyframes")
+            lines.append(
+                f"{stats['curves']} curves, {stats.get('curveKeys', 0)} keyframes"
+            )
         if stats.get("meshImported"):
             lines.append(f"{stats['meshImported']} meshes imported")
-        placeholders = sum(v for k, v in stats.items() if k.endswith("Placeholder"))
+        placeholders = sum(
+            v for k, v in stats.items() if k.endswith("Placeholder")
+        )
         if placeholders:
             lines.append(f"{placeholders} placeholders")
+        if asset_root:
+            lines.append(f"asset root: {os.path.basename(asset_root.rstrip('/\\'))}")
         lines.extend(f"missing: {m}" for m in missing)
         scene["arc_ns_last_report"] = "\n".join(lines)
 
@@ -3565,6 +4387,8 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
 
 
 _outfit_classes = (
+    ARC_OUTFITS_OT_SelectNS,
+    ARC_OUTFITS_OT_ClearNSSearch,
     ARC_OUTFITS_OT_ImportNiagaraFX,
     ARC_OUTFITS_OT_SelectHairMI,
     ARC_OUTFITS_OT_ImportSinglePSK,
@@ -3573,6 +4397,12 @@ _outfit_classes = (
     ARC_OUTFITS_OT_PickOutfitCSV,
     ARC_OUTFITS_OT_ClearOutfitCSV,
     ARC_OUTFITS_OT_LoadOutfit,
+    ARC_OUTFITS_OT_RescanAppearance,
+    ARC_OUTFITS_OT_DeepPathSearch,
+    ARC_OUTFITS_OT_ClearDeepPathSearch,
+    ARC_OUTFITS_OT_AddAppearancePart,
+    ARC_OUTFITS_OT_ImportReference,
+    ARC_OUTFITS_OT_UpdateHairColor,
     ARC_OUTFITS_OT_ImportColorBenchmark,
     ARC_OUTFITS_OT_LoadAllColorways,
     ARC_OUTFITS_OT_SelectOutfit,
@@ -3602,8 +4432,11 @@ _outfit_classes = (
     ARC_OUTFITS_OT_UpdateSelectedGroupNodes,
     ARC_OUTFITS_OT_ImportWeapon,
     ARC_OUTFITS_OT_ImportWeaponMod,
+    ARC_OUTFITS_OT_ApplyWeaponSkin,
+    ARC_OUTFITS_OT_ClearWeaponSkin,
     ARC_OUTFITS_OT_ApplyWeaponPattern,
     ARC_OUTFITS_OT_ClearWeaponPattern,
+    ARC_OUTFITS_OT_ApplyPosePreset,
     ARC_OUTFITS_OT_SelectAnim,
     ARC_OUTFITS_OT_ClearAnimSearch,
     ARC_OUTFITS_OT_RefreshAnimCatalog,
@@ -3617,10 +4450,30 @@ _outfit_classes = (
 # Outfits package: TCP listener only. Full Map Placement ops ship in DataRaiders-MapImporter.
 from . import addon_line as _addon_line
 
-_map_ops = (
-    map_placement.OPERATOR_CLASSES
-    if _addon_line.is_map_importer_line()
-    else map_placement.BRIDGE_OPERATOR_CLASSES
-)
+
+def _map_operator_classes():
+    """Resolve map ops without assuming a fresh map_placement module.
+
+    Blender can keep a stale ``DataRaiders-Outfits.map_placement`` in
+    ``sys.modules`` across zip installs. Prefer ``BRIDGE_OPERATOR_CLASSES``;
+    fall back to listen-only classes from ``OPERATOR_CLASSES``.
+    """
+    if _addon_line.is_map_importer_line():
+        return tuple(getattr(map_placement, "OPERATOR_CLASSES", ()) or ())
+    bridge = getattr(map_placement, "BRIDGE_OPERATOR_CLASSES", None)
+    if bridge:
+        return tuple(bridge)
+    listen = []
+    for cls in getattr(map_placement, "OPERATOR_CLASSES", ()) or ():
+        name = getattr(cls, "__name__", "") or ""
+        if name in (
+            "ARC_OUTFITS_OT_StartPlacementListener",
+            "ARC_OUTFITS_OT_StopPlacementListener",
+        ):
+            listen.append(cls)
+    return tuple(listen)
+
+
+_map_ops = _map_operator_classes()
 
 classes = _outfit_classes + _map_ops

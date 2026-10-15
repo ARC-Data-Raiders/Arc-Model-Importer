@@ -627,11 +627,7 @@ def ensure_loaded(force: bool = False) -> bool:
     _cache["root"] = root
 
     if not best:
-        msg = (
-            f"No *_FMDex.json.br (or .json) under '{root or '(none)'}'. "
-            "Set FMDex Folder in Settings to FModel's FMDex/<Profile> output "
-            "(not the FMDex source code folder)."
-        )
+        msg = f"No *_FMDex.json.br (or .json) under '{root or '(none)'}'."
         if root and not _brotli_available():
             msg += " Note: brotli is not installed; uncompressed .json also works."
         _cache["error"] = msg

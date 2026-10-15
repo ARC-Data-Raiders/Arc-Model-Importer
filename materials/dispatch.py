@@ -189,7 +189,11 @@ def _dispatch_weapon_slot_material(mat, mi_path: str, psk_path: str, mi_stem_low
             os.path.basename(mi_path), family, slot_lower or "(none)",
         )
 
-        if family == FAMILY_EMISSIVE:
+        parent_l = str(mi_probe.get("parent") or "").lower()
+        if mi_stem_lower.startswith("mi_beacon") or parent_l.endswith("m_beacon"):
+            from .environment import setup_beacon_material
+            setup_beacon_material(mat, mi_path, psk_path)
+        elif family == FAMILY_EMISSIVE:
             _setup_weapon_emissive_material(mat, mi_path)
         elif family == FAMILY_SCAN:
             _setup_enemy_scan_display_material(mat, mi_path)

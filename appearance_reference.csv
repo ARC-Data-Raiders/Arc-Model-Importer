@@ -1,0 +1,252 @@
+﻿kind,key,id,label,folder,segment,rel_path,has_mesh,icon_stem
+body,SK_Body,b6d8f72f549aeca7,Body,Bodies,Shared,Characters/Shared/Bodies/SK_Body.psk,1,
+head,Celeste_Cin,5a111b412c16f10c,Celeste Cin,Celeste_Cin,Heads,Characters/Heads/Celeste_Cin/Base/Head_Celeste_Cin_Base.psk,1,Celeste_Cin
+head,Face_01_Pio,ccdb6f956abaaa20,Face 01 Pio,Face_01_Pio,Heads,Characters/Heads/Face_01_Pio/Base/Head_Face_01_Pio_Base.psk,1,Face_01_Pio
+head,Face_02,ce596060153db8f7,Face 02,Face_02,Heads,Characters/Heads/Face_02/Base/Head_Face_02_Base.psk,1,Face_02
+head,Face_02_Pio,8a3f388b5923609c,Face 02 Pio,Face_02_Pio,Heads,Characters/Heads/Face_02_Pio/Base/Head_Face_02_Pio_Base.psk,1,Face_02_Pio
+head,Face_03_Pio,cbc21905f2c4880c,Face 03,Face_03_Pio,Heads,Characters/Heads/Face_03_Pio/Base/Head_Face_03_Pio_Base.psk,1,Face_03_Pio
+head,Face_04_Pio,43c542490f3647c5,Face 04,Face_04_Pio,Heads,Characters/Heads/Face_04_Pio/Base/Head_Face_04_Pio_Base.psk,1,Face_04_Pio
+head,Face_05_Pio,84598c346faa9653,Face 05,Face_05_Pio,Heads,Characters/Heads/Face_05_Pio/Base/Head_Face_05_Pio_Base.psk,1,Face_05_Pio
+head,Face_06_Pio,a5c0bc9d2d62ee48,Face 06,Face_06_Pio,Heads,Characters/Heads/Face_06_Pio/Base/Head_Face_06_Pio_Base.psk,1,Face_06_Pio
+head,Face_07_Pio,2467d7fe4c7a82f4,Face 07 Pio,Face_07_Pio,Heads,Characters/Heads/Face_07_Pio/Base/Head_Face_07_Pio_Base.psk,1,Face_07_Pio
+head,Face_08_Pio,725c3b052b6b4799,Face 08 Pio,Face_08_Pio,Heads,Characters/Heads/Face_08_Pio/Base/Head_Face_08_Pio_Base.psk,1,Face_08_Pio
+head,Face_09_Pio,6b183503be6a7696,Face 09,Face_09_Pio,Heads,Characters/Heads/Face_09_Pio/Base/Head_Face_09_Pio_Base.psk,1,Face_09_Pio
+head,Face_10_Pio,f24d18cda0e724b2,Face 10,Face_10_Pio,Heads,Characters/Heads/Face_10_Pio/Base/Head_Face_10_Pio_Base.psk,1,Face_10_Pio
+head,Face_11_Pio,9cb8fa00a9fd1003,Face 11,Face_11_Pio,Heads,Characters/Heads/Face_11_Pio/Base/Head_Face_11_Pio_Base.psk,1,Face_11_Pio
+head,Face_12_Pio,f526710d2298bcc9,Face 12,Face_12_Pio,Heads,Characters/Heads/Face_12_Pio/Base/Head_Face_12_Pio_Base.psk,1,Face_12_Pio
+head,Face_13_Pio,fc4a3bce92691f49,Face 13,Face_13_Pio,Heads,Characters/Heads/Face_13_Pio/Base/Head_Face_13_Pio_Base.psk,1,Face_13_Pio
+head,Face_14_Pio,184343be6d0a93a5,Face 14,Face_14_Pio,Heads,Characters/Heads/Face_14_Pio/Base/Head_Face_14_Pio_Base.psk,1,Face_14_Pio
+head,Face_15_Pio,242d5bb8773f971d,Face 15,Face_15_Pio,Heads,Characters/Heads/Face_15_Pio/Base/Head_Face_15_Pio_Base.psk,1,Face_15_Pio
+head,Face_18_Pio,fd540dcccca6ac7e,Face 18,Face_18_Pio,Heads,Characters/Heads/Face_18_Pio/Base/Head_Face_18_Pio_Base.psk,1,Face_18_Pio
+head,Face_19_Pio,6e01be64a3bcf869,Face 19,Face_19_Pio,Heads,Characters/Heads/Face_19_Pio/Base/Head_Face_19_Pio_Base.psk,1,Face_19_Pio
+head,Face_20_Pio,bcebf404a632e628,Face 20,Face_20_Pio,Heads,Characters/Heads/Face_20_Pio/Base/Head_Face_20_Pio_Base.psk,1,Face_20_Pio
+hair,Hairs|AfroFade,8b4ed8c2d48735d6,Afro Fade,AfroFade,Hairs,Characters/Hairs/AfroFade/SK_AfroFade.psk,1,AfroFade
+hair,Hairs|AfroLong,67c0e628944998be,Afro Long,AfroLong,Hairs,Characters/Hairs/AfroLong/SK_AfroLong.pskx,1,AfroLong
+hair,Hairs|BackSlickMessy,6ffce66f27e5ba39,Back Slick Messy,BackSlickMessy,Hairs,Characters/Hairs/BackSlickMessy/SK_BackSlickMessy.psk,1,BackSlickMessy
+hair,Hairs|BobSlick,9634b77635e0c3df,Bob Slick,BobSlick,Hairs,Characters/Hairs/BobSlick/SK_BobSlick.pskx,1,BobSlick
+hair,Hairs|BowlCutMessy,57ab743f9faeec07,Bowl Cut Messy,BowlCutMessy,Hairs,Characters/Hairs/BowlCutMessy/SK_BowlCutMessy.psk,1,BowlCutMessy
+hair,Hairs|BraidedBun,3ba3b461c232e739,Braided Bun,BraidedBun,Hairs,Characters/Hairs/BraidedBun/SK_BraidedBun.psk,1,BraidedBun
+hair,Hairs|Buzzcut,998a198e10391565,Buzzcut,Buzzcut,Hairs,Characters/Hairs/Buzzcut/Skins/Straight/SM_Buzzcut_Straight.pskx,1,Buzzcut
+hair,Hairs|Buzzcut\Skins\Straight,d19d142baface6e0,Buzzcut · Straight,Buzzcut,Hairs,Characters/Hairs/Buzzcut/Skins/Straight/SM_Buzzcut_Straight.pskx,1,Buzzcut
+hair,Hairs|Celeste,588d44f40d681676,Celeste,Celeste,Hairs,Characters/Hairs/Celeste/SM_Hair_Celeste.pskx,1,Celeste
+hair,Hairs|CurlyShort,568494378e356b6e,Curly Short,CurlyShort,Hairs,Characters/Hairs/CurlyShort/SK_CurlyShort.pskx,1,CurlyShort
+hair,Hairs|CurtainFade,ad796daeff2c29bd,Curtain Fade,CurtainFade,Hairs,Characters/Hairs/CurtainFade/SK_CurtainFade.pskx,1,CurtainFade
+hair,Hairs|DreadsSidecut,12aab82ff3b8d409,Dreads Sidecut,DreadsSidecut,Hairs,Characters/Hairs/DreadsSidecut/SK_DreadsSidecut.psk,1,DreadsSidecut
+hair,Hairs|FrenchBraids,ff9d775c7b7bb245,French Braids,FrenchBraids,Hairs,Characters/Hairs/FrenchBraids/SK_FrenchBraids.pskx,1,FrenchBraids
+hair,Hairs|LobBangs,fcc00a593d26a43a,Lob Bangs,LobBangs,Hairs,Characters/Hairs/LobBangs/SK_LobBangs.psk,1,LobBangs
+hair,Hairs|LowBun,82a588358db9890c,Low Bun,LowBun,Hairs,Characters/Hairs/LowBun/SK_LowBun.psk,1,LowBun
+hair,Hairs|MiddleFade,ce562904f1782337,Middle Fade,MiddleFade,Hairs,Characters/Hairs/MiddleFade/SK_MiddleFade.psk,1,MiddleFade
+hair,Hairs|MohawkMessy,c1fc856404ff94bb,Mohawk Messy,MohawkMessy,Hairs,Characters/Hairs/MohawkMessy/SK_MohawkMessy.psk,1,MohawkMessy
+hair,Hairs|Mullet,88edb6be5a8ad968,Mullet,Mullet,Hairs,Characters/Hairs/Mullet/SK_Mullet.psk,1,Mullet
+hair,Hairs|MulletCurly,f6abc5cd45d5eca8,Mullet Curly,MulletCurly,Hairs,Characters/Hairs/MulletCurly/SK_MulletCurly.pskx,1,MulletCurly
+hair,Hairs|PonytailBigCurly,cc506d3b88898706,Ponytail Big Curly,PonytailBigCurly,Hairs,Characters/Hairs/PonytailBigCurly/SK_PonytailBigCurly.pskx,1,PonytailBigCurly
+hair,Hairs|RecedeMessy,726efbf3423bbabe,Recede Messy,RecedeMessy,Hairs,Characters/Hairs/RecedeMessy/SK_RecedeMessy.pskx,1,RecedeMessy
+hair,Hairs|ShortUpswept,134c99dab3b6f288,Short Upswept,ShortUpswept,Hairs,Characters/Hairs/ShortUpswept/SK_ShortUpswept.psk,1,ShortUpswept
+hair,Hairs|ShortWavy,97c2f2f45e2a37ee,Short Wavy,ShortWavy,Hairs,Characters/Hairs/ShortWavy/SK_ShortWavy.psk,1,ShortWavy
+hair,FacialHairs|BeardFull,adf0b73a58f26ba1,Facial · Beard Full,BeardFull,FacialHairs,Characters/FacialHairs/BeardFull/SK_BeardFull.psk,1,BeardFull
+hair,FacialHairs|MuttonChops,7108d8b4125acf28,Facial · Mutton Chops,MuttonChops,FacialHairs,Characters/FacialHairs/MuttonChops/SK_MuttonChops.pskx,1,MuttonChops
+hair,FacialHairs|ShortTidy,4ae265a522e828fe,Facial · Short Tidy,ShortTidy,FacialHairs,Characters/FacialHairs/ShortTidy/SK_ShortTidy.psk,1,ShortTidy
+hair,FacialHairs|SideBurns,6fadd5c790d60b72,Facial · Side Burns,SideBurns,FacialHairs,Characters/FacialHairs/SideBurns/SK_SideBurns.psk,1,SideBurns
+hair,FacialHairs|Stubble,0f27476b54f33612,Facial · Stubble,Stubble,FacialHairs,Characters/FacialHairs/Stubble/SK_Stubble.psk,1,Stubble
+hair,FacialHairs|StubbleShort,e3b4d270405acbc7,Facial · Stubble Short,StubbleShort,FacialHairs,,0,StubbleShort
+hair_color,MI_Hair_01_AshBlonde,3e48aa04c89a53d3,Ash Blonde,MI_Hair_01_AshBlonde,HairColors,Characters/Hairs/Materials/HairColors/Hair_01/MI_Hair_01_AshBlonde.json,1,
+hair_color,MI_Hair_01_Black,3593e4dc62e0ad1b,Black,MI_Hair_01_Black,HairColors,Characters/Hairs/Materials/HairColors/Hair_01/MI_Hair_01_Black.json,1,
+hair_color,MI_Hair_01_Black_Rough,a2475ebde60070a0,Black Rough,MI_Hair_01_Black_Rough,HairColors,Characters/Hairs/Materials/HairColors/Hair_01/MI_Hair_01_Black_Rough.json,1,
+hair_color,MI_Hair_01_Blue,235d6a9c3bfaaf1d,Blue,MI_Hair_01_Blue,HairColors,Characters/Hairs/Materials/HairColors/Hair_01/MI_Hair_01_Blue.json,1,
+hair_color,MI_Hair_01_DarkBrown,98ec69e52c411797,Dark Brown,MI_Hair_01_DarkBrown,HairColors,Characters/Hairs/Materials/HairColors/Hair_01/MI_Hair_01_DarkBrown.json,1,
+hair_color,MI_Hair_01_Green,2a4c845cba1f6669,Green,MI_Hair_01_Green,HairColors,Characters/Hairs/Materials/HairColors/Hair_01/MI_Hair_01_Green.json,1,
+hair_color,MI_Hair_01_Grey,35fc05fa706eeca6,Grey,MI_Hair_01_Grey,HairColors,Characters/Hairs/Materials/HairColors/Hair_01/MI_Hair_01_Grey.json,1,
+hair_color,MI_Hair_01_Pink,35e9c712bc4b4c51,Pink,MI_Hair_01_Pink,HairColors,Characters/Hairs/Materials/HairColors/Hair_01/MI_Hair_01_Pink.json,1,
+hair_color,MI_Hair_01_Red,ea960062983e4637,Red,MI_Hair_01_Red,HairColors,Characters/Hairs/Materials/HairColors/Hair_01/MI_Hair_01_Red.json,1,
+hair_color,MI_Hair_01_Brunette,50924930b4b6a6f3,Brunette,MI_Hair_01_Brunette,HairColors,Characters/Hairs/Materials/BaseMaterials/MI_Hair_01_Brunette.json,1,
+backpack,backpack|ArcPack,f7f9a221b2d39735,Arc Pack,ArcPack,BackpackContainer,Characters/Backpacks/Containers/ArcPack/ArcPack/SM_ArcPack_ArcPack.pskx,1,ArcPack
+backpack,backpack|Barrel,eea8e729ca7696d4,Barrel,Barrel,BackpackContainer,Characters/Backpacks/Containers/Barrel/Barrel/SM_Barrel_Barrel.pskx,1,Barrel
+backpack,backpack|BasketBackpack,03220aac2d25dd71,Basket Backpack,BasketBackpack,BackpackContainer,Characters/Backpacks/Containers/BasketBackpack/BasketBackpack/SK_BasketBackpack_BasketBackpack.psk,1,BasketBackpack
+backpack,backpack|Cartographer,2d8a8af8740cd23e,Cartographer,Cartographer,BackpackContainer,Characters/Backpacks/Containers/Cartographer/Backpack/SK_Cartographer_Backpack.psk,1,Cartographer
+backpack,backpack|ClosedAlpha,2bca8eda380d9cce,Closed Alpha,ClosedAlpha,BackpackContainer,,0,ClosedAlpha
+backpack,backpack|Duffelbag,a20c6081569a3054,Duffelbag,Duffelbag,BackpackContainer,Characters/Backpacks/Containers/Duffelbag/Duffelbag/SK_Duffelbag_Duffelbag.psk,1,Duffelbag
+backpack,backpack|Fieldphone,31d2b2ec55c8bd2f,Fieldphone,Fieldphone,BackpackContainer,Characters/Backpacks/Containers/Fieldphone/Fieldphone/SM_Fieldphone_Fieldphone.pskx,1,Fieldphone
+backpack,backpack|Hardcase,f0d8d157d50b699b,Hardcase,Hardcase,BackpackContainer,Characters/Backpacks/Containers/Hardcase/Hardcase/SM_Hardcase_Hardcase.pskx,1,Hardcase
+backpack,backpack|HikingBag,3a95dffced93bcc9,Hiking Bag,HikingBag,BackpackContainer,Characters/Backpacks/Containers/HikingBag/Backpack/SK_HikingBag_Backpack.psk,1,HikingBag
+backpack,backpack|Luggage,6c9dd7bf45f30961,Luggage,Luggage,BackpackContainer,Characters/Backpacks/Containers/Luggage/Luggage/SM_Luggage_Luggage.pskx,1,Luggage
+backpack,backpack|Occult,65ef0952c1f4b6ce,Occult,Occult,BackpackContainer,Characters/Backpacks/Containers/Occult/Occult/SM_Occult_Occult.pskx,1,Occult
+backpack,backpack|OxygenTank,8e6a933bccd58754,Oxygen Tank,OxygenTank,BackpackContainer,Characters/Backpacks/Containers/OxygenTank/OxygenTank/SM_OxygenTank_OxygenTank.pskx,1,OxygenTank
+backpack,backpack|Portmanteau,ab3f67bf30106435,Portmanteau,Portmanteau,BackpackContainer,Characters/Backpacks/Containers/Portmanteau/Bag/SM_Portmanteau_Bag.pskx,1,Portmanteau
+backpack,backpack|RollupBackpack,5939022510db6603,Rollup Backpack,RollupBackpack,BackpackContainer,Characters/Backpacks/Containers/RollupBackpack/Backpack/SM_RollupBackpack_Backpack.pskx,1,Rollupbackpack
+backpack,backpack|Scout,d3d7482bd4d25dd2,Scout,Scout,BackpackContainer,,0,Scout
+backpack,backpack|Seasack,1ff34dc306bbf08b,Seasack,Seasack,BackpackContainer,Characters/Backpacks/Containers/Seasack/Seasack/SK_Seasack_Seasack.psk,1,Seasack
+backpack,backpack|SurvivalBag,632746a5b28187f0,Survival Bag,SurvivalBag,BackpackContainer,Characters/Backpacks/Containers/SurvivalBag/Props/SK_SurvivalBag_Props.psk,1,Survival
+backpack,backpack|TacticalBag,cc6cb21048cc7a7a,Tactical Bag,TacticalBag,BackpackContainer,Characters/Backpacks/Containers/TacticalBag/TacticalBag/SM_TacticalBag_TacticalBag.pskx,1,TacticalBag
+backpack,backpack|TechBag,9397fe8590dcb69a,Tech Bag,TechBag,BackpackContainer,Characters/Backpacks/Containers/TechBag/TechBag/SM_TechBag_TechBag.pskx,1,TechBag
+backpack,backpack|TennisBag,c19c56cca87aaf7b,Tennis Bag,TennisBag,BackpackContainer,Characters/Backpacks/Containers/TennisBag/TennisBag/SM_TennisBag_TennisBag.pskx,1,TennisBag
+backpack,backpack|Toolbox,78386a1db3c0144d,Toolbox,Toolbox,BackpackContainer,Characters/Backpacks/Containers/Toolbox/Toolbox/SM_Toolbox_Toolbox.pskx,1,Toolbox
+backpack,backpack|TrashPile,629a30625cca4543,Trash Pile,TrashPile,BackpackContainer,Characters/Backpacks/Containers/TrashPile/TrashPileBag/SM_TrashPile_TrashPileBag.pskx,1,TrashPileBag
+backpack,backpack|TreasureChest,5ae3873862d695ea,Treasure Chest,TreasureChest,BackpackContainer,,0,TreasureChest
+backpack,backpack|TreasureHunterBackpack,a1f77ca4df88ae57,Treasure Hunter Backpack,TreasureHunterBackpack,BackpackContainer,Characters/Backpacks/Containers/TreasureHunterBackpack/TreasureHunterBackpack/SM_TreasureHunterBackpack_TreasureHunterBackpack.pskx,1,TreasureHunterBackpack
+backpack,backpack|Trunk,4d48c51e9c3b7113,Trunk,Trunk,BackpackContainer,Characters/Backpacks/Containers/Trunk/Trunk/SM_Trunk_Trunk.pskx,1,Trunk
+backpack,backpack|Tvoltpack,0ad2ebd84d046b9b,Tvoltpack,Tvoltpack,BackpackContainer,Characters/Backpacks/Containers/Tvoltpack/Backpack/SK_Tvoltpack_Backpack.psk,1,Tvoltpack
+backpack,backpack|Urn,b62dd39d52dd0d96,Urn,Urn,BackpackContainer,Characters/Backpacks/Containers/Urn/Urn/SM_Urn_Urn.pskx,1,Urn
+backpack,backpack|Utility,6bb61b4d7008bb15,Utility,Utility,BackpackContainer,Characters/Backpacks/Containers/Utility/Case/SM_Utility_Case.pskx,1,Utility
+backpack,backpack|Vessel,7c1584b3f38625aa,Vessel,Vessel,BackpackContainer,Characters/Backpacks/Containers/Vessel/Vessel/SK_Vessel_Vessel.psk,1,Vessel
+backpack,backpack|WaterTank,f15f582236aee813,Water Tank,WaterTank,BackpackContainer,Characters/Backpacks/Containers/WaterTank/WaterTank/SM_WaterTank_WaterTank.pskx,1,WaterTank
+attachment,attachment|Antenna,20b66c023b633f2c,Antenna,Antenna,BackpackAttachment,Characters/Backpacks/Attachments/Antenna/SM_Antenna_01_A.pskx,1,Antenna
+attachment,attachment|AviatorMask,58052cd3532aa062,Aviator Mask,AviatorMask,BackpackAttachment,Characters/Backpacks/Attachments/AviatorMask/SM_AviatorMask_01_A.pskx,1,AviatorMask_01_A
+attachment,attachment|BirdHouse_01,394b93ad32619ec2,Bird House 01,BirdHouse_01,BackpackAttachment,Characters/Backpacks/Attachments/BirdHouse_01/SM_BirdHouse_01_A.pskx,1,BirdHouse_01_A
+attachment,attachment|BlanketRoll,141cbaa9ac1dcfdf,Blanket Roll,BlanketRoll,BackpackAttachment,Characters/Backpacks/Attachments/BlanketRoll/SM_BlanketRoll_01_A.pskx,1,BlanketRoll
+attachment,attachment|BoxingGloves_01,5bfa8d1192758ca0,Boxing Gloves 01,BoxingGloves_01,BackpackAttachment,Characters/Backpacks/Attachments/BoxingGloves_01/SM_BoxingGloves_01_A.pskx,1,BoxingGloves_01_A
+attachment,attachment|BriefCase,95a748a949c670ab,Brief Case,BriefCase,BackpackAttachment,Characters/Backpacks/Attachments/BriefCase/SM_Briefcase_01_A.pskx,1,Briefcase_01_A
+attachment,attachment|Bucket,b3b56e11f2018cdb,Bucket,Bucket,BackpackAttachment,Characters/Backpacks/Attachments/Bucket/SM_Bucket_01_A.pskx,1,Bucket_01_A
+attachment,attachment|CanSixPack,6dacaed46c73c321,Can Six Pack,CanSixPack,BackpackAttachment,Characters/Backpacks/Attachments/CanSixPack/SM_CanSixPack_01_A.pskx,1,CanSixPack_01_A
+attachment,attachment|Canteen,e152c1a6f7545afe,Canteen,Canteen,BackpackAttachment,Characters/Backpacks/Attachments/Canteen/SM_Canteen_01_A.pskx,1,Canteen_01_A
+attachment,attachment|Cauldron,7457ace6c7cc6930,Cauldron,Cauldron,BackpackAttachment,Characters/Backpacks/Attachments/Cauldron/SM_Cauldron_01_A.pskx,1,Cauldron_01_A
+attachment,attachment|CeramicVase_01,8ee5e98b5bf03cec,Ceramic Vase 01,CeramicVase_01,BackpackAttachment,Characters/Backpacks/Attachments/CeramicVase_01/SM_CeramicVase_01_A.uemodel,1,CeramicVase_01_A
+attachment,attachment|DivingFins,68be04a58517db11,Diving Fins,DivingFins,BackpackAttachment,Characters/Backpacks/Attachments/DivingFins/SM_DivingFins_01_A.pskx,1,DivingFins
+attachment,attachment|Drum,46f487496111616c,Drum,Drum,BackpackAttachment,Characters/Backpacks/Attachments/Drum/SM_Drum_01_A.pskx,1,Drum
+attachment,attachment|FaxMachine,b1d861f4fbdac978,Fax Machine,FaxMachine,BackpackAttachment,Characters/Backpacks/Attachments/FaxMachine/SM_FaxMachine_01_A.pskx,1,FaxMachine_01_A
+attachment,attachment|FieldKitchen,91f575543c116009,Field Kitchen,FieldKitchen,BackpackAttachment,Characters/Backpacks/Attachments/FieldKitchen/SM_FieldKitchen_01_A.pskx,1,FieldKitchen_01_A
+attachment,attachment|FirstAidKit,c43746f613856022,First Aid Kit,FirstAidKit,BackpackAttachment,Characters/Backpacks/Attachments/FirstAidKit/SM_FirstAidKit_A.pskx,1,FirstAidKit
+attachment,attachment|FishTrap_01,b0ec51a3a6fc85a0,Fish Trap 01,FishTrap_01,BackpackAttachment,Characters/Backpacks/Attachments/FishTrap_01/SM_FishTrap_01_A.pskx,1,FishTrap_01_A
+attachment,attachment|FlightRecorder_01,4829e1e54da0c5c0,Flight Recorder 01,FlightRecorder_01,BackpackAttachment,Characters/Backpacks/Attachments/FlightRecorder_01/SM_FlightRecorder_01_A.pskx,1,FlightRecorder_01_A
+attachment,attachment|Football,716f243cd9648116,Football,Football,BackpackAttachment,Characters/Backpacks/Attachments/Football/SM_Football_01_A.pskx,1,Football_01_A
+attachment,attachment|FuelCanister,a1c7a0e6577ec60e,Fuel Canister,FuelCanister,BackpackAttachment,Characters/Backpacks/Attachments/FuelCanister/SM_FuelCanister_01_A.pskx,1,FuelCanister_01_A
+attachment,attachment|GameConsole_01,cd480156588db265,Game Console 01,GameConsole_01,BackpackAttachment,Characters/Backpacks/Attachments/GameConsole_01/SM_GameConsole_01_A.pskx,1,GameConsole_01_A
+attachment,attachment|GasCanister,3ea2f44e6c1ee35f,Gas Canister,GasCanister,BackpackAttachment,Characters/Backpacks/Attachments/GasCanister/SM_GasCanister_01_A.pskx,1,GasCanister_01_A
+attachment,attachment|GasCanister_02,92406dc8f07e884b,Gas Canister 02,GasCanister_02,BackpackAttachment,Characters/Backpacks/Attachments/GasCanister_02/SM_GasCanister_02_A.pskx,1,GasCanister_02_A
+attachment,attachment|GasolineCan_01,865fad2e12bdc884,Gasoline Can 01,GasolineCan_01,BackpackAttachment,Characters/Backpacks/Attachments/GasolineCan_01/SM_GasolineCan_01_A.pskx,1,GasolineCan_01_A
+attachment,attachment|GaugeBox,fcac37f5f01b099e,Gauge Box,GaugeBox,BackpackAttachment,Characters/Backpacks/Attachments/GaugeBox/SM_GaugeBox_01_A.pskx,1,GaugeBox_01_A
+attachment,attachment|Globe_01,82cb1bad56f830b8,Globe 01,Globe_01,BackpackAttachment,Characters/Backpacks/Attachments/Globe_01/SM_Globe_01_A.pskx,1,Globe_01_A
+attachment,attachment|GrainSack,7cd9e15fb4f0ca25,Grain Sack,GrainSack,BackpackAttachment,Characters/Backpacks/Attachments/GrainSack/SM_GrainSack_01_A.pskx,1,GrainSack_01_A
+attachment,attachment|Hookah,13e6a9f93536a3f8,Hookah,Hookah,BackpackAttachment,Characters/Backpacks/Attachments/Hookah/SM_Hookah_01_A.pskx,1,Hookah
+attachment,attachment|HoseBunde_01,927be9b351c7593b,Hose Bunde 01,HoseBunde_01,BackpackAttachment,Characters/Backpacks/Attachments/HoseBunde_01/SM_HoseBundle_01_A.pskx,1,HoseBunde_01
+attachment,attachment|HydraulicPump_01,b2dcc48cbbaf39b8,Hydraulic Pump 01,HydraulicPump_01,BackpackAttachment,Characters/Backpacks/Attachments/HydraulicPump_01/SM_HydraulicPump_01_A.pskx,1,HydraulicPump_01_A
+attachment,attachment|Maps_01,921eb0944dd3a462,Maps 01,Maps_01,BackpackAttachment,Characters/Backpacks/Attachments/Maps_01/SM_Maps_01_A.pskx,1,Maps_01_A
+attachment,attachment|Mine,db9c6aca3d708da8,Mine,Mine,BackpackAttachment,Characters/Backpacks/Attachments/Mine/SM_Mine_01_A.pskx,1,Mine
+attachment,attachment|NomadJug_01,d21879285346dd74,Nomad Jug 01,NomadJug_01,BackpackAttachment,Characters/Backpacks/Attachments/NomadJug_01/SM_NomadJug_01.pskx,1,NomadJug_01_A
+attachment,attachment|PicnicBasket_01,163ddbae9d9db16f,Picnic Basket 01,PicnicBasket_01,BackpackAttachment,Characters/Backpacks/Attachments/PicnicBasket_01/SM_PicnicBasket_01_A.pskx,1,PicnicBasket_01_A
+attachment,attachment|PocketExtinguisher_01,a75c72136768ea92,Pocket Extinguisher 01,PocketExtinguisher_01,BackpackAttachment,Characters/Backpacks/Attachments/PocketExtinguisher_01/SM_PocketExtinguisher_01_A.pskx,1,PocketExtinguisher_01_A
+attachment,attachment|Radiopack,0df7c72ad464264b,Radiopack,Radiopack,BackpackAttachment,Characters/Backpacks/Attachments/Radiopack/SM_Radiopack_01_A.pskx,1,Radiopack_01_A
+attachment,attachment|RecordPlayer_01,83b79ae59a0a8a3d,Record Player 01,RecordPlayer_01,BackpackAttachment,Characters/Backpacks/Attachments/RecordPlayer_01/SM_RecordPlayer_01_A.pskx,1,RecordPlayer_01
+attachment,attachment|SampleBox,384a6530b3d01ce4,Sample Box,SampleBox,BackpackAttachment,Characters/Backpacks/Attachments/SampleBox/SM_SampleBox_01_A.pskx,1,SampleBox_01_A
+attachment,attachment|Scrolls_01,92889f95000d25b8,Scrolls 01,Scrolls_01,BackpackAttachment,Characters/Backpacks/Attachments/Scrolls_01/SM_Scrolls_01_A.pskx,1,Scrolls_01_A
+attachment,attachment|ShipBell_01,0e4d400ef1501e96,Ship Bell 01,ShipBell_01,BackpackAttachment,Characters/Backpacks/Attachments/ShipBell_01/SM_ShipBell_01_A.pskx,1,ShipBell_01_A
+attachment,attachment|Shoes,58ba1f536d3e6859,Shoes,Shoes,BackpackAttachment,Characters/Backpacks/Attachments/Shoes/SM_Shoes_01_A.pskx,1,Shoes_01_A
+attachment,attachment|SnowRescueKit_01,2b21d23cacabf900,Snow Rescue Kit 01,SnowRescueKit_01,BackpackAttachment,Characters/Backpacks/Attachments/SnowRescueKit_01/SM_SnowRescueKit_01_A.pskx,1,SnowRescueKit
+attachment,attachment|SpaceShip,a66ea6f20c85e012,Space Ship,SpaceShip,BackpackAttachment,Characters/Backpacks/Attachments/SpaceShip/SM_SpaceShip_01_A.pskx,1,SpaceShip
+attachment,attachment|Spinning_Top_01,0b6fccd45d607cda,Spinning Top 01,Spinning_Top_01,BackpackAttachment,Characters/Backpacks/Attachments/Spinning_Top_01/SM_Spinning_Top_01_A.pskx,1,Spinning_Top_01_A
+attachment,attachment|TickTrophy_01,0497f89b266bf87c,Tick Trophy 01,TickTrophy_01,BackpackAttachment,Characters/Backpacks/Attachments/TickTrophy_01/SM_TickTrophy_01_A.uemodel,1,TickTrophy_01_A
+attachment,attachment|ToolBag_01,7ff6e86901344388,Tool Bag 01,ToolBag_01,BackpackAttachment,Characters/Backpacks/Attachments/ToolBag_01/SM_ToolBag_01_A.pskx,1,ToolBag_01_A
+attachment,attachment|WaterSkin,83c548fa689dc8dd,Water Skin,WaterSkin,BackpackAttachment,Characters/Backpacks/Attachments/WaterSkin/SM_Waterskin_01_A.pskx,1,Waterskin_01_A
+attachment,attachment|WeaponsCase,4b6d57cee2c1159e,Weapons Case,WeaponsCase,BackpackAttachment,Characters/Backpacks/Attachments/WeaponsCase/SM_WeaponsCase_01_A.pskx,1,WeaponsCase
+attachment,attachment|WickerBasket_01,f937342d34eaef1d,Wicker Basket 01,WickerBasket_01,BackpackAttachment,Characters/Backpacks/Attachments/WickerBasket_01/SM_WickerBasket_01_A.pskx,1,WickerBasket_01_A
+charm,charm|Anchor_01,d97d2140298f287f,Anchor 01,Anchor_01,BackpackCharm,Characters/Backpacks/Charms/Anchor_01/SM_Anchor_01_A.pskx,1,Anchor_01_A
+charm,charm|Anemometer_01,cd7403eb44bcea9f,Anemometer 01,Anemometer_01,BackpackCharm,Characters/Backpacks/Charms/Anemometer_01/SM_Anemometer_01_A.pskx,1,Anemometer_01
+charm,charm|AntlerTalisman_01,eafccaa9a2a43615,Antler Talisman 01,AntlerTalisman_01,BackpackCharm,Characters/Backpacks/Charms/AntlerTalisman_01/SM_AntlerTalisman_01_A.pskx,1,AntlerTalisman_01_A
+charm,charm|Banana_01_A,108a32007e34a157,Banana 01 A,Banana_01_A,BackpackCharm,Characters/Backpacks/Charms/Banana_01_A/SM_Banana_01_A.pskx,1,Banana_01_A
+charm,charm|Baseball_01,2185c3dc008e9e34,Baseball 01,Baseball_01,BackpackCharm,Characters/Backpacks/Charms/Baseball_01/SM_Baseball_01_A.pskx,1,Baseball_01
+charm,charm|Binoculars_01,057fdd382e310d73,Binoculars 01,Binoculars_01,BackpackCharm,Characters/Backpacks/Charms/Binoculars_01/SM_Binoculars_01_A.pskx,1,Binoculars_01_A
+charm,charm|BobbleHead_01,32410eda90bf8c92,Bobble Head 01,BobbleHead_01,BackpackCharm,Characters/Backpacks/Charms/BobbleHead_01/SM_BobbleHead_01_A.pskx,1,BobbleHead_01_A
+charm,charm|BoltBuddies_01,cd27f7fc44f6a0ab,Bolt Buddies 01,BoltBuddies_01,BackpackCharm,Characters/Backpacks/Charms/BoltBuddies_01/SM_BoltBuddies_01_A.pskx,1,BoltBuddies_01
+charm,charm|BoneSaw_01,f28dd8c0d1fab3da,Bone Saw 01,BoneSaw_01,BackpackCharm,Characters/Backpacks/Charms/BoneSaw_01/SM_BoneSaw_01_A.pskx,1,BoneSaw_01
+charm,charm|BrassTap_01,b10ad25948647464,Brass Tap 01,BrassTap_01,BackpackCharm,Characters/Backpacks/Charms/BrassTap_01/SM_BrassTap_01_A.pskx,1,BrassTap_01
+charm,charm|BurgerPlushie_01,b9b5707d985f1118,Burger Plushie 01,BurgerPlushie_01,BackpackCharm,Characters/Backpacks/Charms/BurgerPlushie_01/SM_BurgerPlushie_01_A.pskx,1,BurgerPlushie_01_A
+charm,charm|CactusPot_01,b1464c4ca2d839ee,Cactus Pot 01,CactusPot_01,BackpackCharm,Characters/Backpacks/Charms/CactusPot_01/SM_CactusPot_01_A.pskx,1,CactusPot_01_A
+charm,charm|CannedTomatoes_01,7b545f4ea51f1335,Canned Tomatoes 01,CannedTomatoes_01,BackpackCharm,Characters/Backpacks/Charms/CannedTomatoes_01/SM_CannedTomatoes_01_A.pskx,1,CannedTomatoes_01_A
+charm,charm|CarFreshner_01,0a805ef1487266c5,Car Freshner 01,CarFreshner_01,BackpackCharm,Characters/Backpacks/Charms/CarFreshner_01/SM_CarFreshner_01_A.pskx,1,CarFreshner_01_A
+charm,charm|Cassette_01,b00150749b0f039f,Cassette 01,Cassette_01,BackpackCharm,Characters/Backpacks/Charms/Cassette_01/SM_Cassette_01_A.pskx,1,Cassette_01_A
+charm,charm|ChickPendant_01,9679aee4369ebe05,Chick Pendant 01,ChickPendant_01,BackpackCharm,Characters/Backpacks/Charms/ChickPendant_01/SM_ChickPendant_01_A.pskx,1,ChickPendant_01
+charm,charm|ChristmasHorn_01,02c70f6b16c43daf,Christmas Horn 01,ChristmasHorn_01,BackpackCharm,Characters/Backpacks/Charms/ChristmasHorn_01/SM_ChristmasHorn_01_A.pskx,1,ChristmasHorn_01_A
+charm,charm|CoffeePot_01,18e6d23b4c9fe8e9,Coffee Pot 01,CoffeePot_01,BackpackCharm,Characters/Backpacks/Charms/CoffeePot_01/SM_CoffeePot_01_A.pskx,1,CoffeePot_01_A
+charm,charm|ComputerMouse_01,4ceb7619ba74261c,Computer Mouse 01,ComputerMouse_01,BackpackCharm,Characters/Backpacks/Charms/ComputerMouse_01/SM_ComputerMouse_01_A.uemodel,1,ComputerMouse_01_A
+charm,charm|ConchShell,1beec6c774c77098,Conch Shell,ConchShell,BackpackCharm,Characters/Backpacks/Charms/ConchShell/SM_ConchShell_01_A.pskx,1,ConchShell_01_A
+charm,charm|DeerSkull_01,8d63a8b9178ccbc2,Deer Skull 01,DeerSkull_01,BackpackCharm,Characters/Backpacks/Charms/DeerSkull_01/SM_DeerSkull_01_A.pskx,1,DeerSkull_01_A
+charm,charm|DepthGauge_01,6517ea3ec5efa3ba,Depth Gauge 01,DepthGauge_01,BackpackCharm,Characters/Backpacks/Charms/DepthGauge_01/SM_DepthGauge_01_A.pskx,1,DepthGauge
+charm,charm|DivingGoggles_01,7a972ec9740d219a,Diving Goggles 01,DivingGoggles_01,BackpackCharm,Characters/Backpacks/Charms/DivingGoggles_01/SM_DivingGoggles_01_A.pskx,1,DivingGoggles
+charm,charm|Enamel_01,9445d1ecc74d524b,Enamel 01,Enamel_01,BackpackCharm,Characters/Backpacks/Charms/Enamel_01/SM_Enamel_01_A.pskx,1,Enamel_01_A
+charm,charm|FieldGlass_01,434c63a85ff79b80,Field Glass 01,FieldGlass_01,BackpackCharm,Characters/Backpacks/Charms/FieldGlass_01/SM_FieldGlass_01_A.pskx,1,FieldGlass_01_A
+charm,charm|FilmReel_01,aac3ea104a1d4f06,Film Reel 01,FilmReel_01,BackpackCharm,Characters/Backpacks/Charms/FilmReel_01/SM_FilmReel_01_A.pskx,1,FilmReel_01_A
+charm,charm|Fish_01,9cb3c34d96e2ccdb,Fish 01,Fish_01,BackpackCharm,Characters/Backpacks/Charms/Fish_01/SM_Fish_01_A.pskx,1,Fish_01_A
+charm,charm|Floater_01,12bc82bb112940ae,Floater 01,Floater_01,BackpackCharm,Characters/Backpacks/Charms/Floater_01/SM_Floater_01_A.pskx,1,Floater_01_A
+charm,charm|FloppyDisk_01,3c09afc020c2adf9,Floppy Disk 01,FloppyDisk_01,BackpackCharm,Characters/Backpacks/Charms/FloppyDisk_01/SM_FloppyDisk_01_A.pskx,1,FloppyDisk_01_A
+charm,charm|GlowstickBundle_01,b377ed29efdc36c7,Glowstick Bundle 01,GlowstickBundle_01,BackpackCharm,Characters/Backpacks/Charms/GlowstickBundle_01/SM_GlowstickBundle_01_A.pskx,1,GlowstickBundle_01_A
+charm,charm|Gourd_01,44bb6843d0797ebe,Gourd 01,Gourd_01,BackpackCharm,Characters/Backpacks/Charms/Gourd_01/SM_Gourd_01_A.pskx,1,Gourd_01_A
+charm,charm|Harmonica_01,8322484fe564cf66,Harmonica 01,Harmonica_01,BackpackCharm,Characters/Backpacks/Charms/Harmonica_01/SM_Harmonica_01_A.pskx,1,Harmonica_01_A
+charm,charm|HighwayTorch_01,91a8e5e3e4356498,Highway Torch 01,HighwayTorch_01,BackpackCharm,Characters/Backpacks/Charms/HighwayTorch_01/SM_HighwayTorch_01_A.pskx,1,HighwayTorch
+charm,charm|Horse_01,39d4248513c10d91,Horse 01,Horse_01,BackpackCharm,Characters/Backpacks/Charms/Horse_01/SM_Horse_01_A.pskx,1,Horse_01
+charm,charm|Karabiner,194c943e15e682d7,Karabiner,Karabiner,BackpackCharm,Characters/Backpacks/Charms/Karabiner/SM_BackpackCharm_Karabiner.pskx,1,Karabiner
+charm,charm|LanceKeyChain_01,1fab68b12fa832d9,Lance Key Chain 01,LanceKeyChain_01,BackpackCharm,Characters/Backpacks/Charms/LanceKeyChain_01/SM_LanceKeyChain_01_A.pskx,1,LanceKeyChain_01_A
+charm,charm|Lemons_01,f3f7dfe9ee5e9239,Lemons 01,Lemons_01,BackpackCharm,Characters/Backpacks/Charms/Lemons_01/SM_Lemons_01_A.pskx,1,Lemons_01_A
+charm,charm|Lizzie_01,3a225d26d5efdca6,Lizzie 01,Lizzie_01,BackpackCharm,Characters/Backpacks/Charms/Lizzie_01/SM_Lizzie_01_A.pskx,1,Lizzie_01_A
+charm,charm|Medal_01,49f4bdb0aebd5713,Medal 01,Medal_01,BackpackCharm,Characters/Backpacks/Charms/Medal_01/SM_Medal_01_A.pskx,1,Medal_01_A
+charm,charm|Medal_02,8100875e5a564f4b,Medal 02,Medal_02,BackpackCharm,Characters/Backpacks/Charms/Medal_02/SM_Medal_02_A.pskx,1,Medal_02_A
+charm,charm|MiniRemote_01,884204a7392906b8,Mini Remote 01,MiniRemote_01,BackpackCharm,Characters/Backpacks/Charms/MiniRemote_01/SM_MiniRemote_01_A.pskx,1,MiniRemote_01_A
+charm,charm|MoonLander_01,2f58f26d8e62dba1,Moon Lander 01,MoonLander_01,BackpackCharm,Characters/Backpacks/Charms/MoonLander_01/SM_MoonLander_01_A.pskx,1,MoonLander_01_A
+charm,charm|Origami_01,8751eb3e3d702698,Origami 01,Origami_01,BackpackCharm,Characters/Backpacks/Charms/Origami_01/SM_Origami_01_A.pskx,1,Origami_01_A
+charm,charm|Pager_01,e0a7c1001c1f7ef5,Pager 01,Pager_01,BackpackCharm,Characters/Backpacks/Charms/Pager_01/SM_Pager_01_A.pskx,1,Pager_01_A
+charm,charm|PocketRadar_01,67e05818848e7d16,Pocket Radar 01,PocketRadar_01,BackpackCharm,Characters/Backpacks/Charms/PocketRadar_01/SM_PocketRadar_01_A.pskx,1,PocketRadar
+charm,charm|PortableJammer_01,cce3c24aa7ca7661,Portable Jammer 01,PortableJammer_01,BackpackCharm,Characters/Backpacks/Charms/PortableJammer_01/SM_PortableJammer_01_A.pskx,1,PortableJammer_01_A
+charm,charm|PressureGauge_01,9e6860099d844f6c,Pressure Gauge 01,PressureGauge_01,BackpackCharm,Characters/Backpacks/Charms/PressureGauge_01/SM_PressureGauge_01_A.pskx,1,PressureGauge_01_A
+charm,charm|RabbitFoot_01,6a4645bc9603acf6,Rabbit Foot 01,RabbitFoot_01,BackpackCharm,Characters/Backpacks/Charms/RabbitFoot_01/SM_RabbitFoot_01_A.pskx,1,RabbitFoot
+charm,charm|Radio_01,71982122cbaeccf4,Radio 01,Radio_01,BackpackCharm,Characters/Backpacks/Charms/Radio_01/SM_Radio_01_A.pskx,1,Radio_01_A
+charm,charm|RemoveBeforeFlight_01,e0472785d052fb45,Remove Before Flight 01,RemoveBeforeFlight_01,BackpackCharm,Characters/Backpacks/Charms/RemoveBeforeFlight_01/SM_RemoveBeforeFlight_01_A.pskx,1,RemoveBeforeFlight_01_A
+charm,charm|RubberDuck_01,76070f01efb2195a,Rubber Duck 01,RubberDuck_01,BackpackCharm,Characters/Backpacks/Charms/RubberDuck_01/SM_RubberDuck_01_A.pskx,1,RubberDuck_01_A
+charm,charm|SampleTube_01,67c11bf0d85be14c,Sample Tube 01,SampleTube_01,BackpackCharm,Characters/Backpacks/Charms/SampleTube_01/SM_SampleTube_01_A.pskx,1,SampleTube_01_A
+charm,charm|Sextant_01,71158badf9545cc6,Sextant 01,Sextant_01,BackpackCharm,Characters/Backpacks/Charms/Sextant_01/SM_Sextant_01_A.pskx,1,Sextant_01_A
+charm,charm|Shears_01,c9c4c63d2fd7b38f,Shears 01,Shears_01,BackpackCharm,Characters/Backpacks/Charms/Shears_01/SM_Shears_01_A.pskx,1,Shears_01_A
+charm,charm|ShuttleKeyChain_01,e2fa08ffeac5d3b9,Shuttle Key Chain 01,ShuttleKeyChain_01,BackpackCharm,Characters/Backpacks/Charms/ShuttleKeyChain_01/SM_ShuttleKeyChain_01_A.pskx,1,ShuttleKeyChain_01_A
+charm,charm|SnowGlobe_01,6dd7f693a3c31c8f,Snow Globe 01,SnowGlobe_01,BackpackCharm,Characters/Backpacks/Charms/SnowGlobe_01/SM_SnowGlobe_01_A.pskx,1,SnowGlobe_01_A
+charm,charm|SoccerFinalsTicket_01,e40252eae1b4c429,Soccer Finals Ticket 01,SoccerFinalsTicket_01,BackpackCharm,Characters/Backpacks/Charms/SoccerFinalsTicket_01/SM_SoccerFinalsTicket_01_A.pskx,1,SoccerFinalsTicket_01_A
+charm,charm|SodaCan_01,99ab06c0b8024695,Soda Can 01,SodaCan_01,BackpackCharm,Characters/Backpacks/Charms/SodaCan_01/SM_SodaCan_01_A.pskx,1,SodaCan_01_A
+charm,charm|SpaceGun_01,8a7f6da67289cc11,Space Gun 01,SpaceGun_01,BackpackCharm,Characters/Backpacks/Charms/SpaceGun_01/SM_SpaceGun_01_A.pskx,1,SpaceGun_01
+charm,charm|SpottingScope_01,5a9882f6fcde857e,Spotting Scope 01,SpottingScope_01,BackpackCharm,Characters/Backpacks/Charms/SpottingScope_01/SM_SpottingScope_01_A.pskx,1,SpottingScope_01_A
+charm,charm|Stapler_01,33c8287049bb1c73,Stapler 01,Stapler_01,BackpackCharm,Characters/Backpacks/Charms/Stapler_01/SM_Stapler_01_A.pskx,1,Stapler_01_A
+charm,charm|Sundial_01,f018171998039127,Sundial 01,Sundial_01,BackpackCharm,Characters/Backpacks/Charms/Sundial_01/SM_Sundial_01_A.pskx,1,Sundial
+charm,charm|TalkingTeeth_01,bfadb79d0ebda739,Talking Teeth 01,TalkingTeeth_01,BackpackCharm,Characters/Backpacks/Charms/TalkingTeeth_01/SM_ChatteringTeeth_01_A.pskx,1,TalkingTeeth_01
+charm,charm|ToyPlane_01,d501efed590b69c3,Toy Plane 01,ToyPlane_01,BackpackCharm,Characters/Backpacks/Charms/ToyPlane_01/SM_ToyPlane_01_A.pskx,1,ToyPlane_01_A
+charm,charm|ToyRobot_01,b07e6161b6bc9dc4,Toy Robot 01,ToyRobot_01,BackpackCharm,Characters/Backpacks/Charms/ToyRobot_01/SM_ToyRobot_01_A.pskx,1,ToyRobot_01_A
+charm,charm|TwigTrinket_01,0dca0687c0d4873f,Twig Trinket 01,TwigTrinket_01,BackpackCharm,Characters/Backpacks/Charms/TwigTrinket_01/SM_TwigTrinket_01_A.pskx,1,TwigTrinket_01_A
+charm,charm|VintageMic_01,9a3962ffc4a4b3e8,Vintage Mic 01,VintageMic_01,BackpackCharm,Characters/Backpacks/Charms/VintageMic_01/SM_VintageMic_01_A.pskx,1,VintageMic_01_A
+charm,charm|VintageToyCar_01,ef9237cb8c638f31,Vintage Toy Car 01,VintageToyCar_01,BackpackCharm,Characters/Backpacks/Charms/VintageToyCar_01/SM_VintageToyCar_01_A.pskx,1,VintageToyCar_01_A
+charm,charm|Walkman_01,63a535c406d9ba64,Walkman 01,Walkman_01,BackpackCharm,Characters/Backpacks/Charms/Walkman_01/SM_CasettePlayer_01_A.pskx,1,Walkman_01
+charm,charm|WaterBottle_01,1c8a93c8df7e58c5,Water Bottle 01,WaterBottle_01,BackpackCharm,Characters/Backpacks/Charms/WaterBottle_01/SM_WaterBottle_01_A.pskx,1,WaterBottle_01_A
+charm,charm|WineBottle_01,a2c5a4eb2a35899d,Wine Bottle 01,WineBottle_01,BackpackCharm,Characters/Backpacks/Charms/WineBottle_01/SM_WineBottle_01_A.pskx,1,WineBottle_01_A
+charm,charm|WireSpool_01,23fa5de45cf187d2,Wire Spool 01,WireSpool_01,BackpackCharm,Characters/Backpacks/Charms/WireSpool_01/SM_WireSpool_01_A.uemodel,1,WireSpool_01_A
+raider_tool,raider_tool|10MilTool,8fc6c2ba09de4dbf,10 Mil Tool,10MilTool,RaiderTool,Characters/RaiderTool/10MilTool/SK_10MilTool_01.psk,1,10MilTool
+raider_tool,raider_tool|AnthropologistStaffTool_01,8c436fc4c7f67c30,Anthropologist Staff Tool 01,AnthropologistStaffTool_01,RaiderTool,Characters/RaiderTool/AnthropologistStaffTool_01/SK_AnthropologistStaffTool_01.psk,1,AnthropologistStaffTool
+raider_tool,raider_tool|ArcTool_01,d25a930b904b74aa,Arc Tool 01,ArcTool_01,RaiderTool,Characters/RaiderTool/ArcTool_01/SK_ArcTool_01.psk,1,ArcTool
+raider_tool,raider_tool|BastionMace_01,22c1ae5a982c6d8d,Bastion Mace 01,BastionMace_01,RaiderTool,Characters/RaiderTool/BastionMace_01/SK_BastionMace_05_A.psk,1,BastionMace
+raider_tool,raider_tool|GoalieTool_01,c1d5a38d1dcf53b9,Goalie Tool 01,GoalieTool_01,RaiderTool,Characters/RaiderTool/GoalieTool_01/SK_GoalieTool_01_A.psk,1,GoalieTool
+raider_tool,raider_tool|MobyDickTool_01,2582d5f0cbdb83f2,Moby Dick Tool 01,MobyDickTool_01,RaiderTool,Characters/RaiderTool/MobyDickTool_01/SK_MobyDickTool_01_A.psk,1,MobyDick
+raider_tool,raider_tool|RelaxedAustronautTool_01,8ea4b8663b3adac5,Relaxed Austronaut Tool 01,RelaxedAustronautTool_01,RaiderTool,Characters/RaiderTool/RelaxedAustronautTool_01/SK_RelaxedAustronautTool_01_A.psk,1,RelaxedAustronautTool
+raider_tool,raider_tool|RiotSledgeHammer_01,9e10c01bac387923,Riot Sledge Hammer 01,RiotSledgeHammer_01,RaiderTool,Characters/RaiderTool/RiotSledgeHammer_01/SK_RiotSledgeHammer_01.psk,1,RiotSledgeHammer
+raider_tool,raider_tool|ShroudHornsTool_01,48eca8fe5c3c58cb,Shroud Horns Tool 01,ShroudHornsTool_01,RaiderTool,Characters/RaiderTool/ShroudHornsTool_01/SK_ShroudHornsTool_01_A.psk,1,ShroudHornsTool
+raider_tool,raider_tool|TheKidTool_01,4aad383f60c7a180,The Kid Tool 01,TheKidTool_01,RaiderTool,Characters/RaiderTool/TheKidTool_01/SK_TheKidTool_01_A.psk,1,TheKidTool
+raider_tool,raider_tool|UrchinHarvesterTool_01,5ce7024033675976,Urchin Harvester Tool 01,UrchinHarvesterTool_01,RaiderTool,Characters/RaiderTool/UrchinHarvesterTool_01/SK_UrchinHarvesterTool_01_A.psk,1,UrchinHarvesterTool
+hair,Hairs|BackSlickShort,1dce41a8f0225b73,Back Slick Short,BackSlickShort,Hairs,Characters/Hairs/BackSlickShort/SK_BackSlickShort.psk,1,BackSlickShort
+hair,Hairs|Bob,bfdc6a736005fb54,Bob,Bob,Hairs,Characters/Hairs/Bob/SK_Bob.psk,1,Bob
+hair,Hairs|DreadsShort,01604cc0f6f22a17,Dreads Short,DreadsShort,Hairs,Characters/Hairs/DreadsShort/SK_DreadsShort.psk,1,DreadsShort
+hair,Hairs|HighPonytail,92a6863b895a88aa,High Ponytail,HighPonytail,Hairs,Characters/Hairs/HighPonytail/SK_HighPonytail.psk,1,HighPonytail
+backpack,backpack|Boiler,aa11237f79b88a19,Boiler,Boiler,Containers,Characters/Backpacks/Containers/Boiler/Boiler/SM_Boiler_Boiler.pskx,1,Boiler
+backpack,backpack|IronStove,1deb297470f1b40c,Iron Stove,IronStove,Containers,Characters/Backpacks/Containers/IronStove/IronStove/SM_IronStove_IronStove.pskx,1,IronStove
+attachment,attachment|CarbideLamp_01,d933c48a824d1ed1,Carbide Lamp 01,CarbideLamp_01,Attachments,Characters/Backpacks/Attachments/CarbideLamp_01/SM_CarbideLamp_01_A.pskx,1,CarbideLamp_01
+attachment,attachment|InfraredTransmitter_01,f3722682fcace6ef,Infrared Transmitter 01,InfraredTransmitter_01,Attachments,Characters/Backpacks/Attachments/InfraredTransmitter_01/SM_InfraredTransmitter_01_A.pskx,1,InfraredTransmitter_01
+attachment,attachment|LithiumPack_01,4a90d4c05d908fcd,Lithium Pack 01,LithiumPack_01,Attachments,Characters/Backpacks/Attachments/LithiumPack_01/SM_LithiumPack_01_A.pskx,1,LithiumPack_01
+attachment,attachment|Mailbox_01,0e610c5f66e9f619,Mailbox 01,Mailbox_01,Attachments,Characters/Backpacks/Attachments/Mailbox_01/SM_Mailbox_01_A.pskx,1,Mailbox_01
+attachment,attachment|OxygenRespirator_01,35d04bc7cbb6e1ba,Oxygen Respirator 01,OxygenRespirator_01,Attachments,Characters/Backpacks/Attachments/OxygenRespirator_01/SM_OxygenRespirator_01_A.pskx,1,OxygenRespirator_01
+attachment,attachment|RenegadeCenser_01,68e7203bb2651358,Renegade Censer 01,RenegadeCenser_01,Attachments,Characters/Backpacks/Attachments/RenegadeCenser_01/SM_RenegadeCenser_01_A.pskx,1,RenegadeCenser_01
+attachment,attachment|SpacecraftModule_01,2bb02a7c3538cb51,Spacecraft Module 01,SpacecraftModule_01,Attachments,Characters/Backpacks/Attachments/SpacecraftModule_01/SM_SpacecraftModule_01_A.pskx,1,SpacecraftModule_01
+attachment,attachment|TrainWhistle_01,ee4490a9dd971e8b,Train Whistle 01,TrainWhistle_01,Attachments,Characters/Backpacks/Attachments/TrainWhistle_01/SM_TrainWhistle_01_A.pskx,1,TrainWhistle_01
+charm,charm|CowBell_01,c949ff45daa2d2e9,Cow Bell 01,CowBell_01,Charms,Characters/Backpacks/Charms/CowBell_01/SM_CowBell_01_A.pskx,1,CowBell_01
+charm,charm|GearBracelet_01,c1a0fda766f66011,Gear Bracelet 01,GearBracelet_01,Charms,Characters/Backpacks/Charms/GearBracelet_01/SM_GearBracelet_01_A.pskx,1,GearBracelet_01
+charm,charm|HandheldLamp_01,0049eefadb695d21,Handheld Lamp 01,HandheldLamp_01,Charms,Characters/Backpacks/Charms/HandheldLamp_01/SM_HandheldLamp_01.pskx,1,HandheldLamp_01
+charm,charm|HotAirBalloon_01,8a137b7b71210e2b,Hot Air Balloon 01,HotAirBalloon_01,Charms,Characters/Backpacks/Charms/HotAirBalloon_01/SM_HotAirBalloon_01_A.pskx,1,HotAirBalloon_01
+charm,charm|IceScrewsBundle_01,dcccf06db6aa85dd,Ice Screws Bundle 01,IceScrewsBundle_01,Charms,Characters/Backpacks/Charms/IceScrewsBundle_01/SM_IceScrewsBundle_01_A.pskx,1,IceScrewsBundle_01
+charm,charm|KillCounter_01,2ea9b5098f7856b4,Kill Counter 01,KillCounter_01,Charms,Characters/Backpacks/Charms/KillCounter_01/SM_KillCounter_01_A.pskx,1,KillCounter_01
+charm,charm|PolaroidCamera_01,71d2d7c993ba3e22,Polaroid Camera 01,PolaroidCamera_01,Charms,Characters/Backpacks/Charms/PolaroidCamera_01/SM_PolaroidCamera_01_A.pskx,1,PolaroidCamera_01
+charm,charm|SheriffBadge_01,3a8b2aa6f5287613,Sheriff Badge 01,SheriffBadge_01,Charms,Characters/Backpacks/Charms/SheriffBadge_01/SM_SheriffBadge_01_A.pskx,1,SheriffBadge_01
+charm,charm|TrafficBand_01,9bf406702f8a7b7b,Traffic Band 01,TrafficBand_01,Charms,Characters/Backpacks/Charms/TrafficBand_01/SM_TrafficBand_01_A.pskx,1,TrafficBand_01
+charm,charm|WhistleBundle_01,45ea68a2dbd8ff2f,Whistle Bundle 01,WhistleBundle_01,Charms,Characters/Backpacks/Charms/WhistleBundle_01/SM_WhistleBundle_01_A.pskx,1,WhistleBundle_01
+raider_tool,raider_tool|ArcticFox_01,adf506db42737669,Arctic Fox 01,ArcticFox_01,RaiderTool,Characters/RaiderTool/ArcticFox_01/SK_ArcticFox_01_A.psk,1,ArcticFox_01
+raider_tool,raider_tool|IceClimber_01,6be8322d1696368c,Ice Climber 01,IceClimber_01,RaiderTool,Characters/RaiderTool/IceClimber_01/SK_IceClimber_01_A.psk,1,IceClimber_01
+raider_tool,raider_tool|ReaverTool_01,3a292e828023dfb1,Reaver Tool 01,ReaverTool_01,RaiderTool,Characters/RaiderTool/ReaverTool_01/SK_ReaverTool_01_A.psk,1,ReaverTool_01
+raider_tool,raider_tool|Renegade_01,1a216aad37a840a7,Renegade 01,Renegade_01,RaiderTool,Characters/RaiderTool/Renegade_01/SK_Renegade_01_A.psk,1,Renegade_01
+raider_tool,raider_tool|ScrapMechanic_01,994bc0748f7b6a3f,Scrap Mechanic 01,ScrapMechanic_01,RaiderTool,Characters/RaiderTool/ScrapMechanic_01/SK_ScrapMechanic_01.psk,1,ScrapMechanic_01

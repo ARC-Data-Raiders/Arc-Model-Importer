@@ -341,6 +341,11 @@ def _pattern_enum_items(self, context):
     return _wcat.pattern_enum_items(self, context)
 
 
+def _weapon_skin_enum_items(self, context):
+    from . import weapon_catalog as _wcat
+    return _wcat.skin_enum_items(self, context)
+
+
 _ANIM_KIND_ITEMS = (
     ("ALL", "All kinds", "AnimSequence, AnimMontage, and AnimComposite"),
     ("AnimSequence", "Sequences", "UAnimSequence only"),
@@ -442,9 +447,15 @@ _SHARED_SCENE_PROPS = (
     "arc_psk_entries",
     "arc_outfit_selections",
     "arc_pioneer_root",
+    "arc_pak_dir",
+    "arc_usmap_path",
     "arc_fmdex_root",
     "arc_ns_json_path",
     "arc_ns_asset_root",
+    "arc_ns_catalog_root",
+    "arc_ns_search",
+    "arc_ns_selected",
+    "arc_ns_lut_only",
     "arc_ns_bake_curves",
     "arc_manual_outfit_folder",
     "arc_outfit_preset",
@@ -469,6 +480,23 @@ _SHARED_SCENE_PROPS = (
     "arc_palette_mode",
     "arc_outfit_color_pipeline",
     "arc_color_benchmark_id",
+    "arc_appearance_attach_to_outfit",
+    "arc_appearance_replace_selected",
+    "arc_appearance_body_skin",
+    "arc_appearance_head",
+    "arc_appearance_hair",
+    "arc_appearance_hair_color",
+    "arc_appearance_eyelash_copy_hair_color",
+    "arc_appearance_backpack",
+    "arc_appearance_attachment",
+    "arc_appearance_charm",
+    "arc_appearance_raider_tool",
+    "arc_appearance_csv_path",
+    "arc_include_reference",
+    "arc_appearance_import_body",  # retired checkbox; deleted on register
+    "arc_import_slot_offset",
+    "arc_import_slot_spacing",
+    "arc_deep_path_search_root",
     "arc_crease_edge_color",
     "arc_mask_debug_mode",
     "arc_mask_debug_source",
@@ -488,7 +516,9 @@ _SHARED_SCENE_PROPS = (
     "arc_weapon_mod_underbarrel",
     "arc_weapon_mod_tech",
     "arc_weapon_pattern",
+    "arc_weapon_skin",
     "arc_last_weapon_armature",
+    "arc_pose_preset",
     "arc_anim_search",
     "arc_selected_anim",
     "arc_anim_kind_filter",
@@ -500,16 +530,21 @@ _SHARED_SCENE_PROPS = (
     "arc_last_applied_anim_armature",
     "arc_lighting_look",
     "arc_lighting_lut_strength",
+    "arc_lighting_hdri",
     "arc_lighting_hdri_strength",
     "arc_lighting_hdri_rotation_z",
     "arc_lighting_hdri_flip_x",
     "arc_lighting_apply_hdri",
     "arc_lighting_apply_lut",
+    "arc_lighting_override",
     "arc_lighting_look_applied",
     "arc_lighting_map",
     "arc_lighting_scenario",
     "arc_lighting_apply_bloom",
     "arc_lighting_apply_fog",
+    "arc_lighting_fog_size_x",
+    "arc_lighting_fog_size_y",
+    "arc_lighting_fog_size_z",
 )
 
 # Props the Outfits (and shared) UI draws — used by ensure_scene_properties().
@@ -535,6 +570,22 @@ _UI_CRITICAL_SCENE_PROPS = (
     "arc_palette_mode",
     "arc_outfit_color_pipeline",
     "arc_color_benchmark_id",
+    "arc_appearance_attach_to_outfit",
+    "arc_appearance_replace_selected",
+    "arc_appearance_body_skin",
+    "arc_appearance_head",
+    "arc_appearance_hair",
+    "arc_appearance_hair_color",
+    "arc_appearance_eyelash_copy_hair_color",
+    "arc_appearance_backpack",
+    "arc_appearance_attachment",
+    "arc_appearance_charm",
+    "arc_appearance_raider_tool",
+    "arc_appearance_csv_path",
+    "arc_include_reference",
+    "arc_import_slot_offset",
+    "arc_import_slot_spacing",
+    "arc_deep_path_search_root",
     "arc_crease_edge_color",
     "arc_mask_debug_mode",
     "arc_mask_debug_source",
@@ -553,6 +604,8 @@ _UI_CRITICAL_SCENE_PROPS = (
     "arc_weapon_mod_underbarrel",
     "arc_weapon_mod_tech",
     "arc_weapon_pattern",
+    "arc_weapon_skin",
+    "arc_pose_preset",
     "arc_anim_search",
     "arc_selected_anim",
     "arc_anim_kind_filter",
@@ -560,8 +613,13 @@ _UI_CRITICAL_SCENE_PROPS = (
     "arc_anim_replace_action",
     "arc_animation_cache",
     "arc_lighting_look",
+    "arc_lighting_hdri",
+    "arc_lighting_override",
     "arc_lighting_map",
     "arc_lighting_scenario",
+    "arc_lighting_fog_size_x",
+    "arc_lighting_fog_size_y",
+    "arc_lighting_fog_size_z",
 )
 
 # Map-importer line only — safe to always remove when that line unregisters.
@@ -594,7 +652,12 @@ def ensure_scene_properties() -> bool:
     properties here — that fires update callbacks and can tag_redraw VIEW_3D in a loop.
     """
     missing = [n for n in _UI_CRITICAL_SCENE_PROPS if not hasattr(bpy.types.Scene, n)]
-    if missing:
+    # Collection props can exist but point at a recycled Operator RNA id after reload.
+    collections_broken = (
+        _scene_collection_fixed_type_id("arc_psk_entries") != "ArcOutfitsPSKEntry"
+        or _scene_collection_fixed_type_id("arc_outfit_selections") != "ArcOutfitsSelection"
+    )
+    if missing or collections_broken:
         try:
             register()
         except Exception as exc:
@@ -607,6 +670,12 @@ def ensure_scene_properties() -> bool:
     still_missing = [n for n in _UI_CRITICAL_SCENE_PROPS if not hasattr(bpy.types.Scene, n)]
     if still_missing:
         print(f"Arc Raiders: Scene props still missing after ensure: {still_missing}")
+        return False
+    if (
+        _scene_collection_fixed_type_id("arc_psk_entries") != "ArcOutfitsPSKEntry"
+        or _scene_collection_fixed_type_id("arc_outfit_selections") != "ArcOutfitsSelection"
+    ):
+        print("Arc Raiders: Scene collection props still corrupted after ensure")
         return False
     return True
 
@@ -625,45 +694,344 @@ def _register_mask_debug_color_n():
     )
 
 
+def _scene_collection_fixed_type_id(name: str) -> str:
+    """Return the CollectionProperty fixed_type identifier, or ''."""
+    try:
+        prop = bpy.types.Scene.bl_rna.properties.get(name)
+    except Exception:
+        return ""
+    if prop is None or getattr(prop, "type", "") != "COLLECTION":
+        return ""
+    ft = getattr(prop, "fixed_type", None)
+    return getattr(ft, "identifier", "") or ""
+
+
+def _assign_collection_prop(name: str, expected_cls, prop) -> None:
+    """Bind a Scene CollectionProperty, repairing RNA type-id corruption.
+
+    After dual-addon reload, Blender can leave ``arc_psk_entries`` pointing at a
+    recycled Operator RNA id (e.g. ``ARC_OUTFITS_OT_clear_anim_search``). ``add()``
+    then returns that operator stub and ``entry.psk_path = ...`` crashes. Rebind
+    whenever the fixed_type is missing or not the expected PropertyGroup.
+    """
+    expected = getattr(expected_cls, "__name__", "") or ""
+    current = _scene_collection_fixed_type_id(name)
+    if current == expected and hasattr(bpy.types.Scene, name):
+        return
+    if hasattr(bpy.types.Scene, name):
+        if current and current != expected:
+            print(
+                f"Arc Raiders: repairing Scene.{name} "
+                f"(fixed_type was '{current}', expected '{expected}')"
+            )
+        try:
+            delattr(bpy.types.Scene, name)
+        except Exception:
+            pass
+    setattr(bpy.types.Scene, name, prop)
+
+
 def register():
     for cls in classes:
         _safe_register_class(cls)
 
-    bpy.types.Scene.arc_psk_entries = CollectionProperty(type=ArcOutfitsPSKEntry)
-    bpy.types.Scene.arc_outfit_selections = CollectionProperty(type=ArcOutfitsSelection)
-    bpy.types.Scene.arc_pioneer_root = StringProperty(
-        name='PioneerGame Root',
-        description=(
-            "Content search root for textures, MI JSONs, and outfits. Prefer the full "
-            "FModel output folder (parent of PioneerGame/ + MapPlacements/), not a "
-            "MapPlacements/{Map} mesh-only tree — those usually have .uemodel without "
-            "MI/SM JSON. Map meshes still resolve via the placements manifest / "
-            "arc_placement_mesh_root. Leave empty to auto-detect from the manifest."
-        ),
-        default="",
-        subtype='DIR_PATH',
+    def _assign_if_free(name, prop):
+        if hasattr(bpy.types.Scene, name):
+            return
+        setattr(bpy.types.Scene, name, prop)
+
+    _assign_collection_prop(
+        "arc_psk_entries",
+        ArcOutfitsPSKEntry,
+        CollectionProperty(type=ArcOutfitsPSKEntry),
     )
-    bpy.types.Scene.arc_ns_json_path = StringProperty(
+    _assign_collection_prop(
+        "arc_outfit_selections",
+        ArcOutfitsSelection,
+        CollectionProperty(type=ArcOutfitsSelection),
+    )
+    _assign_if_free(
+        "arc_pioneer_root",
+        StringProperty(
+            name='PioneerGame Root',
+            description=(
+                "Content search root for textures, MI JSONs, and outfits. Prefer the full "
+                "FModel output folder (parent of PioneerGame/ + MapPlacements/), not a "
+                "MapPlacements/{Map} mesh-only tree — those usually have .uemodel without "
+                "MI/SM JSON. Map meshes still resolve via the placements manifest / "
+                "arc_placement_mesh_root. Leave empty to auto-detect from the manifest."
+            ),
+            default="",
+            subtype='DIR_PATH',
+        ),
+    )
+    _assign_if_free(
+        "arc_pak_dir",
+        StringProperty(
+            name="Paks Folder",
+            description=(
+                "Shipping Arc Raiders IoStore folder (PioneerGame/Content/Paks). "
+                "The addon reads .utoc/.ucas from here. Oodle is loaded from the game install."
+            ),
+            default="",
+            subtype="DIR_PATH",
+        ),
+    )
+    _assign_if_free(
+        "arc_usmap_path",
+        StringProperty(
+            name="Usmap",
+            description="Newer .usmap. Leave empty to use the file shipped with the addon.",
+            default="",
+            subtype="FILE_PATH",
+        ),
+    )
+
+    # Body / head / hair sidebar (must use _assign_if_free — early return below
+    # skips bulk registration on reload when MapImporter RNA is already present).
+    from . import appearance as _appearance
+
+    # Retired: body was a checkbox; now three Add buttons. Drop RNA if present.
+    if hasattr(bpy.types.Scene, "arc_appearance_import_body"):
+        try:
+            delattr(bpy.types.Scene, "arc_appearance_import_body")
+        except Exception:
+            pass
+    _assign_if_free(
+        "arc_appearance_attach_to_outfit",
+        BoolProperty(
+            name="Add to Selected Outfit",
+            description=(
+                "When enabled, Add Hair / Head / Body / gear merges onto the "
+                "selected outfit armature (or a mesh skinned to one). When off, "
+                "import as a standalone group"
+            ),
+            default=False,
+        ),
+    )
+    _assign_if_free(
+        "arc_appearance_replace_selected",
+        BoolProperty(
+            name="Replace Selected",
+            description=(
+                "When enabled, Add Hair / Head / Body / gear removes the "
+                "currently selected matching part first, then imports the new "
+                "one. Off by default (always adds)"
+            ),
+            default=False,
+        ),
+    )
+    _assign_if_free(
+        "arc_appearance_csv_path",
+        StringProperty(
+            name="Appearance Reference CSV",
+            description=(
+                "Optional override for appearance_reference.csv "
+                "(head/hair/body catalog). Leave empty to use the shipped CSV"
+            ),
+            default="",
+            subtype='FILE_PATH',
+        ),
+    )
+    _assign_if_free(
+        "arc_appearance_body_skin",
+        EnumProperty(
+            name="Body Skin",
+            description="Skin colour variant for the shared body mesh",
+            items=make_body_items,
+        ),
+    )
+    _assign_if_free(
+        "arc_appearance_head",
+        EnumProperty(
+            name="Head",
+            description="Exported head mesh under Characters/Heads",
+            items=_appearance.make_head_enum_items,
+        ),
+    )
+    _assign_if_free(
+        "arc_appearance_hair",
+        EnumProperty(
+            name="Hair",
+            description="Exported hair mesh under Characters/Hairs (or FacialHairs)",
+            items=_appearance.make_hair_enum_items,
+        ),
+    )
+    _assign_if_free(
+        "arc_appearance_hair_color",
+        EnumProperty(
+            name="Hair Color",
+            description="Shared HairColors MI (ColorA/B) applied on top of the style atlas MI",
+            items=_appearance.make_hair_color_enum_items,
+        ),
+    )
+    _assign_if_free(
+        "arc_appearance_eyelash_copy_hair_color",
+        BoolProperty(
+            name="Eyelash copy Hair Color",
+            description=(
+                "When enabled, head eyelashes use the selected Hair Color (ColorA) "
+                "on Add Head and Update Hair Color"
+            ),
+            default=True,
+        ),
+    )
+    _assign_if_free(
+        "arc_appearance_backpack",
+        EnumProperty(
+            name="Backpack",
+            description="Backpack container under Characters/Backpacks/Containers",
+            items=_appearance.make_backpack_enum_items,
+        ),
+    )
+    _assign_if_free(
+        "arc_appearance_attachment",
+        EnumProperty(
+            name="Attachment",
+            description="Backpack attachment under Characters/Backpacks/Attachments",
+            items=_appearance.make_attachment_enum_items,
+        ),
+    )
+    _assign_if_free(
+        "arc_appearance_charm",
+        EnumProperty(
+            name="Charm",
+            description="Backpack charm under Characters/Backpacks/Charms",
+            items=_appearance.make_charm_enum_items,
+        ),
+    )
+    _assign_if_free(
+        "arc_appearance_raider_tool",
+        EnumProperty(
+            name="Raider Tool",
+            description="Raider tool under Characters/RaiderTools",
+            items=_appearance.make_raider_tool_enum_items,
+        ),
+    )
+    _assign_if_free(
+        "arc_include_reference",
+        BoolProperty(
+            name="Include Reference",
+            description=(
+                "When enabled, Load Outfit / Add Head / Add Hair also place UI "
+                "reference image planes (outfit 1 m left, head 0.5 m right, "
+                "hair 0.5 m above)"
+            ),
+            default=True,
+        ),
+    )
+    _assign_if_free(
+        "arc_deep_path_search_root",
+        StringProperty(
+            name="Deep Path Search Folder",
+            description=(
+                "User-consented folder for expensive Content/Characters discovery "
+                "when the standard PioneerGame/Content/Pioneer layout is missing. "
+                "Empty = deep search disabled"
+            ),
+            default="",
+            subtype='DIR_PATH',
+        ),
+    )
+    _assign_if_free(
+        "arc_import_slot_offset",
+        BoolProperty(
+            name="Offset Characters",
+            description=(
+                "Park each character on a pad spaced along X (default 2 m). "
+                "Each pad holds one Body, Head, Hair, Facial Hair, and Outfit. "
+                "Disable to import everything at world origin"
+            ),
+            default=True,
+        ),
+    )
+    _assign_if_free(
+        "arc_import_slot_spacing",
+        FloatProperty(
+            name="Character Spacing",
+            description="Distance between character pads along X (meters)",
+            default=2.0,
+            min=0.5,
+            max=50.0,
+            soft_min=1.0,
+            soft_max=10.0,
+            step=10,
+            precision=2,
+            unit='LENGTH',
+        ),
+    )
+
+    # Map Importer may already own shared Scene RNA. Later assigns skip
+    # properties that exist so Pose / Animations / Lighting still register.
+
+    _assign_if_free(
+        "arc_ns_json_path",
+        StringProperty(
         name='NS JSON',
         description=(
-            "Exported cooked Niagara system (NS_*.json). Must come from a property "
-            "export that resolves Niagara data-interface classes from mappings — "
-            "FModel's own export silently drops the curve tables. Dump with "
-            "CUE4Parse.Example niagara-ns-dump"
+            "One cooked Niagara system (NS_*.json). Prefer a niagara-ns-dump "
+            "(property export with ShaderLUT). FModel Exports+Metadata JSON drops "
+            "curve tables. Use the catalog below, or pick a file here"
         ),
         default="",
         subtype='FILE_PATH',
     )
-    bpy.types.Scene.arc_ns_asset_root = StringProperty(
+    )
+    _assign_if_free(
+        "arc_ns_asset_root",
+        StringProperty(
         name='NS Asset Root',
         description=(
-            "Export root searched for the renderer's .pskx/.psk meshes. "
-            "Leave empty to build placeholder geometry instead"
+            "FModel export root searched for renderer .pskx/.psk meshes "
+            "(usually Arc_Raiders_Current or its PioneerGame folder). "
+            "Empty = use PioneerGame Folder from Settings; still empty = placeholders"
         ),
         default="",
         subtype='DIR_PATH',
     )
-    bpy.types.Scene.arc_ns_bake_curves = BoolProperty(
+    )
+    _assign_if_free(
+        "arc_ns_catalog_root",
+        StringProperty(
+        name='NS Catalog Folder',
+        description=(
+            "Folder of NS_*.json to browse (prefer niagara-ns-dump output). "
+            "Empty = Pioneer …/Effects under PioneerGame Folder"
+        ),
+        default="",
+        subtype='DIR_PATH',
+    )
+    )
+    _assign_if_free(
+        "arc_ns_search",
+        StringProperty(
+        name='NS Search',
+        description="Filter the Niagara catalog by stem or folder (2+ characters)",
+        default="",
+    )
+    )
+    _assign_if_free(
+        "arc_ns_selected",
+        StringProperty(
+        name='Selected NS',
+        description="Catalog key of the selected Niagara system",
+        default="",
+    )
+    )
+    _assign_if_free(
+        "arc_ns_lut_only",
+        BoolProperty(
+        name='LUT dumps only',
+        description=(
+            "Hide NS JSON that has no ShaderLUT (typical FModel Exports+Metadata). "
+            "Point Catalog Folder at a niagara-ns-dump for curve-complete files"
+        ),
+        default=False,
+    )
+    )
+    _assign_if_free(
+        "arc_ns_bake_curves",
+        BoolProperty(
         name='Bake Curve LUTs',
         description=(
             "Bake each curve data interface's cooked ShaderLUT as an F-curve on a "
@@ -672,58 +1040,86 @@ def register():
         ),
         default=True,
     )
-    bpy.types.Scene.arc_fmdex_root = StringProperty(
-        name='FMDex Folder (FModel)',
-        description=(
-            "Folder containing FModel *_FMDex.json.br indexes "
-            "(usually {FModel install}/FMDex/{Profile}), not the FMDex source code"
-        ),
-        default="",
-        subtype='DIR_PATH',
     )
-    bpy.types.Scene.arc_manual_outfit_folder = StringProperty(
+    _assign_if_free(
+        "arc_fmdex_root",
+        StringProperty(
+            name='FMDex Folder (FModel)',
+            description=(
+                "Folder containing FModel *_FMDex.json.br indexes "
+                "(usually {FModel install}/FMDex/{Profile}), not the FMDex source code"
+            ),
+            default="",
+            subtype='DIR_PATH',
+        ),
+    )
+    _assign_if_free(
+        "arc_manual_outfit_folder",
+        StringProperty(
         name='Manual DA_OI_Outfit Folder',
         description="Override folder to scan for outfit colourways when auto-detection finds none",
         default="", subtype='DIR_PATH',
     )
-    bpy.types.Scene.arc_outfit_preset = EnumProperty(
+    )
+    _assign_if_free(
+        "arc_outfit_preset",
+        EnumProperty(
         name="Outfit Preset",
         description="Select a full named outfit colourway to auto-fill per-part skins below",
         items=make_outfit_preset_items,
     )
-    bpy.types.Scene.arc_outfit_csv_path = StringProperty(
+    )
+    _assign_if_free(
+        "arc_outfit_csv_path",
+        StringProperty(
         name="Outfit Reference CSV",
         description="Override CSV for the Outfit Selector",
         default="", subtype='FILE_PATH',
     )
-    bpy.types.Scene.arc_selected_outfit = StringProperty(
+    )
+    _assign_if_free(
+        "arc_selected_outfit",
+        StringProperty(
         name="Selected Outfit Key",
         description="Key of the currently selected outfit for import",
         default="",
     )
-    bpy.types.Scene.arc_selected_outfit_browse = EnumProperty(
+    )
+    _assign_if_free(
+        "arc_selected_outfit_browse",
+        EnumProperty(
         name="Browse Outfits",
         description="Browse all outfits — selecting one also selects it above",
         items=make_outfit_selector_items,
         update=_on_browse_outfit_changed,
     )
-    bpy.types.Scene.arc_outfit_search = StringProperty(
+    )
+    _assign_if_free(
+        "arc_outfit_search",
+        StringProperty(
         name="Search Outfits",
         description="Filter the outfit list",
         default="",
     )
-    # FModel bridge (outfits + map-importer): listener for import_models / import_outfit
-    bpy.types.Scene.arc_placement_listen_port = IntProperty(
-        name="FModel Listen Port",
-        description="TCP port for FModel model and placement commands (default 28563; SurfBlender uses 28562)",
-        default=28563,
-        min=1024,
-        max=65535,
     )
-    bpy.types.Scene.arc_auto_listen = BoolProperty(
-        name="Auto-start FModel Listener",
-        description="Start the local FModel receiver when this add-on registers",
-        default=True,
+    # FModel bridge (outfits + map-importer): listener for import_models / import_outfit
+    _assign_if_free(
+        "arc_placement_listen_port",
+        IntProperty(
+            name="FModel Listen Port",
+            description="TCP port for FModel model and placement commands (default 28563; SurfBlender uses 28562)",
+            default=28563,
+            min=1024,
+            max=65535,
+        ),
+    )
+    _assign_if_free(
+        "arc_auto_listen",
+        BoolProperty(
+            name="Auto-start FModel Listener",
+            description="Start the local FModel receiver when this add-on registers",
+            default=True,
+        ),
     )
 
     # Map Placement / GroundPlane / shore — map-importer line only
@@ -869,7 +1265,9 @@ def register():
     # Blender-only experiment switch: FModel keeps one validated decal transform.
     from . import materials as _materials
 
-    bpy.types.Scene.arc_decal_method = EnumProperty(
+    _assign_if_free(
+        "arc_decal_method",
+        EnumProperty(
         name="Decal Placement",
         description=(
             "How decal UVs are placed. FModel (validated) matches the FModel viewer and "
@@ -879,7 +1277,10 @@ def register():
         items=_materials.DECAL_PLACEMENT_METHODS,
         default=_materials.DECAL_PLACEMENT_DEFAULT,
     )
-    bpy.types.Scene.arc_decal_excl_slot = EnumProperty(
+    )
+    _assign_if_free(
+        "arc_decal_excl_slot",
+        EnumProperty(
         name="Decal Slot",
         description="Which decal LayerMask gate receives the Colour N exclude checkboxes",
         items=[
@@ -895,6 +1296,7 @@ def register():
         ],
         default="0",
     )
+    )
     for _zi in range(1, 9):
         setattr(
             bpy.types.Scene,
@@ -908,7 +1310,9 @@ def register():
                 default=False,
             ),
         )
-    bpy.types.Scene.arc_palette_mode = EnumProperty(
+    _assign_if_free(
+        "arc_palette_mode",
+        EnumProperty(
         name="Palette Routing",
         description=(
             "ColorA/B/C vs ColorA2/B2/C2 for ColorMask_XYZ. Auto = measured zone map; "
@@ -923,15 +1327,17 @@ def register():
         ],
         default='AUTO',
     )
+    )
     # D022–D032 ground truth vs pre-D022 ColorMask_XYZ / D010 soft Mix.
     # Revert: set LEGACY then Update Materials (legacy path is fully retained).
-    bpy.types.Scene.arc_outfit_color_pipeline = EnumProperty(
+    _assign_if_free(
+        "arc_outfit_color_pipeline",
+        EnumProperty(
         name="Outfit Color Pipeline",
         description=(
             "How outfit colour is built. Legacy: ColorMask_XYZ G/B lerp of ColorA/B/C "
-            "into ArcTexturer. Ground Truth: ColorMask.rgb × ColorMaskSwatch fold-from-white "
-            "into Principled (rough/metal/decals/TA normals/edge-crease; no ArcTexturer). "
-            "TA UVs use ArrayUvScale 25 plus per-layer Crease/Edge/Medium NormalTiling Value nodes. "
+            "into ArcTexturer. Ground Truth: M_Character_Layered reconstruct (linear packed maps, "
+            "UV1 texture arrays, lerp(A,A2,BaseColor.R), crease/edge wear, DX+RNM normals). "
             "Re-run Update Materials after changing"
         ),
         items=[
@@ -943,13 +1349,15 @@ def register():
             (
                 'GROUND_TRUTH',
                 "Ground Truth",
-                "Cooked ColorMask×Swatch Colour N muxed by mid×8; Principled PBR "
-                "(rough/metal/decals/extra normals/edge-crease). ArrayUvScale=25. No ArcTexturer.",
+                "M_Character_Layered reconstruct into Principled (UV1 arrays, A/A2 lerp, wear, DX+RNM). No ArcTexturer.",
             ),
         ],
-        default='LEGACY',
+        default='GROUND_TRUTH',
     )
-    bpy.types.Scene.arc_color_benchmark_id = EnumProperty(
+    )
+    _assign_if_free(
+        "arc_color_benchmark_id",
+        EnumProperty(
         name="Color Benchmark",
         description=(
             "Which curated body part(s) to import as flat inspection graphs "
@@ -968,18 +1376,24 @@ def register():
         ],
         default='ALL',
     )
-    bpy.types.Scene.arc_crease_edge_color = BoolProperty(
+    )
+    _assign_if_free(
+        "arc_crease_edge_color",
+        BoolProperty(
         name="Crease/Edge Color",
         description=(
-            "When on: wire N_Crease/EdgeColorOverlay into ArcTexturer Crease/Edge sockets. "
-            "When off (default): leave those sockets unconnected, hide them on the Arc "
-            "node, and mute EdgeCrease-Controller so crease/edge color cannot tint. "
+            "When on (default, Revamped parity): wire Crease/EdgeColorOverlay into the "
+            "GT albedo path and ArcTexturer Crease/Edge sockets. When off: leave those "
+            "sockets unconnected and mute EdgeCrease-Controller. "
             "Re-run Update Materials after changing"
         ),
-        default=False,
+        default=True,
+    )
     )
     # Internal: UI toggle removed; import always organizes nodes at end of material build.
-    bpy.types.Scene.arc_organize_nodes_on_import = BoolProperty(
+    _assign_if_free(
+        "arc_organize_nodes_on_import",
+        BoolProperty(
         name="Organize Nodes on Import",
         description=(
             "Legacy compatibility prop — ignored. Import always runs NCT / place_* / "
@@ -987,9 +1401,12 @@ def register():
         ),
         default=True,
     )
+    )
     # Internal: UI toggle removed; import path hardcodes prefetch On via utils.io_prefetch_enabled.
 
-    bpy.types.Scene.arc_io_prefetch = BoolProperty(
+    _assign_if_free(
+        "arc_io_prefetch",
+        BoolProperty(
         name="IO Prefetch",
         description=(
             "Use a small ThreadPool to discover texture paths while meshes import "
@@ -998,9 +1415,12 @@ def register():
         ),
         default=True,
     )
+    )
 
     # Mask Debug — Apply-only (no live update callbacks).
-    bpy.types.Scene.arc_mask_debug_source = EnumProperty(
+    _assign_if_free(
+        "arc_mask_debug_source",
+        EnumProperty(
         name="Zone Source",
         description=(
             "How Color N is derived. Procedural uses a live ColorRamp (tunable band "
@@ -1010,7 +1430,10 @@ def register():
         items=_MASK_DEBUG_SOURCE_ITEMS,
         default="procedural",
     )
-    bpy.types.Scene.arc_mask_debug_mode = EnumProperty(
+    )
+    _assign_if_free(
+        "arc_mask_debug_mode",
+        EnumProperty(
         name="Mask Debug",
         description=(
             "Viewport mask preview injected into clothing materials (ColorABC stay live). "
@@ -1019,8 +1442,11 @@ def register():
         items=_MASK_DEBUG_MODE_ITEMS,
         default="0",
     )
+    )
     _register_mask_debug_color_n()
-    bpy.types.Scene.arc_mask_debug_grid_scale = FloatProperty(
+    _assign_if_free(
+        "arc_mask_debug_grid_scale",
+        FloatProperty(
         name="Debug Grid Scale",
         description=(
             "Digit / checker density. Digits auto-fit the mesh (about 24 glyph rows "
@@ -1033,7 +1459,10 @@ def register():
         soft_max=10.0,
         max=10.0,
     )
-    bpy.types.Scene.arc_mask_debug_overlay_opacity = FloatProperty(
+    )
+    _assign_if_free(
+        "arc_mask_debug_overlay_opacity",
+        FloatProperty(
         name="Overlay Opacity",
         description="Mode overlay mix factor (highlight / CurvatureID / false colour). Click Apply",
         default=0.5,
@@ -1041,7 +1470,10 @@ def register():
         max=1.0,
         subtype="FACTOR",
     )
-    bpy.types.Scene.arc_mask_debug_opacity = FloatProperty(
+    )
+    _assign_if_free(
+        "arc_mask_debug_opacity",
+        FloatProperty(
         name="Overlay Opacity (legacy)",
         description="Deprecated alias of Overlay Opacity",
         default=0.5,
@@ -1049,7 +1481,10 @@ def register():
         max=1.0,
         subtype="FACTOR",
     )
-    bpy.types.Scene.arc_mask_debug_colormask_opacity = FloatProperty(
+    )
+    _assign_if_free(
+        "arc_mask_debug_colormask_opacity",
+        FloatProperty(
         name="ColorMask Opacity",
         description="ColorMask layer mix factor (above mode overlay). Click Apply",
         default=0.5,
@@ -1057,7 +1492,10 @@ def register():
         max=1.0,
         subtype="FACTOR",
     )
-    bpy.types.Scene.arc_mask_debug_numbers_opacity = FloatProperty(
+    )
+    _assign_if_free(
+        "arc_mask_debug_numbers_opacity",
+        FloatProperty(
         name="Numbers Opacity",
         description="Zone digit overlay opacity. Click Apply",
         default=1.0,
@@ -1065,92 +1503,163 @@ def register():
         max=1.0,
         subtype="FACTOR",
     )
-    bpy.types.Scene.arc_mask_debug_show_colormask = BoolProperty(
+    )
+    _assign_if_free(
+        "arc_mask_debug_show_colormask",
+        BoolProperty(
         name="Show ColorMask",
         description="Composite ColorMask above the mode overlay (Apply to enable)",
         default=False,
     )
-    bpy.types.Scene.arc_mask_debug_show_numbers = BoolProperty(
+    )
+    _assign_if_free(
+        "arc_mask_debug_show_numbers",
+        BoolProperty(
         name="Show Numbers",
         description="Overlay Color N zone digits (Apply to enable / disable)",
         default=True,
     )
+    )
 
     # Weapons browser (ST hard catalog). Callbacks are module-level so Blender
     # RNA keeps a stable reference (nested defs can be GC'd → mojibake labels).
-    bpy.types.Scene.arc_weapon_key = EnumProperty(
+    _assign_if_free(
+        "arc_weapon_key",
+        EnumProperty(
         name="Weapon",
         description="Firearm / launcher from ST_ItemNames (hard catalog)",
         items=_weapon_enum_items,
     )
-    bpy.types.Scene.arc_weapon_mod_muzzle = EnumProperty(
+    )
+    _assign_if_free(
+        "arc_weapon_mod_muzzle",
+        EnumProperty(
         name="Muzzle",
         description="Muzzle mod from ST catalog",
         items=_mod_items_muzzle,
     )
-    bpy.types.Scene.arc_weapon_mod_stock = EnumProperty(
+    )
+    _assign_if_free(
+        "arc_weapon_mod_stock",
+        EnumProperty(
         name="Stock",
         description="Stock mod from ST catalog",
         items=_mod_items_stock,
     )
-    bpy.types.Scene.arc_weapon_mod_magazine = EnumProperty(
+    )
+    _assign_if_free(
+        "arc_weapon_mod_magazine",
+        EnumProperty(
         name="Magazine",
         description="Magazine mod from ST catalog",
         items=_mod_items_magazine,
     )
-    bpy.types.Scene.arc_weapon_mod_underbarrel = EnumProperty(
+    )
+    _assign_if_free(
+        "arc_weapon_mod_underbarrel",
+        EnumProperty(
         name="UnderBarrel",
         description="Under-barrel mod from ST catalog",
         items=_mod_items_underbarrel,
     )
-    bpy.types.Scene.arc_weapon_mod_tech = EnumProperty(
+    )
+    _assign_if_free(
+        "arc_weapon_mod_tech",
+        EnumProperty(
         name="Tech",
         description="Tech mod from ST catalog",
         items=_mod_items_tech,
     )
-    bpy.types.Scene.arc_weapon_pattern = EnumProperty(
+    )
+    _assign_if_free(
+        "arc_weapon_skin",
+        EnumProperty(
+        name="Weapon Skin",
+        description="Colourway from the selected gun's Items/Firearms/<stem>/Skins folder",
+        items=_weapon_skin_enum_items,
+    )
+    )
+    _assign_if_free(
+        "arc_weapon_pattern",
+        EnumProperty(
         name="Weapon Pattern",
-        description="Paintjob pattern PNG under MaterialLibrary/Textures/Weapons/Patterns",
+        description="Optional paintjob pattern PNG under MaterialLibrary/Textures/Weapons/Patterns",
         items=_pattern_enum_items,
     )
-    bpy.types.Scene.arc_last_weapon_armature = StringProperty(
+    )
+    _assign_if_free(
+        "arc_last_weapon_armature",
+        StringProperty(
         name="Last Weapon Armature",
         description="Name of the most recently imported weapon armature (mod snap fallback)",
         default="",
     )
+    )
 
-    bpy.types.Scene.arc_anim_search = StringProperty(
+    from . import pose_presets as _pose_presets
+
+    _assign_if_free(
+        "arc_pose_preset",
+        EnumProperty(
+        name="Pose",
+        description="Single-frame character pose. Full clips stay in Animations",
+        items=_pose_presets.POSE_ENUM_ITEMS,
+        default="APOSE",
+        update=_pose_presets.on_pose_preset_update,
+    )
+    )
+    _assign_if_free(
+        "arc_anim_search",
+        StringProperty(
         name="Search Animations",
         description="Filter the animation catalog by name or folder (does not import)",
         default="",
     )
-    bpy.types.Scene.arc_selected_anim = StringProperty(
+    )
+    _assign_if_free(
+        "arc_selected_anim",
+        StringProperty(
         name="Selected Animation",
         description="Catalog key of the animation that Apply will import onto the armature",
         default="",
     )
-    bpy.types.Scene.arc_anim_kind_filter = EnumProperty(
+    )
+    _assign_if_free(
+        "arc_anim_kind_filter",
+        EnumProperty(
         name="Animation Kind",
         description="Restrict the picker to sequences, montages, or composites",
         items=_ANIM_KIND_ITEMS,
         default="ALL",
     )
-    bpy.types.Scene.arc_anim_spawn_notifies = BoolProperty(
+    )
+    _assign_if_free(
+        "arc_anim_spawn_notifies",
+        BoolProperty(
         name="Spawn Notify Props",
         description="When applying, attach mesh props and FX markers from animation notifies",
         default=True,
     )
-    bpy.types.Scene.arc_anim_replace_action = BoolProperty(
+    )
+    _assign_if_free(
+        "arc_anim_replace_action",
+        BoolProperty(
         name="Replace Previous Action",
         description="Drop the last applied animation Action instead of accumulating Actions in the blend",
         default=True,
     )
-    bpy.types.Scene.arc_anim_spawn_other_notifies = BoolProperty(
+    )
+    _assign_if_free(
+        "arc_anim_spawn_other_notifies",
+        BoolProperty(
         name="Spawn Other Notifies",
         description="Also spawn empties for sound/trail/misc notifies (not just mesh props and Niagara)",
         default=False,
     )
-    bpy.types.Scene.arc_animation_cache = StringProperty(
+    )
+    _assign_if_free(
+        "arc_animation_cache",
+        StringProperty(
         name="Animation Cache",
         description=(
             "PioneerGame / FModel export root — used to find .psa files. "
@@ -1160,19 +1669,28 @@ def register():
         default="",
         subtype="DIR_PATH",
     )
-    bpy.types.Scene.arc_last_applied_anim = StringProperty(
+    )
+    _assign_if_free(
+        "arc_last_applied_anim",
+        StringProperty(
         name="Last Applied Animation",
         default="",
     )
-    bpy.types.Scene.arc_last_applied_anim_armature = StringProperty(
+    )
+    _assign_if_free(
+        "arc_last_applied_anim_armature",
+        StringProperty(
         name="Last Animation Armature",
         default="",
+    )
     )
 
     # Lighting Look (Kodak LUT + HDRI from Pioneer/Lighting)
     from . import lighting_looks as _lighting_looks
 
-    bpy.types.Scene.arc_lighting_look = EnumProperty(
+    _assign_if_free(
+        "arc_lighting_look",
+        EnumProperty(
         name="Lighting Look",
         description=(
             "Kodak5218 RGBTable16x1 looks under Pioneer/Lighting/LUTs "
@@ -1180,15 +1698,32 @@ def register():
         ),
         items=_lighting_looks.make_lighting_look_items,
     )
-    bpy.types.Scene.arc_lighting_lut_strength = FloatProperty(
+    )
+    _assign_if_free(
+        "arc_lighting_lut_strength",
+        FloatProperty(
         name="LUT Strength",
-        description="Mix factor for the compositor Kodak LUT (0 = bypass, 1 = full)",
-        default=1.0,
+        description=(
+            "Mix factor for the compositor Kodak LUT (0 = bypass, 1 = full). "
+            "Default 0.5 — CurveRGB gray-ramp reads stronger than UE at Fac=1"
+        ),
+        default=0.5,
         min=0.0,
         max=1.0,
         subtype="FACTOR",
     )
-    bpy.types.Scene.arc_lighting_hdri_strength = FloatProperty(
+    )
+    _assign_if_free(
+        "arc_lighting_hdri",
+        EnumProperty(
+        name="HDRI File",
+        description="World HDRI under Pioneer/Lighting/HDRI (scenario sync fills this unless Override)",
+        items=_lighting_looks.make_lighting_hdri_items,
+    )
+    )
+    _assign_if_free(
+        "arc_lighting_hdri_strength",
+        FloatProperty(
         name="HDRI Strength",
         description="World Environment strength multiplier (combined with look exposure_ev)",
         default=1.0,
@@ -1196,7 +1731,10 @@ def register():
         soft_max=8.0,
         max=64.0,
     )
-    bpy.types.Scene.arc_lighting_hdri_rotation_z = FloatProperty(
+    )
+    _assign_if_free(
+        "arc_lighting_hdri_rotation_z",
+        FloatProperty(
         name="HDRI Rotation Z",
         description=(
             "World Mapping Z rotation in degrees — UE SourceCubemapAngle "
@@ -1208,48 +1746,115 @@ def register():
         soft_min=0.0,
         soft_max=360.0,
     )
-    bpy.types.Scene.arc_lighting_hdri_flip_x = BoolProperty(
+    )
+    _assign_if_free(
+        "arc_lighting_hdri_flip_x",
+        BoolProperty(
         name="HDRI Flip X",
         description="Mirror HDRI on X via Mapping Scale (fixes left/right vs UE)",
         default=False,
     )
-    bpy.types.Scene.arc_lighting_apply_lut = BoolProperty(
+    )
+    _assign_if_free(
+        "arc_lighting_apply_lut",
+        BoolProperty(
         name="Apply LUT",
         description="Enable compositor Kodak strip LUT when applying a Lighting Look",
         default=True,
     )
-    bpy.types.Scene.arc_lighting_apply_hdri = BoolProperty(
+    )
+    _assign_if_free(
+        "arc_lighting_apply_hdri",
+        BoolProperty(
         name="Apply HDRI",
         description="Load paired World HDRI when applying a Lighting Look",
         default=True,
     )
-    bpy.types.Scene.arc_lighting_look_applied = StringProperty(
+    )
+    _assign_if_free(
+        "arc_lighting_override",
+        BoolProperty(
+        name="Override LUT + HDRI",
+        default=False,
+    )
+    )
+    _assign_if_free(
+        "arc_lighting_look_applied",
+        StringProperty(
         name="Last Lighting Look",
         description="Status of the last Apply Lighting Look",
         default="",
     )
+    )
 
     from . import lighting_atmosphere as _lighting_atmosphere
 
-    bpy.types.Scene.arc_lighting_map = EnumProperty(
+    _assign_if_free(
+        "arc_lighting_map",
+        EnumProperty(
         name="Lighting Map",
         description="Map whose DA_*_LightingScenarios (or Home_Lighting_*) drive atmosphere",
         items=_lighting_atmosphere.make_lighting_map_items,
+        update=_lighting_looks.on_lighting_map_update,
     )
-    bpy.types.Scene.arc_lighting_scenario = EnumProperty(
+    )
+    _assign_if_free(
+        "arc_lighting_scenario",
+        EnumProperty(
         name="Lighting Scenario",
         description="Gameplay Lighting.* tag for this map (HeightFog / PostProcess source)",
         items=_lighting_atmosphere.make_lighting_scenario_items,
+        update=_lighting_looks.on_lighting_scenario_update,
     )
-    bpy.types.Scene.arc_lighting_apply_bloom = BoolProperty(
+    )
+    _assign_if_free(
+        "arc_lighting_apply_bloom",
+        BoolProperty(
         name="Apply Bloom",
         description="Compositor Fog Glow bloom from PostProcess BloomIntensity/Threshold",
         default=True,
     )
-    bpy.types.Scene.arc_lighting_apply_fog = BoolProperty(
-        name="Apply Volume Fog",
-        description="World Principled Volume from ExponentialHeightFog (not compositor mist)",
+    )
+    _assign_if_free(
+        "arc_lighting_apply_fog",
+        BoolProperty(
+        name="Apply Fog Cube",
+        description=(
+            "Finite fog mesh ArcLightingFogVolume with Principled Volume "
+            "(not World Volume — that blacks out the HDRI)"
+        ),
         default=True,
+    )
+    )
+    _assign_if_free(
+        "arc_lighting_fog_size_x",
+        FloatProperty(
+        name="Fog Size X",
+        description="ArcLightingFogVolume extent on X (Blender units)",
+        default=2000.0,
+        min=1.0,
+        soft_max=8000.0,
+    )
+    )
+    _assign_if_free(
+        "arc_lighting_fog_size_y",
+        FloatProperty(
+        name="Fog Size Y",
+        description="ArcLightingFogVolume extent on Y (Blender units)",
+        default=2000.0,
+        min=1.0,
+        soft_max=8000.0,
+    )
+    )
+    _assign_if_free(
+        "arc_lighting_fog_size_z",
+        FloatProperty(
+        name="Fog Size Z",
+        description="ArcLightingFogVolume extent on Z (Blender units)",
+        default=500.0,
+        min=1.0,
+        soft_max=4000.0,
+    )
     )
 
     # Migrate legacy mode ints: old FalseColor becomes Mode 3.

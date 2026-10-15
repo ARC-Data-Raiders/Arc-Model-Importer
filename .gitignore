@@ -58,6 +58,12 @@ map_tools/_decal_*.json
 # Local reference dumps (may embed absolute texture paths)
 reference/
 
+# Pak helper build output (self-contained publish is produced by package_addon.ps1)
+ArcPak/bin/
+ArcPak/obj/
+ArcPak/publish/
+ArcPak/cache/
+
 # Packaging output
 dist/
 *.addon.zip

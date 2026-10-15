@@ -3,6 +3,7 @@ Rig fixing and merging logic for the Arc Raiders Importer
 """
 
 import bpy
+import bmesh
 import re
 from mathutils import Vector
 
@@ -117,11 +118,52 @@ def find_joint_target(bone, orig_heads: dict, orig_dir: Vector):
     return max(candidates, key=score)
 
 
+def _activate_armature(arm):
+    """Make *arm* active/selected so mode_set / edit ops can run (nested ops OK)."""
+    ctx = bpy.context
+    view = ctx.view_layer
+    prev = view.objects.active
+    try:
+        arm.hide_set(False)
+    except Exception:
+        pass
+    arm.hide_viewport = False
+    try:
+        arm.hide_select = False
+    except Exception:
+        pass
+    if arm.name not in view.objects:
+        try:
+            ctx.scene.collection.objects.link(arm)
+        except Exception:
+            pass
+    arm.select_set(True)
+    view.objects.active = arm
+    return prev
+
+
+def _mode_set(arm, mode: str):
+    """object.mode_set with a temp override — nested operators often lack active_object."""
+    ctx = bpy.context
+    _activate_armature(arm)
+    kw = {
+        "active_object": arm,
+        "object": arm,
+        "selected_editable_objects": [arm],
+        "view_layer": ctx.view_layer,
+        "scene": ctx.scene,
+    }
+    if ctx.window is not None:
+        kw["window"] = ctx.window
+    with ctx.temp_override(**kw):
+        bpy.ops.object.mode_set(mode=mode)
+
+
 def fix_bone_orientations(arm):
     arm.data.display_type = 'OCTAHEDRAL'
     arm.show_in_front = True
-    bpy.context.view_layer.objects.active = arm
-    bpy.ops.object.mode_set(mode='EDIT')
+    prev = _activate_armature(arm)
+    _mode_set(arm, "EDIT")
 
     edit_bones = list(arm.data.edit_bones)
     orig_heads = {b.name: b.head.copy() for b in edit_bones}
@@ -150,7 +192,12 @@ def fix_bone_orientations(arm):
         if bone.length < 0.01:
             bone.length = 0.02
 
-    bpy.ops.object.mode_set(mode='OBJECT')
+    _mode_set(arm, "OBJECT")
+    if prev is not None:
+        try:
+            bpy.context.view_layer.objects.active = prev
+        except Exception:
+            pass
 
 
 # Attachment / socket leaves under weapon_root — never aim these at siblings.
@@ -197,9 +244,8 @@ def fix_weapon_bone_orientations(arm, min_length: float = 5.0):
         return
     arm.data.display_type = "OCTAHEDRAL"
     arm.show_in_front = True
-    prev = bpy.context.view_layer.objects.active
-    bpy.context.view_layer.objects.active = arm
-    bpy.ops.object.mode_set(mode="EDIT")
+    prev = _activate_armature(arm)
+    _mode_set(arm, "EDIT")
 
     edit_bones = list(arm.data.edit_bones)
     orig_heads = {b.name: b.head.copy() for b in edit_bones}
@@ -257,7 +303,7 @@ def fix_weapon_bone_orientations(arm, min_length: float = 5.0):
         if bone.length < 0.001:
             bone.length = min_length
 
-    bpy.ops.object.mode_set(mode="OBJECT")
+    _mode_set(arm, "OBJECT")
     if prev is not None:
         try:
             bpy.context.view_layer.objects.active = prev
@@ -278,9 +324,20 @@ def merge_armatures(armatures):
     bpy.ops.object.select_all(action='DESELECT')
     for arm in armatures:
         arm.select_set(True)
-    bpy.context.view_layer.objects.active = master
-    bpy.ops.object.join()
-    return bpy.context.active_object, shared_bone_names
+    _activate_armature(master)
+    ctx = bpy.context
+    kw = {
+        "active_object": master,
+        "object": master,
+        "selected_editable_objects": list(armatures),
+        "view_layer": ctx.view_layer,
+        "scene": ctx.scene,
+    }
+    if ctx.window is not None:
+        kw["window"] = ctx.window
+    with ctx.temp_override(**kw):
+        bpy.ops.object.join()
+    return bpy.context.active_object or master, shared_bone_names
 
 
 def cleanup_duplicate_bones(master_arm, shared_bone_names, mesh_objects=None):
@@ -289,7 +346,7 @@ def cleanup_duplicate_bones(master_arm, shared_bone_names, mesh_objects=None):
         if mesh_objects is None
         else [obj for obj in mesh_objects if obj.type == 'MESH']
     )
-    bpy.ops.object.mode_set(mode='EDIT')
+    _mode_set(master_arm, "EDIT")
     bone_map = {}
     all_edit_bones = sorted([b.name for b in master_arm.data.edit_bones], reverse=True)
 
@@ -312,7 +369,7 @@ def cleanup_duplicate_bones(master_arm, shared_bone_names, mesh_objects=None):
                 child.parent = b_orig
             master_arm.data.edit_bones.remove(b_dup)
 
-    bpy.ops.object.mode_set(mode='OBJECT')
+    _mode_set(master_arm, "OBJECT")
 
     for obj in mesh_objects:
         for mod in obj.modifiers:
@@ -363,11 +420,271 @@ def fix_rig_all(all_new_objects: list, merge: bool = True, model_type: str = "")
         print("Arc Raiders PSK Importer: Fixing weapon bone axes (all armatures)...")
         for arm in armatures:
             fix_weapon_bone_orientations(arm)
-    else:
-        print("Arc Raiders PSK Importer: Fixing bone orientations...")
-        fix_bone_orientations(master)
 
     for obj in mesh_objects:
         for mod in obj.modifiers:
             if mod.type == 'ARMATURE':
                 mod.use_deform_preserve_volume = True
+
+    # Mesh object origins at part centers (skeleton stays at feet). May split
+    # gloves/boots into L/R so scale pivots sit near each hand/foot.
+    created = recenter_imported_mesh_origins(mesh_objects)
+    if created:
+        all_new_objects.extend(created)
+
+
+# ---------------------------------------------------------------------------
+# Mesh origins (scale pivots) — leave armature at feet
+# ---------------------------------------------------------------------------
+
+_PAIRED_PART_RE = re.compile(
+    r"(glove|mitt|gauntlet|boot|shoe|footwear|sneaker|sandal)",
+    re.IGNORECASE,
+)
+
+
+def _mesh_still_alive(obj) -> bool:
+    try:
+        obj.name
+        return True
+    except ReferenceError:
+        return False
+
+
+def _side_vertex_group_indices(obj, side: str) -> set[int]:
+    """Vertex-group indices whose names belong to left ('l') or right ('r')."""
+    side = (side or "").lower()
+    out: set[int] = set()
+    suffix = f"_{side}"
+    for vg in obj.vertex_groups:
+        n = (vg.name or "").lower()
+        n = re.sub(r"\.\d{3}$", "", n)
+        if n.endswith(suffix) or n.endswith(f".{side}"):
+            out.add(vg.index)
+    return out
+
+
+def _connected_vert_islands(obj) -> list[list[int]]:
+    """Vertex-index islands (connected components) on a mesh."""
+    me = obj.data
+    if not me or not me.vertices:
+        return []
+    # Edge adjacency from mesh edges (faster than bmesh for large hair cards).
+    n = len(me.vertices)
+    adj = [[] for _ in range(n)]
+    for e in me.edges:
+        a, b = e.vertices
+        adj[a].append(b)
+        adj[b].append(a)
+    seen = [False] * n
+    islands: list[list[int]] = []
+    for i in range(n):
+        if seen[i]:
+            continue
+        stack = [i]
+        comp: list[int] = []
+        seen[i] = True
+        while stack:
+            v = stack.pop()
+            comp.append(v)
+            for nb in adj[v]:
+                if not seen[nb]:
+                    seen[nb] = True
+                    stack.append(nb)
+        islands.append(comp)
+    return islands
+
+
+def _island_lr_side(obj, indices: list[int], left_gis: set[int], right_gis: set[int]) -> str:
+    wl = wr = 0.0
+    for vi in indices:
+        for g in obj.data.vertices[vi].groups:
+            if g.group in left_gis:
+                wl += float(g.weight)
+            elif g.group in right_gis:
+                wr += float(g.weight)
+    if wl > 1e-6 or wr > 1e-6:
+        return "L" if wl >= wr else "R"
+    # No hand/foot weights: fall back to island centroid X in object space.
+    cx = 0.0
+    for vi in indices:
+        cx += obj.data.vertices[vi].co.x
+    cx /= max(len(indices), 1)
+    return "L" if cx < 0.0 else "R"
+
+
+def _delete_verts_keep_side(obj, keep_side: str, left_gis: set[int], right_gis: set[int]) -> bool:
+    """Delete verts belonging to the opposite side (island majority). Returns True if culled."""
+    islands = _connected_vert_islands(obj)
+    if len(islands) < 2:
+        return False
+    delete: list[int] = []
+    kept = 0
+    for isl in islands:
+        side = _island_lr_side(obj, isl, left_gis, right_gis)
+        if side == keep_side:
+            kept += 1
+        else:
+            delete.extend(isl)
+    if not delete or kept == 0:
+        return False
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bm.verts.ensure_lookup_table()
+    kill = {i for i in delete}
+    to_del = [bm.verts[i] for i in kill if i < len(bm.verts)]
+    bmesh.ops.delete(bm, geom=to_del, context="VERTS")
+    bm.to_mesh(obj.data)
+    obj.data.update()
+    bm.free()
+    return True
+
+
+def split_paired_lr_meshes(objects: list) -> list:
+    """Split glove/boot-style meshes into ``*_L`` / ``*_R`` objects.
+
+    Returns newly created objects (the R half). Original becomes the L half.
+    Armature parent + modifiers are preserved on the duplicate.
+    """
+    created: list = []
+    meshes = [o for o in objects if _mesh_still_alive(o) and o.type == "MESH"]
+    for obj in meshes:
+        if obj.get("arc_lr_split"):
+            continue
+        if not _PAIRED_PART_RE.search(obj.name or ""):
+            continue
+        left_gis = _side_vertex_group_indices(obj, "l")
+        right_gis = _side_vertex_group_indices(obj, "r")
+        if not left_gis or not right_gis:
+            continue
+        islands = _connected_vert_islands(obj)
+        if len(islands) < 2:
+            continue
+        sides = {_island_lr_side(obj, isl, left_gis, right_gis) for isl in islands}
+        if sides != {"L", "R"}:
+            continue
+
+        # Duplicate full mesh, then cull opposite sides.
+        dup = obj.copy()
+        dup.data = obj.data.copy()
+        linked = False
+        for coll in list(obj.users_collection):
+            try:
+                coll.objects.link(dup)
+                linked = True
+            except RuntimeError:
+                pass
+        if not linked:
+            bpy.context.scene.collection.objects.link(dup)
+        # Keep parenting / armature binding.
+        dup.parent = obj.parent
+        try:
+            dup.matrix_parent_inverse = obj.matrix_parent_inverse.copy()
+        except Exception:
+            pass
+        for mod in dup.modifiers:
+            if mod.type == "ARMATURE" and obj.modifiers.get(mod.name):
+                src = obj.modifiers[mod.name]
+                mod.object = src.object
+
+        if not _delete_verts_keep_side(obj, "L", left_gis, right_gis):
+            bpy.data.objects.remove(dup, do_unlink=True)
+            continue
+        if not _delete_verts_keep_side(dup, "R", left_gis, right_gis):
+            bpy.data.objects.remove(dup, do_unlink=True)
+            continue
+
+        base = re.sub(r"\.\d{3}$", "", obj.name)
+        obj.name = f"{base}_L"[:63]
+        dup.name = f"{base}_R"[:63]
+        try:
+            obj["arc_lr_split"] = "L"
+            dup["arc_lr_split"] = "R"
+            if obj.get("arc_psk_path"):
+                dup["arc_psk_path"] = obj.get("arc_psk_path")
+            if obj.get("arc_model_type"):
+                dup["arc_model_type"] = obj.get("arc_model_type")
+        except Exception:
+            pass
+        created.append(dup)
+        print(f"Arc Raiders PSK Importer: Split paired mesh → {obj.name} / {dup.name}")
+    return created
+
+
+def _origin_to_geometry_bounds(obj) -> bool:
+    """Set object origin to bbox center without moving the mesh in world space."""
+    if not _mesh_still_alive(obj) or obj.type != "MESH":
+        return False
+    if not obj.data or not obj.data.vertices:
+        return False
+    if obj.get("arc_origin_recentered"):
+        return False
+    view_layer = bpy.context.view_layer
+    prev_active = view_layer.objects.active
+    prev_selected = [o for o in bpy.context.selected_objects]
+    was_hide = False
+    try:
+        was_hide = bool(obj.hide_get())
+    except Exception:
+        pass
+    mode = getattr(bpy.context, "mode", "OBJECT") or "OBJECT"
+    try:
+        if mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
+    except Exception:
+        pass
+    try:
+        if was_hide:
+            try:
+                obj.hide_set(False)
+            except Exception:
+                obj.hide_viewport = False
+        bpy.ops.object.select_all(action="DESELECT")
+        obj.select_set(True)
+        view_layer.objects.active = obj
+        bpy.ops.object.origin_set(type="ORIGIN_GEOMETRY", center="BOUNDS")
+        try:
+            obj["arc_origin_recentered"] = 1
+        except Exception:
+            pass
+        return True
+    except Exception as exc:
+        print(f"Arc Raiders PSK Importer: origin recenter failed on {obj.name}: {exc}")
+        return False
+    finally:
+        try:
+            bpy.ops.object.select_all(action="DESELECT")
+            for o in prev_selected:
+                if _mesh_still_alive(o):
+                    o.select_set(True)
+            if prev_active is not None and _mesh_still_alive(prev_active):
+                view_layer.objects.active = prev_active
+            if was_hide:
+                try:
+                    obj.hide_set(True)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+
+def recenter_imported_mesh_origins(objects: list) -> list:
+    """Put each mesh origin at its geometry center; split gloves/boots L/R first.
+
+    Armatures are left at the feet (whole-character scale). Returns any new
+    objects created by L/R splits so callers can track them.
+    """
+    if not objects:
+        return []
+    created = split_paired_lr_meshes(objects)
+    meshes = [
+        o for o in list(objects) + created
+        if _mesh_still_alive(o) and o.type == "MESH"
+    ]
+    n = 0
+    for obj in meshes:
+        if _origin_to_geometry_bounds(obj):
+            n += 1
+    if n:
+        print(f"Arc Raiders PSK Importer: Recentered {n} mesh origin(s) to part centers")
+    return created

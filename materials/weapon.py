@@ -367,7 +367,7 @@ def _new_iface_color(ng, name: str, default=(0.0, 0.0, 0.0, 1.0), in_out="INPUT"
 
 
 _WEAPON_TEXTURER = "WeaponTexturer"
-_WEAPON_TEXTURER_VER = 2
+_WEAPON_TEXTURER_VER = 3
 
 
 def _weapon_texturer_is_current(ng) -> bool:
@@ -388,7 +388,9 @@ def _weapon_texturer_is_current(ng) -> bool:
         return False
     need = {
         "CR Color", "CR Alpha", "Normal Color", "Normal Alpha",
-        "Weapon ID", "Wear Color", "Wear Alpha", "Pattern Color", "Pattern ID",
+        "Weapon ID", "Weapon ID Alpha",
+        "Base Color Red", "Base Color Green", "Base Color Blue", "Base Color Alpha",
+        "Wear Color", "Wear Alpha", "Pattern Color", "Pattern ID",
         "Use Pattern R", "Use Pattern G", "Use Pattern B",
         "Pattern Color R", "Pattern Color G", "Pattern Color B",
         "Pattern Strength R", "Pattern Strength G", "Pattern Strength B",
@@ -415,12 +417,12 @@ def _mix_rgba(nodes, links, *, label, location, factor_sock, color_a, color_b):
 
 
 def ensure_weapon_texturer_node_group():
-    """Build WeaponTexturer v2: per-channel R/G/B pattern via Pattern ID (falls back to Weapon ID)."""
+    """Build WeaponTexturer v3: ID-zone Base Color tints + per-channel paintjob pattern."""
     existing = utils.find_node_group(_WEAPON_TEXTURER)
     if _weapon_texturer_is_current(existing):
         return existing
 
-    # Stale blend copies are rebuilt in-memory (v2 interface); do not prefer old blend.
+    # Stale blend copies are rebuilt in-memory; do not prefer old blend.
     if existing is not None:
         try:
             existing.name = f"{_WEAPON_TEXTURER}_stale_v{int(existing.get('arc_weapon_texturer_ver', 0) or 0)}"
@@ -441,6 +443,13 @@ def ensure_weapon_texturer_node_group():
     _new_iface_color(ng, "Normal Color", (0.5, 0.5, 1.0, 1.0))
     _new_iface_float(ng, "Normal Alpha", 0.0, 0.0, 1.0)
     _new_iface_color(ng, "Weapon ID", (0.0, 0.0, 0.0, 1.0))
+    _new_iface_float(ng, "Weapon ID Alpha", 0.0, 0.0, 1.0)
+    # Skin stencil "Base - Color - {Red,Green,Blue,Alpha}" (default white = no tint).
+    white = (1.0, 1.0, 1.0, 1.0)
+    _new_iface_color(ng, "Base Color Red", white)
+    _new_iface_color(ng, "Base Color Green", white)
+    _new_iface_color(ng, "Base Color Blue", white)
+    _new_iface_color(ng, "Base Color Alpha", white)
     _new_iface_color(ng, "Wear Color", (0.5, 0.5, 0.5, 1.0))
     _new_iface_float(ng, "Wear Alpha", 0.0, 0.0, 1.0)
     _new_iface_color(ng, "Pattern Color", (1.0, 1.0, 1.0, 1.0))
@@ -465,9 +474,52 @@ def ensure_weapon_texturer_node_group():
     nodes = ng.nodes
     links = ng.links
     gi = nodes.new("NodeGroupInput")
-    gi.location = (-1800, 0)
+    gi.location = (-2200, 0)
     go = nodes.new("NodeGroupOutput")
-    go.location = (1200, 0)
+    go.location = (1400, 0)
+
+    # --- Weapon ID zone tints (before paintjob) ---
+    # UE: mix(CR, CR * BaseColor{ch}, ID.{ch}) for Red/Green/Blue/Alpha.
+    wid_sep = nodes.new("ShaderNodeSeparateColor")
+    wid_sep.label = "Weapon ID (zones)"
+    wid_sep.location = (-1900, 200)
+    links.new(gi.outputs["Weapon ID"], wid_sep.inputs["Color"])
+
+    zone_map = (
+        ("Red", "Red", 360),
+        ("Green", "Green", 160),
+        ("Blue", "Blue", -40),
+        ("Alpha", None, -240),  # Alpha from dedicated float socket
+    )
+    albedo = gi.outputs["CR Color"]
+    zx = -1600
+    for zone_name, sep_name, y in zone_map:
+        tint = nodes.new("ShaderNodeMix")
+        tint.data_type = "RGBA"
+        tint.blend_type = "MULTIPLY"
+        tint.inputs["Factor"].default_value = 1.0
+        tint.label = f"CR x Base Color {zone_name}"
+        tint.location = (zx, y)
+        # UE: mix(prev, prev * BaseColor{ch}, ID.{ch})
+        links.new(albedo, tint.inputs[6])
+        links.new(gi.outputs[f"Base Color {zone_name}"], tint.inputs[7])
+
+        if sep_name is not None:
+            fac_sock = wid_sep.outputs[sep_name]
+        else:
+            fac_sock = gi.outputs["Weapon ID Alpha"]
+
+        mix = _mix_rgba(
+            nodes,
+            links,
+            label=f"ID zone {zone_name}",
+            location=(zx + 220, y),
+            factor_sock=fac_sock,
+            color_a=albedo,
+            color_b=tint.outputs[2],
+        )
+        albedo = mix.outputs[2]
+        zx += 40
 
     # --- Effective Pattern ID ---
     # Default (Use Separate Pattern ID = 0): mask from Weapon ID.
@@ -475,7 +527,7 @@ def ensure_weapon_texturer_node_group():
     id_pick = nodes.new("ShaderNodeMix")
     id_pick.data_type = "RGBA"
     id_pick.blend_type = "MIX"
-    id_pick.label = "Pattern ID ← Weapon ID default"
+    id_pick.label = "Pattern ID <- Weapon ID default"
     id_pick.location = (-1100, 420)
     links.new(gi.outputs["Use Separate Pattern ID"], id_pick.inputs["Factor"])
     links.new(gi.outputs["Weapon ID"], id_pick.inputs[6])
@@ -495,7 +547,6 @@ def ensure_weapon_texturer_node_group():
         ("G", "Green", 0),
         ("B", "Blue", -200),
     )
-    albedo = gi.outputs["CR Color"]
     x0 = -700
     for i, (ch, sep_name, y) in enumerate(channel_map):
         tint = nodes.new("ShaderNodeMix")
@@ -569,7 +620,7 @@ def ensure_weapon_texturer_node_group():
     wear_mix = _mix_rgba(
         nodes,
         links,
-        label="Wear → Albedo",
+        label="Wear -> Albedo",
         location=(1000, 40),
         factor_sock=scuff_fac.outputs[0],
         color_a=albedo,
@@ -647,15 +698,41 @@ def apply_pattern_to_material(mat, pattern_path: str, use_pattern: bool = True) 
         tree.links.new(pat_img_node.outputs["Color"], node.inputs["Pattern Color"])
     pat_img_node.image = img
 
-    # Optional companion Pattern ID map (*_ID.png next to *_C.png)
+    # Optional companion Pattern ID map (*_ID.png next to *_C.png, or
+    # T_Weapons_Pattern_*_ID under any Content root — 2.0 Unpack often has
+    # only the colour map while Steam dumps still have the ID).
     id_path = ""
     base, ext = os.path.splitext(pattern_path)
     low = base.lower()
     if low.endswith("_c"):
-        for suffix in ("_ID", "_Id", "_id"):
-            cand = base[:-2] + suffix + ext
+        stem = os.path.basename(base)
+        folder = os.path.dirname(pattern_path)
+        candidates = [
+            stem[:-2] + "_ID" + ext,
+            stem[:-2] + "_Id" + ext,
+            stem[:-2] + "_id" + ext,
+        ]
+        core = stem[2:] if stem.lower().startswith("t_") else stem
+        core = core[:-2] if core.lower().endswith("_c") else core
+        candidates.append(f"T_Weapons_Pattern_{core}_ID{ext}")
+        candidates.append(
+            f"T_Weapons_Pattern_{core.replace('ISlands', 'Islands')}_ID{ext}"
+        )
+        candidates.append(
+            f"T_Weapons_Pattern_{core.replace('Islands', 'ISlands')}_ID{ext}"
+        )
+        for name in candidates:
+            cand = os.path.join(folder, name)
             if os.path.isfile(cand):
                 id_path = cand
+                break
+            obj_guess = (
+                "/Game/Pioneer/MaterialLibrary/Textures/Weapons/Patterns/"
+                + os.path.splitext(name)[0]
+            )
+            found = textures.find_texture_from_object_path(obj_guess)
+            if found and os.path.isfile(found):
+                id_path = found
                 break
     if id_path:
         id_img = _load_image_cached(id_path)
@@ -692,6 +769,223 @@ def clear_pattern_on_material(mat) -> bool:
             ok = True
     _set_group_input_default(node, "Use Separate Pattern ID", 0.0)
     return ok
+
+
+def _weapon_effective_switches(mi: dict) -> dict:
+    """MI StaticSwitch values over WeaponPreset defaults (Enable * Mask = false)."""
+    from . import preset_defaults
+
+    parent = str((mi or {}).get("parent") or "")
+    switches = {}
+    # Walk preset for the ultimate WeaponPreset parent when known.
+    for key in (
+        parent,
+        "M_WeaponPreset_CR+NXX+WPO+ID",
+        "M_WeaponPreset_CR+NOM",
+    ):
+        if not key:
+            continue
+        presets = preset_defaults.preset_switches(key)
+        if presets:
+            switches.update(presets)
+            break
+    switches.update((mi or {}).get("switches") or {})
+    return switches
+
+
+def _resolve_paintjob_paths(mi: dict, tex_lookup: dict) -> tuple[str, str, list[str]]:
+    """Return (pattern_png, mask_png, missing_object_path_notes)."""
+    from .. import textures as _tex
+
+    pat_path = ""
+    mask_path = ""
+    missing: list[str] = []
+    for param, (fpath, _img) in (tex_lookup or {}).items():
+        pl = str(param).lower()
+        if not fpath:
+            continue
+        if "paintjob" in pl and "pattern" in pl and "mask" in pl:
+            if os.path.isfile(fpath):
+                mask_path = fpath
+        elif ("paintjob" in pl and "pattern" in pl) or pl in (
+            "paintjob pattern", "pattern color", "pattern",
+        ):
+            if os.path.isfile(fpath) and not pat_path:
+                pat_path = fpath
+    for param, obj_path in mi.get("textures") or []:
+        pl = str(param).lower()
+        is_mask = "paintjob" in pl and "pattern" in pl and "mask" in pl
+        is_pat = (not is_mask) and (
+            ("paintjob" in pl and "pattern" in pl)
+            or pl in ("paintjob pattern", "pattern color", "pattern")
+        )
+        if not is_mask and not is_pat:
+            continue
+        found = _tex.find_texture_from_object_path(obj_path) if obj_path else ""
+        if found and os.path.isfile(found):
+            if is_mask and not mask_path:
+                mask_path = found
+            elif is_pat and not pat_path:
+                pat_path = found
+        else:
+            leaf = (obj_path or "").rstrip("/").replace("\\", "/").split("/")[-1]
+            leaf = leaf.split(".", 1)[0]
+            missing.append(f"{param} ({leaf})")
+    # Some dumps point Pattern Mask at the same _C map as the colour pattern.
+    # That is not a zone ID — keep Weapon ID as the mask instead.
+    if (
+        pat_path
+        and mask_path
+        and os.path.normcase(os.path.normpath(pat_path))
+        == os.path.normcase(os.path.normpath(mask_path))
+    ):
+        mask_path = ""
+    # Companion ID next to colour map, plus common T_Weapons_Pattern_*_ID rename.
+    if pat_path and not mask_path:
+        base, ext = os.path.splitext(pat_path)
+        stem = os.path.basename(base)
+        folder = os.path.dirname(pat_path)
+        candidates = []
+        if stem.lower().endswith("_c"):
+            candidates.append(stem[:-2] + "_ID" + ext)
+            candidates.append(stem[:-2] + "_Id" + ext)
+            # T_OrganicISlands_01_C → T_Weapons_Pattern_OrganicIslands_01_ID
+            core = stem[2:] if stem.lower().startswith("t_") else stem
+            core = core[:-2] if core.lower().endswith("_c") else core
+            candidates.append(f"T_Weapons_Pattern_{core}_ID{ext}")
+            # typo / plural variants seen in dumps
+            candidates.append(
+                f"T_Weapons_Pattern_{core.replace('ISlands', 'Islands')}_ID{ext}"
+            )
+            candidates.append(
+                f"T_Weapons_Pattern_{core.replace('Islands', 'ISlands')}_ID{ext}"
+            )
+        for name in candidates:
+            cand = os.path.join(folder, name)
+            if os.path.isfile(cand):
+                mask_path = cand
+                break
+            # Also search other Content roots for the companion ID.
+            obj_guess = (
+                "/Game/Pioneer/MaterialLibrary/Textures/Weapons/Patterns/"
+                + os.path.splitext(name)[0]
+            )
+            found = _tex.find_texture_from_object_path(obj_guess)
+            if found and os.path.isfile(found):
+                mask_path = found
+                break
+    return pat_path, mask_path, missing
+
+
+def _apply_mi_paintjob_pattern(
+    mat, mi: dict, tex_lookup: dict, switches: dict | None = None,
+) -> bool:
+    """Wire Paintjob Pattern (+ optional Mask) from a skin / stencil MI."""
+    if mat is None or not mi:
+        return False
+    pat_path, mask_path, missing = _resolve_paintjob_paths(mi, tex_lookup)
+    if not pat_path:
+        if missing:
+            print(
+                "Arc Raiders: Paintjob Pattern texture missing on disk: "
+                + ", ".join(missing)
+                + " (export MaterialLibrary/Textures/Weapons/Patterns from FModel, "
+                "or point Pioneer at a dump that includes those PNGs)"
+            )
+        return False
+    if not apply_pattern_to_material(mat, pat_path, use_pattern=True):
+        return False
+    sw = switches if switches is not None else _weapon_effective_switches(mi)
+    # Honour per-channel Use Pattern switches when any are explicitly True;
+    # otherwise keep all channels on (skin paintjobs often omit the switches).
+    explicit = [
+        bool(sw.get(f"Use Pattern - {zone}", False))
+        for zone in ("Red", "Green", "Blue")
+    ]
+    node = _find_weapon_texturer_instance(mat)
+    if node is not None and any(explicit):
+        for ch, on in zip(("R", "G", "B"), explicit):
+            _set_group_input_default(node, f"Use Pattern {ch}", 1.0 if on else 0.0)
+    # Wire dedicated Pattern ID / mask when present.
+    if mask_path and os.path.isfile(mask_path) and node is not None:
+        tree = getattr(mat, "node_tree", None)
+        if tree is not None:
+            id_img = _load_image_cached(mask_path)
+            if id_img is not None:
+                try:
+                    id_img.colorspace_settings.name = "Non-Color"
+                except Exception:
+                    pass
+                for link in list(tree.links):
+                    if link.to_node == node and link.to_socket.name == "Pattern ID":
+                        tree.links.remove(link)
+                pat_id_node = tree.nodes.new("ShaderNodeTexImage")
+                pat_id_node.label = "Paintjob Pattern Mask"
+                pat_id_node.location = (node.location.x - 360, node.location.y - 520)
+                pat_id_node.image = id_img
+                tree.links.new(pat_id_node.outputs["Color"], node.inputs["Pattern ID"])
+                _set_group_input_default(node, "Use Separate Pattern ID", 1.0)
+    elif missing:
+        # Pattern colour applied; note missing ID mask (Weapon ID zones still used).
+        print(
+            "Arc Raiders: Paintjob Pattern applied without dedicated ID mask "
+            f"(missing: {', '.join(missing)}; using Weapon ID zones)"
+        )
+    return True
+
+
+def _tex_path_is_ascended(fpath_or_name: str) -> bool:
+    return "ascended" in (fpath_or_name or "").lower()
+
+
+def _ascended_companion_from_cr(cr_fpath: str, suffix: str, local_folders: list) -> object | None:
+    """Prefer Ascended_*_<suffix> beside an Ascended CR when MI still points at base maps.
+
+    Ascended Default/Addon meshes remapped their CR atlas; base ID/Wear on those
+    UVs smear. Ascended_Base MIs keep base CR and are not handled here.
+    """
+    if not cr_fpath or not _tex_path_is_ascended(cr_fpath):
+        return None
+    stem = os.path.splitext(os.path.basename(cr_fpath))[0]
+    if not stem.lower().endswith("_cr"):
+        return None
+    base = stem[:-3]
+    candidates = [
+        f"{base}_{suffix}.png",
+        f"{base}_{suffix.upper()}.png",
+    ]
+    # T_*_Ascended_Default_Addon_A_CR → T_*_Ascended_Default_ID / _A_ID
+    m = re.match(r"(.+_Ascended_Default)(?:_Addon)?(?:_[AB])?$", base, flags=re.IGNORECASE)
+    if m:
+        root = m.group(1)
+        candidates.extend(
+            [
+                f"{root}_{suffix}.png",
+                f"{root}_A_{suffix}.png",
+                f"{root}_ID.png" if suffix.lower() == "id" else f"{root}_Wear.png",
+            ]
+        )
+    search_dirs = list(local_folders or [])
+    parent = os.path.dirname(cr_fpath)
+    if parent and parent not in search_dirs:
+        search_dirs.insert(0, parent)
+        # Ascended/Default → Ascended
+        grand = os.path.dirname(parent)
+        if grand and grand not in search_dirs:
+            search_dirs.append(grand)
+    for folder in search_dirs:
+        if not folder or not os.path.isdir(folder):
+            continue
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            continue
+        lower_map = {n.lower(): n for n in names}
+        for cand in candidates:
+            hit = lower_map.get(cand.lower())
+            if hit:
+                return _load_image_cached(os.path.join(folder, hit))
+    return None
 
 
 def _setup_weapon_main_material(mat, mi_path: str, psk_path: str):
@@ -791,9 +1085,25 @@ def _setup_weapon_main_material(mat, mi_path: str, psk_path: str):
         links.new(nm_src, group.inputs["Normal Color"])
         links.new(normal_node.outputs["Alpha"], group.inputs["Normal Alpha"])
 
+    cr_fpath = ""
+    if cr_img:
+        cr_fpath = getattr(cr_img, "filepath_raw", None) or getattr(cr_img, "filepath", "") or cr_img.name
+        try:
+            cr_fpath = bpy.path.abspath(cr_fpath) if cr_fpath else cr_img.name
+        except Exception:
+            cr_fpath = cr_img.name
+
     _, id_img = _find_flat_tex(tex_lookup, "Weapon ID", "ID", "id")
     if not id_img:
         _, id_img = find_weapon_stem_tex("id")
+    # Ascended CR + base ID warps remapped Addon/Default meshes — prefer Ascended ID
+    # or omit rather than smear base UV zones across the new atlas.
+    if cr_fpath and _tex_path_is_ascended(cr_fpath):
+        id_name = (getattr(id_img, "name", "") if id_img else "") or ""
+        id_path = (getattr(id_img, "filepath", "") if id_img else "") or id_name
+        if id_img and not _tex_path_is_ascended(id_path):
+            asc_id = _ascended_companion_from_cr(cr_fpath, "ID", local_folders)
+            id_img = asc_id  # may be None → skip base ID
     if id_img:
         id_img.colorspace_settings.name = "Non-Color"
         id_node = nodes.new("ShaderNodeTexImage")
@@ -802,12 +1112,20 @@ def _setup_weapon_main_material(mat, mi_path: str, psk_path: str):
         id_node.interpolation = "Cubic"
         id_node.location = (COL_TEX, Y_ID)
         links.new(id_node.outputs["Color"], group.inputs["Weapon ID"])
+        if "Weapon ID Alpha" in group.inputs:
+            links.new(id_node.outputs["Alpha"], group.inputs["Weapon ID Alpha"])
         # Pattern ID defaults to Weapon ID until a dedicated Pattern ID map is linked.
         links.new(id_node.outputs["Color"], group.inputs["Pattern ID"])
 
     _, wear_img = _find_flat_tex(tex_lookup, "Wear", "wear")
     if not wear_img:
         _, wear_img = find_weapon_stem_tex("wear")
+    if cr_fpath and _tex_path_is_ascended(cr_fpath):
+        wear_name = (getattr(wear_img, "name", "") if wear_img else "") or ""
+        wear_path = (getattr(wear_img, "filepath", "") if wear_img else "") or wear_name
+        if wear_img and not _tex_path_is_ascended(wear_path):
+            asc_wear = _ascended_companion_from_cr(cr_fpath, "Wear", local_folders)
+            wear_img = asc_wear
     if wear_img:
         wear_img.colorspace_settings.name = "Non-Color"
         wear_node = nodes.new("ShaderNodeTexImage")
@@ -824,6 +1142,28 @@ def _setup_weapon_main_material(mat, mi_path: str, psk_path: str):
     for ch in ("R", "G", "B"):
         _set_group_input_default(group, f"Use Pattern {ch}", 0.0)
         _set_group_input_default(group, f"Pattern Strength {ch}", 1.0)
+
+    # Resolve Enable * Mask / Use Pattern switches: MI overrides, else WeaponPreset defaults
+    # (all Enable * Mask = false). Stencil Base Color R/G/B are palette slots — applying
+    # them without the matching Enable switch paints guns neon orange/teal.
+    switches = _weapon_effective_switches(mi)
+    colour_by = {str(n): rgba for n, rgba in (mi.get("colours") or []) if n}
+    white = (1.0, 1.0, 1.0, 1.0)
+    for zone in ("Red", "Green", "Blue", "Alpha"):
+        enabled = bool(switches.get(f"Enable {zone} Mask", False))
+        rgba = colour_by.get(f"Base - Color - {zone}") if enabled else None
+        _set_group_input_default(group, f"Base Color {zone}", rgba if rgba is not None else white)
+
+    # Paintjob Pattern colours (game typo: "Patern") — only used when Use Pattern is on.
+    for ch, zone in (("R", "Red"), ("G", "Green"), ("B", "Blue")):
+        rgba = (
+            colour_by.get(f"Paintjob Patern - {zone}")
+            or colour_by.get(f"Paintjob Pattern - {zone}")
+            or colour_by.get(f"Pattern Color - {zone}")
+        )
+        if rgba is not None:
+            _set_group_input_default(group, f"Pattern Color {ch}", rgba)
+
     # Align wear defaults with MI scalars when present
     for sock_name, keys in (
         ("Wear Scuff Strength", ("Wear Scuff Strength", "Scuff Strength")),
@@ -856,6 +1196,10 @@ def _setup_weapon_main_material(mat, mi_path: str, psk_path: str):
     for param, (fpath, img) in tex_lookup.items():
         if fpath in handled:
             continue
+        pl = str(param).lower()
+        # Applied below via _apply_mi_paintjob_pattern; skip duplicate image nodes.
+        if "paintjob" in pl and "pattern" in pl:
+            continue
         node = nodes.new("ShaderNodeTexImage")
         node.image = img
         node.label = param
@@ -874,6 +1218,11 @@ def _setup_weapon_main_material(mat, mi_path: str, psk_path: str):
             nodes, links, principled, ex_img, scalars,
             col_tex=COL_TEX, col_util=COL_UTIL, col_mix=COL_GROUP, row_y=Y_PAT,
         )
+
+    # Auto-apply Paintjob Pattern only when the MI authors a pattern map.
+    # Channel enables follow Use Pattern - R/G/B switches (default false → all on
+    # when a pattern texture is present, matching skin paintjobs that omit switches).
+    _apply_mi_paintjob_pattern(mat, mi, tex_lookup, switches=switches)
 
 
 def _setup_weapon_emissive_material(mat, mi_path: str):
@@ -914,16 +1263,40 @@ def _setup_weapon_screen_material(mat, mi_path: str):
 
 
 
-def setup_weapon_material(obj, psk_path: str) -> int:
+def setup_weapon_material(obj, psk_path: str, skin_json: str = "") -> int:
     """Assign per-slot materials from SK/SM SkeletalMaterials / StaticMaterials.
 
     Used for firearms and hero/character SKs (e.g. Kalika Base Body) whose MIs
     live beside the mesh via ObjectPath / Materials/ siblings. Arc enemies use
     ``setup_enemy_material`` (same slot wiring, explicit domain entrypoint).
+
+    When *skin_json* points at a Firearms ``Skins/*/MI_*.json``, weapon-family
+    slots use that MI (CR/ID/Wear + stencil Base Color / Paintjob Pattern).
+
     Returns the number of Blender slots successfully wired.
     """
+    from .classify import FAMILY_WEAPON, classify_mi_family
     from .dispatch import _get_or_build_shared_mi_material
+
+    skin_path = ""
+    if skin_json and skin_json not in ("NONE", "none"):
+        cand = os.path.abspath(skin_json)
+        if os.path.isfile(cand):
+            skin_path = cand
+
     slots = _parse_sk_material_slots(psk_path)
+    # 2.0 firearm SK dumps often have SkeletalMaterials: null. Sibling SM JSON
+    # usually still has StaticMaterials; when that also fails, synthesize one
+    # slot from the chosen skin MI or folder MI_*_A.json.
+    if not slots or not any(mi for _n, _s, mi in slots):
+        folder_mi = _fallback_weapon_folder_mi(psk_path, skin_path)
+        if folder_mi:
+            stem = os.path.splitext(os.path.basename(folder_mi))[0]
+            slots = [(stem, stem, folder_mi)]
+            print(
+                f"Arc Raiders PSK Importer: SK/SM slots empty for "
+                f"'{os.path.basename(psk_path)}'; using folder MI '{stem}'"
+            )
     if not slots:
         print(f"Arc Raiders PSK Importer: No SK material slots found for '{os.path.basename(psk_path)}'")
         return 0
@@ -954,14 +1327,70 @@ def setup_weapon_material(obj, psk_path: str) -> int:
             print(f"Arc Raiders PSK Importer: MI JSON not found for slot '{slot_name}' ({mi_stem})")
             continue
 
-        mat = _get_or_build_shared_mi_material(mi_stem, mi_path, psk_path, slot_lower)
+        use_path = mi_path
+        use_stem = mi_stem
+        if skin_path:
+            try:
+                probe = _parse_flat_mi_json(mi_path)
+                fam = classify_mi_family(probe, (mi_stem or "").lower(), slot_lower)
+            except Exception:
+                fam = ""
+            # Replace weapon surfaces with the chosen Skins/*/MI_*. Keep emissive/scan slots.
+            if fam == FAMILY_WEAPON:
+                use_path = skin_path
+                use_stem = os.path.splitext(os.path.basename(skin_path))[0]
+
+        mat = _get_or_build_shared_mi_material(use_stem, use_path, psk_path, slot_lower)
         if mat is None:
             print(
                 "Arc Raiders PSK Importer: Failed to set up material for slot "
-                f"'{slot_name}' (index {idx}, MI '{mi_stem}', path '{mi_path}')"
+                f"'{slot_name}' (index {idx}, MI '{use_stem}', path '{use_path}')"
             )
             continue
         target_slot.material = mat
+        if skin_path and use_path == skin_path:
+            try:
+                mat["arc_skin_json"] = skin_path
+                obj["arc_skin_json"] = skin_path
+                obj["arc_skin_choice"] = skin_path
+            except Exception:
+                pass
         wired += 1
     return wired
+
+
+def _fallback_weapon_folder_mi(psk_path: str, skin_path: str = "") -> str:
+    """Pick a usable MI JSON when SK/SM material arrays are null (2.0 dumps)."""
+    if skin_path and os.path.isfile(skin_path):
+        return skin_path
+    folder = os.path.dirname(psk_path or "")
+    if not folder or not os.path.isdir(folder):
+        return ""
+    psk_stem = os.path.splitext(os.path.basename(psk_path or ""))[0]
+    bare = re.sub(r"^(SK_|SM_)", "", psk_stem, flags=re.IGNORECASE)
+    bare = re.sub(r"_LOD\d+$", "", bare, flags=re.IGNORECASE)
+    candidates = [
+        f"MI_{bare}.json",
+        f"MI_{psk_stem}.json",
+    ]
+    # Prefer exact letter suffix match (…_A), then any MI_* matching bare stem.
+    exact = os.path.join(folder, f"MI_{bare}.json")
+    if os.path.isfile(exact):
+        return exact
+    try:
+        for fname in sorted(os.listdir(folder)):
+            fl = fname.lower()
+            if not fl.startswith("mi_") or not fl.endswith(".json"):
+                continue
+            if "skeleton" in fl:
+                continue
+            if bare.lower() in fl.replace("-", "_"):
+                return os.path.join(folder, fname)
+    except OSError:
+        pass
+    for name in candidates:
+        path = os.path.join(folder, name)
+        if os.path.isfile(path):
+            return path
+    return ""
 

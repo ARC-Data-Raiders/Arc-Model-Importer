@@ -28,7 +28,9 @@ from . import utils
 _LUT_PREFIX = "RGBTable16x1_Kodak5218"
 _LUT_RE = re.compile(r"^RGBTable16x1_Kodak5218(?:_(.+))?$", re.IGNORECASE)
 _GROUP_NAME = "ArcLightingLook"
-_STACK_VERSION = 7  # v7: Kodak via CurveRGB gray-ramp (MapUV strip was black in B5)
+_STACK_VERSION = 8  # v8: skip Kodak LUT on reference planes (Object Index / ID Mask)
+# Must match reference_planes.REF_PASS_INDEX — UI art is already display-referred.
+_REF_PASS_INDEX = 64
 # Common Pioneer SkyLight / reflection SourceCubemapAngle (degrees) — not Blender-default Z.
 _DEFAULT_HDRI_ROTATION_Z_DEG = 227.52
 _PAIRINGS_CACHE: dict[str, Any] | None = None
@@ -1163,6 +1165,7 @@ def _ensure_compositor_stack(
         or _find_node(nodes, label="ArcLightingLutMix") is None
         or _find_node(nodes, label="ArcLightingLutCurves") is None
         or _find_node(nodes, label="ArcLightingBloom") is None
+        or _find_node(nodes, label="ArcLightingRefHoldout") is None
     )
     if need_build:
         nodes.clear()
@@ -1193,12 +1196,32 @@ def _ensure_compositor_stack(
             pass
         _set_fac(lut_mix, 1.0)
 
+        # Skip Kodak on reference UI planes (already display-referred icons).
+        id_mask = nodes.new("CompositorNodeIDMask")
+        id_mask.label = "ArcLightingRefMask"
+        id_mask.location = (x0 + 780, -220)
+        # Blender 5: Index / Anti-Alias are sockets (not RNA props).
+        if "Index" in id_mask.inputs:
+            id_mask.inputs["Index"].default_value = int(_REF_PASS_INDEX)
+        if "Anti-Alias" in id_mask.inputs:
+            id_mask.inputs["Anti-Alias"].default_value = False
+
+        ref_hold = nodes.new("ShaderNodeMix")
+        ref_hold.label = "ArcLightingRefHoldout"
+        ref_hold.location = (x0 + 1000, 0)
+        try:
+            ref_hold.data_type = "RGBA"
+            ref_hold.clamp_factor = True
+        except Exception:
+            pass
+        _set_fac(ref_hold, 0.0)
+
         go = nodes.new("NodeGroupOutput")
-        go.location = (x0 + 1040, 0)
+        go.location = (x0 + 1260, 0)
 
         viewer = nodes.new("CompositorNodeViewer")
         viewer.label = "ArcLightingViewer"
-        viewer.location = (x0 + 1040, -160)
+        viewer.location = (x0 + 1260, -160)
 
         links.new(rl.outputs["Image"], bloom.inputs["Image"])
         curve_in = curves.inputs.get("Image") or curves.inputs[0]
@@ -1212,12 +1235,43 @@ def _ensure_compositor_stack(
         if b_sock is not None:
             links.new(curve_out, b_sock)
 
-        result = lut_mix.outputs.get("Result_Color") or lut_mix.outputs.get("Result") or lut_mix.outputs[0]
+        lut_result = lut_mix.outputs.get("Result_Color") or lut_mix.outputs.get("Result") or lut_mix.outputs[0]
+        # Fac = reference mask → B (ungraded bloom) over A (LUT result).
+        fac_sock = ref_hold.inputs.get("Factor") or ref_hold.inputs.get("Fac")
+        a_hold = ref_hold.inputs.get("A_Color") or ref_hold.inputs.get("A")
+        b_hold = ref_hold.inputs.get("B_Color") or ref_hold.inputs.get("B")
+        idx_out = rl.outputs.get("IndexOB") or rl.outputs.get("Index Object")
+        if idx_out is not None and "ID value" in id_mask.inputs:
+            links.new(idx_out, id_mask.inputs["ID value"])
+        mask_out = id_mask.outputs.get("Alpha") or id_mask.outputs[0]
+        if fac_sock is not None:
+            links.new(mask_out, fac_sock)
+        if a_hold is not None:
+            links.new(lut_result, a_hold)
+        if b_hold is not None:
+            links.new(bloom.outputs["Image"], b_hold)
+
+        result = ref_hold.outputs.get("Result_Color") or ref_hold.outputs.get("Result") or ref_hold.outputs[0]
         out_in = _group_output_socket(go)
         links.new(result, out_in)
         links.new(result, viewer.inputs["Image"])
 
         nt["arc_stack_version"] = _STACK_VERSION
+
+    # Keep Index / Anti-Alias defaults current even when stack already built.
+    id_mask = _find_node(nodes, label="ArcLightingRefMask")
+    if id_mask is not None:
+        if "Index" in id_mask.inputs:
+            id_mask.inputs["Index"].default_value = int(_REF_PASS_INDEX)
+        if "Anti-Alias" in id_mask.inputs:
+            id_mask.inputs["Anti-Alias"].default_value = False
+
+    # Object Index pass required for reference holdout.
+    try:
+        for vl in scene.view_layers:
+            vl.use_pass_object_index = True
+    except Exception:
+        pass
 
     bloom = _find_node(nodes, label="ArcLightingBloom")
     lut_mix = _find_node(nodes, label="ArcLightingLutMix")
@@ -1469,10 +1523,6 @@ def draw_lighting_look_box(layout, context) -> None:
 
     if hasattr(scene, "arc_lighting_override"):
         box.prop(scene, "arc_lighting_override", text="Override (custom LUT + HDRI)")
-        if getattr(scene, "arc_lighting_override", False):
-            box.label(text="Manual LUT + HDRI kept on Apply", icon="INFO")
-        else:
-            box.label(text="Scenario updates LUT + HDRI in the panel; Apply enables them", icon="INFO")
 
     box.prop(scene, "arc_lighting_look", text="LUT Look")
     row = box.row(align=True)

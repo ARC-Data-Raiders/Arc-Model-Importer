@@ -366,7 +366,11 @@ def import_model_paths(data: dict[str, Any]) -> list[str]:
             continue
         # Single-model bridge path: geometry + materials (no outfit dialog)
         ok, msg, _objs = operators.import_psk_with_materials(path)
-        if ok:
+        print(f"Arc Raiders FModel bridge: {msg}")
+        if ok and "FAIL" in (msg or ""):
+            errors.append(msg)
+            imported.append(path)
+        elif ok:
             imported.append(path)
         else:
             errors.append(msg or path)
@@ -466,7 +470,7 @@ def import_outfit_manifest(data: dict[str, Any]) -> list[str]:
     mat_cache: dict[tuple[str, str, str], list] = {}
     imported: list[str] = []
     errors: list[str] = []
-    x_cursor = 0.0
+    x_cursor = 0.0  # legacy fallback only
     margin_frac = 0.25
     scene = bpy.context.scene
 
@@ -585,22 +589,51 @@ def import_outfit_manifest(data: dict[str, Any]) -> list[str]:
             coll.objects.link(obj)
 
         bpy.context.view_layer.update()
-        minx = maxx = None
-        for o in inst_objs:
-            if o.type != "MESH":
-                continue
-            for corner in o.bound_box:
-                wx = (o.matrix_world @ mathutils.Vector(corner)).x
-                minx = wx if minx is None else min(minx, wx)
-                maxx = wx if maxx is None else max(maxx, wx)
+        # Character pads (default 2 m): one Outfit per slot.
+        try:
+            from import_layout import place_imported, offset_enabled, slot_world_x  # type: ignore
+        except ImportError:
+            try:
+                from .. import import_layout as _il
 
-        if minx is not None:
-            width = max(maxx - minx, 1e-4)
-            shift = x_cursor - minx
+                place_imported = _il.place_imported
+                offset_enabled = _il.offset_enabled
+                slot_world_x = _il.slot_world_x
+            except Exception:
+                place_imported = None
+        if place_imported is not None:
             for o in inst_objs:
-                if o.parent is None:
-                    o.location.x += shift
-            x_cursor += width * (1.0 + margin_frac)
+                try:
+                    if not o.get("arc_assembly_role"):
+                        o["arc_assembly_role"] = "Outfit"
+                except Exception:
+                    pass
+            slot = place_imported(inst_objs, "Outfit", scene=scene)
+            if offset_enabled(scene):
+                print(
+                    f"Arc Raiders: outfit colourway '{cw_name}' → slot {slot} "
+                    f"@ X={slot_world_x(slot, scene):.1f} m"
+                )
+        else:
+            # Fallback: legacy bbox packing along X.
+            minx = maxx = None
+            for o in inst_objs:
+                if o.type != "MESH":
+                    continue
+                for corner in o.bound_box:
+                    wx = (o.matrix_world @ mathutils.Vector(corner)).x
+                    minx = wx if minx is None else min(minx, wx)
+                    maxx = wx if maxx is None else max(maxx, wx)
+            if minx is not None:
+                width = max(maxx - minx, 1e-4)
+                if x_cursor > 0.0:
+                    shift = x_cursor - minx
+                    for o in inst_objs:
+                        if o.parent is None:
+                            o.location.x += shift
+                    x_cursor += width * (1.0 + margin_frac)
+                else:
+                    x_cursor = maxx + width * margin_frac
 
     if not imported and errors:
         raise RuntimeError("; ".join(errors[:3]))

@@ -94,19 +94,32 @@ def _is_character_enemy_outfit_decal_asset(mi_stem: str = "", mi_path: str = "")
 
 
 
+# Firearm class tokens that embed "Light" (e.g. SemiAuto_Light_01) — surface MIs.
+_FIREARM_LIGHT_FALSE_POSITIVE = (
+    "rifle", "pistol", "shotgun", "cannon", "smg", "lmg", "launcher",
+    "battlerifle", "assaultrifle", "handcannon", "sniperrifle", "firearm",
+    "railgun", "beamrifle",
+)
+
+
 def _is_weapon_emissive_light_mi(mi_stem_lower: str) -> bool:
     """True for pure emissive/light MIs (not surface mats whose names contain 'light').
 
     Weapon lights are named like MI_Weapon_Emissive_Light_01 / MI_EmissiveLight_*.
-    Do NOT match MI_Lightdrone_*, MI_LightningBot_*, etc. — those are full CR/NOM
-    surface materials that used to be mis-routed by a naive ``'light' in stem`` check.
+    Do NOT match MI_Lightdrone_*, MI_LightningBot_*, or firearm stems like
+    MI_BattleRifle_SemiAuto_Light_01 (class suffix Light, not a bulb).
     """
     if not mi_stem_lower:
         return False
     if "emissive" in mi_stem_lower:
         return True
     # Token-boundary "light": _light_ / _light / light_ at stem edges — not "lightdrone"
-    return bool(re.search(r"(^|_)light(_|$)", mi_stem_lower))
+    if not re.search(r"(^|_)light(_|$)", mi_stem_lower):
+        return False
+    # SemiAuto_Light / Light battle-rifle skins are CR+ID surfaces, not emissive bulbs.
+    if any(tok in mi_stem_lower for tok in _FIREARM_LIGHT_FALSE_POSITIVE):
+        return False
+    return True
 
 
 

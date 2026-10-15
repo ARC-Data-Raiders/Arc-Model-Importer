@@ -31,6 +31,8 @@ _CORE_MESH_PREFIXES = (
 
 
 def _ue_entries(data) -> list[dict]:
+    if isinstance(data, dict) and isinstance(data.get("Exports"), list):
+        data = data["Exports"]
     if isinstance(data, list):
         return [e for e in data if isinstance(e, dict)]
     if isinstance(data, dict):
@@ -245,19 +247,8 @@ def _is_core_mesh(stem: str) -> bool:
     return any(stem.startswith(p) for p in _CORE_MESH_PREFIXES)
 
 
-# Barriers: authored +X faces the shell; +180° yaw faces them outward.
-_OUTWARD_YAW_FLIP_MESHES = frozenset(
-    {
-        "SM_Barrier_01",
-        "SM_Barrier_02",
-    }
-)
-# Engines: flip vertically (UE pitch), not yaw/roll — those left them sideways.
-_OUTWARD_PITCH_FLIP_MESHES = frozenset(
-    {
-        "SM_ExtractionElevator_01_Engine_A",
-    }
-)
+# Socket RelativeRotation / RelativeScale are the placement. Do not add a
+# second 180 degree flip: authored yaw already turns barriers and engines.
 
 
 def _mesh_vert_count(obj) -> int:
@@ -293,10 +284,6 @@ def _compose_child_pose(
         loc = cl
         pyr = cr
         scale = cs
-    if mesh in _OUTWARD_YAW_FLIP_MESHES:
-        pyr = (pyr[0], pyr[1] + 180.0, pyr[2])
-    if mesh in _OUTWARD_PITCH_FLIP_MESHES:
-        pyr = (pyr[0] + 180.0, pyr[1], pyr[2])
     euler = unreal_to_blender_xyz_radians(pyr[0], pyr[1], pyr[2])
     return loc, euler, scale
 
@@ -361,6 +348,177 @@ def _find_socket_owner(
     return None, None
 
 
+def _mesh_body_tokens(stem: str) -> list[str]:
+    body = stem.lower()
+    if body.startswith("sm_") or body.startswith("sk_"):
+        body = body[3:]
+    return [t for t in body.split("_") if t]
+
+
+def _tokens_fit(mesh_tokens: list[str], sock_tokens: list[str]) -> int:
+    """Score when every mesh token is present on the socket. 0 means no match."""
+    if not mesh_tokens:
+        return 0
+    have = set(sock_tokens)
+    if any(t not in have for t in mesh_tokens):
+        return 0
+    if not any(not t.isdigit() for t in mesh_tokens):
+        return 0
+    return len(mesh_tokens)
+
+
+def _prepare_mesh_tokens(tokens: list[str], sock_tokens: list[str]) -> list[str]:
+    """Drop the shared prop name and a family index the socket does not use."""
+    if tokens and len(tokens[0]) > 12 and tokens[0] not in sock_tokens:
+        tokens = tokens[1:]
+    if tokens and tokens[0].isdigit() and tokens[0] not in sock_tokens:
+        tokens = tokens[1:]
+    return tokens
+
+
+def _drop_variant_letter(tokens: list[str]) -> list[str]:
+    if tokens and len(tokens[-1]) == 1 and tokens[-1].isalpha():
+        return tokens[:-1]
+    return tokens
+
+
+def match_socket_to_mesh(socket_name: str, stems: list[str], root_stem: str = "") -> str:
+    """Pick the folder mesh a socket is authored to hold.
+
+    ``Door_A_01`` and ``Door_A_02`` both match ``SM_..._Door_A``.
+    ``Engine_01_A`` through ``Engine_01_H`` match the one engine mesh.
+    ``DoorPiston_01_A`` stays on that mesh when ``_B`` is a different file.
+    """
+    sock_tokens = [t for t in socket_name.lower().split("_") if t]
+    candidates = [s for s in stems if s and s.lower() != (root_stem or "").lower()]
+
+    def _rank(drop_letter: bool) -> tuple[str, int] | None:
+        best_stem = ""
+        best_score = 0
+        tied = False
+        for stem in candidates:
+            tokens = _prepare_mesh_tokens(_mesh_body_tokens(stem), sock_tokens)
+            st = sock_tokens
+            if drop_letter:
+                tokens = _drop_variant_letter(tokens)
+                st = _drop_variant_letter(sock_tokens)
+            score = _tokens_fit(tokens, st)
+            if score > best_score:
+                best_stem = stem
+                best_score = score
+                tied = False
+            elif score and score == best_score and stem != best_stem:
+                tied = True
+        if tied or not best_stem:
+            return None
+        return best_stem, best_score
+
+    exact = _rank(False)
+    if exact:
+        return exact[0]
+    loose = _rank(True)
+    return loose[0] if loose else ""
+
+
+def detect_folder_prop_layout(folder: str) -> dict:
+    """Read StaticMesh sockets in *folder* and say where each prop sits.
+
+    A mesh listed more than once needs a duplicate at each socket. Coordinates
+    are the socket RelativeLocation / Rotation / Scale, in Unreal centimetres.
+    Returns an empty ``spots`` list when the folder has no authored placement.
+    """
+    folder = os.path.abspath(folder)
+    stems = [
+        os.path.splitext(name)[0]
+        for name in os.listdir(folder)
+        if name.lower().endswith((".psk", ".pskx"))
+    ]
+    # Prefer .psk over .pskx when both exist for the same stem.
+    stem_set = []
+    seen = set()
+    for stem in stems:
+        key = stem.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        stem_set.append(stem)
+
+    socket_index = load_folder_socket_index(folder)
+    root_stem = ""
+    root_count = 0
+    for stem, socks in socket_index.items():
+        if stem not in {s for s in stem_set} and not any(s.lower() == stem.lower() for s in stem_set):
+            continue
+        if len(socks) > root_count:
+            root_count = len(socks)
+            root_stem = stem
+    # One row per placed owner. A socket on a mesh that is itself placed N times
+    # (two doors) is N spots, so the child is duplicated onto each copy.
+    spots = []
+    unmatched = []
+    counts: dict[str, int] = {root_stem: 1} if root_stem else {}
+    for _pass in range(8):
+        new_spots = []
+        new_unmatched = []
+        new_counts: dict[str, int] = {root_stem: 1} if root_stem else {}
+        for owner, socks in socket_index.items():
+            if not any(s.lower() == owner.lower() for s in stem_set):
+                continue
+            copies = 1 if owner.lower() == (root_stem or "").lower() else counts.get(owner, 0)
+            if copies <= 0:
+                continue
+            for sock_name, sock in socks.items():
+                mesh = match_socket_to_mesh(sock_name, stem_set, owner)
+                if not mesh:
+                    new_unmatched.append({"socket": sock_name, "owner": owner})
+                    continue
+                for _copy in range(copies):
+                    new_spots.append(
+                        {
+                            "mesh": mesh,
+                            "owner": owner,
+                            "socket": sock_name,
+                            "location": tuple(sock.get("location") or (0.0, 0.0, 0.0)),
+                            "rotation": tuple(sock.get("rotation") or (0.0, 0.0, 0.0)),
+                            "scale": tuple(sock.get("scale") or (1.0, 1.0, 1.0)),
+                        }
+                    )
+                    new_counts[mesh] = new_counts.get(mesh, 0) + 1
+        if new_counts == counts and len(new_spots) == len(spots):
+            spots = new_spots
+            unmatched = new_unmatched
+            counts = new_counts
+            break
+        spots = new_spots
+        unmatched = new_unmatched
+        counts = new_counts
+    duplicates = {mesh: n for mesh, n in counts.items() if n > 1}
+    return {
+        "folder": folder,
+        "root": root_stem,
+        "spots": spots,
+        "duplicates": duplicates,
+        "unmatched": unmatched,
+        "socket_index": socket_index,
+    }
+
+
+def layout_summary(layout: dict) -> str:
+    """One line for the import report."""
+    spots = layout.get("spots") or []
+    if not spots:
+        return ""
+    dups = layout.get("duplicates") or {}
+    dup_bits = [f"{os.path.basename(m)} x{n}" for m, n in sorted(dups.items())]
+    dup_text = (", ".join(dup_bits)) if dup_bits else "no duplicates"
+    unmatched = layout.get("unmatched") or []
+    extra = f", {len(unmatched)} socket(s) with no mesh" if unmatched else ""
+    return (
+        f"Prop coordinates: {len(spots)} spot(s) on {layout.get('root') or 'root'}"
+        f"; duplicates: {dup_text}{extra}"
+    )
+
+
 def apply_attachment_poses(
     *,
     root_obj,
@@ -368,6 +526,7 @@ def apply_attachment_poses(
     templates: dict[str, object],
     socket_index: dict[str, dict[str, dict]],
     attachments: list[dict],
+    core_only: bool = True,
 ) -> tuple[int, int, int]:
     """Parent/place children. Returns (placed, duplicated, skipped)."""
     placed = 0
@@ -398,7 +557,7 @@ def apply_attachment_poses(
         if not mesh or mesh == root_stem:
             skipped += 1
             continue
-        if not _is_core_mesh(mesh):
+        if core_only and not _is_core_mesh(mesh):
             skipped += 1
             continue
         tmpl = templates.get(mesh)
@@ -645,6 +804,61 @@ def assemble_extraction_elevator_folder(
     try:
         root_obj["arc_prop_assembled"] = 1
         root_obj["arc_prop_bp"] = os.path.basename(bp) if bp else ""
+    except Exception:
+        pass
+    return stats
+
+
+def apply_detected_folder_layout(folder: str) -> dict:
+    """Place and duplicate meshes already imported from *folder* using socket coordinates."""
+    layout = detect_folder_prop_layout(folder)
+    stats = {
+        "summary": layout_summary(layout),
+        "placed": 0,
+        "duplicated": 0,
+        "skipped": 0,
+        "error": "",
+        "duplicates": dict(layout.get("duplicates") or {}),
+    }
+    spots = layout.get("spots") or []
+    root_stem = layout.get("root") or ""
+    if not spots or not root_stem:
+        return stats
+    templates = index_templates_in_scene(folder)
+    root_obj = None
+    for stem, obj in templates.items():
+        if stem.lower() == root_stem.lower():
+            root_obj = obj
+            root_stem = stem
+            break
+    if root_obj is None:
+        stats["error"] = f"root mesh not in scene: {root_stem}"
+        return stats
+    attachments = [
+        {
+            "var": spot["socket"],
+            "mesh": spot["mesh"],
+            "attach": spot["socket"],
+            "parent": spot["owner"],
+            "location": (0.0, 0.0, 0.0),
+            "rotation": (0.0, 0.0, 0.0),
+            "scale": (1.0, 1.0, 1.0),
+        }
+        for spot in spots
+    ]
+    placed, duplicated, skipped = apply_attachment_poses(
+        root_obj=root_obj,
+        root_stem=root_stem,
+        templates=templates,
+        socket_index=layout["socket_index"],
+        attachments=attachments,
+        core_only=False,
+    )
+    stats["placed"] = placed
+    stats["duplicated"] = duplicated
+    stats["skipped"] = skipped
+    try:
+        root_obj["arc_prop_layout"] = stats["summary"][:900]
     except Exception:
         pass
     return stats

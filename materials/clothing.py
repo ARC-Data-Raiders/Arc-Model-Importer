@@ -267,7 +267,7 @@ def clothing_material_cache_key(
     """
     pipe = palette_calibration.parse_outfit_color_pipeline(outfit_color_pipeline)
     # gt_pbr2: cooked Colour N plus roughness/metal/decals/normals/edge-crease (no Arc).
-    gen = "gt_pbr2" if pipe == palette_calibration.OUTFIT_COLOR_PIPELINE_GROUND_TRUTH else "legacy"
+    gen = "gt_pbr3" if pipe == palette_calibration.OUTFIT_COLOR_PIPELINE_GROUND_TRUTH else "legacy"
     return (_norm_path_key(mi_json_path), texture_fingerprint or "", pipe, gen)
 
 
@@ -1188,16 +1188,22 @@ def _find_huevariation_png(png_lists) -> str:
     return ""
 
 
-def _mi_global_float(store: dict | None, name: str, default: float = 0.0) -> float:
-    if not store:
-        return float(default)
-    val = store.get(name)
-    if val is None:
-        return float(default)
-    try:
-        return float(val)
-    except (TypeError, ValueError):
-        return float(default)
+def _mi_global_float(
+    store: dict | None,
+    name: str,
+    default: float = 0.0,
+    *,
+    mi_data=None,
+) -> float:
+    """Global MI scalar (Tiling, BreakupMaskTiling, HueVariation*) from zone_scalars or mi_params."""
+    if store and name in store:
+        try:
+            return float(store[name])
+        except (TypeError, ValueError):
+            pass
+    if mi_data is not None:
+        return _gt_param_float(mi_data, name, default)
+    return float(default)
 
 
 def _live_pattern_rgba(colours: dict | None, zone: int, suffix: str):
@@ -1233,11 +1239,13 @@ def _wire_gt_zone_pattern_hue(
     *,
     col_x=None,
     hide=True,
+    omit_hue_variation: bool = False,
 ):
-    """Layered DXBC: Patterns×PatternColorA/B/C then HueVariation (strength×0.1).
+    """Layered DXBC: Patterns×PatternColorA/B/C then optional HueVariation.
 
     Arc Texturer ``Pattern N`` sockets stay on the legacy group; GT must mix
-    here so Colour N matches Snooper ``ArcZoneColor``.
+    here so Colour N matches Snooper ``ArcZoneColor``. Revamped omits hue
+    variation — pass ``omit_hue_variation=True`` for GT parity.
     """
     def _xy(legacy_x, dy=0.0, step=0):
         if col_x is None:
@@ -1269,20 +1277,32 @@ def _wire_gt_zone_pattern_hue(
             if tiling <= 1e-6:
                 tiling = 1.0
             uv = hue_cache.get("pattern_uv")
+            uv_sock = hue_cache.get("pattern_uv_sock")
             if uv is None:
-                uv = nodes.new("ShaderNodeTexCoord")
+                uv = nodes.new("ShaderNodeUVMap")
                 uv.name = "GT_Pattern_UV"
-                uv.label = "GT Pattern UV"
+                uv.label = "UV1 Pattern"
+                try:
+                    uv.uv_map = "UV1"
+                except Exception:
+                    pass
                 uv.location = (-1080.0, 540.0) if col_x is None else (_gt_pbr.maps_uv_x(), _gt_pbr.colour_row_y("pattern"))
                 uv.hide = hide
                 uv.parent = None if col_x is not None else parent
                 hue_cache["pattern_uv"] = uv
+                uv_sock = _gt_pbr.orient_uv(
+                    nodes, links, uv.outputs["UV"], "GT_Pattern_UV_orient",
+                    (uv.location[0] + 200.0), uv.location[1], hide=True,
+                )
+                hue_cache["pattern_uv_sock"] = uv_sock
+            if uv_sock is None:
+                uv_sock = uv.outputs["UV"]
             mapping = nodes.new("ShaderNodeMapping")
             mapping.name = f"GT_Pattern_map_z{zone}"
             mapping.label = f"GT Pattern tile={tiling:.3f} z{zone}"
             _gt_attach_local(mapping, parent, _xy(-260.0, 80.0, 0), hide=hide)
             mapping.inputs["Scale"].default_value = (tiling, tiling, tiling)
-            links.new(uv.outputs["UV"], mapping.inputs["Vector"])
+            links.new(uv_sock, mapping.inputs["Vector"])
             tex_nd = nodes.new("ShaderNodeTexImage")
             tex_nd.name = f"GT_Pattern_z{zone}"
             tex_nd.label = os.path.basename(png_path)
@@ -1326,6 +1346,8 @@ def _wire_gt_zone_pattern_hue(
                     links, mix, colour_src, rgb_nd.outputs[0], fac_sock=fac.outputs[0]
                 )
 
+    if omit_hue_variation:
+        return colour_src
     hue_str = _mi_layer_float(zone_scalars, zone, "HueVariationStrength", 0.0)
     if abs(hue_str) <= 1e-8:
         hue_str = _mi_global_float(zone_scalars, "HueVariationStrength", 0.0)
@@ -1386,15 +1408,15 @@ def _wire_gt_zone_pattern_hue(
 def _gt_wire_colour_n_group(
     nodes, links, row_parent, loc, zone, amt, swatch_nd, cm_src, colours, uses_sec,
     mat_key: str = "mat",
+    packed_r=None,
 ):
-    """Instance a per-zone GT_ColourN group (internals = this Color N only)."""
-    sec = bool(uses_sec[zone - 1]) if uses_sec and 0 <= zone - 1 < len(uses_sec) else False
-    key_a = "ColorA2" if sec else "ColorA"
-    key_b = "ColorB2" if sec else "ColorB"
-    key_c = "ColorC2" if sec else "ColorC"
-    nd_a = nodes.get(key_a) or nodes.get("ColorA")
-    nd_b = nodes.get(key_b) or nodes.get("ColorB")
-    nd_c = nodes.get(key_c) or nodes.get("ColorC")
+    """Instance a per-zone GT_ColourN group (lerp A/A2 by packed BaseColor.R)."""
+    nd_a = nodes.get("ColorA")
+    nd_b = nodes.get("ColorB")
+    nd_c = nodes.get("ColorC")
+    nd_a2 = nodes.get("ColorA2") or nd_a
+    nd_b2 = nodes.get("ColorB2") or nd_b
+    nd_c2 = nodes.get("ColorC2") or nd_c
     if nd_a is None or nd_b is None or nd_c is None:
         return None
     overlay_nd = nodes.get(f"{zone}_BaseColorOverlay")
@@ -1406,9 +1428,12 @@ def _gt_wire_colour_n_group(
             color_a=nd_a,
             color_b=nd_b,
             color_c=nd_c,
+            color_a2=nd_a2,
+            color_b2=nd_b2,
+            color_c2=nd_c2,
             overlay=overlay_nd if overlay_nd is not None else (colours or {}).get(f"{zone}_BaseColorOverlay"),
             tree_key=mat_key,
-            secondary=sec,
+            secondary=False,
         )
     except Exception:
         return None
@@ -1417,7 +1442,7 @@ def _gt_wire_colour_n_group(
     g = nodes.new("ShaderNodeGroup")
     g.node_tree = gtree
     g.name = f"GT_ColourN_z{zone}"
-    g.label = f"Colour {zone} ({'A2' if sec else 'A'})"
+    g.label = f"Colour {zone} (A/A2 lerp)"
     _gt_attach_local(g, row_parent, loc("fac"))
     if cm_src is not None and getattr(cm_src, "outputs", None):
         try:
@@ -1426,6 +1451,20 @@ def _gt_wire_colour_n_group(
             cm_col = cm_src.outputs[0]
         try:
             links.new(cm_col, g.inputs["ColorMask"])
+        except Exception:
+            pass
+    amt_nd = nodes.new("ShaderNodeValue")
+    amt_nd.name = f"GT_amt_z{zone}"
+    amt_nd.label = f"Amt z{zone}"
+    amt_nd.outputs[0].default_value = float(amt)
+    _gt_attach_local(amt_nd, row_parent, loc("amt"), hide=True)
+    try:
+        links.new(amt_nd.outputs[0], g.inputs["Amt"])
+    except Exception:
+        pass
+    if packed_r is not None:
+        try:
+            links.new(packed_r, g.inputs["PackedR"])
         except Exception:
             pass
     try:
@@ -1469,7 +1508,6 @@ def _wire_outfit_color_ground_truth(
     process steps (top→bottom), matching the decal grid.
     """
     hide = not bypass_arc
-    # Legacy ArcTexturer path still uses stage columns inside one scheme frame.
     _COL = {
         "swatch": 0.0,
         "fac": 300.0,
@@ -1511,6 +1549,21 @@ def _wire_outfit_color_ground_truth(
     mask_bits = palette_calibration.extract_layer_mask_bits(zone_scalars)
     if base_tex is None:
         base_tex = _find_basecolor_tex_for_arc(nodes, group_node)
+    packed_r = None
+    if base_tex is not None and getattr(base_tex, "outputs", None):
+        packed_sep = nodes.new("ShaderNodeSeparateColor")
+        packed_sep.name = "GT_PackedR_Colour"
+        packed_sep.label = "packed BaseColor.R → A/A2"
+        packed_sep.hide = True
+        try:
+            links.new(base_tex.outputs["Color"], packed_sep.inputs[0])
+        except Exception:
+            try:
+                links.new(base_tex.outputs[0], packed_sep.inputs[0])
+            except Exception:
+                packed_sep = None
+        if packed_sep is not None:
+            packed_r = packed_sep.outputs[0]
     pattern_images = {}
     hue_cache = {}
 
@@ -1586,6 +1639,7 @@ def _wire_outfit_color_ground_truth(
     colortex_wired = []
     colortex_uv = None
     colortex_images = {}
+    zone_colortex = {}
     png_lists = tuple(
         lst for lst in (colortex_pngs, colortex_pngs_fallback) if lst
     )
@@ -1671,6 +1725,7 @@ def _wire_outfit_color_ground_truth(
                 swatch_nd if swatch_nd is not None else swatch_rgba,
                 cm_src, colours or {}, uses_sec,
                 mat_key=mat_key,
+                packed_r=packed_r,
             )
         if colour_src is None:
             # wABC = ColorMask.rgb × ColorMaskSwatch (Snooper ColorMaskWeights, gate≈amt).
@@ -1793,21 +1848,12 @@ def _wire_outfit_color_ground_truth(
                 colour_src = _gt_mix_link(links, mul_ov, colour_src, overlay_nd.outputs[0], fac_value=1.0)
                 overlay_muls += 1
 
-        # D043: col *= lerp(1, ColorTex, sat(strength)) when ID>=1. Never slice 0.
+        # Sample ColorTex on UV1; multiply happens in finish_gt after wear.
         colortex_id = _mi_layer_float(ta_ids, zone, "ColorTextureID", 0.0)
-        str_base = max(0.0, min(1.0, _mi_layer_float(zone_scalars, zone, "BaseTextureStrength", 0.0)))
-        str_edge = max(0.0, min(1.0, _mi_layer_float(zone_scalars, zone, "EdgeTextureStrength", 0.0)))
-        str_crease = max(0.0, min(1.0, _mi_layer_float(zone_scalars, zone, "CreaseTextureStrength", 0.0)))
         tiling = _mi_layer_float(zone_scalars, zone, "ColorTextureTiling", 1.0)
         if tiling <= 1e-6:
             tiling = 1.0
-        stages = (
-            ("base", str_base),
-            ("edge", str_edge),
-            ("crease", str_crease),
-        )
-        live_strength = any(s > 1e-6 for _, s in stages)
-        if colortex_id >= 1.0 and live_strength and png_lists:
+        if colortex_id >= 1.0 and png_lists:
             png_path = _find_colortex_slice_png(png_lists, colortex_id)
             img = colortex_images.get(png_path) if png_path else None
             if img is None and png_path:
@@ -1820,9 +1866,13 @@ def _wire_outfit_color_ground_truth(
                     colortex_images[png_path] = img
             if img is not None:
                 if colortex_uv is None:
-                    colortex_uv = nodes.new("ShaderNodeTexCoord")
+                    colortex_uv = nodes.new("ShaderNodeUVMap")
                     colortex_uv.name = "GT_ColorTex_UV"
-                    colortex_uv.label = "GT ColorTex UV"
+                    colortex_uv.label = "UV1 ColorTex"
+                    try:
+                        colortex_uv.uv_map = "UV1"
+                    except Exception:
+                        pass
                     colortex_uv.location = (
                         (_gt_pbr.colour_col_x(zone) - _gt_pbr._GT_GRID_DX, _gt_pbr.shared_row_y("colortex_sample"))
                         if bypass_arc
@@ -1830,13 +1880,27 @@ def _wire_outfit_color_ground_truth(
                     )
                     colortex_uv.hide = hide
                     colortex_uv.parent = None if bypass_arc else scheme_frame
+                    colortex_uv_sock = _gt_pbr.orient_uv(
+                        nodes, links, colortex_uv.outputs["UV"], "GT_ColorTex_UV_orient",
+                        colortex_uv.location[0] + 200.0, colortex_uv.location[1], hide=True,
+                    )
+                else:
+                    colortex_uv_sock = None
+                    orient_nd = nodes.get("GT_ColorTex_UV_orient")
+                    if orient_nd is not None and getattr(orient_nd, "outputs", None):
+                        colortex_uv_sock = orient_nd.outputs[0]
+                    if colortex_uv_sock is None:
+                        colortex_uv_sock = colortex_uv.outputs["UV"]
                 mapping = nodes.new("ShaderNodeMapping")
                 mapping.name = f"GT_ColorTex_map_z{zone}"
                 mapping.label = f"GT ColorTex tile={tiling:.3f} z{zone}"
                 mapping.hide = True
                 _gt_attach_local(mapping, row_parent, loc("tex_map"), hide=True)
-                mapping.inputs["Scale"].default_value = (tiling, tiling, tiling)
-                links.new(colortex_uv.outputs["UV"], mapping.inputs["Vector"])
+                detail_t = _mi_layer_float(zone_scalars, zone, "DetailTiling", 1.0) or 1.0
+                glob_t = _mi_global_float(zone_scalars, "Tiling", 1.0)
+                scale = max(1e-6, float(glob_t) * float(detail_t) * float(tiling))
+                mapping.inputs["Scale"].default_value = (scale, scale, scale)
+                links.new(colortex_uv_sock, mapping.inputs["Vector"])
                 tex_nd = nodes.new("ShaderNodeTexImage")
                 tex_nd.name = f"GT_ColorTex_z{zone}"
                 tex_nd.label = os.path.basename(png_path)
@@ -1844,34 +1908,7 @@ def _wire_outfit_color_ground_truth(
                 tex_nd.interpolation = "Cubic"
                 _gt_attach_local(tex_nd, row_parent, loc("tex"), hide=False if bypass_arc else hide)
                 links.new(mapping.outputs["Vector"], tex_nd.inputs["Vector"])
-
-                tex_src = white_nd.outputs[0]
-                for stage_name, stage_str in stages:
-                    if stage_str <= 1e-6:
-                        continue
-                    blend = _new_mix_lerp_white(
-                        nodes,
-                        name=f"GT_ColorTex_{stage_name}_z{zone}",
-                        label=f"GT lerp(tex,ColorTex,{stage_name}={stage_str:.3f}) z{zone}",
-                        location=loc("tex_blend"),
-                        hide=True if bypass_arc else hide,
-                    )
-                    _gt_attach_local(blend, row_parent, loc("tex_blend"), hide=True if bypass_arc else hide)
-                    try:
-                        fac_sock = blend.inputs.get("Factor") or blend.inputs[0]
-                        fac_sock.default_value = float(stage_str)
-                    except Exception:
-                        pass
-                    tex_src = _gt_mix_link(links, blend, tex_src, tex_nd.outputs["Color"])
-                tex_mul = _new_mix_multiply(
-                    nodes,
-                    name=f"GT_ColorTex_mul_z{zone}",
-                    label=f"GT ×ColorTex ID={int(round(colortex_id))} z{zone}",
-                    location=loc("tex_mul"),
-                    hide=True if bypass_arc else hide,
-                )
-                _gt_attach_local(tex_mul, row_parent, loc("tex_mul"), hide=True if bypass_arc else hide)
-                colour_src = _gt_mix_link(links, tex_mul, colour_src, tex_src, fac_value=1.0)
+                zone_colortex[zone] = tex_nd.outputs["Color"]
                 colortex_wired.append(zone)
 
         _pat_y = loc("pat")[1] if bypass_arc else y0
@@ -1890,21 +1927,25 @@ def _wire_outfit_color_ground_truth(
             hue_cache,
             col_x=0.0 if bypass_arc else None,
             hide=True if bypass_arc else hide,
+            # Revamped warns and omits HueVariation / MediumNormal.
+            omit_hue_variation=bool(bypass_arc),
         )
 
-        _wet_y = loc("wet")[1] if bypass_arc else y0
-        colour_src = _wire_gt_zone_wet(
-            nodes,
-            links,
-            row_parent,
-            colours or {},
-            zone_scalars,
-            zone,
-            colour_src,
-            _wet_y,
-            col_x=0.0 if bypass_arc else None,
-            hide=True if bypass_arc else hide,
-        )
+        # Revamped omits weather/wet; keep wet only on the legacy Arc path.
+        if not bypass_arc:
+            _wet_y = loc("wet")[1] if bypass_arc else y0
+            colour_src = _wire_gt_zone_wet(
+                nodes,
+                links,
+                row_parent,
+                colours or {},
+                zone_scalars,
+                zone,
+                colour_src,
+                _wet_y,
+                col_x=0.0 if bypass_arc else None,
+                hide=True if bypass_arc else hide,
+            )
 
         if bypass_arc:
             zone_outputs[zone] = colour_src
@@ -1920,19 +1961,20 @@ def _wire_outfit_color_ground_truth(
         "blur": palette_calibration.BLURRY_CURVATURE_STATUS,
         "scheme_a2_linked": a2_linked,
         "scheme_nodes_ensured": ensured.get("created") or [],
-        "scheme_fac_from_basecolor_r": False,
+        "scheme_fac_from_basecolor_r": packed_r is not None,
         "scheme_fac_from_colormask_r": False,
         "uses_secondary": uses_sec,
         "colormask_in_weights": cm_src is not None,
-        "assemble_mode": "cooked_colormask_swatch_wabc_overlay_colortex_pattern_hue_wet",
+        "assemble_mode": "revamped_packed_aa2_colormask_wear_uv1",
         "pattern_zones": hue_cache.get("pattern_zones") or [],
         "hue_zones": hue_cache.get("hue_zones") or [],
         "basecolor_on_colour_n": False,
-        "basecolor_in_fac": False,
+        "basecolor_in_fac": packed_r is not None,
         "base_tex_present": base_tex is not None,
         "overlay_muls": overlay_muls,
-        "colortex_deferred": False,
+        "colortex_deferred": True,
         "colortex_zones": colortex_wired,
+        "colortex_outputs": zone_colortex,
         "xyz_as_abc": False,
         "cm_groups_present": bool(cm_groups),
         "zone_outputs": zone_outputs,
@@ -3223,6 +3265,7 @@ def _setup_gt_bypass_material(
     normal_tex = []
     basecolor_tex = []
     colormask_tex = []
+    breakup_tex = []
     for fname in main_pngs or []:
         role = textures.identify_texture(fname)
         if role == "occlusion":
@@ -3233,6 +3276,8 @@ def _setup_gt_bypass_material(
             basecolor_tex.append(fname)
         elif role == "colormask":
             colormask_tex.append(fname)
+        elif role == "breakup":
+            breakup_tex.append(fname)
 
     base_other = [
         p for p in (base_pngs or [])
@@ -3277,6 +3322,7 @@ def _setup_gt_bypass_material(
             os.path.join(folder, fname) if folder else fname,
             f"GT_ColorMask_{i}",
             (_gt_pbr.maps_cm_x(), _gt_pbr.colour_row_y("colour") - i * _GT_DY),
+            non_color=True,
         )
         if nd is None:
             continue
@@ -3292,6 +3338,7 @@ def _setup_gt_bypass_material(
             os.path.join(folder, fname) if folder else fname,
             f"GT_BaseColor_{i}",
             (_gt_pbr.maps_cm_x(), _gt_pbr.colour_row_y("tex") - i * _GT_DY),
+            non_color=True,
         )
         if nd is None:
             continue
@@ -3299,6 +3346,26 @@ def _setup_gt_bypass_material(
         nd.label = f"BaseColor {fname}"
         if base_tex is None:
             base_tex = nd
+
+    breakup_node = None
+    if not breakup_tex:
+        for p in base_other:
+            if textures.identify_texture(os.path.basename(p)) == "breakup":
+                breakup_tex.append(p)
+    for i, item in enumerate(breakup_tex):
+        fpath = item if os.path.isabs(item) else (os.path.join(folder, item) if folder else item)
+        nd = _gt_make_tex(
+            nodes,
+            fpath,
+            f"GT_Breakup_{i}",
+            (_gt_pbr.maps_uv_x(), _gt_pbr.colour_row_y("wet") - i * _GT_DY),
+            non_color=True,
+        )
+        if nd is None:
+            continue
+        nd.label = f"Breakup {os.path.basename(fpath)}"
+        if breakup_node is None:
+            breakup_node = nd
 
     normal_node = None
     for i, fname in enumerate(normal_tex):
@@ -3428,6 +3495,8 @@ def _setup_gt_bypass_material(
         decal_folder=df,
         search_dirs=search_dirs,
         sparse_colormask=("radiobag" in f"{_material_key} {_mat_name} {json_path or ''}".lower()),
+        breakup_node=breakup_node,
+        colortex_outputs=_gt.get("colortex_outputs") or {},
     )
     # Keep Colour-row frames; do not unparent/declutter (that made the spaghetti graph).
     n_moved = 0
@@ -3654,9 +3723,8 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
             if "Base Color" in group_node.inputs:
                 links.new(node.outputs["Color"], group_node.inputs["Base Color"])
         place_column(basecolor_tex, ABOVE_X + 40, connect_fn=connect_basecolor, collapsed=True,
-                     start_y=ABOVE_Y + (len(occlusion_tex) + len(normal_tex)) * ABOVE_STEP - 80)
-
-        colormask_nodes = place_column(colormask_tex, -2200)
+                     start_y=ABOVE_Y + (len(occlusion_tex) + len(normal_tex)) * ABOVE_STEP - 80, non_color=True)
+        colormask_nodes = place_column(colormask_tex, -2200, non_color=True)
         place_column(other_tex, -2400, start_y=-2000)
     
     # One ColorMask_XYZ per Colour/Roughness/Metallic channel (zones 1..8).

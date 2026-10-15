@@ -26,28 +26,52 @@ from ..properties import BODY_ALBEDO, BODY_NORMAL
 # ---------------------------------------------------------------------------
 
 def _find_misc_textures(folder: str) -> dict:
-    result = {'cr': None, 'normal_type': None, 'normal': None}
+    result = {'cr': None, 'albedo': None, 'normal_type': None, 'normal': None}
     try:
         for fname in os.listdir(folder):
             fl = fname.lower()
             fpath = os.path.join(folder, fname)
             if fl.endswith('_cr.png'):
                 result['cr'] = fpath
+            elif fl.endswith('_basecolor.png') or fl.endswith('_basecolour.png'):
+                result['albedo'] = fpath
             for ntype in ('nom', 'nem', 'nxm', 'nam'):
                 if fl.endswith(f'_{ntype}.png'):
                     result['normal_type'] = ntype
                     result['normal'] = fpath
+            if result['normal'] is None and (
+                fl.endswith('_normal.png') or fl.endswith('_normals.png')
+            ):
+                result['normal_type'] = 'tangent'
+                result['normal'] = fpath
     except OSError:
         pass
     return result
 
 
 
+def _albedo_tex_node(nodes, path: str):
+    """BaseColor image node. Shell maps often store RGB with a zero alpha."""
+    if not path:
+        return None
+    img = bpy.data.images.load(path, check_existing=True)
+    try:
+        img.alpha_mode = "NONE"
+    except Exception:
+        pass
+    node = nodes.new("ShaderNodeTexImage")
+    node.image = img
+    node.label = "Base Color"
+    node.interpolation = "Cubic"
+    node.location = (-900, 300)
+    return node
+
+
 def setup_misc_material(obj, psk_path: str):
     folder = os.path.dirname(psk_path)
     texs = _find_misc_textures(folder)
 
-    if not texs['cr'] and not texs['normal']:
+    if not texs['cr'] and not texs['normal'] and not texs['albedo']:
         print(f"Arc Raiders PSK Importer: No CR or N*M textures found for '{os.path.basename(psk_path)}'")
         return
 
@@ -103,7 +127,7 @@ def setup_misc_material(obj, psk_path: str):
         links.new(nm_in, nm_node.inputs["Color"])
         links.new(nm_node.outputs["Normal"], principled.inputs["Normal"])
         ntype = texs['normal_type']
-        if ntype != 'nom':
+        if ntype not in ('nom', 'tangent'):
             links.new(normal_node.outputs["Alpha"], principled.inputs["Metallic"])
 
         if ntype in ('nom', 'nem', 'nam'):
@@ -145,7 +169,79 @@ def setup_misc_material(obj, psk_path: str):
         elif ntype == 'nxm':
             if cr_node:
                 links.new(cr_node.outputs["Color"], principled.inputs["Base Color"])
+        elif ntype == 'tangent':
+            color_node = cr_node or _albedo_tex_node(nodes, texs['albedo'])
+            if color_node is not None:
+                links.new(color_node.outputs["Color"], principled.inputs["Base Color"])
 
     elif cr_node:
         links.new(cr_node.outputs["Color"], principled.inputs["Base Color"])
+    elif texs['albedo']:
+        albedo = _albedo_tex_node(nodes, texs['albedo'])
+        if albedo is not None:
+            links.new(albedo.outputs["Color"], principled.inputs["Base Color"])
+    _fill_shell_slots(obj, folder)
+
+
+def _fill_shell_slots(obj, folder: str) -> None:
+    """Second slot on charms such as the snowglobe. The body CR map does not cover it."""
+    smoke = ""
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    for name in names:
+        low = name.lower()
+        if not low.endswith(".png"):
+            continue
+        if "snowsmoke" in low or low.endswith("_nox.png"):
+            smoke = os.path.join(folder, name)
+            if "snowsmoke" in low:
+                break
+    if not smoke:
+        return
+    for slot in obj.material_slots:
+        mat = slot.material
+        if mat is None or "shell" not in (mat.name or "").lower():
+            continue
+        mat.use_nodes = True
+        nodes = mat.node_tree.nodes
+        links = mat.node_tree.links
+        nodes.clear()
+        principled = nodes.new("ShaderNodeBsdfPrincipled")
+        principled.location = (400, 0)
+        out_node = nodes.new("ShaderNodeOutputMaterial")
+        out_node.location = (700, 0)
+        links.new(principled.outputs["BSDF"], out_node.inputs["Surface"])
+        img = bpy.data.images.load(smoke, check_existing=True)
+        tex = nodes.new("ShaderNodeTexImage")
+        tex.image = img
+        tex.label = "Shell"
+        tex.interpolation = "Cubic"
+        tex.location = (-500, 80)
+        links.new(tex.outputs["Color"], principled.inputs["Base Color"])
+        try:
+            principled.inputs["Roughness"].default_value = 0.08
+        except Exception:
+            pass
+        trans = principled.inputs.get("Transmission Weight") or principled.inputs.get("Transmission")
+        if trans is not None:
+            try:
+                trans.default_value = 0.85
+            except Exception:
+                pass
+        for attr, value in (
+            ("blend_method", "HASHED"),
+            ("surface_render_method", "DITHERED"),
+            ("use_transparency_overlap", True),
+            ("show_transparent_back", True),
+        ):
+            try:
+                setattr(mat, attr, value)
+            except Exception:
+                pass
+        try:
+            mat.use_backface_culling = False
+        except Exception:
+            pass
 

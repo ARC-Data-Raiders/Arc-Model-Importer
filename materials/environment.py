@@ -177,6 +177,371 @@ _WATER_SHORE_KEYS = (
 
 
 
+def _remap_01(nodes, links, sock, low, high, loc, label):
+    """Map *sock* from [low, high] into 0..1 and clamp. Revamped roughness range."""
+    mp = nodes.new("ShaderNodeMapRange")
+    mp.label = label
+    mp.location = loc
+    mp.clamp = True
+    links.new(sock, mp.inputs["Value"])
+    mp.inputs["From Min"].default_value = float(low)
+    mp.inputs["From Max"].default_value = float(high)
+    return mp.outputs["Result"]
+
+
+def stamp_beacon_islands(obj) -> None:
+    """Store each beacon lamp's center and radius so the sprite can face the camera.
+
+    The beacon slot is a small 3D volume, not a flat card. Two lamps on one mesh
+    need their own centers.
+    """
+    import bmesh
+
+    if obj is None or getattr(obj, "type", "") != "MESH":
+        return
+    me = obj.data
+    beacon_slots = {
+        i for i, slot in enumerate(obj.material_slots)
+        if slot.material and "beacon" in (slot.material.name or "").lower()
+    }
+    if not beacon_slots:
+        return
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.faces.ensure_lookup_table()
+    faces = [f for f in bm.faces if f.material_index in beacon_slots]
+    seen = set()
+    islands = []
+    for face in faces:
+        if face.index in seen:
+            continue
+        stack = [face]
+        seen.add(face.index)
+        comp = [face]
+        while stack:
+            cur = stack.pop()
+            for edge in cur.edges:
+                for other in edge.link_faces:
+                    if other.material_index in beacon_slots and other.index not in seen:
+                        seen.add(other.index)
+                        stack.append(other)
+                        comp.append(other)
+        islands.append(comp)
+    centers = {}
+    radii = {}
+    for comp in islands:
+        verts = {v.index: v.co.copy() for face in comp for v in face.verts}
+        xs = [co.x for co in verts.values()]
+        ys = [co.y for co in verts.values()]
+        zs = [co.z for co in verts.values()]
+        center = (
+            (min(xs) + max(xs)) * 0.5,
+            (min(ys) + max(ys)) * 0.5,
+            (min(zs) + max(zs)) * 0.5,
+        )
+        radius = 0.5 * max(max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs))
+        for index in verts:
+            centers[index] = center
+            radii[index] = radius
+    bm.free()
+    center_attr = me.attributes.get("arc_beacon_center")
+    if center_attr is None:
+        center_attr = me.attributes.new("arc_beacon_center", "FLOAT_VECTOR", "POINT")
+    radius_attr = me.attributes.get("arc_beacon_radius")
+    if radius_attr is None:
+        radius_attr = me.attributes.new("arc_beacon_radius", "FLOAT", "POINT")
+    for index in range(len(me.vertices)):
+        center_attr.data[index].vector = centers.get(index, (0.0, 0.0, 0.0))
+        radius_attr.data[index].value = float(radii.get(index, 0.0))
+
+
+def _beacon_view_cell_uv(nodes, links):
+    """Pick one cell of the 4x2 beacon sheet and project it toward the camera.
+
+    ``T_Beacon_CR_01`` is eight angles of one lamp. ``M_Beacon`` shows a single
+    cell (``MF_AtlasSelect``) in screen space, not wrapped around the mesh.
+    """
+    coord = nodes.new("ShaderNodeTexCoord")
+    coord.label = "Lamp position"
+    coord.location = (-1700, -80)
+    center = nodes.new("ShaderNodeAttribute")
+    center.label = "Lamp center"
+    center.location = (-1700, -280)
+    center.attribute_name = "arc_beacon_center"
+    try:
+        center.attribute_type = "GEOMETRY"
+    except Exception:
+        pass
+    radius = nodes.new("ShaderNodeAttribute")
+    radius.label = "Lamp radius"
+    radius.location = (-1700, -480)
+    radius.attribute_name = "arc_beacon_radius"
+    try:
+        radius.attribute_type = "GEOMETRY"
+    except Exception:
+        pass
+    # One direction for the whole lamp. Per-fragment Incoming splits the
+    # card across two atlas cells when the view sits on a column boundary.
+    origin = nodes.new("ShaderNodeCombineXYZ")
+    origin.label = "Camera origin"
+    origin.location = (-1700, 520)
+    cam_obj = nodes.new("ShaderNodeVectorTransform")
+    cam_obj.label = "Camera in object space"
+    cam_obj.location = (-1480, 520)
+    cam_obj.vector_type = "POINT"
+    cam_obj.convert_from = "CAMERA"
+    cam_obj.convert_to = "OBJECT"
+    links.new(origin.outputs["Vector"], cam_obj.inputs["Vector"])
+    center_view = nodes.new("ShaderNodeAttribute")
+    center_view.label = "Lamp center"
+    center_view.location = (-1700, 300)
+    center_view.attribute_name = "arc_beacon_center"
+    try:
+        center_view.attribute_type = "GEOMETRY"
+    except Exception:
+        pass
+    toward = nodes.new("ShaderNodeVectorMath")
+    toward.label = "Toward camera"
+    toward.location = (-1260, 400)
+    toward.operation = "SUBTRACT"
+    links.new(cam_obj.outputs["Vector"], toward.inputs[0])
+    links.new(center_view.outputs["Vector"], toward.inputs[1])
+    norm = nodes.new("ShaderNodeVectorMath")
+    norm.location = (-1040, 400)
+    norm.operation = "NORMALIZE"
+    links.new(toward.outputs["Vector"], norm.inputs[0])
+    sep = nodes.new("ShaderNodeSeparateXYZ")
+    sep.location = (-660, 360)
+    links.new(norm.outputs["Vector"], sep.inputs["Vector"])
+
+    yaw = nodes.new("ShaderNodeMath")
+    yaw.label = "Yaw"
+    yaw.location = (-460, 460)
+    yaw.operation = "ARCTAN2"
+    links.new(sep.outputs["Y"], yaw.inputs[0])
+    links.new(sep.outputs["X"], yaw.inputs[1])
+    spun = nodes.new("ShaderNodeMath")
+    spun.location = (-260, 460)
+    spun.operation = "ADD"
+    spun.inputs[1].default_value = math.pi
+    links.new(yaw.outputs["Value"], spun.inputs[0])
+    unit = nodes.new("ShaderNodeMath")
+    unit.location = (-60, 460)
+    unit.operation = "DIVIDE"
+    unit.inputs[1].default_value = math.tau
+    links.new(spun.outputs["Value"], unit.inputs[0])
+    cols = nodes.new("ShaderNodeMath")
+    cols.location = (140, 460)
+    cols.operation = "MULTIPLY"
+    cols.inputs[1].default_value = 4.0
+    links.new(unit.outputs["Value"], cols.inputs[0])
+    col_i = nodes.new("ShaderNodeMath")
+    col_i.location = (320, 460)
+    col_i.operation = "FLOOR"
+    links.new(cols.outputs["Value"], col_i.inputs[0])
+    col_off = nodes.new("ShaderNodeMath")
+    col_off.label = "Column"
+    col_off.location = (500, 460)
+    col_off.operation = "MULTIPLY"
+    col_off.inputs[1].default_value = 0.25
+    links.new(col_i.outputs["Value"], col_off.inputs[0])
+
+    above = nodes.new("ShaderNodeMath")
+    above.label = "Above the lamp"
+    above.location = (-260, 220)
+    above.operation = "GREATER_THAN"
+    above.inputs[1].default_value = 0.25
+    links.new(sep.outputs["Z"], above.inputs[0])
+    row_off = nodes.new("ShaderNodeMath")
+    row_off.label = "Row"
+    row_off.location = (500, 220)
+    row_off.operation = "MULTIPLY"
+    row_off.inputs[1].default_value = 0.5
+    links.new(above.outputs["Value"], row_off.inputs[0])
+
+    delta = nodes.new("ShaderNodeVectorMath")
+    delta.label = "Offset from lamp center"
+    delta.location = (-1480, -80)
+    delta.operation = "SUBTRACT"
+    links.new(coord.outputs["Object"], delta.inputs[0])
+    links.new(center.outputs["Vector"], delta.inputs[1])
+    to_cam = nodes.new("ShaderNodeVectorTransform")
+    to_cam.label = "Offset in camera space"
+    to_cam.location = (-1260, -80)
+    to_cam.vector_type = "VECTOR"
+    to_cam.convert_from = "OBJECT"
+    to_cam.convert_to = "CAMERA"
+    links.new(delta.outputs["Vector"], to_cam.inputs["Vector"])
+    sep_cam = nodes.new("ShaderNodeSeparateXYZ")
+    sep_cam.location = (-1040, -80)
+    links.new(to_cam.outputs["Vector"], sep_cam.inputs["Vector"])
+    rad_vec = nodes.new("ShaderNodeCombineXYZ")
+    rad_vec.location = (-1480, -420)
+    links.new(radius.outputs["Fac"], rad_vec.inputs["X"])
+    rad_cam = nodes.new("ShaderNodeVectorTransform")
+    rad_cam.location = (-1260, -420)
+    rad_cam.vector_type = "VECTOR"
+    rad_cam.convert_from = "OBJECT"
+    rad_cam.convert_to = "CAMERA"
+    links.new(rad_vec.outputs["Vector"], rad_cam.inputs["Vector"])
+    rad_len = nodes.new("ShaderNodeVectorMath")
+    rad_len.location = (-1040, -420)
+    rad_len.operation = "LENGTH"
+    links.new(rad_cam.outputs["Vector"], rad_len.inputs[0])
+    diameter = nodes.new("ShaderNodeMath")
+    diameter.location = (-840, -420)
+    diameter.operation = "MULTIPLY"
+    diameter.inputs[1].default_value = 2.0
+    links.new(rad_len.outputs["Value"], diameter.inputs[0])
+    safe = nodes.new("ShaderNodeMath")
+    safe.location = (-640, -420)
+    safe.operation = "MAXIMUM"
+    safe.inputs[1].default_value = 0.001
+    links.new(diameter.outputs["Value"], safe.inputs[0])
+    u_div = nodes.new("ShaderNodeMath")
+    u_div.location = (-440, -20)
+    u_div.operation = "DIVIDE"
+    links.new(sep_cam.outputs["X"], u_div.inputs[0])
+    links.new(safe.outputs["Value"], u_div.inputs[1])
+    v_div = nodes.new("ShaderNodeMath")
+    v_div.location = (-440, -160)
+    v_div.operation = "DIVIDE"
+    links.new(sep_cam.outputs["Y"], v_div.inputs[0])
+    links.new(safe.outputs["Value"], v_div.inputs[1])
+    u_01 = nodes.new("ShaderNodeMath")
+    u_01.location = (-240, -20)
+    u_01.operation = "ADD"
+    u_01.inputs[1].default_value = 0.5
+    links.new(u_div.outputs["Value"], u_01.inputs[0])
+    v_01 = nodes.new("ShaderNodeMath")
+    v_01.location = (-240, -160)
+    v_01.operation = "ADD"
+    v_01.inputs[1].default_value = 0.5
+    links.new(v_div.outputs["Value"], v_01.inputs[0])
+    # The billboard quad carries a 0-1 UV. Scale that into the chosen cell.
+    sheet = nodes.new("ShaderNodeUVMap")
+    sheet.label = "Billboard UV"
+    sheet.location = (-260, -40)
+    sep_uv = nodes.new("ShaderNodeSeparateXYZ")
+    sep_uv.location = (-40, -40)
+    links.new(sheet.outputs["UV"], sep_uv.inputs["Vector"])
+    u_span = nodes.new("ShaderNodeMath")
+    u_span.location = (160, 40)
+    u_span.operation = "MULTIPLY"
+    u_span.inputs[1].default_value = 0.242
+    links.new(sep_uv.outputs["X"], u_span.inputs[0])
+    v_span = nodes.new("ShaderNodeMath")
+    v_span.location = (160, -80)
+    v_span.operation = "MULTIPLY"
+    v_span.inputs[1].default_value = 0.484
+    links.new(sep_uv.outputs["Y"], v_span.inputs[0])
+    u_cell = nodes.new("ShaderNodeMath")
+    u_cell.location = (700, 80)
+    u_cell.operation = "ADD"
+    u_cell.inputs[1].default_value = 0.004
+    links.new(u_span.outputs["Value"], u_cell.inputs[0])
+    u_out = nodes.new("ShaderNodeMath")
+    u_out.location = (880, 160)
+    u_out.operation = "ADD"
+    links.new(u_cell.outputs["Value"], u_out.inputs[0])
+    links.new(col_off.outputs["Value"], u_out.inputs[1])
+    v_cell = nodes.new("ShaderNodeMath")
+    v_cell.location = (700, -40)
+    v_cell.operation = "ADD"
+    v_cell.inputs[1].default_value = 0.008
+    links.new(v_span.outputs["Value"], v_cell.inputs[0])
+    v_out = nodes.new("ShaderNodeMath")
+    v_out.location = (880, 0)
+    v_out.operation = "ADD"
+    links.new(v_cell.outputs["Value"], v_out.inputs[0])
+    links.new(row_off.outputs["Value"], v_out.inputs[1])
+    combine = nodes.new("ShaderNodeCombineXYZ")
+    combine.label = "Atlas cell UV"
+    combine.location = (1080, 80)
+    links.new(u_out.outputs["Value"], combine.inputs["X"])
+    links.new(v_out.outputs["Value"], combine.inputs["Y"])
+    return combine.outputs["Vector"]
+
+
+def setup_beacon_material(mat, mi_path: str, psk_path: str = "") -> None:
+    """One view from ``T_Beacon_CR_01``, clipped to the lamp alpha.
+
+    The sheet is 4 columns by 2 rows. Dark texels have alpha 0, so the card
+    around the lamp drops out. ``OnOff`` gates the extra emissive; the sprite
+    stays visible either way.
+    """
+    from . import preset_defaults
+
+    mi = _parse_flat_mi_json(mi_path) if mi_path else {}
+    raw_scalars = mi.get("scalars") or {}
+    scalars = raw_scalars if isinstance(raw_scalars, dict) else {n: v for n, v in raw_scalars}
+    raw_colours = mi.get("colours") or []
+    colours = dict(raw_colours) if not isinstance(raw_colours, dict) else raw_colours
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+    principled = nodes.new("ShaderNodeBsdfPrincipled")
+    principled.location = (1400, 80)
+    out = nodes.new("ShaderNodeOutputMaterial")
+    out.location = (1680, 80)
+    links.new(principled.outputs["BSDF"], out.inputs["Surface"])
+    cr_path = ""
+    refs = (preset_defaults.get_preset("M_Beacon") or {}).get("referenced_textures") or []
+    for ref in refs:
+        if "T_Beacon_CR" not in str(ref):
+            continue
+        cr_path = textures.find_texture_from_object_path(str(ref)) or ""
+        if cr_path and os.path.isfile(cr_path):
+            break
+        cr_path = ""
+    if cr_path:
+        img = _load_fallback_tex_image(cr_path)
+        if img is not None:
+            try:
+                img.alpha_mode = "STRAIGHT"
+            except Exception:
+                pass
+            cell_uv = _beacon_view_cell_uv(nodes, links)
+            tex = _new_tex_image(nodes, img, "T_Beacon_CR_01", (1160, 200))
+            tex.extension = "CLIP"
+            tex.interpolation = "Linear"
+            links.new(cell_uv, tex.inputs["Vector"])
+            links.new(tex.outputs["Color"], principled.inputs["Base Color"])
+            links.new(tex.outputs["Color"], principled.inputs["Emission Color"])
+            mask = nodes.new("ShaderNodeMapRange")
+            mask.label = "Lamp coverage"
+            mask.location = (1280, -80)
+            mask.clamp = True
+            mask.inputs["From Min"].default_value = 0.08
+            mask.inputs["From Max"].default_value = 0.45
+            links.new(tex.outputs["Alpha"], mask.inputs["Value"])
+            links.new(mask.outputs["Result"], principled.inputs["Alpha"])
+    light = colours.get("LightColor") or (preset_defaults.preset_vectors("M_Beacon").get("LightColor") or (0.94, 0.15, 0.0, 1.0))
+    emissive = float(scalars.get("Emissive", 1.0) or 0.0)
+    on = float(scalars.get("OnOff", 0.0) or 0.0) >= 0.5
+    try:
+        if "Emission Color" in principled.inputs and principled.inputs["Emission Color"].is_linked:
+            pass
+        else:
+            principled.inputs["Emission Color"].default_value = (
+                float(light[0]), float(light[1]), float(light[2]), 1.0,
+            )
+        principled.inputs["Roughness"].default_value = 0.35
+        principled.inputs["Emission Strength"].default_value = emissive if on else 2.0
+    except Exception:
+        pass
+    try:
+        mat.use_backface_culling = False
+    except Exception:
+        pass
+    try:
+        mat.surface_render_method = "BLENDED"
+    except Exception:
+        pass
+    mat["arc_mi_family"] = "beacon"
+
+
 def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: str = FAMILY_ENVIRONMENT):
     """Principled setup for Arc environment MIs (concrete, buildings, roads, metal trims).
 
@@ -395,6 +760,7 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     ao_sock = None
 
     cr1_node = None
+    cr2_node = None
     if cr1_img:
         cr1_node = _new_tex_image(nodes, cr1_img, "CR / Layer1", (COL_TEX, y_cr))
         _bind_tex_vec(cr1_node, y_cr)
@@ -403,6 +769,12 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         cr1_pl = (cr1_param or "").lower()
         if cr1_pl not in ("basecolor", "ca", "1. ca", "coloralpha", "pm_diffuse"):
             rough_sock = cr1_node.outputs["Alpha"]
+            # Concrete_01 (Revamped profile): remap CR alpha through RoughnessRange.
+            if "m_architecturepreset_concrete" in parent_l:
+                r_lo = _mi_scalar(scalars, "RoughnessRangeLow", default=0.0)
+                r_hi = _mi_scalar(scalars, "RoughnessRangeHigh", default=1.0)
+                if abs(r_lo) > 1e-4 or abs(r_hi - 1.0) > 1e-4:
+                    rough_sock = _remap_01(nodes, links, rough_sock, r_lo, r_hi, (COL_UTIL, y_cr - 80), "Roughness Range")
         else:
             rough_sock = None
             # Soft default; scalar Roughness may override below
@@ -723,6 +1095,30 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             (COL_MIX + 160, y_ov - 900), "Waterline Mix",
         )
 
+    # ── Concrete_01 contrast (Revamped recovered shader) ───────────────────
+    # color = saturate(color * (1 + 2*contrast) - contrast)
+    concrete_profile = "m_architecturepreset_concrete" in parent_l
+    if concrete_profile and albedo_sock is not None:
+        contrast = _mi_scalar(scalars, "BC Contrast", default=0.0)
+        if abs(contrast) > 1e-4:
+            scale = nodes.new("ShaderNodeVectorMath")
+            scale.operation = "SCALE"
+            scale.label = "BC Contrast Scale"
+            scale.location = (COL_MIX + 200, y_cr - 40)
+            scale.inputs["Scale"].default_value = 1.0 + 2.0 * contrast
+            links.new(albedo_sock, scale.inputs[0])
+            add = nodes.new("ShaderNodeVectorMath")
+            add.operation = "ADD"
+            add.label = "BC Contrast Bias"
+            add.location = (COL_MIX + 400, y_cr - 40)
+            add.inputs[1].default_value = (-contrast, -contrast, -contrast)
+            links.new(scale.outputs[0], add.inputs[0])
+            clamp = nodes.new("ShaderNodeClamp")
+            clamp.label = "BC Contrast Clamp"
+            clamp.location = (COL_MIX + 600, y_cr - 40)
+            links.new(add.outputs[0], clamp.inputs["Value"])
+            albedo_sock = clamp.outputs["Result"]
+
     # ── Base desaturation (concrete Desaturation scalar) ───────────────────
     base_desat = _mi_scalar(scalars, "Desaturation", "BaseDesaturation", default=0.0)
     if base_desat > 0.001 and albedo_sock is not None:
@@ -827,6 +1223,24 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     tint = _mi_colour(colours, *_TINT_PARAMS, default=None)
     tint_rgb = env_props.tint_multiplier(mi, preset_key, *_TINT_PARAMS)
     tint_on = _mi_switch(switches, "Use Tint", "Enable Tinting", default=True)
+    # Concrete_01 tints around mid-grey: albedo * Tint * 2 (Revamped profile).
+    if concrete_profile and albedo_sock is not None and tint is not None:
+        rgb = nodes.new("ShaderNodeRGB")
+        rgb.label = "Concrete Tint"
+        rgb.outputs[0].default_value = (float(tint[0]), float(tint[1]), float(tint[2]), 1.0)
+        rgb.location = (COL_MIX + 280, y_cr + 220)
+        tinted = _mix_rgba(
+            nodes, links, albedo_sock, rgb.outputs[0], 1.0,
+            (COL_MIX + 480, y_cr + 120), "Albedo × Tint", blend="MULTIPLY",
+        )
+        gain = nodes.new("ShaderNodeVectorMath")
+        gain.operation = "SCALE"
+        gain.label = "Neutral-grey tint ×2"
+        gain.location = (COL_MIX + 700, y_cr + 120)
+        gain.inputs["Scale"].default_value = 2.0
+        links.new(tinted, gain.inputs[0])
+        albedo_sock = gain.outputs[0]
+        tint_on = False
     if albedo_sock is not None and tint_on and any(abs(c - 1.0) > 0.01 for c in tint_rgb):
         rgb = nodes.new("ShaderNodeRGB")
         rgb.label = "Tint"

@@ -6,7 +6,7 @@ Import Arc Raiders models by selecting an outfit folder.
 bl_info = {
     "name": "Arc Model Importer",
     "author": "Silarious (Ai Vibe Code)/ Naryun & Zebulon Core Functions",
-    "version": (2, 18, 236),
+    "version": (2, 19, 8),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Arc Model Importer",
     "description": "Import Arc Raiders outfits, weapons, animations, and models by selecting content folders.",
@@ -68,7 +68,8 @@ from . import importing
 from . import materials
 from . import textures
 from . import utils
-from . import map_placement  # noqa: F401 â€” map-importer lane; bridge helpers shared with outfits
+from . import pak_extract
+from . import map_placement  # noqa: F401 Ã¢â‚¬â€ map-importer lane; bridge helpers shared with outfits
 
 _last_search_value = [("", "")]
 
@@ -128,15 +129,26 @@ def _search_poll():
 
 def register():
     """Register all modules and properties (idempotent on reinstall/reload)."""
-    # Clean slate so Preferences â†’ Install over an enabled copy cannot double-register.
+    # Clean slate so Preferences Ã¢â€ â€™ Install over an enabled copy cannot double-register.
     try:
         unregister()
     except Exception:
         pass
 
     properties.register()
+    pak_extract.register_defaults()
+
+    try:
+        from . import appearance as _appearance
+
+        _appearance.register_previews()
+    except Exception as e:
+        print(f"Arc Raiders PSK Importer: appearance previews register failed: {e}")
 
     for cls in operators.classes:
+        _safe_register_class(cls)
+
+    for cls in pak_extract.classes:
         _safe_register_class(cls)
 
     for cls in ui.classes:
@@ -145,7 +157,7 @@ def register():
     try:
         if not utils.ensure_psk_addon():
             print(
-                "Arc Raiders PSK Importer: warning â€” PSK import ops missing; "
+                "Arc Raiders PSK Importer: warning Ã¢â‚¬â€ PSK import ops missing; "
                 "mesh import will fail until Unreal PSK/PSA is enabled."
             )
     except Exception as e:
@@ -197,6 +209,7 @@ def _auto_start_listener():
 
 def unregister():
     """Unregister all modules and properties (safe if partially registered)."""
+    pak_extract.unregister_defaults()
     try:
         if addon_line.is_map_importer_line():
             map_placement.unregister_instancer_material_focus()
@@ -219,11 +232,21 @@ def unregister():
     for cls in reversed(ui.classes):
         _safe_unregister_class(cls)
 
+    for cls in reversed(pak_extract.classes):
+        _safe_unregister_class(cls)
+
     for cls in reversed(operators.classes):
         _safe_unregister_class(cls)
 
     try:
         properties.unregister()
+    except Exception:
+        pass
+
+    try:
+        from . import appearance as _appearance
+
+        _appearance.unregister_previews()
     except Exception:
         pass
 

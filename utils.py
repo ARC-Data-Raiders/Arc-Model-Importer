@@ -461,6 +461,10 @@ _CONTENT_DIR_CACHE = {}
 _RELATIVE_DIR_CACHE = {}
 _OUTFIT_CHAR_MAP_CACHE = {}
 _CACHE_ROOT_SEEN = [None]
+# Deep folder walks are opt-in (user picks a search root). Never silent.
+_DEEP_SEARCH_ROOT = ""
+_PATH_MISS_NOTE = None  # (root, tuple(rel_parts)) of last fast-path miss
+
 
 def get_pioneer_root():
     try:
@@ -468,6 +472,75 @@ def get_pioneer_root():
         return bpy.path.abspath(root) if root else ""
     except Exception:
         return ""
+
+
+def get_deep_search_root() -> str:
+    """Folder the user agreed to deep-search within (empty = deep search off)."""
+    global _DEEP_SEARCH_ROOT
+    if _DEEP_SEARCH_ROOT and os.path.isdir(_DEEP_SEARCH_ROOT):
+        return _DEEP_SEARCH_ROOT
+    try:
+        scene = bpy.context.scene
+        raw = getattr(scene, "arc_deep_path_search_root", "") or ""
+        path = bpy.path.abspath(raw) if raw else ""
+        if path and os.path.isdir(path):
+            _DEEP_SEARCH_ROOT = path
+            return path
+    except Exception:
+        pass
+    return ""
+
+
+def set_deep_search_root(folder: str) -> str:
+    """Enable expensive path search under *folder*. Returns normalized path or ''."""
+    global _DEEP_SEARCH_ROOT, _PATH_MISS_NOTE
+    folder = os.path.normpath(folder or "")
+    if not folder or not os.path.isdir(folder):
+        _DEEP_SEARCH_ROOT = ""
+        try:
+            bpy.context.scene.arc_deep_path_search_root = ""
+        except Exception:
+            pass
+        return ""
+    _DEEP_SEARCH_ROOT = folder
+    _PATH_MISS_NOTE = None
+    _CONTENT_DIR_CACHE.clear()
+    _RELATIVE_DIR_CACHE.clear()
+    try:
+        bpy.context.scene.arc_deep_path_search_root = folder
+    except Exception:
+        pass
+    return folder
+
+
+def clear_deep_search_root() -> None:
+    set_deep_search_root("")
+
+
+def deep_search_allowed(within: str = "") -> bool:
+    consent = get_deep_search_root()
+    if not consent:
+        return False
+    if not within:
+        return True
+    try:
+        common = os.path.commonpath([
+            os.path.normcase(os.path.abspath(consent)),
+            os.path.normcase(os.path.abspath(within)),
+        ])
+        return os.path.normcase(common) == os.path.normcase(os.path.abspath(consent))
+    except ValueError:
+        return False
+
+
+def last_path_miss():
+    return _PATH_MISS_NOTE
+
+
+def note_path_miss(root: str, rel_parts: list | tuple) -> None:
+    global _PATH_MISS_NOTE
+    _PATH_MISS_NOTE = (root or "", tuple(rel_parts or ()))
+
 
 def invalidate_dir_caches_if_root_changed():
     root = get_pioneer_root()
@@ -496,6 +569,11 @@ def invalidate_dir_caches_if_root_changed():
             _wcat.invalidate_enum_caches()
         except Exception:
             pass
+        try:
+            from . import appearance as _app
+            _app.invalidate_cache()
+        except Exception:
+            pass
 
 def _content_dir_score(content_dir: str) -> int:
     """Prefer PioneerGame Content over Engine/plugin Content under FModel dumps."""
@@ -514,56 +592,81 @@ def _content_dir_score(content_dir: str) -> int:
     return score
 
 
+def _find_content_dir_fast(root: str) -> str:
+    """Known layouts only — no directory indexing."""
+    if not root or not os.path.isdir(root):
+        return ""
+    base = os.path.basename(os.path.normpath(root)).lower()
+    if base == "content":
+        return root
+    if base == "pioneer":
+        parent = os.path.dirname(os.path.normpath(root))
+        if os.path.basename(parent).lower() == "content":
+            return parent
+    if base == "pioneergame":
+        direct_pg = os.path.join(root, "Content")
+        if os.path.isdir(direct_pg):
+            return direct_pg
+    # Common FModel / dump roots (one-level probes, not a walk).
+    for candidate in (
+        os.path.join(root, "PioneerGame", "Content"),
+        os.path.join(root, "Content"),
+        os.path.join(root, "Game", "Content"),
+    ):
+        if os.path.isdir(candidate):
+            return candidate
+    # Parent one level up (user picked Content/Pioneer or PioneerGame/Content/Pioneer).
+    parent = os.path.dirname(os.path.normpath(root))
+    if parent and os.path.basename(parent).lower() == "content" and os.path.isdir(parent):
+        return parent
+    grand = os.path.dirname(parent) if parent else ""
+    if grand:
+        sib = os.path.join(grand, "PioneerGame", "Content")
+        if os.path.isdir(sib):
+            return sib
+    return ""
+
+
+def _find_content_dir_deep(root: str) -> str:
+    """BFS Content discovery — only after user consent (deep_search_allowed)."""
+    MAX_DEPTH = 6
+    MAX_VISITED = 20000
+    visited = 0
+    candidates = []
+    queue = deque([(root, 0)])
+    while queue:
+        current, depth = queue.popleft()
+        visited += 1
+        if visited > MAX_VISITED:
+            break
+        try:
+            entries = os.listdir(current)
+        except OSError:
+            continue
+        for entry in entries:
+            full = os.path.join(current, entry)
+            if not os.path.isdir(full):
+                continue
+            if entry.lower() == "content":
+                candidates.append(full)
+            if depth < MAX_DEPTH:
+                queue.append((full, depth + 1))
+    if not candidates:
+        return ""
+    return max(candidates, key=_content_dir_score)
+
+
 def find_content_dir(root: str) -> str:
     if not root or not os.path.isdir(root):
         return ""
     if root in _CONTENT_DIR_CACHE:
         return _CONTENT_DIR_CACHE[root]
-    found = ""
-    base = os.path.basename(os.path.normpath(root)).lower()
-    if base == "content":
-        found = root
-    elif base == "pioneer":
-        # Root is already Content/Pioneer — parent is the UE Content folder.
-        parent = os.path.dirname(os.path.normpath(root))
-        if os.path.basename(parent).lower() == "content":
-            found = parent
-    elif base == "pioneergame":
-        # Root is already PioneerGame — Content is a direct child.
-        direct_pg = os.path.join(root, "Content")
-        if os.path.isdir(direct_pg):
-            found = direct_pg
-    if not found:
-        # FModel output roots often contain both Engine/Content and PioneerGame/Content.
-        # Prefer the game package Content so /Game/Pioneer/... ObjectPaths resolve.
-        direct = os.path.join(root, "PioneerGame", "Content")
-        if os.path.isdir(direct):
-            found = direct
-        else:
-            MAX_DEPTH = 6
-            MAX_VISITED = 20000
-            visited = 0
-            candidates = []
-            queue = deque([(root, 0)])
-            while queue:
-                current, depth = queue.popleft()
-                visited += 1
-                if visited > MAX_VISITED:
-                    break
-                try:
-                    entries = os.listdir(current)
-                except OSError:
-                    continue
-                for entry in entries:
-                    full = os.path.join(current, entry)
-                    if not os.path.isdir(full):
-                        continue
-                    if entry.lower() == "content":
-                        candidates.append(full)
-                    if depth < MAX_DEPTH:
-                        queue.append((full, depth + 1))
-            if candidates:
-                found = max(candidates, key=_content_dir_score)
+    found = _find_content_dir_fast(root)
+    if not found and deep_search_allowed(root):
+        search_root = get_deep_search_root() or root
+        found = _find_content_dir_deep(search_root)
+    elif not found:
+        note_path_miss(root, ("Content",))
     _CONTENT_DIR_CACHE[root] = found
     return found
 
@@ -630,6 +733,18 @@ def guess_full_fmodel_content_dirs(seed_content_dir: str = "") -> list[str]:
     return out
 
 
+_pak_cache_roots: list[str] = []
+
+
+def set_pak_cache_root(path: str) -> None:
+    """Remember a pak extract cache so MI JSON and PNG resolve from it."""
+    if not path:
+        return
+    norm = os.path.normpath(path)
+    if norm not in _pak_cache_roots:
+        _pak_cache_roots.append(norm)
+
+
 def get_content_dirs(extra_roots: list[str] | None = None) -> list[str]:
     """Ordered Content directories for ObjectPath / MI / SM JSON resolve.
 
@@ -668,6 +783,26 @@ def get_content_dirs(extra_roots: list[str] | None = None) -> list[str]:
     for er in extra_roots or []:
         if er:
             roots.append(er)
+    for cache in _pak_cache_roots:
+        # ExportSession mirrors the cooked tree: cache/PioneerGame/Content/...
+        if os.path.isdir(cache):
+            roots.append(cache)
+        game = os.path.join(cache, "Game")
+        if os.path.isdir(game):
+            _add(game, prefer_front=True)
+    # Steam / full dump fallback: 2.0 Unpack often omits MaterialLibrary pattern
+    # ID maps that still live under Desktop Arc_Raiders_Current.
+    try:
+        desk = os.path.join(
+            os.path.expanduser("~"),
+            "Desktop",
+            "Arc_Raiders_Current",
+            "PioneerGame",
+        )
+        if os.path.isdir(desk):
+            roots.append(desk)
+    except Exception:
+        pass
 
     seed_contents: list[str] = []
     for root in roots:
@@ -757,66 +892,117 @@ _REL_DIR_SKIP = frozenset({
 })
 
 
-def find_relative_dir(root: str, rel_parts: list) -> str:
+def _find_relative_dir_fast(root: str, rel_parts: list) -> str:
+    """Try known PioneerGame/Content/Pioneer layouts without walking the tree."""
+    if not root or not rel_parts:
+        return ""
+    parts = list(rel_parts)
+    content_dir = find_content_dir(root)
+    candidates = []
+    if content_dir:
+        candidates.append(os.path.join(content_dir, "Pioneer", *parts))
+        candidates.append(os.path.join(content_dir, *parts))
+    base = os.path.basename(os.path.normpath(root)).lower()
+    if base == "pioneergame":
+        candidates.append(os.path.join(root, "Content", "Pioneer", *parts))
+    elif base == "content":
+        candidates.append(os.path.join(root, "Pioneer", *parts))
+    elif base == "pioneer":
+        candidates.append(os.path.join(root, *parts))
+    candidates.append(os.path.join(root, "PioneerGame", "Content", "Pioneer", *parts))
+    candidates.append(os.path.join(root, "Content", "Pioneer", *parts))
+    candidates.append(os.path.join(root, "Pioneer", *parts))
+    candidates.append(os.path.join(root, *parts))
+    # Also accept root already pointing at Characters / Items / etc.
+    if normalize_folder_name(os.path.basename(root)) == normalize_folder_name(parts[0]):
+        if len(parts) == 1:
+            candidates.insert(0, root)
+        else:
+            candidates.insert(0, os.path.join(root, *parts[1:]))
+    seen = set()
+    for candidate in candidates:
+        norm = os.path.normcase(os.path.normpath(candidate))
+        if norm in seen:
+            continue
+        seen.add(norm)
+        if os.path.isdir(candidate):
+            return candidate
+    return ""
+
+
+def _find_relative_dir_deep(search_root: str, rel_parts: list) -> str:
+    """BFS suffix match under a user-consented folder."""
+    if not search_root or not os.path.isdir(search_root) or not rel_parts:
+        return ""
+    MAX_DEPTH = 8
+    MAX_VISITED = 30000
+
+    def _search_for_suffix(suffix_parts):
+        if not suffix_parts:
+            return ""
+        target_leaf_norm = normalize_folder_name(suffix_parts[-1])
+        visited = 0
+        queue = deque([(search_root, 0)])
+        while queue:
+            current, depth = queue.popleft()
+            visited += 1
+            if visited > MAX_VISITED:
+                break
+            try:
+                entries = os.listdir(current)
+            except OSError:
+                continue
+            for entry in entries:
+                full = os.path.join(current, entry)
+                if not os.path.isdir(full):
+                    continue
+                elow = entry.lower()
+                if elow in _REL_DIR_SKIP:
+                    continue
+                # FModel composer dumps: <root>/Outfits/<name>/Parts/...
+                # (singular Items/.../Skins/Outfit is the real colourway tree).
+                if elow == "outfits" and "skins" not in current.lower():
+                    continue
+                if normalize_folder_name(entry) == target_leaf_norm:
+                    ok = True
+                    check = full
+                    for part in reversed(suffix_parts[:-1]):
+                        check = os.path.dirname(check)
+                        if normalize_folder_name(os.path.basename(check)) != normalize_folder_name(part):
+                            ok = False
+                            break
+                    if ok:
+                        return full
+                if depth < MAX_DEPTH:
+                    queue.append((full, depth + 1))
+        return ""
+
+    for start in range(len(rel_parts)):
+        hit = _search_for_suffix(rel_parts[start:])
+        if hit:
+            return hit
+    return ""
+
+
+def find_relative_dir(root: str, rel_parts: list, *, allow_deep: bool | None = None) -> str:
+    """Resolve Content/Pioneer/<rel_parts>.
+
+    Fast known layouts always run. Deep BFS only when the user has consented
+    via Settings → Search Selected Folder (or allow_deep=True).
+    """
     if not root:
         return ""
-    cache_key = (root, tuple(rel_parts))
+    parts = list(rel_parts or [])
+    use_deep = deep_search_allowed(root) if allow_deep is None else bool(allow_deep)
+    cache_key = (root, tuple(parts), bool(use_deep))
     if cache_key in _RELATIVE_DIR_CACHE:
         return _RELATIVE_DIR_CACHE[cache_key]
-    result = ""
-    content_dir = find_content_dir(root)
-    if content_dir:
-        candidate = os.path.join(content_dir, "Pioneer", *rel_parts)
-        if os.path.isdir(candidate):
-            result = candidate
-    if not result and os.path.isdir(root):
-        MAX_DEPTH = 8
-        MAX_VISITED = 30000
-        def _search_for_suffix(suffix_parts):
-            if not suffix_parts:
-                return ""
-            target_leaf_norm = normalize_folder_name(suffix_parts[-1])
-            visited = 0
-            queue = deque([(root, 0)])
-            while queue:
-                current, depth = queue.popleft()
-                visited += 1
-                if visited > MAX_VISITED:
-                    break
-                try:
-                    entries = os.listdir(current)
-                except OSError:
-                    continue
-                for entry in entries:
-                    full = os.path.join(current, entry)
-                    if not os.path.isdir(full):
-                        continue
-                    elow = entry.lower()
-                    if elow in _REL_DIR_SKIP:
-                        continue
-                    # FModel composer dumps: <root>/Outfits/<name>/Parts/...
-                    # (singular Items/.../Skins/Outfit is the real colourway tree).
-                    if elow == "outfits" and "skins" not in current.lower():
-                        continue
-                    if normalize_folder_name(entry) == target_leaf_norm:
-                        ok = True
-                        check = full
-                        for part in reversed(suffix_parts[:-1]):
-                            check = os.path.dirname(check)
-                            if normalize_folder_name(os.path.basename(check)) != normalize_folder_name(part):
-                                ok = False
-                                break
-                        if ok:
-                            return full
-                    if depth < MAX_DEPTH:
-                        queue.append((full, depth + 1))
-            return ""
-        for start in range(len(rel_parts)):
-            suffix = rel_parts[start:]
-            hit = _search_for_suffix(suffix)
-            if hit:
-                result = hit
-                break
+    result = _find_relative_dir_fast(root, parts)
+    if not result and use_deep and os.path.isdir(root):
+        search_root = get_deep_search_root() or root
+        result = _find_relative_dir_deep(search_root, parts)
+    elif not result:
+        note_path_miss(root, parts)
     _RELATIVE_DIR_CACHE[cache_key] = result
     return result
 
@@ -1678,17 +1864,208 @@ def ensure_visor_node_group() -> bool:
     return ensure_node_group(_VISOR_GROUP)
 
 
+def strip_node_group_material_outputs(ng) -> int:
+    """Remove Material Output nodes from a node *group* (keep Group Output only).
+
+    ArcTexturer historically nested Material Output inside Face Shader / EYE Colour;
+    that creates a double-output chain when the group is used in a material.
+    """
+    if ng is None:
+        return 0
+    removed = 0
+    for node in list(ng.nodes):
+        if node.type == "OUTPUT_MATERIAL":
+            ng.nodes.remove(node)
+            removed += 1
+    return removed
+
+
+def repair_face_shader_normal_flipper(ng=None) -> bool:
+    """Assign missing NormalFlipper inside Face Shader and wire Mix → Flip → Normal Map.
+
+    ArcTexturer ships Face Shader with an empty Group datablock where NormalFlipper
+    should sit; Mix.004 (combined Normal 1/2/3) often has no output link.
+    """
+    face = ng or find_node_group("Face Shader")
+    if face is None:
+        return False
+    if not ensure_node_group("NormalFlipper"):
+        return False
+    flip_tree = find_node_group("NormalFlipper")
+    if flip_tree is None:
+        return False
+
+    flip_node = None
+    for node in face.nodes:
+        if node.type != "GROUP":
+            continue
+        if node.node_tree is None:
+            node.node_tree = flip_tree
+            try:
+                node.label = "NormalFlipper"
+            except Exception:
+                pass
+            flip_node = node
+            break
+        if node.node_tree == flip_tree or (node.node_tree.name or "") == "NormalFlipper":
+            flip_node = node
+            break
+    if flip_node is None:
+        flip_node = face.nodes.new("ShaderNodeGroup")
+        flip_node.node_tree = flip_tree
+        flip_node.label = "NormalFlipper"
+        flip_node.location = (-200, -200)
+
+    nmap = next((n for n in face.nodes if n.type == "NORMAL_MAP"), None)
+    # Combined overlay of Normal 1/2/3 — last Mix before the mask Factor Mix.004.
+    mix_out = None
+    for node in face.nodes:
+        if node.type != "MIX":
+            continue
+        if (node.name or "") == "Mix.004" or (
+            getattr(node, "blend_type", "") == "OVERLAY"
+            and node.inputs.get("Factor") is not None
+            and node.inputs["Factor"].is_linked
+        ):
+            mix_out = node
+            break
+    if mix_out is None:
+        mixes = [n for n in face.nodes if n.type == "MIX"]
+        mix_out = mixes[-1] if mixes else None
+
+    flip_in = flip_node.inputs.get("Color") or (flip_node.inputs[0] if flip_node.inputs else None)
+    flip_out = flip_node.outputs.get("Color") or (
+        flip_node.outputs[0] if flip_node.outputs else None
+    )
+    if flip_in is None or flip_out is None:
+        return False
+
+    links = face.links
+    if mix_out is not None:
+        result = mix_out.outputs.get("Result") or mix_out.outputs.get("Color")
+        if result is None and mix_out.outputs:
+            result = mix_out.outputs[0]
+        if result is not None:
+            for link in list(links):
+                if link.to_socket == flip_in:
+                    links.remove(link)
+            # Also clear orphan Result links that don't reach Normal Map.
+            links.new(result, flip_in)
+
+    if nmap is not None:
+        color_in = nmap.inputs.get("Color")
+        if color_in is not None:
+            for link in list(links):
+                if link.to_socket == color_in:
+                    links.remove(link)
+            links.new(flip_out, color_in)
+        try:
+            nmap.convention = "DIRECTX"
+        except Exception:
+            pass
+    return True
+
+
+def repair_teeth_group(ng=None) -> bool:
+    """Heal ArcTexturer Teeth: missing NormalFlipper + Normal Map Color link.
+
+    Bundled Teeth ships an empty Group datablock (no sockets) and an unwired
+    Normal Map. Assign NormalFlipper and wire Group Input Normal → Flip → NMap.
+    """
+    teeth = ng or find_node_group("Teeth")
+    if teeth is None:
+        return False
+    if not ensure_node_group("NormalFlipper"):
+        return False
+    flip_tree = find_node_group("NormalFlipper")
+    if flip_tree is None:
+        return False
+
+    flip_node = None
+    for node in teeth.nodes:
+        if node.type != "GROUP":
+            continue
+        if node.node_tree is None:
+            node.node_tree = flip_tree
+            try:
+                node.label = "NormalFlipper"
+            except Exception:
+                pass
+            flip_node = node
+            break
+        if node.node_tree == flip_tree or (node.node_tree.name or "") == "NormalFlipper":
+            flip_node = node
+            break
+    if flip_node is None:
+        flip_node = teeth.nodes.new("ShaderNodeGroup")
+        flip_node.node_tree = flip_tree
+        flip_node.label = "NormalFlipper"
+        flip_node.location = (-200.0, -200.0)
+
+    # Empty Group nodes keep zero sockets until node_tree is assigned; re-find.
+    flip_in = flip_node.inputs.get("Color") or (flip_node.inputs[0] if flip_node.inputs else None)
+    flip_out = flip_node.outputs.get("Color") or (
+        flip_node.outputs[0] if flip_node.outputs else None
+    )
+    if flip_in is None or flip_out is None:
+        return False
+
+    gi = next((n for n in teeth.nodes if n.type == "GROUP_INPUT"), None)
+    nmap = next((n for n in teeth.nodes if n.type == "NORMAL_MAP"), None)
+    links = teeth.links
+    normal_out = None
+    if gi is not None:
+        normal_out = gi.outputs.get("Normal")
+        if normal_out is None:
+            for sock in gi.outputs:
+                if "normal" in (sock.name or "").casefold():
+                    normal_out = sock
+                    break
+    if normal_out is not None:
+        for link in list(links):
+            if link.to_socket == flip_in:
+                links.remove(link)
+        links.new(normal_out, flip_in)
+    if nmap is not None:
+        color_in = nmap.inputs.get("Color")
+        if color_in is not None:
+            for link in list(links):
+                if link.to_socket == color_in:
+                    links.remove(link)
+            links.new(flip_out, color_in)
+        try:
+            nmap.convention = "DIRECTX"
+        except Exception:
+            pass
+    return True
+
+
 def ensure_node_group(name: str) -> bool:
-    if find_node_group(name) is not None:
+    existing = find_node_group(name)
+    if existing is not None:
+        if name == "Face Shader":
+            strip_node_group_material_outputs(existing)
+            repair_face_shader_normal_flipper(existing)
+        elif name == "Teeth":
+            repair_teeth_group(existing)
         return True
     if not os.path.isfile(_BLEND_PATH):
         return False
+    # Face Shader / Teeth nest NormalFlipper — load the dependency first.
+    if name in ("Face Shader", "Teeth") and find_node_group("NormalFlipper") is None:
+        ensure_node_group("NormalFlipper")
     with bpy.data.libraries.load(_BLEND_PATH, link=False) as (data_from, data_to):
         if name not in data_from.node_groups:
             print(f"Arc Raiders PSK Importer: Node group '{name}' not found in blend file")
             return False
         data_to.node_groups = [name]
-    return find_node_group(name) is not None
+    ng = find_node_group(name)
+    if ng is not None and name == "Face Shader":
+        strip_node_group_material_outputs(ng)
+        repair_face_shader_normal_flipper(ng)
+    elif ng is not None and name == "Teeth":
+        repair_teeth_group(ng)
+    return ng is not None
 
 def ensure_material(name: str) -> bool:
     if name in bpy.data.materials:

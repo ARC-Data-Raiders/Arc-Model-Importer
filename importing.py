@@ -318,17 +318,112 @@ def find_outfit_row(rows: list, key: str) -> dict:
     return None
 
 
+_PAK_COLOURWAY_TRIED: set[str] = set()
+_PAK_COLOURWAY_MI_DONE: set[str] = set()
+
+
+def _ensure_pak_colourway_folder(character_name: str) -> str:
+    """Extract DA_OI colourway JSON and the MI files they reference when paks are set."""
+    name = (character_name or "").strip()
+    if not name:
+        return ""
+    key = utils.normalize_folder_name(name)
+    folder_name = _outfit_folder_from_csv(name) or name
+    try:
+        from . import pak_extract
+    except Exception:
+        return ""
+    scene = bpy.context.scene
+    if not pak_extract.configured_dir(scene):
+        return ""
+    rel = f"Items/Characters/Skins/Outfit/{folder_name}"
+    cache_folder = os.path.join(
+        pak_extract.cache_dir(),
+        "PioneerGame", "Content", "Pioneer",
+        "Items", "Characters", "Skins", "Outfit", folder_name,
+    )
+    if key not in _PAK_COLOURWAY_TRIED and not _folder_has_colourway_json(cache_folder):
+        _PAK_COLOURWAY_TRIED.add(key)
+        try:
+            pak_extract.extract_paths(
+                pak_extract.configured_dir(scene),
+                pak_extract.resolve_usmap(scene),
+                [pak_extract.game_path(rel)],
+            )
+        except Exception as exc:
+            print(f"Arc Pak: colourway extract failed: {exc}")
+    if not _folder_has_colourway_json(cache_folder):
+        return ""
+    if key not in _PAK_COLOURWAY_MI_DONE:
+        _PAK_COLOURWAY_MI_DONE.add(key)
+        _extract_colourway_materials(cache_folder)
+    _COLOURWAY_INDEX_CACHE.pop(os.path.abspath(cache_folder), None)
+    parent = os.path.dirname(cache_folder)
+    _COLOURWAY_INDEX_CACHE.pop(os.path.abspath(parent), None)
+    return cache_folder
+
+
+def _folder_has_colourway_json(folder: str) -> bool:
+    if not folder or not os.path.isdir(folder):
+        return False
+    try:
+        for name in os.listdir(folder):
+            low = name.casefold()
+            if low.startswith("da_oi") and "_color" in low and low.endswith(".json") and "persistence" not in low:
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def _extract_colourway_materials(folder: str) -> None:
+    """Pull MI packages named by the colourway JSON so the selector can apply them."""
+    try:
+        from . import pak_extract
+    except Exception:
+        return
+    scene = bpy.context.scene
+    game = pak_extract.configured_dir(scene)
+    usmap = pak_extract.resolve_usmap(scene)
+    if not game or not usmap:
+        return
+    wanted = []
+    seen = set()
+    for path in _iter_colourway_json_paths(folder):
+        data = _load_ue_json(path)
+        if not data:
+            continue
+        for entry in utils.ue_export_entries(data):
+            if (entry.get("Type") or "") not in _COLOURWAY_MOD_TYPES:
+                continue
+            mat = _soft_asset_path((entry.get("Properties") or {}).get("Material"))
+            cooked = pak_extract.game_path(mat) if mat else ""
+            if not cooked or cooked.casefold() in seen:
+                continue
+            seen.add(cooked.casefold())
+            dest = os.path.join(pak_extract.cache_dir(), *cooked.split("/")) + ".json"
+            if os.path.isfile(dest):
+                continue
+            wanted.append(cooked)
+    if not wanted:
+        return
+    try:
+        pak_extract.extract_paths(game, usmap, wanted)
+    except Exception as exc:
+        print(f"Arc Pak: colourway material extract failed: {exc}")
+
+
 def colorways_for_outfit_row(root: str, row: dict) -> list:
     """Return ``[(preset_name, json_path), ...]`` for a CSV outfit row.
 
     Scans ``Items/Characters/Skins/Outfit/<Item/UI Folder>`` (and Model Folder
     as fallback) for DA_OI colourway JSONs — same discovery the batch UI uses.
     """
-    if not root or not row:
+    if not row:
         return []
-    outfit_root = utils.find_relative_dir(root, ["Items", "Characters", "Skins", "Outfit"])
+    outfit_root = utils.find_relative_dir(root, ["Items", "Characters", "Skins", "Outfit"]) if root else ""
     if not outfit_root or not os.path.isdir(outfit_root):
-        return []
+        outfit_root = ""
     folders = []
     for f in (row.get("Item/UI Folder Name") or "").split(";"):
         f = f.strip()
@@ -337,11 +432,19 @@ def colorways_for_outfit_row(root: str, row: dict) -> list:
     model = (row.get("Model Folder Name") or "").strip().split(";")[0].strip()
     if model and model not in folders:
         folders.append(model)
+    if outfit_root:
+        for folder_name in folders:
+            candidate = os.path.join(outfit_root, folder_name)
+            if not os.path.isdir(candidate):
+                continue
+            presets = scan_outfit_presets_in_folder(candidate)
+            if presets:
+                return presets
     for folder_name in folders:
-        candidate = os.path.join(outfit_root, folder_name)
-        if not os.path.isdir(candidate):
+        pak_folder = _ensure_pak_colourway_folder(folder_name)
+        if not pak_folder:
             continue
-        presets = scan_outfit_presets_in_folder(candidate)
+        presets = scan_outfit_presets_in_folder(pak_folder)
         if presets:
             return presets
     return []
@@ -469,14 +572,21 @@ def scan_outfit_presets(character_name: str, manual_folder: str = "") -> list:
     folder = get_outfit_folder(character_name)
     char_norm = utils.normalize_folder_name(character_name)
     if folder and os.path.isdir(folder):
-        return scan_outfit_presets_in_folder(folder, char_norm)
+        found = scan_outfit_presets_in_folder(folder, char_norm)
+        if found:
+            return found
     if not char_norm:
         return []
     root = utils.get_pioneer_root()
     outfit_root = utils.find_relative_dir(root, ["Items", "Characters", "Skins", "Outfit"]) if root else ""
-    if not outfit_root:
-        return []
-    return list(_index_colourways(outfit_root).get(char_norm, []))
+    if outfit_root:
+        found = list(_index_colourways(outfit_root).get(char_norm, []))
+        if found:
+            return found
+    pak_folder = _ensure_pak_colourway_folder(character_name)
+    if pak_folder:
+        return scan_outfit_presets_in_folder(pak_folder, char_norm)
+    return []
 
 
 def scan_outfit_presets_in_folder(folder: str, char_norm: str = "") -> list:
