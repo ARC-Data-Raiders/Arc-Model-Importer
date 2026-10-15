@@ -984,6 +984,15 @@ internal static class Program
                 }
             }
 
+            var texture = package.GetExports().OfType<UTexture>().FirstOrDefault();
+            if (texture is not null)
+            {
+                session.Add(texture);
+                queued++;
+                Log.Information("queue texture {Name}", texture.Name);
+                continue;
+            }
+
             jsonPackages.Add((package, path));
             queued++;
             Log.Information("queue json {Path}", NormalizePackagePath(path));

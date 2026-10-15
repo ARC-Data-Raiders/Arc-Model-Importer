@@ -2413,6 +2413,7 @@ class ARC_OUTFITS_OT_AddAppearancePart(Operator):
         name="Part",
         items=(
             ('HAIR', "Hair", "Import the selected hair style"),
+            ('FACIAL_HAIR', "Facial Hair", "Import the selected facial hair style"),
             ('HEAD', "Head", "Import the selected head"),
             ('BODY', "Body", "Import the shared body mesh"),
             ('BACKPACK', "Backpack", "Import the selected backpack"),
@@ -2434,6 +2435,7 @@ class ARC_OUTFITS_OT_AddAppearancePart(Operator):
 
         role = {
             "HAIR": "Hair",
+            "FACIAL_HAIR": "FacialHair",
             "HEAD": "Head",
             "BODY": "Body",
             "BACKPACK": "Backpack",
@@ -2467,7 +2469,7 @@ class ARC_OUTFITS_OT_AddAppearancePart(Operator):
         if count <= 0:
             self.report({'ERROR'}, "; ".join(msgs[:3]) or f"Nothing imported ({role})")
             return {'CANCELLED'}
-        if role in ("Head", "Hair"):
+        if role in ("Body", "Head", "Hair", "FacialHair", "Backpack", "Attachment", "Charm", "RaiderTool"):
             _maybe_import_references(context, objs, roles={role})
         verb = "Replaced" if replace else "Added" if attach_to is not None else "Imported"
         if attach_to is not None:
@@ -2480,6 +2482,38 @@ class ARC_OUTFITS_OT_AddAppearancePart(Operator):
                 {'INFO'},
                 f"{verb} {role}. " + "; ".join(msgs[:4]),
             )
+        return {'FINISHED'}
+
+
+class ARC_OUTFITS_OT_UpdateBackpackColorway(Operator):
+    """Apply an authored color option to selected backpack assemblies."""
+    bl_idname = "arc_outfits.update_backpack_colorway"
+    bl_label = "Update Backpack Colorway"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        from . import appearance
+        targets = set()
+        for selected in context.selected_objects:
+            candidates = [selected] + list(selected.children_recursive)
+            targets.update(obj for obj in candidates if obj.type == 'MESH' and obj.get('arc_assembly_role') == 'Backpack')
+        if not targets:
+            self.report({'ERROR'}, "Select backpack meshes or their armature")
+            return {'CANCELLED'}
+        colorway = getattr(context.scene, 'arc_appearance_backpack_colorway', 'BASE')
+        for obj in targets:
+            choice = obj.get('arc_backpack_choice')
+            if choice and colorway not in {row['id'] for row in appearance.list_backpack_colorways(choice)}:
+                self.report({'ERROR'}, f"Colorway '{colorway}' is unavailable for '{obj.name}'")
+                return {'CANCELLED'}
+        try:
+            messages, added = appearance.repair_backpack_assemblies(context, list(targets), add_missing_parts=True, colorway_id=colorway)
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        for message in messages:
+            print('Arc Raiders: ' + message)
+        self.report({'INFO'}, f"Updated selected backpack colorways; {len(added)} missing objects added")
         return {'FINISHED'}
 
 
@@ -4427,6 +4461,7 @@ _outfit_classes = (
     ARC_OUTFITS_OT_AddAllAppearance,
     ARC_OUTFITS_OT_CancelAppearanceQueue,
     ARC_OUTFITS_OT_ImportReference,
+    ARC_OUTFITS_OT_UpdateBackpackColorway,
     ARC_OUTFITS_OT_UpdateHairColor,
     ARC_OUTFITS_OT_ImportColorBenchmark,
     ARC_OUTFITS_OT_LoadAllColorways,

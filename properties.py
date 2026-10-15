@@ -288,6 +288,16 @@ def _initialize_outfit_defaults():
     if scenes is None:
         return 0.1
     for scene in scenes:
+        # Preserve legacy facial selections when splitting the old mixed hair enum.
+        if not scene.get('arc_hair_selector_schema') and hasattr(scene, 'arc_appearance_facial_hair'):
+            from . import appearance
+            raw = scene.get('arc_appearance_hair', 0)
+            choices = appearance._list_all_hair_choices()
+            choice = choices[raw - 1] if isinstance(raw, int) and 0 < raw <= len(choices) else appearance.resolve_choice(raw) if isinstance(raw, str) else None
+            if choice and appearance.hair_choice_role(choice) == 'FacialHair':
+                scene.arc_appearance_facial_hair = choice['id']
+                scene.arc_appearance_hair = 'NONE'
+            scene['arc_hair_selector_schema'] = 1
         if hasattr(scene, 'arc_selected_outfit_browse'):
             ensure_outfit_selection(scene)
     return None
@@ -575,9 +585,11 @@ _SHARED_SCENE_PROPS = (
     "arc_appearance_body_skin",
     "arc_appearance_head",
     "arc_appearance_hair",
+    "arc_appearance_facial_hair",
     "arc_appearance_hair_color",
     "arc_appearance_eyelash_copy_hair_color",
     "arc_appearance_backpack",
+    "arc_appearance_backpack_colorway",
     "arc_appearance_attachment",
     "arc_appearance_charm",
     "arc_appearance_raider_tool",
@@ -587,6 +599,7 @@ _SHARED_SCENE_PROPS = (
     "arc_import_slot_offset",
     "arc_inherit_shape_key",
     "arc_import_slot_spacing",
+    "arc_import_slot_row_spacing",
     "arc_deep_path_search_root",
     "arc_crease_edge_color",
     "arc_mask_debug_mode",
@@ -666,9 +679,11 @@ _UI_CRITICAL_SCENE_PROPS = (
     "arc_appearance_body_skin",
     "arc_appearance_head",
     "arc_appearance_hair",
+    "arc_appearance_facial_hair",
     "arc_appearance_hair_color",
     "arc_appearance_eyelash_copy_hair_color",
     "arc_appearance_backpack",
+    "arc_appearance_backpack_colorway",
     "arc_appearance_attachment",
     "arc_appearance_charm",
     "arc_appearance_raider_tool",
@@ -677,6 +692,7 @@ _UI_CRITICAL_SCENE_PROPS = (
     "arc_import_slot_offset",
     "arc_inherit_shape_key",
     "arc_import_slot_spacing",
+    "arc_import_slot_row_spacing",
     "arc_deep_path_search_root",
     "arc_crease_edge_color",
     "arc_mask_debug_mode",
@@ -826,6 +842,10 @@ def _assign_collection_prop(name: str, expected_cls, prop) -> None:
     setattr(bpy.types.Scene, name, prop)
 
 
+def _update_backpack_choice(self, context):
+    self.arc_appearance_backpack_colorway = 'BASE'
+
+
 def register():
     for cls in classes:
         _safe_register_class(cls)
@@ -956,12 +976,20 @@ def register():
             items=_appearance.make_head_enum_items,
         ),
     )
-    _assign_if_free(
+    _assign_outfit_selector(
         "arc_appearance_hair",
         EnumProperty(
             name="Hair",
-            description="Exported hair mesh under Characters/Hairs (or FacialHairs)",
+            description="Hair style under Characters/Hairs",
             items=_appearance.make_hair_enum_items,
+        ),
+    )
+    _assign_outfit_selector(
+        "arc_appearance_facial_hair",
+        EnumProperty(
+            name="Facial Hair",
+            description="Facial hair style; shares a character slot with normal hair",
+            items=_appearance.make_facial_hair_enum_items,
         ),
     )
     _assign_if_free(
@@ -983,12 +1011,21 @@ def register():
             default=True,
         ),
     )
-    _assign_if_free(
+    _assign_outfit_selector(
         "arc_appearance_backpack",
         EnumProperty(
             name="Backpack",
             description="Backpack container under Characters/Backpacks/Containers",
             items=_appearance.make_backpack_enum_items,
+            update=_update_backpack_choice,
+        ),
+    )
+    _assign_outfit_selector(
+        "arc_appearance_backpack_colorway",
+        EnumProperty(
+            name="Colorway",
+            description="Authored backpack color option; Default follows the game's item definition",
+            items=_appearance.make_backpack_colorway_enum_items,
         ),
     )
     _assign_if_free(
@@ -1045,7 +1082,7 @@ def register():
         BoolProperty(
             name="Offset Characters",
             description=(
-                "Park each character on a pad spaced along X (default 2 m). "
+                "Park characters in rows of ten (X default 2 m; Y default 8 m). "
                 "Each pad holds one Body, Head, Hair, Facial Hair, and Outfit. "
                 "Disable to import everything at world origin"
             ),
@@ -1077,6 +1114,16 @@ def register():
             step=10,
             precision=2,
             unit='LENGTH',
+        ),
+    )
+
+    _assign_if_free(
+        "arc_import_slot_row_spacing",
+        FloatProperty(
+            name="Row Spacing",
+            description="Distance between rows of ten character slots along positive Y (meters)",
+            default=8.0, min=0.5, max=100.0, soft_min=2.0, soft_max=20.0,
+            step=10, precision=2, unit='LENGTH',
         ),
     )
 

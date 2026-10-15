@@ -74,8 +74,9 @@ def _extraction_revision(scene=None) -> str:
 
 
 def mesh_cache_is_current(path: str, scene=None) -> bool:
+    from .pak_catalog import filesystem_path
     try:
-        with open(path + ".arc-extract.json", "r", encoding="utf-8") as stream:
+        with open(filesystem_path(path + ".arc-extract.json"), "r", encoding="utf-8") as stream:
             record = json.load(stream)
         return bool(record.get("revision")) and record["revision"] == _extraction_revision(scene)
     except (OSError, ValueError):
@@ -330,13 +331,15 @@ def complete_extraction(out_dir, paths, code, log, revision):
     """Finalize cache state on the main thread after an exporter has finished."""
     global _LAST_EXTRACT_LOG
     _LAST_EXTRACT_LOG = log
+    from .pak_catalog import filesystem_path
     meshes = _collect_uemodels(out_dir, paths)
     if code == 0:
         for mesh in meshes:
-            with open(mesh + ".arc-extract.json", "w", encoding="utf-8") as stream:
+            with open(filesystem_path(mesh + ".arc-extract.json"), "w", encoding="utf-8") as stream:
                 json.dump({"revision": revision}, stream)
     utils.set_pak_cache_root(out_dir)
     textures.clear_clothing_path_caches()
+    appearance._ICON_SCAN_CACHE.clear()
     return meshes
 
 

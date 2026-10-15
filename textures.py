@@ -97,6 +97,7 @@ def _mi_entry_stem(entry: dict) -> str:
 
 def _load_clothing_mi_entry(json_path: str):
     """Return (entry_dict_or_None, data) for a clothing MI JSON path."""
+    json_path = _fs_abspath(json_path)
     if not json_path or not os.path.isfile(json_path):
         return None, None
     try:
@@ -259,10 +260,7 @@ def resolve_clothing_mi_json(json_path: str, expected_stem: str = "") -> str:
     """Return an identity-valid clothing MIC path, searching Outfits if needed."""
     if not json_path:
         return ""
-    try:
-        abs_path = os.path.abspath(bpy.path.abspath(json_path))
-    except Exception:
-        abs_path = os.path.abspath(json_path)
+    abs_path = _fs_abspath(json_path)
     stem = (expected_stem or os.path.splitext(os.path.basename(abs_path))[0]).strip()
     if "." in stem:
         stem = stem.split(".", 1)[0]
@@ -345,6 +343,7 @@ def _is_mi_json_filename(fname: str) -> bool:
 
 def _load_mi_json_data(json_path: str):
     """Load MI JSON; return parsed object or None."""
+    json_path = _fs_abspath(json_path)
     if not json_path or not os.path.isfile(json_path):
         return None
     try:
@@ -392,10 +391,7 @@ def resolve_part_mi_json(json_path: str, expected_stem: str = "") -> str:
     """Prefer identity-valid MIC; else keep a usable thin dump beside the mesh."""
     if not json_path:
         return ""
-    try:
-        abs_path = os.path.abspath(bpy.path.abspath(json_path))
-    except Exception:
-        abs_path = os.path.abspath(json_path)
+    abs_path = _fs_abspath(json_path)
     cache_key = (_norm_cache_path(abs_path), (expected_stem or "").strip().lower())
     if cache_key[0] and cache_key in _PART_MI_RESOLVE_CACHE:
         return _PART_MI_RESOLVE_CACHE[cache_key]
@@ -413,7 +409,7 @@ def resolve_part_mi_json(json_path: str, expected_stem: str = "") -> str:
 
 def scan_skins(psk_path: str, manual_folder: str = "") -> list:
     """Scan for all skin/colour options for a part."""
-    manual_folder = bpy.path.abspath(manual_folder) if manual_folder else ""
+    manual_folder = _fs_abspath(manual_folder) if manual_folder else ""
     if manual_folder and os.path.isdir(manual_folder):
         results = []
         for skin_name in get_all_skin_dirs(manual_folder):
@@ -453,11 +449,14 @@ def scan_skins(psk_path: str, manual_folder: str = "") -> list:
     return results
 
 def _fs_abspath(path: str) -> str:
-    """Absolute, Windows-long-path-safe filesystem path (worker-safe if abs)."""
+    """Resolve Blender-relative paths and preserve native absolute Windows paths."""
     from .pak_catalog import filesystem_path
     if not path:
         return ""
-    if os.path.isabs(path):
+    # Blender reserves // for paths relative to the current .blend. Native
+    # Windows UNC uses backslashes; //?/ is an extended absolute path.
+    blender_relative = path.startswith("//") and not path.startswith("//?/")
+    if os.path.isabs(path) and not blender_relative:
         return filesystem_path(os.path.normpath(path))
     try:
         absolute = bpy.path.abspath(path)
@@ -481,7 +480,7 @@ def get_skins_folder(psk_path: str):
     candidates = [_fs_abspath(p) for p in candidates]
     candidates = [p for p in dict.fromkeys(candidates) if os.path.isdir(p)]
     def revision(folder):
-        return max((os.path.getmtime(os.path.join(base, name)) for base, _dirs, files in os.walk(folder) for name in files if name.lower().startswith("mi_") and name.lower().endswith(".json")), default=0)
+        return max((os.path.getmtime(_fs_abspath(os.path.join(base, name))) for base, _dirs, files in os.walk(folder) for name in files if name.lower().startswith("mi_") and name.lower().endswith(".json")), default=0)
     return max(candidates, key=revision) if candidates else None
 
 
@@ -817,7 +816,7 @@ def authored_visual_part_materials(psk_path: str) -> list:
                 continue
             for entry in utils.ue_export_entries(data):
                 props = entry.get("Properties") or {}
-                mesh_ref = props.get("Mesh") or {}
+                mesh_ref = props.get("Mesh") or props.get("StaticMesh") or {}
                 if mi_stem_from_material_ref(mesh_ref).casefold() != mesh_stem:
                     continue
                 overrides = props.get("MaterialOverrides") or []
@@ -872,7 +871,7 @@ def get_base_skin_json(psk_path: str, manual_folder: str = "") -> str:
     (including thin FModel dumps with Parameters.Colors — shared across colorways).
     Prefer non-fur clothing MIs when both shell and fur instances share a folder.
     """
-    manual_folder = bpy.path.abspath(manual_folder) if manual_folder else ""
+    manual_folder = _fs_abspath(manual_folder) if manual_folder else ""
     skins_folder = manual_folder if (manual_folder and os.path.isdir(manual_folder)) else get_skins_folder(psk_path)
     if skins_folder:
         all_dirs = get_all_skin_dirs(skins_folder)
@@ -1680,7 +1679,7 @@ def is_hair(psk_path: str) -> bool:
     ):
         return False
     norm = psk_path.replace("\\", "/").lower()
-    if "/characters/hairs/" in norm:
+    if "/characters/hairs/" in norm or "/characters/facialhairs/" in norm:
         return True
     # Outfit fur-card meshes (FoxHatCards) reuse Metahuman hair shaders.
     return is_hair_cards_part(psk_path)
@@ -1831,15 +1830,27 @@ def is_misc(psk_path: str) -> bool:
     return has_color
 
 def scan_hair_mis(psk_path: str) -> list:
-    folder = os.path.dirname(psk_path)
+    """Only card MIs, with exact visual-part bindings before folder defaults.
+
+    A hairstyle can also have opaque accessories (FrenchBraids' hair tie).
+    Those are never usable as the strand Coverage/Attribute material.
+    """
     results = []
+    seen = set()
+    candidates = [binding["path"] for binding in authored_visual_part_materials(psk_path)]
+    folder = os.path.dirname(psk_path)
     try:
-        for fname in sorted(os.listdir(folder)):
-            if fname.lower().endswith(".json") and fname.lower().startswith("mi_"):
-                results.append((os.path.splitext(fname)[0], os.path.join(folder, fname)))
+        candidates.extend(os.path.join(folder, name) for name in sorted(os.listdir(folder))
+                          if name.lower().startswith("mi_") and name.lower().endswith(".json"))
     except OSError:
         pass
+    for path in candidates:
+        key = os.path.normcase(os.path.abspath(path))
+        if key not in seen and is_hair_cards_mi(path):
+            seen.add(key)
+            results.append((os.path.splitext(os.path.basename(path))[0], path))
     return results
+
 
 def find_skin_json_for_mi_stem(psk_path: str, mi_stem: str) -> str:
     if not mi_stem:

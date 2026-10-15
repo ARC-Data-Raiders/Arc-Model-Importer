@@ -344,6 +344,8 @@ def _load_image_cached(fpath: str):
     """Load an image once per path; faster than repeated check_existing scans."""
     if not fpath:
         return None
+    # Blender image IO also needs the Windows extended prefix for deep Pak paths.
+    fpath = textures._fs_abspath(fpath)
     key = _norm_path_key(fpath)
     img = _IMAGE_BY_PATH.get(key)
     if img is not None:

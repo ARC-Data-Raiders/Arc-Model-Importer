@@ -69,6 +69,8 @@ $RootFilesShared = @(
     "importing.py",
     "appearance.py",
     "appearance_queue.py",
+    "hair_placement.py",
+    "backpack_catalog.py",
     "pose_presets.py",
     "reference_planes.py",
     "revamped_bridge.py",

@@ -184,16 +184,19 @@ def _resolve_csv_rel_path(rel_path: str) -> str:
 
 
 def _pak_cache_rel_path(rel: str) -> str:
-    """PNG written into the pak cache during reindex (no Pioneer root required)."""
+    """Resolve an exact cached package across mount aliases, including long paths."""
     try:
-        from . import pak_extract
+        from . import pak_extract, pak_catalog
     except Exception:
         return ""
+    extension = os.path.splitext(rel or "")[1]
     cache = pak_extract.cache_dir()
-    candidate = os.path.join(cache, "PioneerGame", "Content", "Pioneer", *rel.split("/"))
-    if os.path.isfile(candidate):
-        return candidate
-    return ""
+    candidates = []
+    for package in pak_extract._package_aliases(pak_extract.game_path(rel)):
+        candidate = pak_catalog.filesystem_path(os.path.join(cache, *package.split("/")) + extension)
+        if os.path.isfile(candidate):
+            candidates.append(candidate)
+    return max(candidates, key=lambda path: os.stat(path).st_mtime_ns) if candidates else ""
 
 
 def _alnum_token(text: str) -> str:
@@ -1215,7 +1218,7 @@ def make_hair_color_enum_items(self, context):
     return items
 
 
-def list_hair_choices() -> list[dict]:
+def _list_all_hair_choices() -> list[dict]:
     """Catalog hairstyles from shipped CSV, else DA_VP_* + loose mesh folders.
 
     Most styles ship JSON/textures only; geometry is often ``.uemodel`` (or
@@ -1263,7 +1266,7 @@ def list_hair_choices() -> list[dict]:
                     if export.get("Type") != "CustomizationVisualPartDataAsset":
                         continue
                     props = export.get("Properties") or {}
-                    mesh_stem = _mesh_package_stem(props.get("Mesh"))
+                    mesh_stem = _mesh_package_stem(props.get("Mesh") or props.get("StaticMesh"))
                     if mesh_stem:
                         break
                 # Style folder is first segment under Hairs/ or nested Buzzcut/Skins/X
@@ -1353,6 +1356,26 @@ def list_hair_choices() -> list[dict]:
     return result
 
 
+def hair_choice_role(choice_or_id) -> str:
+    """Classify legacy mixed-catalog IDs without changing their saved identity."""
+    if isinstance(choice_or_id, dict):
+        choice = choice_or_id
+    else:
+        _list_all_hair_choices()
+        choice = _CHOICE_BY_ID.get(str(choice_or_id)) or {}
+    segment = str(choice.get("segment") or "").casefold()
+    path = str(choice.get("rel_path") or choice.get("path") or "").replace("\\", "/").casefold()
+    return "FacialHair" if segment == "facialhairs" or "/facialhairs/" in path else "Hair"
+
+
+def list_hair_choices() -> list[dict]:
+    return [choice for choice in _list_all_hair_choices() if hair_choice_role(choice) == "Hair"]
+
+
+def list_facial_hair_choices() -> list[dict]:
+    return [choice for choice in _list_all_hair_choices() if hair_choice_role(choice) == "FacialHair"]
+
+
 def make_head_enum_items(self, context):
     choices = list_head_choices()
     if not choices:
@@ -1366,12 +1389,13 @@ def make_head_enum_items(self, context):
 
 def make_hair_enum_items(self, context):
     choices = list_hair_choices()
+    legacy_numbers = {choice["id"]: i + 1 for i, choice in enumerate(_list_all_hair_choices())}
     items = [("NONE", "None / bald", "Skip hair import")]
     ready = sum(1 for c in choices if c.get("has_mesh"))
     missing = len(choices) - ready
     for i, choice in enumerate(choices):
         tip = choice.get("path") or "No .psk/.pskx/.uemodel — re-export mesh in FModel"
-        items.append((choice["id"], choice["label"], tip, i + 1))
+        items.append((choice["id"], choice["label"], tip, legacy_numbers[choice["id"]]))
     if not choices:
         items = [("NONE", "No hairstyles found", "Export Characters/Hairs (DA_VP + mesh)")]
     elif missing and ready:
@@ -1380,6 +1404,15 @@ def make_hair_enum_items(self, context):
             "None / bald",
             f"{ready} importable · {missing} JSON-only (no mesh)",
         )
+    return items
+
+
+def make_facial_hair_enum_items(self, context):
+    numbers = {choice["id"]: i + 1 for i, choice in enumerate(_list_all_hair_choices())}
+    items = [("NONE", "None", "Skip facial hair import", 0)]
+    for choice in list_facial_hair_choices():
+        label = choice["label"].removeprefix("Facial · ")
+        items.append((choice["id"], label, choice.get("path") or "No mesh exported", numbers[choice["id"]]))
     return items
 
 
@@ -1406,6 +1439,36 @@ def list_gear_choices(kind: str) -> list[dict]:
                 choice = _register_choice(choice)
     _CACHE[cache_key] = choices
     return choices
+
+
+def list_backpack_colorways(choice_id=None) -> list[dict]:
+    from . import backpack_catalog
+    if choice_id is None:
+        choice_id = getattr(bpy.context.scene, "arc_appearance_backpack", "NONE")
+    list_gear_choices("backpack")
+    return backpack_catalog.list_colorways(resolve_choice(choice_id) or {})
+
+
+def make_backpack_colorway_enum_items(self, context):
+    from . import backpack_catalog
+    list_gear_choices("backpack")
+    return backpack_catalog.enum_items(resolve_choice(getattr(self, "arc_appearance_backpack", "NONE")) or {})
+
+
+def backpack_extraction_rels(choice_id, colorway="BASE") -> list[str]:
+    list_gear_choices("backpack")
+    choice = resolve_choice(choice_id) or {}
+    item = choice.get("icon_stem") or choice.get("folder") or ""
+    rel = str(choice.get("rel_path") or "").replace("\\", "/")
+    parts = rel.split("/")
+    container = "/".join(parts[:4]) if parts[:3] == ["Characters", "Backpacks", "Containers"] else ""
+    return [value for value in (f"Items/Characters/Skins/BackpackContainer/{item}" if item else "", container) if value]
+
+
+def backpack_material_extraction_rels(choice_id, colorway="BASE") -> list[str]:
+    from . import backpack_catalog
+    list_gear_choices("backpack")
+    return backpack_catalog.material_dependencies(resolve_choice(choice_id) or {}, colorway)
 
 
 def _make_gear_enum_items(kind: str, empty_label: str):
@@ -1483,12 +1546,7 @@ def _role_matches(obj_role: str, want_role: str) -> bool:
         return False
     if a == b:
         return True
-    # Hair dropdown can import FacialHair meshes.
-    if b == "hair" and a in ("hair", "facialhair", "facial_hair", "facial hair"):
-        return True
-    if b == "facialhair" and a in ("hair", "facialhair", "facial_hair", "facial hair"):
-        return True
-    return False
+    return a.replace("_", "").replace(" ", "") == b.replace("_", "").replace(" ", "")
 
 
 def _object_alive(obj) -> bool:
@@ -1763,6 +1821,36 @@ def _mesh_is_skinned(obj) -> bool:
     return bool(obj.vertex_groups)
 
 
+def _gear_source_socket_bind(obj, bone_name):
+    """Skeletal gear is authored in character component space, not at the socket."""
+    from mathutils import Matrix, Vector, Quaternion
+    cached = obj.get("arc_gear_source_socket_matrix")
+    if cached and obj.get("arc_gear_source_socket_name") == bone_name:
+        return Matrix([cached[index:index + 4] for index in range(0, 16, 4)])
+    path = str(obj.get("arc_source_mesh") or obj.get("arc_psk_path") or "")
+    bind = None
+    if path.casefold().endswith(".uemodel"):
+        from . import uemodel_import
+        scale = float(obj.data.get("arc_uemodel_scale", importing.ue_import_unit_scale()))
+        matrices = {}
+        for index, bone in enumerate(uemodel_import.parse_uemodel_bones(path, scale=scale)):
+            local = Matrix.LocRotScale(Vector(bone.translation), Quaternion((bone.rotation[3], *bone.rotation[:3])), Vector(bone.scale))
+            matrices[index] = matrices[bone.parent] @ local if bone.parent in matrices else local
+            if bone.name == bone_name:
+                bind = matrices[index]
+                break
+    else:
+        arm = next((mod.object for mod in obj.modifiers if mod.type == "ARMATURE" and mod.object), None)
+        arm = arm or (obj.parent if obj.parent and obj.parent.type == "ARMATURE" and obj.parent_type != "BONE" else None)
+        if arm and bone_name in arm.data.bones:
+            bind = arm.matrix_world @ arm.data.bones[bone_name].matrix_local
+    if bind is not None:
+        bind = Matrix.LocRotScale(bind.to_translation(), bind.to_quaternion(), Vector((1.0, 1.0, 1.0)))
+        obj["arc_gear_source_socket_matrix"] = [value for row in bind for value in row]
+        obj["arc_gear_source_socket_name"] = bone_name
+    return bind
+
+
 def bone_parent_to_slot(objects: list, master, bone_name: str) -> int:
     """Attach at the Unreal socket head while preserving imported world size."""
     if master is None or not _object_alive(master) or master.type != "ARMATURE":
@@ -1775,7 +1863,12 @@ def bone_parent_to_slot(objects: list, master, bone_name: str) -> int:
         if not _object_alive(obj) or obj.type != "MESH":
             continue
         try:
-            # Drop armature mods — static gear is socket-parented, not skinned.
+            actual_bone = str(obj.get("arc_gear_attach_bone") or bone_name)
+            if actual_bone != bone_name:
+                snapped += bone_parent_to_slot([obj], master, actual_bone)
+                continue
+            source_bind = _gear_source_socket_bind(obj, bone_name)
+            # Gear follows the socket; component-space SKs retain their bind offset.
             for mod in list(obj.modifiers):
                 if mod.type == "ARMATURE":
                     obj.modifiers.remove(mod)
@@ -1784,6 +1877,10 @@ def bone_parent_to_slot(objects: list, master, bone_name: str) -> int:
             pose_bone = master.pose.bones[bone_name]
             socket = master.matrix_world @ pose_bone.matrix
             target = Matrix.LocRotScale(socket.to_translation(), socket.to_quaternion(), world_scale)
+            if source_bind is not None:
+                from mathutils import Vector
+                socket_pose = Matrix.LocRotScale(socket.to_translation(), socket.to_quaternion(), Vector((1.0, 1.0, 1.0)))
+                target = socket_pose @ source_bind.inverted_safe() @ Matrix.Diagonal((*world_scale, 1.0))
             obj.parent = master
             obj.parent_type = "BONE"
             obj.parent_bone = bone_name
@@ -2302,6 +2399,58 @@ def _default_slot_armature(*, reuse_existing=True):
     return arm, ""
 
 
+def repair_hair_object(obj, scene=None, *, place_static=True):
+    """Repair an existing hair/beard in place, preserving topology and palette."""
+    from . import textures, hair_placement
+    from .materials.character import setup_hair_material
+    scene = scene or bpy.context.scene
+    source = str(obj.get("arc_source_mesh") or obj.get("arc_psk_path") or "")
+    if obj.type != "MESH" or not textures.is_hair(source):
+        return False, "Not a hair or facial-hair mesh"
+    choices = textures.scan_hair_mis(source)
+    mi = choices[0][1] if choices else str(obj.get("arc_hair_mi") or "")
+    colour_id = getattr(scene, "arc_appearance_hair_color", "NONE") or "NONE"
+    colour = resolve_hair_color_path(colour_id, scene) if colour_id != "NONE" else ""
+    setup_hair_material(obj, mi, colour_json=colour)
+    obj["arc_model_type"] = "hair"
+    role = "FacialHair" if "/facialhairs/" in source.replace("\\", "/").casefold() else "Hair"
+    _stamp_role(obj, role, source)
+    if place_static:
+        from mathutils import Vector
+        from . import import_layout, reference_planes
+
+        def center():
+            corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+            return Vector(tuple((min(v[i] for v in corners) + max(v[i] for v in corners)) * 0.5 for i in range(3)))
+
+        bpy.context.view_layer.update()
+        old_center = center()
+        slot = import_layout.slot_of_object(obj)
+        # Existing cards can be parented directly to the static mesh, or its
+        # origin wrapper. Keep their upright world frame when the mesh rotates
+        # into the head's authored reference frame.
+        references = []
+        for plane in scene.objects:
+            if not plane.get("arc_reference_plane") or reference_planes._reference_role(plane) != role:
+                continue
+            if slot is not None and import_layout.slot_of_object(plane) != slot:
+                continue
+            owner = plane.parent
+            if owner == obj or (obj.parent is not None and owner == obj.parent) or str(plane.get("arc_reference_anchor") or "") == obj.name:
+                references.append((plane, plane.matrix_world.copy()))
+        placed, message = hair_placement.place_static_hair(obj, scene)
+        if placed and references:
+            bpy.context.view_layer.update()
+            delta = center() - old_center
+            for plane, world in references:
+                world.translation += delta
+                plane.matrix_world = world
+            bpy.context.view_layer.update()
+    else:
+        message = "Hair materials repaired"
+    return True, message
+
+
 def import_appearance_parts(
     context,
     *,
@@ -2336,6 +2485,8 @@ def import_appearance_parts(
             want.add("Head")
         elif rl == "hair":
             want.add("Hair")
+        elif rl == "facialhair":
+            want.add("FacialHair")
         elif rl in ("backpack",):
             want.add("Backpack")
         elif rl in ("attachment",):
@@ -2349,10 +2500,11 @@ def import_appearance_parts(
     body_skin = getattr(scene, "arc_appearance_body_skin", "NONE") or "NONE"
     head_id = getattr(scene, "arc_appearance_head", "NONE") or "NONE"
     hair_id = getattr(scene, "arc_appearance_hair", "NONE") or "NONE"
+    facial_hair_id = getattr(scene, "arc_appearance_facial_hair", "NONE") or "NONE"
     hair_colour_id = getattr(scene, "arc_appearance_hair_color", "NONE") or "NONE"
-    if "Hair" in want and hair_colour_id != "NONE" and not resolve_hair_color_path(hair_colour_id, scene):
+    if want.intersection({"Hair", "FacialHair"}) and hair_colour_id != "NONE" and not resolve_hair_color_path(hair_colour_id, scene):
         msgs.append("Selected Hair Color MI could not be loaded from the Pioneer folder or Paks")
-        want.discard("Hair")
+        want.difference_update({"Hair", "FacialHair"})
     do_replace = (
         bool(replace_selected)
         if replace_selected is not None
@@ -2385,12 +2537,14 @@ def import_appearance_parts(
                 jobs.append(("Head", head_path, "NONE"))
             else:
                 msgs.append("Selected head mesh missing — set PioneerGame Folder or the Paks folder")
-    if "Hair" in want:
-        if hair_id == "NONE":
-            msgs.append("Select a Hair style in the dropdown first")
+    for hair_role, selected_hair_id in (("Hair", hair_id), ("FacialHair", facial_hair_id)):
+        if hair_role not in want:
+            continue
+        if selected_hair_id == "NONE":
+            msgs.append(f"Select a {hair_role} style in the dropdown first")
         else:
-            choice = resolve_choice(hair_id)
-            hair_path = (choice or {}).get("path") or resolve_choice_path(hair_id)
+            choice = resolve_choice(selected_hair_id)
+            hair_path = (choice or {}).get("path") or resolve_choice_path(selected_hair_id)
             if not _mesh_file_usable(hair_path):
                 rel = (choice or {}).get("rel_path") or ""
                 if not rel:
@@ -2400,15 +2554,16 @@ def import_appearance_parts(
                         rel = f"Characters/{segment}/{folder}/SK_{folder}.psk"
                 hair_path = locate_appearance_mesh(rel)
             if hair_path:
-                jobs.append(("Hair", hair_path, "NONE"))
+                jobs.append((hair_role, hair_path, "NONE"))
             else:
-                label = (choice or {}).get("label") or hair_id
+                label = (choice or {}).get("label") or selected_hair_id
                 reason = getattr(_mesh_from_pak, "last_reason", "") or ""
                 detail = f" ({reason})" if reason else ""
                 msgs.append(
                     f"Hair '{label}' has no mesh in the Pioneer folder or the paks{detail}"
                 )
 
+    backpack_parts = {}
     gear_want = {
         "Backpack": "backpack",
         "Attachment": "attachment",
@@ -2427,6 +2582,15 @@ def import_appearance_parts(
         list_gear_choices(kind)
         choice = resolve_choice(choice_id)
         from . import pak_extract
+        if role_name == "Backpack":
+            from . import backpack_catalog
+            colorway = getattr(scene, "arc_appearance_backpack_colorway", "BASE") or "BASE"
+            planned = backpack_catalog.plan(choice or {}, colorway)
+            if planned:
+                for part in planned:
+                    backpack_parts[os.path.normcase(os.path.abspath(part["mesh"]))] = part
+                    jobs.append((role_name, part["mesh"], "NONE"))
+                continue
         path = "" if pak_extract.configured_dir(scene) else ((choice or {}).get("path") or resolve_choice_path(choice_id))
         if not _mesh_file_usable(path):
             path = locate_appearance_mesh((choice or {}).get("rel_path") or "")
@@ -2511,10 +2675,11 @@ def import_appearance_parts(
         slot_role = role
         if role == "Body":
             body_variant = variant
-        elif role == "Hair":
+        elif role in ("Hair", "FacialHair"):
             from . import textures as _tex
 
-            choice = resolve_choice(hair_id) if hair_id != "NONE" else None
+            selected_hair_id = facial_hair_id if role == "FacialHair" else hair_id
+            choice = resolve_choice(selected_hair_id) if selected_hair_id != "NONE" else None
             seg = str((choice or {}).get("segment") or "")
             if seg.casefold() == "facialhairs" or "/facialhairs/" in path.replace("\\", "/").casefold():
                 slot_role = "FacialHair"
@@ -2538,6 +2703,15 @@ def import_appearance_parts(
                     obj["arc_body_variant"] = body_variant
                 except Exception:
                     pass
+        if role == "Backpack":
+            from . import backpack_catalog
+            part = backpack_parts.get(os.path.normcase(os.path.abspath(path)))
+            for obj in objs:
+                if _object_alive(obj) and obj.type == "MESH":
+                    if part:
+                        backpack_catalog.apply_material_bindings(obj, part)
+                        obj["arc_gear_attach_bone"] = part["socket"]
+                    _gear_source_socket_bind(obj, str(obj.get("arc_gear_attach_bone") or "slot_container"))
         if role == "Charm" and _charm_needs_connector(objs):
             connector_host = attach_to if attach_to is not None else (None if standalone else _reusable_strap_armature(require_empty_backpack=False))
             if not _charm_connector_on_armature(connector_host):
@@ -2697,6 +2871,20 @@ def import_appearance_parts(
     except Exception as exc:
         msgs.append(f"Slot layout skipped: {exc}")
 
+    # Static styles are authored relative to the head, unlike skeletal cards.
+    # Apply after origin recenter and character-pad placement so both frames are known.
+    from . import hair_placement
+    hair_targets = [o for o in new_objects if o.type == "MESH" and str(o.get("arc_assembly_role") or "") in {"Hair", "FacialHair"}]
+    if "Head" in placed_roles or "Body" in placed_roles:
+        hair_targets.extend(o for o in context.scene.objects if o.type == "MESH" and o not in hair_targets and str(o.get("arc_assembly_role") or "") in {"Hair", "FacialHair"})
+    for hair in hair_targets:
+        try:
+            placed, note = hair_placement.place_static_hair(hair, context.scene)
+            if placed:
+                msgs.append(note)
+        except (ValueError, OSError) as exc:
+            msgs.append(f"Static hair attachment skipped: {exc}")
+
     # Hide new armatures that were not merged away (standalone import).
     if attach_to is None:
         for obj in new_objects:
@@ -2712,3 +2900,71 @@ def import_appearance_parts(
         1 for o in new_objects if _object_alive(o) and o.type == "MESH"
     )
     return mesh_count, msgs, [o for o in new_objects if _object_alive(o)]
+
+
+def repair_backpack_assemblies(context, objects=None, *, add_missing_parts=True, colorway_id=None):
+    """Repair selected/all existing backpack assemblies without moving their host."""
+    from . import backpack_catalog
+    choices = list_gear_choices("backpack")
+    meshes = [obj for obj in (list(objects) if objects is not None else list(bpy.data.objects))
+              if _object_alive(obj) and obj.type == "MESH" and obj.get("arc_assembly_role") == "Backpack"]
+    groups = {}
+    for obj in meshes:
+        source = str(obj.get("arc_source_mesh") or obj.get("arc_psk_path") or "").replace("\\", "/")
+        marker = "/characters/backpacks/containers/"
+        if marker not in source.casefold():
+            continue
+        folder = source[source.casefold().index(marker) + len(marker):].split("/")[0]
+        choice = next((value for value in choices if str(value.get("folder") or "").casefold() == folder.casefold()), None)
+        if not choice:
+            continue
+        host = obj.parent if obj.parent and obj.parent.type == "ARMATURE" else None
+        if host is None:
+            continue
+        groups.setdefault((host, choice['id']), (choice, []))[1].append(obj)
+    # A selected section identifies the whole authored assembly. Include its
+    # already imported siblings before filling missing parts or applying colour.
+    for (host, _id), (choice, existing) in groups.items():
+        folder_marker = "/characters/backpacks/containers/" + str(choice.get("folder") or "").casefold() + "/"
+        for obj in bpy.data.objects:
+            if obj in existing or obj.type != "MESH" or obj.parent != host or obj.get("arc_assembly_role") != "Backpack":
+                continue
+            source = str(obj.get("arc_source_mesh") or obj.get("arc_psk_path") or "").replace("\\", "/").casefold()
+            if obj.get("arc_backpack_choice") == _id or folder_marker in source:
+                existing.append(obj)
+    messages, created = [], []
+    for (host, _id), (choice, existing) in groups.items():
+        selected = colorway_id if colorway_id is not None else str(existing[0].get("arc_backpack_colorway") or "BASE")
+        planned = backpack_catalog.plan(choice, selected)
+        if not planned:
+            for obj in existing:
+                bone_parent_to_slot([obj], host, 'slot_container')
+            continue
+        available = {os.path.basename(str(obj.get("arc_source_mesh") or obj.get("arc_psk_path") or "")).split('.')[0].casefold(): obj for obj in existing}
+        slot = existing[0].get("arc_import_slot", host.get("arc_import_slot", 0))
+        for part in planned:
+            stem = os.path.basename(part['mesh']).split('.')[0].casefold()
+            obj = available.get(stem)
+            if obj is None and add_missing_parts:
+                ok, message, imported = import_appearance_mesh(part['mesh'], import_slot=int(slot))
+                if not ok:
+                    messages.append(message)
+                    continue
+                new_meshes = [value for value in imported if _object_alive(value) and value.type == "MESH"]
+                if not new_meshes:
+                    continue
+                obj = new_meshes[0]
+                for value in imported:
+                    _stamp_role(value, "Backpack", part['mesh'])
+                    value['arc_import_slot'] = int(slot)
+                created.extend(imported)
+                available[stem] = obj
+                messages.append("Added authored backpack part " + os.path.basename(part['mesh']))
+            if obj is None:
+                continue
+            obj['arc_gear_attach_bone'] = part['socket']
+            backpack_catalog.apply_material_bindings(obj, part)
+            bone_parent_to_slot([obj], host, part['socket'])
+        messages.append("Rebound " + str(choice.get('label') or choice['id']) + " with authored socket bind and colour " + selected)
+    bpy.context.view_layer.update()
+    return messages, created

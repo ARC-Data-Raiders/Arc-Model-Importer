@@ -1,7 +1,8 @@
 """
-Character import slots — park each body/outfit pad on a known X spacing.
+Character import slots — one of each asset type on a ten-column grid.
 
-Default: 2 m between characters. Toggle off to keep everything at world origin.
+Default: 2 m between columns, 8 m between rows along positive Y.
+Toggle off to keep everything at world origin.
 Each slot allows at most one Body, Head, Hair, FacialHair, and Outfit.
 """
 
@@ -31,6 +32,8 @@ ROLES = (
 )
 
 _DEFAULT_SPACING_M = 2.0
+_DEFAULT_ROW_SPACING_M = 8.0
+SLOTS_PER_ROW = 10
 
 
 def offset_enabled(scene=None) -> bool:
@@ -54,7 +57,36 @@ def slot_spacing_m(scene=None) -> float:
 def slot_world_x(slot: int, scene=None) -> float:
     if not offset_enabled(scene):
         return 0.0
-    return float(int(slot)) * slot_spacing_m(scene)
+    return float(max(0, int(slot)) % SLOTS_PER_ROW) * slot_spacing_m(scene)
+
+
+def slot_row_spacing_m(scene=None) -> float:
+    sc = scene or getattr(bpy.context, "scene", None)
+    try:
+        value = float(getattr(sc, "arc_import_slot_row_spacing", _DEFAULT_ROW_SPACING_M))
+    except (TypeError, ValueError):
+        value = _DEFAULT_ROW_SPACING_M
+    return max(value, 0.01)
+
+
+def slot_world_y(slot: int, scene=None) -> float:
+    if not offset_enabled(scene):
+        return 0.0
+    return float(max(0, int(slot)) // SLOTS_PER_ROW) * slot_row_spacing_m(scene)
+
+
+def slot_world_xy(slot: int, scene=None) -> tuple[float, float]:
+    return slot_world_x(slot, scene), slot_world_y(slot, scene)
+
+
+def slot_from_world(position, scene=None) -> int:
+    """Recover an unstamped pad from its grid position."""
+    if not offset_enabled(scene):
+        return 0
+    column = max(0, int(round(float(position.x) / slot_spacing_m(scene))))
+    row = max(0, int(round(float(position.y) / slot_row_spacing_m(scene))))
+    # Coordinates past the first row may be from pre-grid imports.
+    return row * SLOTS_PER_ROW + column
 
 
 def _has_strap_mesh(arm) -> bool:
@@ -77,6 +109,8 @@ def _alive(obj) -> bool:
 def infer_role(obj) -> str:
     """Best-effort role for slot occupancy."""
     if not _alive(obj):
+        return ""
+    if obj.get("arc_reference_plane"):
         return ""
     if obj.type == "MESH" and str(obj.get("arc_model_type") or "").casefold() == "body":
         return "Body"
@@ -125,7 +159,8 @@ def discover_slots(scene=None, *, exclude=None) -> dict[int, set[str]]:
             if obj is not None:
                 skip.add(obj)
     occupied: dict[int, set[str]] = {}
-    for obj in bpy.data.objects:
+    sc = scene or getattr(bpy.context, "scene", None)
+    for obj in sc.objects if sc is not None else bpy.data.objects:
         if obj in skip or not _alive(obj) or obj.type not in {"MESH", "ARMATURE"}:
             continue
         role = infer_role(obj)
@@ -145,14 +180,10 @@ def discover_slots(scene=None, *, exclude=None) -> dict[int, set[str]]:
         if slot is None:
             # Infer from world X when offset layout was used previously without stamps.
             if offset_enabled(scene):
-                spacing = slot_spacing_m(scene)
                 wx = float(obj.matrix_world.translation.x)
-                if spacing > 1e-6 and abs(wx) > 0.25:
-                    slot = int(round(wx / spacing))
-                    if slot < 0:
-                        continue
-                else:
-                    slot = 0
+                if wx < -0.25:
+                    continue
+                slot = slot_from_world(obj.matrix_world.translation, scene)
             else:
                 slot = 0
         occupied.setdefault(slot, set()).add(role)
@@ -179,9 +210,8 @@ def allocate_slot(
 ) -> int:
     """Pick a slot for *role*.
 
-    1. Lowest existing slot that does not already have *role* (fill slot 0 before slot 1).
-    2. Otherwise reuse the lowest empty pad index (gaps from deleted characters).
-    3. Else append after the highest occupied slot.
+    Use the lowest nonnegative index that does not already have *role*.
+    Other types can share that pad. Deleted gaps are filled before higher pads.
 
     Pass *exclude* as the objects being placed so they are not mistaken for an
     already-occupied pad (empty scene → slot 0 at origin).
@@ -198,18 +228,12 @@ def allocate_slot(
     if not occupied:
         return 0
 
-    # Lowest slot that is still missing this piece (slot 0, then 1, ...).
-    for slot in sorted(occupied.keys()):
-        if role not in occupied[slot]:
+    # Deleted pads are as eligible as existing pads. One type can fill slot 0
+    # alongside other types, independently of their import order.
+    for slot in range(0, max(occupied) + 2):
+        if role not in occupied.get(slot, set()):
             return slot
-
-    # Fill gaps: if pad 2 was deleted while 0/1/3 remain, place at 2.
-    max_slot = max(occupied.keys())
-    for slot in range(0, max_slot + 1):
-        if slot not in occupied:
-            return slot
-
-    return max_slot + 1
+    return 0
 
 
 def stamp_objects(objects, *, slot: int, role: str = "") -> None:
@@ -225,21 +249,20 @@ def stamp_objects(objects, *, slot: int, role: str = "") -> None:
 
 
 def _iter_roots(objects: list) -> list:
-    """Objects to translate: armatures first, else unparented meshes."""
+    """Translate each assembly root once, including static-mesh EMPTY pivots."""
     alive = [o for o in objects if _alive(o)]
-    arms = [o for o in alive if o.type == "ARMATURE"]
-    if arms:
-        return arms
     obj_set = set(alive)
-    return [o for o in alive if o.type == "MESH" and (o.parent is None or o.parent not in obj_set)]
+    return [o for o in alive if o.type in {"MESH", "ARMATURE", "EMPTY"}
+            and (o.parent is None or o.parent not in obj_set)]
 
 
 def place_objects_at_slot(objects: list, slot: int, *, scene=None, role: str = "") -> float:
-    """Stamp slot/role and move roots so the group sits at slot * spacing on X.
+    """Stamp slot/role and place roots on the ten-column X/Y grid.
 
     Returns the world X used (0 when offset is disabled).
     """
     target_x = slot_world_x(slot, scene)
+    target_y = slot_world_y(slot, scene)
     stamp_objects(objects, slot=slot, role=role)
     if not objects:
         return target_x
@@ -252,17 +275,21 @@ def place_objects_at_slot(objects: list, slot: int, *, scene=None, role: str = "
     xs = [float(o.matrix_world.translation.x) for o in roots]
     cur = sum(xs) / len(xs)
     delta = target_x - cur
-    if abs(delta) < 1e-6:
+    ys = [float(o.matrix_world.translation.y) for o in roots]
+    delta_y = target_y - sum(ys) / len(ys)
+    if abs(delta) < 1e-6 and abs(delta_y) < 1e-6:
         return target_x
 
     for obj in roots:
         try:
             mw = obj.matrix_world.copy()
             mw.translation.x = float(mw.translation.x) + delta
+            mw.translation.y = float(mw.translation.y) + delta_y
             obj.matrix_world = mw
         except Exception:
             try:
                 obj.location.x += delta
+                obj.location.y += delta_y
             except Exception:
                 pass
     return target_x
@@ -292,10 +319,7 @@ def place_imported(
         if prefer is None and _alive(attach_to):
             # Infer from armature world X
             if offset_enabled(scene):
-                spacing = slot_spacing_m(scene)
-                wx = float(attach_to.matrix_world.translation.x)
-                if spacing > 1e-6:
-                    prefer = max(0, int(round(wx / spacing)))
+                prefer = slot_from_world(attach_to.matrix_world.translation, scene)
     slot = allocate_slot(role, scene=scene, prefer_slot=prefer, exclude=objects)
     # When attaching, keep world poses (parent inverse); only stamp — do not
     # shove the whole outfit. New meshes parented in merge already match.
@@ -338,3 +362,64 @@ def normalize_role_name(role: str, *, hair_segment: str = "") -> str:
     if rl in ("raidertool", "raidertools"):
         return "RaiderTool"
     return r if r else "Outfit"
+
+
+def reflow_slots(scene=None, *, legacy_linear: bool = False) -> list[dict]:
+    """Compact existing assemblies by type without changing their authored pose.
+
+    This explicit repair helper is not run during registration. For scenes from
+    before the grid, pass legacy_linear=True so their old slot X is interpreted
+    correctly. Parented reference cards follow their assembly; loose cards are
+    matched by their recorded anchor. Vertex data, Z and socket transforms stay
+    untouched.
+    """
+    sc = scene or bpy.context.scene
+    from . import reference_planes
+    reference_planes.bind_legacy_reference_planes(sc, legacy_linear=legacy_linear)
+    scene_objects = set(sc.objects)
+    groups = {}
+    for obj in sc.objects:
+        if not infer_role(obj):
+            continue
+        root = obj
+        while root.parent is not None and root.parent in scene_objects:
+            root = root.parent
+        groups.setdefault(root, set()).add(obj)
+    for root, objects in groups.items():
+        objects.add(root)
+        objects.update(o for o in root.children_recursive if o in scene_objects)
+        names = {o.name for o in objects}
+        objects.update(o for o in sc.objects if o.get("arc_reference_plane")
+                       and str(o.get("arc_reference_anchor") or "") in names)
+    support_roles = {"BackpackFrame", "BackpackStrap"}
+    records = []
+    for root, objects in groups.items():
+        slots = [slot_of_object(o) for o in objects if infer_role(o)]
+        old_slot = min((s for s in slots if s is not None), default=slot_from_world(root.matrix_world.translation, sc))
+        roles = {infer_role(o) for o in objects} - {""}
+        primary = roles - support_roles or roles
+        records.append((old_slot, root.name, root, objects, primary))
+    occupied = {}
+    moved = []
+    for old_slot, _name, root, objects, roles in sorted(records, key=lambda r: (r[0], r[1])):
+        slot = 0
+        while roles & occupied.get(slot, set()):
+            slot += 1
+        occupied.setdefault(slot, set()).update(roles)
+        old_x, old_y = ((old_slot * slot_spacing_m(sc), 0.0) if legacy_linear
+                        else slot_world_xy(old_slot, sc))
+        new_x, new_y = slot_world_xy(slot, sc)
+        delta = Vector((new_x - old_x, new_y - old_y, 0.0))
+        # Move only top-level group members: references under the root inherit.
+        for obj in objects:
+            if obj.parent not in objects:
+                matrix = obj.matrix_world.copy()
+                matrix.translation += delta
+                obj.matrix_world = matrix
+        stamp_objects(objects, slot=slot)
+        moved.append({"root": root.name, "old_slot": old_slot, "slot": slot,
+                      "roles": sorted(roles), "delta": list(delta)})
+    bpy.context.view_layer.update()
+    reference_planes.categorize_reference_planes(sc)
+    _sync_character_fit(sc)
+    return moved

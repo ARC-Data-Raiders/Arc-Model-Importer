@@ -17,6 +17,7 @@ PARTS = {
     'BODY': ('Body', 'Bodies', 'arc_appearance_body_skin'),
     'HEAD': ('Head', 'Heads', 'arc_appearance_head'),
     'HAIR': ('Hair', 'Hair', 'arc_appearance_hair'),
+    'FACIAL_HAIR': ('FacialHair', 'Facial Hair', 'arc_appearance_facial_hair'),
     'BACKPACK': ('Backpack', 'Backpacks', 'arc_appearance_backpack'),
     'ATTACHMENT': ('Attachment', 'Attachments', 'arc_appearance_attachment'),
     'CHARM': ('Charm', 'Charms', 'arc_appearance_charm'),
@@ -39,6 +40,8 @@ def catalog_jobs(part, scene):
         choices = appearance.list_head_choices()
     elif part == 'HAIR':
         choices = appearance.list_hair_choices()
+    elif part == 'FACIAL_HAIR':
+        choices = appearance.list_facial_hair_choices()
     else:
         choices = appearance.list_gear_choices(part.casefold())
     game = pak_extract.configured_dir(scene)
@@ -100,7 +103,11 @@ class BatchQueue:
                 return False
             try:
                 value = self.future.result()
-                self.finalize(self.batch, value)
+                followup = self.finalize(self.batch, value)
+                if followup is not None:
+                    self.future = followup
+                    self.phase = "Extracting authored materials for current batch"
+                    return False
             except Exception as exc:
                 for job in self.batch:
                     job['prepare_error'] = str(exc)
@@ -148,11 +155,23 @@ def _prepare_batch(owner, batch):
         rels.append(appearance._BACKPACK_STRAP_RELS[0])
     if part == 'BACKPACK':
         rels.append(appearance._BACKPACK_FRAME_RELS[0])
+        for job in batch:
+            rels.extend(appearance.backpack_extraction_rels(job['id'], getattr(owner, '_backpack_colorway', 'BASE')))
     if part == 'CHARM':
         rels.append(appearance._BACKPACK_CHARM_CONNECTOR_RELS[0])
+    if owner._reference:
+        from . import reference_planes
+        for job in batch:
+            package = reference_planes.choice_icon_package(appearance.resolve_choice(job['id']) or {}, scene)
+            if package:
+                rels.append(package)
     paths = []
     for rel in rels:
         path = pak_extract.game_path(rel)
+        if '/T_UI_Icon_' in path:
+            from . import textures
+            if textures.find_asset_from_object_path('/Game/' + path.removeprefix('PioneerGame/Content/'), '.png'):
+                continue
         cached = pak_extract._expected_uemodel(pak_extract.cache_dir(), path)
         if cached and appearance._mesh_file_usable(cached) and pak_extract.mesh_cache_is_current(cached, scene):
             continue
@@ -175,6 +194,19 @@ def _finalize_batch(owner, batch, result):
     plan = owner._extract_plan
     code, log = result
     pak_extract.complete_extraction(plan['out'], plan['paths'], code, log, plan['revision'])
+    if batch[0]['part'] == 'BACKPACK' and not plan.get('material_pass'):
+        dependencies = []
+        for job in batch:
+            try:
+                dependencies.extend(appearance.backpack_material_extraction_rels(job['id'], getattr(owner, '_backpack_colorway', 'BASE')))
+            except Exception as exc:
+                job['prepare_error'] = str(exc)
+        dependencies = list(dict.fromkeys(dependencies))
+        if dependencies:
+            command = pak_extract.extraction_command(pak_extract.configured_dir(owner._scene),
+                pak_extract.resolve_usmap(owner._scene), dependencies, out_dir=plan['out'])
+            owner._extract_plan = {**plan, 'paths': dependencies, 'material_pass': True}
+            return owner._executor.submit(_run_export, command)
     for job in batch:
         path = pak_extract._expected_uemodel(plan['out'], pak_extract.game_path(job['rel']))
         if not appearance._mesh_file_usable(path):
@@ -185,22 +217,26 @@ def _import_one(owner, job):
     from . import appearance, import_layout, operators
     scene = owner._scene
     before = set(bpy.data.objects)
-    slot = max(import_layout.discover_slots(scene), default=-1) + 1
     overrides = {job['prop']: job['id'], 'arc_import_slot_offset': True,
                  'arc_appearance_attach_to_outfit': False, 'arc_appearance_replace_selected': False,
                  'arc_include_reference': owner._reference, 'arc_appearance_hair_color': owner._hair_color}
+    if job['part'] == 'BACKPACK':
+        wanted = getattr(owner, '_backpack_colorway', 'BASE')
+        valid = {c['id'] for c in appearance.list_backpack_colorways(job['id'])}
+        overrides['arc_appearance_backpack_colorway'] = wanted if wanted in valid else 'BASE'
     saved = {key: getattr(scene, key) for key in overrides}
     try:
         for key, value in overrides.items():
             setattr(scene, key, value)
+        slot = import_layout.allocate_slot(job['role'], scene=scene)
         with bpy.context.temp_override(window=owner._window, scene=scene, view_layer=owner._view_layer, collection=owner._collection):
             count, messages, objects = appearance.import_appearance_parts(
                 bpy.context, roles={job['role']}, replace_selected=False, standalone=True, layout_slot=slot)
             roles = {str(obj.get('arc_assembly_role') or '') for obj in objects if obj.type == 'MESH'}
-            primary = bool(roles & {'Hair', 'FacialHair'}) if job['role'] == 'Hair' else job['role'] in roles
+            primary = job['role'] in roles
             if not count or not primary:
                 raise RuntimeError('; '.join(messages[-4:]) or 'Primary asset did not import')
-            if job['role'] in {'Head', 'Hair'}:
+            if job['role'] in {'Body', 'Head', 'Hair', 'FacialHair', 'Backpack', 'Attachment', 'Charm', 'RaiderTool'}:
                 operators._maybe_import_references(bpy.context, objects, roles={job['role']})
             owner._view_layer.update()
         return {'slot': slot, 'meshes': count, 'objects': [obj.name for obj in objects], 'messages': messages}
@@ -219,7 +255,7 @@ def _import_one(owner, job):
 class ARC_OUTFITS_OT_AddAllAppearance(Operator):
     bl_idname = 'arc_outfits.add_all_appearance'
     bl_label = 'Add All Appearance Assets'
-    bl_description = 'Import every available entry on separate slots, in completed batches of four'
+    bl_description = 'Import every entry into the first slot missing its type, in completed batches of four'
     bl_options = {'REGISTER', 'UNDO'}
     part: EnumProperty(items=tuple((key, value[1], 'Import all ' + value[1].lower()) for key, value in PARTS.items()), default='HEAD')
 
@@ -249,12 +285,13 @@ class ARC_OUTFITS_OT_AddAllAppearance(Operator):
         self._collection = context.collection
         self._reference = bool(context.scene.arc_include_reference)
         self._hair_color = context.scene.arc_appearance_hair_color
+        self._backpack_colorway = getattr(context.scene, "arc_appearance_backpack_colorway", "BASE")
         self._selection = list(context.selected_objects)
         self._active_object = context.view_layer.objects.active
         self._skipped = skipped
         self._timer = None
         self._closed = False
-        if self.part == 'HAIR' and self._hair_color != 'NONE':
+        if self.part in {'HAIR', 'FACIAL_HAIR'} and self._hair_color != 'NONE':
             if not appearance.resolve_hair_color_path(self._hair_color, context.scene):
                 self.report({'ERROR'}, 'Selected hair color could not be loaded')
                 return {'CANCELLED'}

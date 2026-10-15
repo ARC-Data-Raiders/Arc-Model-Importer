@@ -257,3 +257,58 @@ The older Pak index omits Head_* entries, so authored head paths are attempted
 rather than silently removed. Missing uncooked entries (Celeste Cin observed)
 report their exact path and do not stop the queue. No new extraction-cache
 revision is needed; morph revision remains 2.19.12.
+
+
+## Shared type slots, rows, reference recovery and backpack variants (2.19.14)
+
+Game evidence: skeletal Hiking/Duffelbag/Seasack/etc. vertices already contain
+character component-space height; static containers are socket-local. Placement
+uses target socket times inverse authored source socket bind for skeletal gear,
+without adding height twice. DA_OI Parts resolve every DA_VP Mesh; Survival has
+Backpack and Props, Barrel also has Extras. Color options use exact DA_OI
+CustomizationVisualPartSetMaterialModifier Part and MaterialSlot bindings;
+Default follows the Color setting's DefaultItemQuery. Selecting a single
+section updates its existing same-host companions rather than duplicating them.
+
+Normal Hair and Facial Hair have independent selectors, Add and Add All buttons,
+occupancy and replacement roles. Saved normal enum numbers remain stable; old
+facial selections migrate to the separate selector. Source hair sections dispatch
+strands and opaque ties separately; static Buzzcut uses a verified head rest-bone
+frame. See appearance-hair-head-textures.md for shader and attachment evidence.
+
+Each type fills its first available slot starting at zero, sharing pads with
+other types. Ten columns wrap into positive Y rows. Defaults are X=2m, Y=8m;
+both controls sit beside Offset Characters. Four-entry batch completion includes
+all mesh/material/reference work, including a second worker extraction phase for
+newly resolved authored materials. Blender work stays on its main thread.
+
+Arc Reference Planes contains children per type. Cards follow their assets,
+including recovered loose legacy cards during explicit scene reflow. Imported
+cards preserve their orientation when static hair receives a head attachment.
+Exact indexed UI packages recover missing PNGs at import time; sidebar drawing
+stays read-only. Direct UTexture export now supports cold caches without a full
+preview reindex. Folder and filename suffixes are independent (TechBag folder,
+T_UI_Icon_BackpackContainer_TechBag_A filename). ShortTidy's exact icon is the
+DA-proven MoustacheRegular. Canonical and RemappedPlugins mounts and extended
+Windows paths are accepted for meshes, images, icons and cache metadata sidecars.
+
+Known limit: Survival Props' lantern remains bound to its own MI_Props_Lantern.
+The simple fallback does not reconstruct its authored procedural lantern effect;
+Intensity alone is insufficient evidence for inventing uniform emission.
+
+Final 2.19.14 live verification: the original185-object scene is repaired to240
+objects, recovering allsix failed backpack entries plus the missing Survival bag
+and Barrel Extras. There are28Backpack,18Head,26Hair and5FacialHair cards (77).
+All163original meshes retain identical vertex/face hashes; all48original cards
+retain their world orientation. Shared slots begin atzero for each type, settings,
+selection, otheraddons andtheoriginalfilepath arepreserved. LiveMCPpasses288
+checks; the integrated private scene repair passes105. Before/after scene copies
+are dist/.local/scene-live-before-21914.blend andscene-live-repaired-21914.blend.
+
+The final real-AppData path test also covers Basket's269-character Wood_Red MI:
+folder ranking must normalize each joined child, even when the folder itself is
+short. Default/Red imports and the layered Red graph pass. Blender-relative //
+paths and native UNC paths remain valid. Four colorway-enum checks verify that
+explicit options retain stable numeric identities before/after default metadata
+loads; Game Default remains distinct from explicitly named variants. Final ZIP
+runtime/source/installed payload checks pass, alongside release GUI queue checks.

@@ -15,19 +15,173 @@ _OUTFIT_ICON_HEIGHT_FRACTION = 0.75
 _OUTFIT_REF_LEFT_GAP_M = 0.38
 
 _REF_COLLECTION = "Arc Reference Planes"
+_REF_TYPE_COLLECTIONS = {
+    "Body": "Bodies", "Head": "Heads", "Hair": "Hair", "FacialHair": "Facial Hair",
+    "Outfit": "Outfits", "Backpack": "Backpacks", "Attachment": "Attachments",
+    "Charm": "Charms", "RaiderTool": "Raider Tools",
+}
 # Object Index used by Lighting Look compositor to skip Kodak LUT on UI planes.
 REF_PASS_INDEX = 64
+_ICON_PACKAGE_LOOKUPS = {}
+
+
+def choice_icon_package(choice: dict, scene=None) -> str:
+    """Find an exact authored UI package in the existing index; never export."""
+    from . import appearance, pak_extract, pak_catalog
+    if not choice:
+        return ""
+    segment, prefix = appearance._gear_icon_spec(choice)
+    if not segment:
+        return ""
+    index = pak_extract.load_pak_index(scene or bpy.context.scene, allow_reindex=False)
+    if not index:
+        return ""
+    stamp = index.get("stamp") or (index.get("path"), index.get("build"))
+    lookup = _ICON_PACKAGE_LOOKUPS.get(stamp)
+    if lookup is None:
+        lookup = {pak_catalog.canonical_path(path).casefold(): pak_catalog.canonical_path(path)
+                  for path in index["paths"] if "/t_ui_icon_" in path.casefold()}
+        _ICON_PACKAGE_LOOKUPS.clear()
+        _ICON_PACKAGE_LOOKUPS[stamp] = lookup
+    stems = []
+    for value in (choice.get("icon_stem"), choice.get("folder")):
+        stem = str(value or "").strip()
+        if not stem or any(token in stem for token in ("/", "\\", "..")):
+            continue
+        if stem not in stems:
+            stems.append(stem)
+        if not stem.upper().endswith("_A") and stem + "_A" not in stems:
+            stems.append(stem + "_A")
+    # Some authored packages use a base folder with an _A image suffix
+    # (TechBag/T_UI_Icon_BackpackContainer_TechBag_A). Both components remain
+    # exact catalog stems; do not borrow a similar name from another asset.
+    for folder in stems:
+        for stem in stems:
+            package = f"PioneerGame/Content/Pioneer/Items/Characters/Skins/{segment}/{folder}/T_UI_Icon_{prefix}_{stem}"
+            found = lookup.get(package.casefold())
+            if found:
+                return found
+    return ""
+
+
+def ensure_choice_icon(choice: dict, scene=None) -> str:
+    """Resolve an icon during import, exporting only its indexed package if needed.
+
+    Sidebar previews continue to use the read-only appearance resolver. This
+    helper belongs to completed import work and must not be called while drawing.
+    """
+    from . import appearance, pak_extract
+    path = appearance._icon_file_for_choice(choice) if choice else ""
+    if path:
+        return path
+    sc = scene or bpy.context.scene
+    game = pak_extract.configured_dir(sc)
+    package = choice_icon_package(choice, sc) if game else ""
+    mapping = pak_extract.resolve_usmap(sc) if package else ""
+    if not package or not mapping:
+        return ""
+    code, log, _meshes = pak_extract.extract_paths(game, mapping, [package])
+    appearance._ICON_SCAN_CACHE.clear()
+    path = appearance._icon_file_for_choice(choice)
+    if not path:
+        print(f"Arc reference: UI icon unavailable after export ({code}): {package}")
+    return path
 
 
 def _ensure_collection(name: str = _REF_COLLECTION):
     col = bpy.data.collections.get(name)
     if col is None:
         col = bpy.data.collections.new(name)
-        try:
+    try:
+        if col.name not in bpy.context.scene.collection.children:
             bpy.context.scene.collection.children.link(col)
-        except Exception:
-            pass
+    except Exception:
+        pass
     return col
+
+
+def _reference_collection(role: str):
+    root = _ensure_collection()
+    label = _REF_TYPE_COLLECTIONS.get(role, "Other")
+    # A unique datablock name avoids stealing a mesh collection called Hair.
+    name = f"Arc References - {label}"
+    col = bpy.data.collections.get(name)
+    if col is None:
+        col = bpy.data.collections.new(name)
+    if col.name not in root.children:
+        root.children.link(col)
+    return col
+
+
+def _reference_role(plane) -> str:
+    from . import import_layout
+    stamped = str(plane.get("arc_reference_role") or "")
+    if stamped in _REF_TYPE_COLLECTIONS:
+        return stamped
+    image_path = str(plane.get("arc_reference_image") or "").replace("\\", "/").casefold()
+    for segment, role in (("facialhair", "FacialHair"), ("hair", "Hair"),
+                          ("face", "Head"), ("backpackcontainer", "Backpack"),
+                          ("backpackattachment", "Attachment"), ("backpackcharm", "Charm"),
+                          ("raidertool", "RaiderTool"), ("outfit", "Outfit")):
+        if f"/skins/{segment}/" in image_path:
+            return role
+    anchor = plane.parent or bpy.data.objects.get(str(plane.get("arc_reference_anchor") or ""))
+    if anchor is not None:
+        roles = {import_layout.infer_role(o) for o in [anchor, *anchor.children_recursive]}
+        # Head/hair names disambiguate cards on mixed outfit armatures.
+        if plane.name.startswith("REF_Hair") and "FacialHair" in roles and "Hair" not in roles:
+            return "FacialHair"
+    for role in _REF_TYPE_COLLECTIONS:
+        if plane.name.startswith("REF_" + role):
+            return role
+    return ""
+
+
+def bind_legacy_reference_planes(scene=None, *, legacy_linear=False) -> int:
+    """Recover old loose cards' ownership from their icon type and exact pad."""
+    from . import import_layout
+    sc = scene or bpy.context.scene
+    meshes = [o for o in sc.objects if o.type == "MESH" and import_layout.infer_role(o)]
+    count = 0
+    for plane in list(sc.objects):
+        if not plane.get("arc_reference_plane") or plane.parent is not None:
+            continue
+        role = _reference_role(plane)
+        if "arc_import_slot" in plane:
+            slot = int(plane["arc_import_slot"])
+        elif legacy_linear:
+            slot = max(0, int(round(plane.matrix_world.translation.x / import_layout.slot_spacing_m(sc))))
+        else:
+            slot = import_layout.slot_from_world(plane.matrix_world.translation, sc)
+        candidates = [o for o in meshes if import_layout.infer_role(o) == role
+                      and import_layout.slot_of_object(o) == slot]
+        if not candidates:
+            continue
+        primary = min(candidates, key=lambda o: (o.matrix_world.translation - plane.matrix_world.translation).length_squared)
+        _anchor_plane(plane, primary.parent or primary)
+        plane["arc_import_slot"] = slot
+        plane["arc_reference_role"] = role
+        count += 1
+    return count
+
+
+def categorize_reference_planes(scene=None) -> int:
+    """Move existing cards into their type collection, preserving their poses."""
+    sc = scene or bpy.context.scene
+    count = 0
+    for plane in list(sc.objects):
+        if not plane.get("arc_reference_plane"):
+            continue
+        role = _reference_role(plane)
+        col = _reference_collection(role)
+        for old in list(plane.users_collection):
+            if old != col:
+                old.objects.unlink(plane)
+        if plane.name not in col.objects:
+            col.objects.link(plane)
+        plane["arc_reference_role"] = role
+        count += 1
+    return count
 
 
 def _depsgraph_update() -> None:
@@ -97,6 +251,8 @@ def _anchor_plane(plane, anchor) -> None:
         plane.matrix_local = anchor.matrix_world.inverted() @ mw
         _depsgraph_update()
         plane["arc_reference_anchor"] = anchor.name
+        if "arc_import_slot" in anchor:
+            plane["arc_import_slot"] = int(anchor["arc_import_slot"])
     except Exception:
         pass
 
@@ -200,6 +356,7 @@ def create_image_plane(
     height_m: float,
     location: Vector,
     facing_y: bool = True,
+    reference_role: str = "",
 ) -> bpy.types.Object | None:
     """Create an XY (or XZ) image plane of world height *height_m* at *location*."""
     image = _load_image(image_path)
@@ -235,7 +392,9 @@ def create_image_plane(
     else:
         plane.data.materials.append(mat)
 
-    col = _ensure_collection()
+    if not reference_role:
+        reference_role = next((r for r in _REF_TYPE_COLLECTIONS if name.startswith("REF_" + r)), "")
+    col = _reference_collection(reference_role)
     try:
         for c in list(plane.users_collection):
             c.objects.unlink(plane)
@@ -245,6 +404,7 @@ def create_image_plane(
     try:
         plane["arc_reference_plane"] = 1
         plane["arc_reference_image"] = image_path
+        plane["arc_reference_role"] = reference_role
         plane.pass_index = int(REF_PASS_INDEX)
     except Exception:
         pass
@@ -408,7 +568,8 @@ def place_head_reference(objects, image_path: str) -> bpy.types.Object | None:
         if obj.parent and obj.parent.type == "ARMATURE":
             anchor = obj.parent
             break
-    _anchor_plane(plane, anchor or _outfit_anchor(objects))
+    _anchor_plane(plane, anchor or (meshes[0].parent or meshes[0] if meshes else None)
+                  or _outfit_anchor(objects))
     return plane
 
 
@@ -424,7 +585,7 @@ def place_hair_reference(objects, image_path: str) -> bpy.types.Object | None:
     center = (mins + maxs) * 0.5
     loc = Vector((maxs.x + 0.25, center.y, maxs.z + h * 0.5))
     plane = create_image_plane(
-        name="REF_Hair",
+        name="REF_FacialHair" if _meshes_with_role(objects, "FacialHair") and not _meshes_with_role(objects, "Hair") else "REF_Hair",
         image_path=image_path,
         height_m=h,
         location=loc,
@@ -434,7 +595,29 @@ def place_hair_reference(objects, image_path: str) -> bpy.types.Object | None:
         if obj.parent and obj.parent.type == "ARMATURE":
             anchor = obj.parent
             break
-    _anchor_plane(plane, anchor or _outfit_anchor(objects))
+    _anchor_plane(plane, anchor or (meshes[0].parent or meshes[0] if meshes else None)
+                  or _outfit_anchor(objects))
+    return plane
+
+
+def place_asset_reference(objects, image_path: str, role: str) -> bpy.types.Object | None:
+    """Place a type-specific cosmetic card beside its actual imported mesh."""
+    meshes = _meshes_with_role(objects, role)
+    bb = _world_bbox(meshes)
+    if bb is None or not image_path:
+        return None
+    mins, maxs = bb
+    height = max(maxs.z - mins.z, maxs.x - mins.x, 0.15) * 0.75
+    center = (mins + maxs) * 0.5
+    plane = create_image_plane(name=f"REF_{role}", image_path=image_path,
+                               height_m=height,
+                               location=Vector((maxs.x + height * 0.6 + 0.08,
+                                                center.y, center.z)),
+                               reference_role=role)
+    anchor = meshes[0].parent or meshes[0]
+    _anchor_plane(plane, anchor)
+    if plane is not None and "arc_import_slot" in meshes[0]:
+        plane["arc_import_slot"] = int(meshes[0]["arc_import_slot"])
     return plane
 
 
@@ -475,7 +658,8 @@ def import_references_for_objects(context, objects, *, roles: set[str] | None = 
     from . import appearance
 
     msgs: list[str] = []
-    want = {str(r).strip().title() for r in (roles or {"Outfit", "Head", "Hair"})}
+    from . import import_layout
+    want = {import_layout.normalize_role_name(str(r)) for r in (roles or {"Outfit", "Head", "Hair"})}
     objs = [o for o in objects if o and o.name in bpy.data.objects]
     head_plane = None
     hair_plane = None
@@ -493,21 +677,41 @@ def import_references_for_objects(context, objects, *, roles: set[str] | None = 
     if "Head" in want:
         head_id = getattr(context.scene, "arc_appearance_head", "NONE") or "NONE"
         choice = appearance.resolve_choice(head_id) if head_id != "NONE" else None
-        path = appearance._icon_file_for_choice(choice) if choice else ""
+        path = ensure_choice_icon(choice, context.scene) if choice else ""
         head_plane = place_head_reference(objs, path) if path else None
         if head_plane:
             msgs.append(f"Reference head plane ← {os.path.basename(path)}")
 
-    if "Hair" in want:
-        hair_id = getattr(context.scene, "arc_appearance_hair", "NONE") or "NONE"
+    for role, selector in (("Hair", "arc_appearance_hair"), ("FacialHair", "arc_appearance_facial_hair")):
+        if role not in want:
+            continue
+        hair_id = getattr(context.scene, selector, "NONE") or "NONE"
         choice = appearance.resolve_choice(hair_id) if hair_id != "NONE" else None
-        path = appearance._icon_file_for_choice(choice) if choice else ""
-        hair_plane = place_hair_reference(objs, path) if path else None
+        path = ensure_choice_icon(choice, context.scene) if choice else ""
+        role_objects = [o for o in objs if o.get("arc_assembly_role") == role]
+        hair_plane = place_hair_reference(role_objects, path) if path else None
         if hair_plane:
-            msgs.append(f"Reference hair plane ← {os.path.basename(path)}")
+            layout_head_hair_stack(role_objects, None, hair_plane)
+            msgs.append(f"Reference {role} plane ← {os.path.basename(path)}")
 
-    if head_plane is not None or hair_plane is not None:
-        layout_head_hair_stack(objs, head_plane, hair_plane)
+    for role, selector in (("Backpack", "arc_appearance_backpack"),
+                           ("Attachment", "arc_appearance_attachment"),
+                           ("Charm", "arc_appearance_charm"),
+                           ("RaiderTool", "arc_appearance_raider_tool")):
+        if role not in want:
+            continue
+        choice_id = getattr(context.scene, selector, "NONE") or "NONE"
+        choice = appearance.resolve_choice(choice_id) if choice_id != "NONE" else None
+        path = ensure_choice_icon(choice, context.scene) if choice else ""
+        plane = place_asset_reference(objs, path, role) if path else None
+        if plane:
+            msgs.append(f"Reference {role} plane ← {os.path.basename(path)}")
+        else:
+            msgs.append(f"Reference {role}: no UI icon for selected asset" if not path
+                        else f"Reference {role} plane skipped (no {role} meshes)")
+
+    if head_plane is not None:
+        layout_head_hair_stack(objs, head_plane, None)
 
     return msgs
 
@@ -530,6 +734,8 @@ def import_references_from_scene(context) -> tuple[int, list[str]]:
         ]
     if not objs:
         return 0, ["Select an imported outfit / head / hair mesh first"]
-    msgs = import_references_for_objects(context, objs)
+    from . import import_layout
+    roles = {import_layout.infer_role(o) for o in objs} & set(_REF_TYPE_COLLECTIONS)
+    msgs = import_references_for_objects(context, objs, roles=roles or {"Outfit"})
     made = sum(1 for m in msgs if "plane ←" in m)
     return made, msgs

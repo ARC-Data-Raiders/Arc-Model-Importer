@@ -55,7 +55,9 @@ def _draw_offset_settings(layout, context):
     if getattr(scene, "arc_import_slot_offset", True) and hasattr(
         scene, "arc_import_slot_spacing"
     ):
-        row.prop(scene, "arc_import_slot_spacing", text="Spacing")
+        row.prop(scene, "arc_import_slot_spacing", text="X")
+        if hasattr(scene, "arc_import_slot_row_spacing"):
+            row.prop(scene, "arc_import_slot_row_spacing", text="Y")
     if hasattr(scene, "arc_inherit_shape_key"):
         layout.prop(scene, "arc_inherit_shape_key", text="Inherit Shape Key")
 
@@ -135,10 +137,13 @@ def _draw_head_section(layout, context):
     _draw_preview_icon(right, icon_id)
 
 
-def _draw_hair_section(layout, context):
+def _draw_hair_section(layout, context, *, facial=False):
     """Left: Hair dropdown, color, Update, Add. Right: Bald or style preview."""
     scene = context.scene
-    choice_id = getattr(scene, "arc_appearance_hair", "NONE")
+    prop = "arc_appearance_facial_hair" if facial else "arc_appearance_hair"
+    label = "Facial Hair" if facial else "Hair"
+    part = "FACIAL_HAIR" if facial else "HAIR"
+    choice_id = getattr(scene, prop, "NONE")
     if not choice_id or choice_id == "NONE":
         try:
             from . import appearance
@@ -149,7 +154,7 @@ def _draw_hair_section(layout, context):
     else:
         icon_id = _appearance_preview_icon_id(choice_id)
     left, right = _split_controls_preview(layout, context, icon_id)
-    left.prop(scene, "arc_appearance_hair", text="Hair")
+    left.prop(scene, prop, text=label)
     if hasattr(scene, "arc_appearance_hair_color"):
         left.prop(scene, "arc_appearance_hair_color", text="Hair Color")
         left.operator(
@@ -158,11 +163,11 @@ def _draw_hair_section(layout, context):
             icon="COLOR",
         )
     op = left.operator(
-        "arc_outfits.add_appearance_part", text="Add Hair", icon="PARTICLE_DATA",
+        "arc_outfits.add_appearance_part", text=f"Add {label}", icon="PARTICLE_DATA",
     )
-    op.part = "HAIR"
-    op = left.operator("arc_outfits.add_all_appearance", text="Add All Hair", icon="IMPORT")
-    op.part = "HAIR"
+    op.part = part
+    op = left.operator("arc_outfits.add_all_appearance", text=f"Add All {label}", icon="IMPORT")
+    op.part = part
     _draw_preview_icon(right, icon_id)
 
 
@@ -175,6 +180,9 @@ def _draw_gear_section(layout, context, *, prop: str, part: str, label: str, ico
     icon_id = _appearance_preview_icon_id(choice_id)
     left, right = _split_controls_preview(layout, context, icon_id)
     left.prop(scene, prop, text=label)
+    if part == "BACKPACK" and hasattr(scene, "arc_appearance_backpack_colorway"):
+        left.prop(scene, "arc_appearance_backpack_colorway", text="Colorway")
+        left.operator("arc_outfits.update_backpack_colorway", text="Update Colorway", icon="COLOR")
     op = left.operator(
         "arc_outfits.add_appearance_part", text=f"Add {label}", icon=icon,
     )
@@ -241,6 +249,10 @@ def _draw_appearance_section(layout, context):
     hair_sec = _collapsible(layout, "arc_appearance_hair_sec", "Hair", default_closed=True)
     if hair_sec is not None:
         _draw_hair_section(hair_sec, context)
+
+    facial_sec = _collapsible(layout, "arc_appearance_facial_hair_sec", "Facial Hair", default_closed=True)
+    if facial_sec is not None:
+        _draw_hair_section(facial_sec, context, facial=True)
 
     backpack_sec = _collapsible(
         layout, "arc_appearance_backpack_sec", "Backpack", default_closed=True,

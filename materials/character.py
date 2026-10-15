@@ -2446,6 +2446,69 @@ def apply_hair_nxa_bridge(
 
 
 def setup_hair_material(obj, json_path: str, colour_json: str = ""):
+    """Build every authored card/accessory slot, including existing old imports."""
+    from .. import textures, uemodel_import
+    source = str(obj.get("arc_source_mesh") or obj.get("arc_psk_path") or "")
+    native = os.path.splitext(source)[0] + ".uemodel"
+    sections = []
+    if os.path.isfile(native):
+        try:
+            _name, _version, lods = uemodel_import.parse_uemodel(native)
+            sections = lods[0].materials if lods else []
+        except (OSError, ValueError, uemodel_import.UeModelError):
+            pass
+    bindings = textures.authored_visual_part_materials(source) if source else []
+    cards = textures.scan_hair_mis(source) if source else []
+    if not textures.is_hair_cards_mi(json_path) and cards:
+        json_path = cards[0][1]
+    if not sections:
+        _setup_hair_card_material(obj, json_path, colour_json)
+        return
+    previous_index = obj.active_material_index
+    applied = []
+    try:
+        for index, (slot, reference, _first, _faces) in enumerate(sections):
+            if index >= len(obj.material_slots):
+                obj.data.materials.append(bpy.data.materials.new(str(slot)[:63]))
+            mi_path = ""
+            for binding in bindings:
+                if binding["slot"].casefold() == str(slot).casefold():
+                    mi_path = binding["path"]
+                    break
+            if not mi_path:
+                mi_path = textures.find_asset_from_object_path(reference, ".json") if reference else ""
+            if not mi_path:
+                mi_path = textures.resolve_part_mi_json(os.path.join(os.path.dirname(source), str(slot) + ".json"), str(slot))
+            card_slot = textures.is_hair_cards_mi(mi_path) if mi_path else False
+            if not mi_path and len(sections) == 1:
+                mi_path = json_path
+                card_slot = textures.is_hair_cards_mi(mi_path)
+            obj.active_material_index = index
+            # Never reuse a shared source MI material for an independently coloured character.
+            old = obj.active_material
+            if old is not None and old.users > 1:
+                obj.active_material = old.copy()
+            if card_slot:
+                _setup_hair_card_material(obj, mi_path, colour_json)
+                applied.append(mi_path)
+            elif mi_path and os.path.isfile(mi_path):
+                from .dispatch import _dispatch_weapon_slot_material
+                mat = obj.active_material
+                if mat is None:
+                    mat = bpy.data.materials.new((obj.name + "_" + str(slot))[:63])
+                    obj.active_material = mat
+                _dispatch_weapon_slot_material(mat, mi_path, source, os.path.basename(mi_path).lower(), str(slot).lower())
+                mat["arc_mi_path"] = os.path.abspath(mi_path)
+                for stamp in ("arc_hair_cards", "arc_hair_shader", "arc_hair_color_mi"):
+                    if stamp in mat:
+                        del mat[stamp]
+        if applied:
+            obj["arc_hair_mi"] = applied[0]
+    finally:
+        obj.active_material_index = min(previous_index, max(0, len(obj.material_slots) - 1))
+
+
+def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
     """Hair cards: Metahuman atlases → Principled + HASHED soft Coverage.
 
     ArcTexturer.blend has Face Shader / Teeth / Eyes but **no Hair group**.
@@ -2454,10 +2517,10 @@ def setup_hair_material(obj, json_path: str, colour_json: str = ""):
     (Alpha=1); expand midtones and HASHED (not CLIP at 0.333).
     """
     base = _strip_setup_suffixes(getattr(obj, "name", "Hair"))
-    mat_name = (base + "_Hair_Mat")[:63]
-    mat = obj.active_material if obj.active_material and "hair" in (obj.active_material.name or "").lower() else None
-    if mat is None:
-        mat = bpy.data.materials.get(mat_name)
+    suffix = f"_Hair_{obj.active_material_index}_Mat" if len(obj.material_slots) > 1 else "_Hair_Mat"
+    mat_name = (base + suffix)[:63]
+    # Reuse only this section, never another section's material with a matching name.
+    mat = obj.active_material
     if mat is None:
         mat = bpy.data.materials.new(name=mat_name)
     else:
@@ -2598,15 +2661,14 @@ def setup_hair_material(obj, json_path: str, colour_json: str = ""):
         links.new(node.outputs["Color"], sep.inputs["Color"])
         # Palette factor = Attribute.A (image Alpha), not R.
         attr_a = node.outputs.get("Alpha") or sep.outputs["Red"]
-        mix_col = nodes.new("ShaderNodeMix")
-        mix_col.data_type = "RGBA"
+        mix_col = nodes.new("ShaderNodeMixRGB")
         mix_col.blend_type = "MIX"
-        mix_col.clamp_factor = True
+        mix_col.use_clamp = True
         mix_col.label = "ColorA/B"
         mix_col.location = (x + 500, row + 40)
-        links.new(attr_a, mix_col.inputs["Factor"])
-        links.new(rgb_a.outputs[0], mix_col.inputs["A"])
-        links.new(rgb_b.outputs[0], mix_col.inputs["B"])
+        links.new(attr_a, mix_col.inputs["Fac"])
+        links.new(rgb_a.outputs[0], mix_col.inputs["Color1"])
+        links.new(rgb_b.outputs[0], mix_col.inputs["Color2"])
         # Root darken by Attribute.B (Blue).
         root_pow = nodes.new("ShaderNodeMath")
         root_pow.operation = "POWER"
@@ -2616,37 +2678,34 @@ def setup_hair_material(obj, json_path: str, colour_json: str = ""):
             (mi.get("scalars") or {}).get("Root position", 4.0) or 4.0
         )
         links.new(sep.outputs["Blue"], root_pow.inputs[0])
-        root_mul = nodes.new("ShaderNodeMix")
-        root_mul.data_type = "RGBA"
+        root_mul = nodes.new("ShaderNodeMixRGB")
         root_mul.blend_type = "MIX"
         root_mul.label = "Root Darken"
         root_mul.location = (x + 720, row + 40)
-        root_mul.clamp_factor = True
+        root_mul.use_clamp = True
         root_tint = nodes.new("ShaderNodeRGB")
         root_tint.label = "Root Multiply"
-        root_tint.outputs[0].default_value = (0.38, 0.32, 0.27, 1.0)
+        root_tint.outputs[0].default_value = colours.get("Root Multiply") or (0.38, 0.32, 0.27, 1.0)
         root_tint.location = (x + 500, row - 280)
-        darkened = nodes.new("ShaderNodeMix")
-        darkened.data_type = "RGBA"
+        darkened = nodes.new("ShaderNodeMixRGB")
         darkened.blend_type = "MULTIPLY"
         darkened.location = (x + 720, row - 120)
-        darkened.inputs["Factor"].default_value = 1.0
-        links.new(mix_col.outputs["Result"], darkened.inputs["A"])
-        links.new(root_tint.outputs[0], darkened.inputs["B"])
-        links.new(root_pow.outputs["Value"], root_mul.inputs["Factor"])
-        links.new(darkened.outputs["Result"], root_mul.inputs["A"])
-        links.new(mix_col.outputs["Result"], root_mul.inputs["B"])
+        darkened.inputs["Fac"].default_value = 1.0
+        links.new(mix_col.outputs["Color"], darkened.inputs["Color1"])
+        links.new(root_tint.outputs[0], darkened.inputs["Color2"])
+        links.new(root_pow.outputs["Value"], root_mul.inputs["Fac"])
+        links.new(darkened.outputs["Color"], root_mul.inputs["Color1"])
+        links.new(mix_col.outputs["Color"], root_mul.inputs["Color2"])
         if base_color_src is None:
-            base_color_src = root_mul.outputs["Result"]
+            base_color_src = root_mul.outputs["Color"]
         else:
-            mul2 = nodes.new("ShaderNodeMix")
-            mul2.data_type = "RGBA"
+            mul2 = nodes.new("ShaderNodeMixRGB")
             mul2.blend_type = "MULTIPLY"
             mul2.location = (x + 900, row + 220)
-            mul2.inputs["Factor"].default_value = 1.0
-            links.new(base_color_src, mul2.inputs["A"])
-            links.new(root_mul.outputs["Result"], mul2.inputs["B"])
-            base_color_src = mul2.outputs["Result"]
+            mul2.inputs["Fac"].default_value = 1.0
+            links.new(base_color_src, mul2.inputs["Color1"])
+            links.new(root_mul.outputs["Color"], mul2.inputs["Color2"])
+            base_color_src = mul2.outputs["Color"]
         mapr = nodes.new("ShaderNodeMapRange")
         mapr.location = (x + 500, row - 400)
         mapr.inputs["From Min"].default_value = 0.0
