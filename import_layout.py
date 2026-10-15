@@ -78,6 +78,8 @@ def infer_role(obj) -> str:
     """Best-effort role for slot occupancy."""
     if not _alive(obj):
         return ""
+    if obj.type == "MESH" and str(obj.get("arc_model_type") or "").casefold() == "body":
+        return "Body"
     stamped = str(obj.get(PROP_ROLE) or "").strip()
     if stamped in ROLES:
         return stamped
@@ -266,6 +268,15 @@ def place_objects_at_slot(objects: list, slot: int, *, scene=None, role: str = "
     return target_x
 
 
+def _sync_character_fit(scene=None):
+    from . import character_fit
+    try:
+        character_fit.sync_scene(scene)
+    except Exception as exc:
+        from . import utils
+        utils.get_logger().warning("Character fit update failed: %s", exc)
+
+
 def place_imported(
     objects: list,
     role: str,
@@ -291,8 +302,10 @@ def place_imported(
     if attach_to is not None:
         stamp_objects(objects, slot=slot, role=role)
         stamp_objects([attach_to], slot=slot, role="")
+        _sync_character_fit(scene)
         return slot
     place_objects_at_slot(objects, slot, scene=scene, role=role)
+    _sync_character_fit(scene)
     return slot
 
 

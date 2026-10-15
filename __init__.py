@@ -6,7 +6,7 @@ Import Arc Raiders models by selecting an outfit folder.
 bl_info = {
     "name": "Arc Model Importer",
     "author": "Silarious (Ai Vibe Code)/ Naryun & Zebulon Core Functions",
-    "version": (2, 19, 11),
+    "version": (2, 19, 12),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Arc Model Importer",
     "description": "Import Arc Raiders outfits, weapons, animations, and models by selecting content folders.",
@@ -158,6 +158,9 @@ def register():
 
     properties.register()
     pak_extract.register_defaults()
+    if not addon_line.is_map_importer_line():
+        from . import character_fit
+        character_fit.register()
 
     try:
         from . import appearance as _appearance
@@ -221,6 +224,8 @@ def _auto_start_listener():
 def unregister():
     """Unregister all modules and properties (safe if partially registered)."""
     pak_extract.unregister_defaults()
+    from . import character_fit
+    character_fit.unregister()
     if bpy.app.timers.is_registered(_initialize_runtime):
         bpy.app.timers.unregister(_initialize_runtime)
     try:

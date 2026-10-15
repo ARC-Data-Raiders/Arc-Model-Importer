@@ -60,6 +60,18 @@ BODY_NORMAL = {
     'male_dark':    'T_Body_Male_N.png',
 }
 
+def _update_inherit_shape_key(self, context):
+    from . import character_fit
+    scene = getattr(context, "scene", None) or self
+    try:
+        if getattr(scene, "arc_inherit_shape_key", True):
+            character_fit.sync_scene(scene)
+        else:
+            character_fit.release_scene(scene)
+    except Exception as exc:
+        utils.get_logger().warning("Shape key inheritance update failed: %s", exc)
+
+
 def make_body_items(self, context):
     return BODY_VARIANTS
 
@@ -573,6 +585,7 @@ _SHARED_SCENE_PROPS = (
     "arc_include_reference",
     "arc_appearance_import_body",  # retired checkbox; deleted on register
     "arc_import_slot_offset",
+    "arc_inherit_shape_key",
     "arc_import_slot_spacing",
     "arc_deep_path_search_root",
     "arc_crease_edge_color",
@@ -662,6 +675,7 @@ _UI_CRITICAL_SCENE_PROPS = (
     "arc_appearance_csv_path",
     "arc_include_reference",
     "arc_import_slot_offset",
+    "arc_inherit_shape_key",
     "arc_import_slot_spacing",
     "arc_deep_path_search_root",
     "arc_crease_edge_color",
@@ -1036,6 +1050,18 @@ def register():
                 "Disable to import everything at world origin"
             ),
             default=True,
+        ),
+    )
+    _assign_if_free(
+        "arc_inherit_shape_key",
+        BoolProperty(
+            name="Inherit Shape Key",
+            description=(
+                "Fit outfit male/female shape keys to the body on the same character. "
+                "Works in either import order; disable to adjust outfit shape keys manually"
+            ),
+            default=True,
+            update=_update_inherit_shape_key,
         ),
     )
     _assign_if_free(

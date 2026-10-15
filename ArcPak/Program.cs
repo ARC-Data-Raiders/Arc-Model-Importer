@@ -935,7 +935,7 @@ internal static class Program
             naniteMeshFormat: ENaniteMeshFormat.NaniteFirst,
             materialDepth: EMaterialDepth.AllLayersNoRef,
             exportMaterials: true,
-            exportMorphTargets: false);
+            exportMorphTargets: true);
         var session = new ExportSession { MaxDegreeOfParallelism = Workers };
         var queued = 0;
         var jsonPackages = new List<(IPackage Package, string Path)>();

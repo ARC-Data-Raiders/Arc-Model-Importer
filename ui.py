@@ -56,6 +56,8 @@ def _draw_offset_settings(layout, context):
         scene, "arc_import_slot_spacing"
     ):
         row.prop(scene, "arc_import_slot_spacing", text="Spacing")
+    if hasattr(scene, "arc_inherit_shape_key"):
+        layout.prop(scene, "arc_inherit_shape_key", text="Inherit Shape Key")
 
 
 # Head/Hair previews: ~128px (template_icon scale unit ≈ 32px).

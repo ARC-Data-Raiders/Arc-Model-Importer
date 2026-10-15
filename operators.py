@@ -391,7 +391,11 @@ def _apply_materials_to_object_impl(
                 obj["arc_body_variant"] = body_variant
         except Exception:
             pass
+        from . import character_fit
+        character_fit.apply_body_gender(obj, body_variant)
         materials.setup_body_material(obj, psk_path, body_variant)
+        if "arc_import_slot" in obj:
+            character_fit.sync_scene(bpy.context.scene)
         return "body"
 
     if model_type == "hair":
@@ -3130,21 +3134,23 @@ class ARC_OUTFITS_OT_ConfirmPSKImport(Operator):
             try:
                 from . import import_layout as _layout
 
+                layout_role = "Body" if types and all(t == "body" for t in types) else "Outfit"
+
                 for o in all_new_objs:
                     if _still_alive(o) and not o.get("arc_assembly_role"):
                         try:
-                            o["arc_assembly_role"] = "Outfit"
+                            o["arc_assembly_role"] = layout_role
                         except Exception:
                             pass
                 slot = _layout.place_imported(
                     [o for o in all_new_objs if _still_alive(o)],
-                    "Outfit",
+                    layout_role,
                     scene=context.scene,
                 )
                 if _layout.offset_enabled(context.scene):
                     self.report(
                         {'INFO'},
-                        f"Outfit slot {slot} @ X={_layout.slot_world_x(slot, context.scene):.1f} m",
+                        f"{layout_role} slot {slot} @ X={_layout.slot_world_x(slot, context.scene):.1f} m",
                     )
             except Exception as exc:
                 print(f"Arc Raiders PSK Importer: slot layout skipped: {exc}")

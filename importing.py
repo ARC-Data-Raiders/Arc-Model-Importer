@@ -15,7 +15,7 @@ from . import textures
 _OUTFIT_CSV_CACHE = {}
 _log = utils.get_logger()
 
-# Skip flags: we replace materials immediately; outfits don't use VCols / shape keys.
+# Replace materials immediately; retain authored body/clothing gender morphs.
 # Keep extra UVs (EXTRAUV0 → UV1). components='ALL' keeps armature for rig.merge.
 # Phase 2: consider first-part components='ALL' + rest 'MESH' to cut armature edit-mode cost.
 # Materials off: PSK blank mats are discarded; setup_weapon_material / map Stage 2
@@ -23,7 +23,7 @@ _log = utils.get_logger()
 _PSK_IMPORT_KWARGS = {
     "should_import_materials": False,
     "should_import_vertex_colors": False,
-    "should_import_shape_keys": False,
+    "should_import_shape_keys": True,
     "should_import_vertex_normals": False,
     "should_import_extra_uvs": True,
     "components": "ALL",
@@ -91,7 +91,7 @@ def _psk_options_from_kwargs(opts_cls):
     options = opts_cls()
     options.should_import_materials = False
     options.should_import_vertex_colors = False
-    options.should_import_shape_keys = False
+    options.should_import_shape_keys = True
     options.should_import_vertex_normals = False
     options.should_import_extra_uvs = True
     options.should_import_mesh = True

@@ -72,6 +72,8 @@ $RootFilesShared = @(
     "reference_planes.py",
     "revamped_bridge.py",
     "import_layout.py",
+    "character_fit.py",
+    "body_mask.py",
     "uemodel_import.py",
     "pak_extract.py",
     "pak_catalog.py",

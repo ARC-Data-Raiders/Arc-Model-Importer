@@ -70,7 +70,7 @@ def _extraction_revision(scene=None) -> str:
     if not mapping or not os.path.isfile(mapping):
         return ""
     with open(mapping, "rb") as stream:
-        return "2.19.10:" + hashlib.sha256(stream.read()).hexdigest()
+        return "2.19.12:" + hashlib.sha256(stream.read()).hexdigest()
 
 
 def mesh_cache_is_current(path: str, scene=None) -> bool:
@@ -609,12 +609,15 @@ class ARC_OT_import_from_pak(Operator, ImportHelper):
         imported = 0
         last = ""
         for mesh in meshes:
-            ok, msg, _objs = appearance.import_appearance_mesh(mesh)
+            body_variant = getattr(scene, "arc_appearance_body_skin", "NONE") if textures.is_body(mesh) else "NONE"
+            ok, msg, _objs = appearance.import_appearance_mesh(mesh, body_variant=body_variant)
             if not ok:
                 self.report({"ERROR"}, msg or "Import failed")
                 return {"CANCELLED"}
             imported += 1
             last = msg or os.path.basename(mesh)
+        from . import character_fit
+        character_fit.sync_scene(scene)
         if imported == 1:
             self.report({"INFO"}, last)
         else:

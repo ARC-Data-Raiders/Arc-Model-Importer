@@ -210,3 +210,25 @@ roughness exponent and NOM/NOX/XEM channels. Existing environment graphs
 repair through Update Materials. Hair Color extracts its selected palette MI
 on demand, applies it at import/update and supports resetting to From style MI.
 Detailed evidence and limits are in the shared blender-import-paths section.
+
+## Gender shape inheritance and body coverage (2.19.12)
+
+Inherit Shape Key is enabled by default below Offset Characters. Body imports
+apply their authored gender morph; outfit male/female keys follow the body on
+the same character, in either import order. Turning inheritance off releases
+the importer drivers for manual outfit editing. Saved-file loading and body
+replacement reconcile the association without mixing character pads. Secondary
+single-body imports stamp the mesh and armature as Body to share the outfit pad.
+
+ArcPak now exports morph targets, the native UEModel reader imports them, and
+PSK shape-key import is enabled. Cache revision 2.19.12 refreshes older exports.
+Body material updates preserve topology and live morph values. Existing meshes
+hydrate missing morphs only with verified correspondence, including old
+coincident-welded bodies with matching faces and equal authored deltas.
+
+Gender fit is supplemented by the game's exact Body material templates and
+UV1 region coverage, plus Body.Hide/Show rules. Coverage multiplies the existing
+skin alpha without changing geometry. Goalie retains its authored exposed
+left-hand regions; Abyss covers the whole shared body. Ambiguous definitions
+produce diagnostics. The shared character-cosmetic-clipping section records
+the decoded equations, old-dump correction, validation evidence and limits.

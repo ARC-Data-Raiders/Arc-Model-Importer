@@ -58,19 +58,9 @@ def setup_body_material(obj, psk_path: str, body_variant: str):
     links = mat.node_tree.links
     nodes.clear()
     
-    # Fix shape key seam splitting
-    prev_active = bpy.context.view_layer.objects.active
-    bpy.context.view_layer.objects.active = obj
-    if obj.data.shape_keys:
-        for key_block in obj.data.shape_keys.key_blocks:
-            if key_block.name != 'Basis':
-                key_block.value = 0.0
-    bpy.ops.object.mode_set(mode='EDIT')
-    bpy.ops.mesh.select_all(action='SELECT')
-    bpy.ops.mesh.remove_doubles(threshold=0.001)
-    bpy.ops.object.mode_set(mode='OBJECT')
-    bpy.context.view_layer.objects.active = prev_active
-    
+    # Material updates must preserve authored vertex IDs and live morph values.
+    # Welding/resetting the body here destroys later gender-shape inheritance.
+
     principled = nodes.new("ShaderNodeBsdfPrincipled")
     principled.location = (300, 0)
     out_node = nodes.new("ShaderNodeOutputMaterial")
@@ -176,6 +166,12 @@ def setup_body_material(obj, psk_path: str, body_variant: str):
         links.new(normal_map_node.outputs["Normal"], principled.inputs["Normal"])
         if "Coat Normal" in principled.inputs:
             links.new(normal_map_node.outputs["Normal"], principled.inputs["Coat Normal"])
+
+
+    # Apply exact outfit UV1 coverage without changing body geometry or the
+    # existing skin alpha ramp. Assembly sync reapplies this after either order.
+    from .. import body_mask
+    body_mask.apply_body_masks(obj)
 
 
 def _apply_default_skin_bsdf(principled, subsurface_color=None) -> None:

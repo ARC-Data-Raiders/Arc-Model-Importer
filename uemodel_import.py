@@ -93,6 +93,15 @@ def _read_array_header(buf: io.BytesIO) -> int:
 
 
 @dataclass
+class UeMorphTarget:
+    """Sparse authored morph deltas in the imported mesh's coordinate space."""
+
+    name: str
+    indices: np.ndarray
+    position_deltas: np.ndarray
+
+
+@dataclass
 class _Lod:
     name: str
     vertices: np.ndarray
@@ -100,6 +109,7 @@ class _Lod:
     uvs: list[np.ndarray] = field(default_factory=list)
     materials: list[tuple[str, str, int, int]] = field(default_factory=list)
     normals: np.ndarray | None = None
+    morph_targets: list[UeMorphTarget] = field(default_factory=list)
 
 
 @dataclass
@@ -161,6 +171,24 @@ def _parse_materials(payload: bytes) -> list[tuple[str, str, int, int]]:
     return mats
 
 
+def _parse_morph_targets(payload: bytes, *, scale: float, flip_y: bool) -> list[UeMorphTarget]:
+    """UEFormat FMorphTarget: name, array of position/normal delta + source index."""
+    buf = io.BytesIO(payload)
+    count = _read_array_header(buf)
+    record = np.dtype([("position", "<f4", (3,)), ("normal", "<f4", (3,)), ("index", "<u4")])
+    morphs = []
+    for _ in range(count):
+        name = _read_fstring(buf)
+        size = _read_array_header(buf)
+        values = np.frombuffer(_read_exact(buf, size * record.itemsize), dtype=record)
+        positions = values["position"].copy()
+        positions *= scale
+        if flip_y:
+            positions[:, 1] *= -1.0
+        morphs.append(UeMorphTarget(name, values["index"].copy(), positions))
+    return morphs
+
+
 def _parse_lods_attribute(payload: bytes, *, scale: float, flip_y: bool) -> list[_Lod]:
     buf = io.BytesIO(payload)
     count = _read_array_header(buf)
@@ -191,6 +219,8 @@ def _parse_lods_attribute(payload: bytes, *, scale: float, flip_y: bool) -> list
                 uvs=uvs,
                 materials=mats,
                 normals=normals,
+                morph_targets=_parse_morph_targets(attrs["MORPHTARGETS"], scale=scale, flip_y=flip_y)
+                if attrs.get("MORPHTARGETS") else [],
             )
         )
     return lods
@@ -228,6 +258,7 @@ def _parse_lods_v9(payload: bytes, *, scale: float, flip_y: bool) -> list[_Lod]:
         indices = np.zeros((0, 3), dtype=np.int32)
         uvs: list[np.ndarray] = []
         mats: list[tuple[str, str, int, int]] = []
+        morphs: list[UeMorphTarget] = []
         while buf.tell() < len(payload) - 8:
             peek = buf.tell()
             try:
@@ -272,6 +303,12 @@ def _parse_lods_v9(payload: bytes, *, scale: float, flip_y: bool) -> list[_Lod]:
                     first = _read_i32(buf)
                     faces = _read_i32(buf)
                     mats.append((slot, path, first, faces))
+            elif attr == "MORPHTARGETS":
+                count = _read_i32(buf)
+                nbytes = _read_i32(buf)
+                morphs = _parse_morph_targets(
+                    _U32.pack(count) + _read_exact(buf, nbytes), scale=scale, flip_y=flip_y,
+                )
             elif attr in ("NORMALS", "TANGENTS", "VERTEXCOLORS", "WEIGHTS"):
                 count = _read_i32(buf)
                 nbytes = _read_i32(buf)
@@ -286,6 +323,7 @@ def _parse_lods_v9(payload: bytes, *, scale: float, flip_y: bool) -> list[_Lod]:
                 indices=indices,
                 uvs=uvs,
                 materials=mats,
+                morph_targets=morphs,
             )
         )
     return lods
@@ -550,6 +588,123 @@ def _assign_materials(obj: bpy.types.Object, lod: _Lod) -> None:
     mesh.polygons.foreach_set("material_index", poly_mat)
 
 
+def _apply_lod_shape_keys(obj, lod: _Lod) -> list[str]:
+    """Add missing authored keys without changing geometry, key values or edits."""
+    if not lod.morph_targets:
+        return []
+    if obj is None or obj.type != "MESH" or len(obj.data.vertices) != len(lod.vertices):
+        raise UeModelError("morph target topology does not match the destination mesh")
+    for morph in lod.morph_targets:
+        if len(morph.indices) and int(morph.indices.max()) >= len(lod.vertices):
+            raise UeModelError(f"morph {morph.name!r} references a vertex outside its LOD")
+    keys = obj.data.shape_keys
+    basis = keys.reference_key if keys else obj.shape_key_add(name="Basis", from_mix=False)
+    coordinates = np.empty((len(obj.data.vertices), 3), dtype=np.float32)
+    basis.data.foreach_get("co", coordinates.ravel())
+    added = []
+    for morph in lod.morph_targets:
+        if not morph.name or (obj.data.shape_keys and morph.name in obj.data.shape_keys.key_blocks):
+            continue
+        coords = coordinates.copy()
+        np.add.at(coords, morph.indices, morph.position_deltas)
+        key = obj.shape_key_add(name=morph.name, from_mix=False)
+        key.relative_key = basis
+        key.data.foreach_set("co", coords.ravel())
+        key.value = 0.0
+        added.append(key.name)
+    return added
+
+
+def _remap_coincident_weld_morphs(obj, lod: _Lod, coordinates: np.ndarray, scale: float) -> _Lod:
+    """Recover an old seam-welded mesh only when source geometry/deltas agree."""
+    from dataclasses import replace
+    from mathutils.kdtree import KDTree
+
+    if not len(coordinates) or len(coordinates) >= len(lod.vertices):
+        raise UeModelError("destination is not a coincident-welded source mesh")
+    tolerance = max(abs(scale) * 0.0001, 1e-7)
+    offset = coordinates.min(axis=0) - lod.vertices.min(axis=0)
+    source = lod.vertices + offset
+    tree = KDTree(len(coordinates))
+    for index, point in enumerate(coordinates):
+        tree.insert(point, index)
+    tree.balance()
+    mapping = np.empty(len(source), dtype=np.int32)
+    representatives = np.full(len(coordinates), -1, dtype=np.int32)
+    for index, point in enumerate(source):
+        _co, target, distance = tree.find(point)
+        if distance > tolerance:
+            raise UeModelError("legacy weld changed source positions; morph hydration skipped")
+        mapping[index] = target
+        representatives[target] = index
+    if np.any(representatives < 0):
+        raise UeModelError("legacy welded mesh contains unmatched vertices")
+
+    def triangle_key(face):
+        a, b, c = (int(index) for index in face)
+        return min((a, b, c), (b, c, a), (c, a, b))
+
+    source_faces = {triangle_key(mapping[face]) for face in lod.indices
+                    if len(set(mapping[face])) == 3}
+    if any(len(face.vertices) != 3 for face in obj.data.polygons):
+        raise UeModelError("legacy welded topology is not the authored triangle mesh")
+    target_faces = {triangle_key(face.vertices) for face in obj.data.polygons}
+    if source_faces != target_faces:
+        raise UeModelError("legacy welded mesh faces differ from the source UEModel")
+    remapped = []
+    for morph in lod.morph_targets:
+        if len(morph.indices) and int(morph.indices.max()) >= len(source):
+            raise UeModelError(f"morph {morph.name!r} references a vertex outside its LOD")
+        deltas = np.zeros_like(lod.vertices)
+        np.add.at(deltas, morph.indices, morph.position_deltas)
+        target_deltas = deltas[representatives]
+        conflicts = np.linalg.norm(deltas - target_deltas[mapping], axis=1)
+        if len(conflicts) and float(conflicts.max()) > tolerance:
+            raise UeModelError(f"coincident source vertices disagree on morph {morph.name!r}")
+        indices = np.flatnonzero(np.any(target_deltas != 0.0, axis=1))
+        remapped.append(UeMorphTarget(morph.name, indices, target_deltas[indices]))
+    return replace(lod, vertices=coordinates, morph_targets=remapped)
+
+
+def ensure_uemodel_shape_keys(obj, path: str, *, scale: float | None = None,
+                               allow_coincident_welds: bool = False) -> list[str]:
+    """Hydrate missing keys on an existing unchanged UEModel mesh, preserving values.
+
+    Exact vertex/triangle order and base geometry must match the source LOD.
+    Origin recentering is allowed. An explicit legacy-weld recovery requires
+    coincident source positions, matching triangle faces, and agreeing morph
+    deltas for every welded vertex. Edited geometry is rejected. Existing key
+    names/values remain.
+    """
+    if obj is None or obj.type != "MESH":
+        raise UeModelError("shape keys require a mesh object")
+    if scale is None:
+        scale = float(obj.data.get("arc_uemodel_scale", 0.01))
+    _name, _version, lods = parse_uemodel(path, scale=scale)
+    name = str(obj.data.get("arc_uemodel_lod") or "LOD0")
+    lod = next((candidate for candidate in lods if candidate.name == name), None)
+    if lod is None:
+        raise UeModelError(f"source UEModel does not contain destination LOD {name!r}")
+    mesh = obj.data
+    coordinates = np.empty((len(mesh.vertices), 3), dtype=np.float32)
+    existing = mesh.shape_keys.reference_key.data if mesh.shape_keys else mesh.vertices
+    existing.foreach_get("co", coordinates.ravel())
+    if len(mesh.vertices) != len(lod.vertices):
+        if not allow_coincident_welds:
+            raise UeModelError("existing mesh topology differs from the source UEModel")
+        lod = _remap_coincident_weld_morphs(obj, lod, coordinates, scale)
+    else:
+        if len(mesh.polygons) != len(lod.indices):
+            raise UeModelError("existing mesh topology differs from the source UEModel")
+        if any(tuple(p.vertices) != tuple(face) for p, face in zip(mesh.polygons, lod.indices)):
+            raise UeModelError("existing mesh vertex order differs from the source UEModel")
+        if len(coordinates):
+            difference = coordinates - lod.vertices
+            if float(np.abs(difference - difference[0]).max()) > max(abs(scale) * 0.001, 1e-5):
+                raise UeModelError("existing mesh base geometry was edited; morph hydration skipped")
+    return _apply_lod_shape_keys(obj, lod)
+
+
 def import_uemodel_v10(path: str, *, scale: float = 0.01, import_lods: bool = False) -> list:
     """Import a v10 (or v7+ attribute-header) UEModel into the current collection."""
     name, _version, lods = parse_uemodel(path, scale=scale)
@@ -574,8 +729,10 @@ def import_uemodel_v10(path: str, *, scale: float = 0.01, import_lods: bool = Fa
             mesh.polygons.foreach_set("use_smooth", [True] * len(mesh.polygons))
             mesh.normals_split_custom_set_from_vertices(lod.normals.tolist())
         mesh["arc_uemodel_lod"] = lod.name
+        mesh["arc_uemodel_scale"] = float(scale)
         obj = bpy.data.objects.new(mesh_name, mesh)
         bpy.context.collection.objects.link(obj)
+        _apply_lod_shape_keys(obj, lod)
         try:
             _assign_uvs(mesh, lod)
         except Exception as exc:
