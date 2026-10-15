@@ -6,7 +6,7 @@ Import Arc Raiders models by selecting an outfit folder.
 bl_info = {
     "name": "Arc Model Importer",
     "author": "Silarious (Ai Vibe Code)/ Naryun & Zebulon Core Functions",
-    "version": (2, 19, 8),
+    "version": (2, 19, 9),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Arc Model Importer",
     "description": "Import Arc Raiders outfits, weapons, animations, and models by selecting content folders.",
@@ -127,6 +127,27 @@ def _search_poll():
     return 0.5
 
 
+def _initialize_runtime():
+    """Load data-dependent resources after addon registration restrictions end."""
+    if getattr(bpy.data, "node_groups", None) is None:
+        return 0.1
+    try:
+        if not utils.ensure_psk_addon():
+            print(
+                "Arc Raiders PSK Importer: warning Ã¢â‚¬â€ PSK import ops missing; "
+                "mesh import will fail until Unreal PSK/PSA is enabled."
+            )
+    except Exception as e:
+        print(f"Arc Raiders PSK Importer: ensure_psk_addon failed: {e}")
+
+    try:
+        utils.preload_arc_node_groups()
+    except Exception as e:
+        print(f"Arc Raiders PSK Importer: ArcTexturer preload failed (non-fatal): {e}")
+
+    return None
+
+
 def register():
     """Register all modules and properties (idempotent on reinstall/reload)."""
     # Clean slate so Preferences Ã¢â€ â€™ Install over an enabled copy cannot double-register.
@@ -154,19 +175,9 @@ def register():
     for cls in ui.classes:
         _safe_register_class(cls)
 
-    try:
-        if not utils.ensure_psk_addon():
-            print(
-                "Arc Raiders PSK Importer: warning Ã¢â‚¬â€ PSK import ops missing; "
-                "mesh import will fail until Unreal PSK/PSA is enabled."
-            )
-    except Exception as e:
-        print(f"Arc Raiders PSK Importer: ensure_psk_addon failed: {e}")
-
-    try:
-        utils.preload_arc_node_groups()
-    except Exception as e:
-        print(f"Arc Raiders PSK Importer: ArcTexturer preload failed (non-fatal): {e}")
+    delay = _initialize_runtime()
+    if delay is not None:
+        bpy.app.timers.register(_initialize_runtime, first_interval=delay)
 
     try:
         if not bpy.app.timers.is_registered(_search_poll):
@@ -210,6 +221,8 @@ def _auto_start_listener():
 def unregister():
     """Unregister all modules and properties (safe if partially registered)."""
     pak_extract.unregister_defaults()
+    if bpy.app.timers.is_registered(_initialize_runtime):
+        bpy.app.timers.unregister(_initialize_runtime)
     try:
         if addon_line.is_map_importer_line():
             map_placement.unregister_instancer_material_focus()

@@ -139,20 +139,34 @@ def configured_dir(scene) -> str:
     return ""
 
 
+def _initialize_pak_defaults():
+    # addon_utils.enable() registers addons under _RestrictData. Scene data
+    # becomes available after registration returns to Blender's event loop.
+    scenes = getattr(bpy.data, "scenes", None)
+    if scenes is None:
+        return 0.1
+    for scene in scenes:
+        reconcile_pak_dir(scene, restore_default=True)
+    return None
+
+
 @bpy.app.handlers.persistent
 def _load_pak_defaults(_unused=None):
-    for scene in bpy.data.scenes:
-        reconcile_pak_dir(scene, restore_default=True)
+    _initialize_pak_defaults()
 
 
 def register_defaults():
     # Scene writes belong in registration/load handlers, never panel draw().
     unregister_defaults()
     bpy.app.handlers.load_post.append(_load_pak_defaults)
-    _load_pak_defaults()
+    delay = _initialize_pak_defaults()
+    if delay is not None:
+        bpy.app.timers.register(_initialize_pak_defaults, first_interval=delay)
 
 
 def unregister_defaults():
+    if bpy.app.timers.is_registered(_initialize_pak_defaults):
+        bpy.app.timers.unregister(_initialize_pak_defaults)
     for handler in list(bpy.app.handlers.load_post):
         if getattr(handler, "__module__", "") == __name__ and getattr(handler, "__name__", "") == "_load_pak_defaults":
             bpy.app.handlers.load_post.remove(handler)

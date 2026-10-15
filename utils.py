@@ -2147,20 +2147,14 @@ def _psk_extension_dir(repo_module: str) -> str:
                 return path
     except Exception:
         pass
-    # Fall back to the usual Blender 5.1 AppData layout.
-    appdata = os.environ.get("APPDATA") or ""
-    if appdata:
-        path = os.path.join(
-            appdata,
-            "Blender Foundation",
-            "Blender",
-            "5.1",
-            "extensions",
-            repo_module,
-            _PSK_EXT_ID,
-        )
+    # Respect Blender's active profile and supported extension root overrides.
+    try:
+        directory = os.environ.get("BLENDER_USER_EXTENSIONS") or bpy.utils.user_resource("EXTENSIONS")
+        path = os.path.join(directory, repo_module, _PSK_EXT_ID)
         if os.path.isdir(path):
             return path
+    except (ValueError, OSError):
+        pass
     return ""
 
 
@@ -2274,7 +2268,7 @@ def _uninstall_psk_repo_copy(repo_module: str) -> None:
         print(f"Arc Raiders PSK Importer: uninstall scan failed: {exc}")
 
 
-def ensure_psk_addon():
+def ensure_psk_addon(*, save_preferences: bool = False):
     """Ensure Unreal PSK/PSA import ops exist (Blender 5.x extension-aware).
 
     The bundled zip is a Blender *extension* (flat root + blender_manifest.toml).
@@ -2302,14 +2296,21 @@ def ensure_psk_addon():
         if _psk_extension_dir(repo_module):
             candidates.append(mod_name)
     for module_name in _PSK_MODULE_CANDIDATES:
-        if module_name not in candidates:
-            candidates.append(module_name)
+        if module_name in candidates:
+            continue
+        try:
+            import importlib.util
+            if importlib.util.find_spec(module_name) is not None:
+                candidates.append(module_name)
+        except (ImportError, ValueError, AttributeError):
+            pass
 
     for module_name in candidates:
         print(f"Arc Raiders PSK Importer: enabling existing '{module_name}'...")
         if _enable_psk_module(module_name):
             try:
-                bpy.ops.wm.save_userpref()
+                if save_preferences:
+                    bpy.ops.wm.save_userpref()
             except Exception:
                 pass
             print(f"Arc Raiders PSK Importer: PSK import ready via '{module_name}'.")
@@ -2338,7 +2339,8 @@ def ensure_psk_addon():
                 f"bl_ext.user_default.{ext_id}"
             ):
                 try:
-                    bpy.ops.wm.save_userpref()
+                    if save_preferences:
+                        bpy.ops.wm.save_userpref()
                 except Exception:
                     pass
                 print(
@@ -2353,7 +2355,8 @@ def ensure_psk_addon():
             _scrub_psk_rna_leftovers()
             if _enable_psk_module(f"bl_ext.user_default.{ext_id}"):
                 try:
-                    bpy.ops.wm.save_userpref()
+                    if save_preferences:
+                        bpy.ops.wm.save_userpref()
                 except Exception:
                     pass
                 return True
@@ -2361,7 +2364,8 @@ def ensure_psk_addon():
         # Official copy on disk but enable failed above — last scrub+retry.
         if _enable_psk_module(f"bl_ext.blender_org.{ext_id}"):
             try:
-                bpy.ops.wm.save_userpref()
+                if save_preferences:
+                    bpy.ops.wm.save_userpref()
             except Exception:
                 pass
             print(
