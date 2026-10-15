@@ -363,10 +363,14 @@ def _parse_bones(payload: bytes, *, scale: float, flip_y: bool) -> list[UeBone]:
         qx, qy, qz, qw = (float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]))
         scl = np.frombuffer(_read_exact(buf, 12), dtype="<f4").astype(np.float64)
         sx, sy, sz = float(scl[0]), float(scl[1]), float(scl[2])
-        # Vertices negate Y. Negating the quaternion as well drops spine_03 below
-        # the pelvis, so only the translation is mirrored.
+        # The mesh reflects Unreal Y. Apply the same basis change to the full
+        # local transform: H @ M @ H, H = diag(1, -1, 1). For a quaternion this
+        # negates X/Z, not W or all components (which would invert the rotation).
+        # Leaving rotation unconverted puts the frame and its sockets on
+        # opposite sides of the wearer and changes the accumulated rest pose.
         if flip_y:
             ty = -ty
+            qx, qz = -qx, -qz
         if not name:
             name = f"bone_{len(bones)}"
         bones.append(

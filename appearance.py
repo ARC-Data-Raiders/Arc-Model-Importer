@@ -55,12 +55,17 @@ _BACKPACK_STRAP_RELS = (
     "Characters/Backpacks/Straps/Default/Strap/SK_Default_Strap.psk",
     "Characters/Backpacks/Straps/Default/Strap/SK_Default_Strap.pskx",
 )
+_BACKPACK_CHARM_CONNECTOR_RELS = (
+    "Characters/Backpacks/Charms/Karabiner/SM_BackpackCharm_Karabiner.pskx",
+    "Characters/Backpacks/Charms/Karabiner/SM_BackpackCharm_Karabiner.psk",
+)
 # Gear role → attach bone on the player (after strap bones are merged in).
 _GEAR_ATTACH_BONE = {
     "Backpack": "slot_container",
     "BackpackFrame": "slot_frame",
     "Attachment": "slot_backpackattachment",
     "Charm": "slot_backpackcharm",
+    "CharmConnector": "slot_backpackcharm",
     # Strap skeleton bone (SK_Default_Strap name map), not a backpack slot.
     "RaiderTool": "ToolStowSlot_1",
 }
@@ -1511,15 +1516,15 @@ def find_selected_role_objects(context, role: str, *, attach_to=None) -> list:
     return hits
 
 
-def remove_appearance_objects(objects: list) -> list[str]:
+def remove_appearance_objects(objects: list, *, keep_armature=None) -> list[str]:
     """Delete appearance meshes (and orphaned standalone armatures). Returns log lines."""
     msgs = []
     meshes = [o for o in objects if o and o.name in bpy.data.objects and o.type == "MESH"]
-    arms = {o for o in objects if o and o.name in bpy.data.objects and o.type == "ARMATURE"}
+    arms = {o for o in objects if o and o.name in bpy.data.objects and o.type == "ARMATURE" and o != keep_armature}
     for mesh in meshes:
         # Standalone import: armature parent that only served this part.
         parent = mesh.parent
-        if parent and parent.type == "ARMATURE":
+        if parent and parent.type == "ARMATURE" and parent != keep_armature:
             siblings = [
                 c for c in parent.children
                 if c.type == "MESH" and c != mesh and c.name in bpy.data.objects
@@ -1704,6 +1709,28 @@ def resolve_backpack_frame_mesh() -> str:
 def resolve_backpack_strap_mesh() -> str:
     """Default strap SK that owns ``backpackframe`` / ``slot_*`` bones."""
     return _resolve_pioneer_mesh_rel(_BACKPACK_STRAP_RELS)
+
+
+def _charm_needs_connector(objects: list) -> bool:
+    """Shared karabiner bridges the authored gap above a hanging charm.
+
+    A charm with its own connector reaches/crosses local Z=0. Preserve its
+    authored origin; moving every charm up hides the gap but discards the clip.
+    """
+    tops = [max(v.co.z for v in obj.data.vertices)
+            for obj in objects
+            if _object_alive(obj) and obj.type == "MESH" and len(obj.data.vertices)]
+    return bool(tops) and max(tops) < -1e-5
+
+
+def _charm_connector_on_armature(master) -> bool:
+    if master is None or not _object_alive(master):
+        return False
+    return any(
+        obj.type == "MESH" and obj.parent == master
+        and str(obj.get("arc_assembly_role") or "") == "CharmConnector"
+        for obj in bpy.data.objects
+    )
 
 
 def _mesh_is_skinned(obj) -> bool:
@@ -2059,7 +2086,7 @@ def _stamp_role(obj, role: str, source_path: str) -> None:
         pass
 
 
-def _reusable_strap_armature():
+def _reusable_strap_armature(*, require_empty_backpack: bool = True):
     """Strap skeleton on the lowest pad that does not already carry a backpack.
 
     Tool, charm, and attachment imports each used to spawn their own skeleton.
@@ -2080,7 +2107,7 @@ def _reusable_strap_armature():
         except (TypeError, ValueError):
             slot = _layout.slot_of_object(obj)
             slot = 0 if slot is None else slot
-        if any(
+        if require_empty_backpack and any(
             _object_alive(other)
             and str(other.get("arc_assembly_role") or "") == "Backpack"
             and int(other.get("arc_import_slot") or 0) == slot
@@ -2399,7 +2426,12 @@ def import_appearance_parts(
 
     if attach_to is None and any(r in _GEAR_ATTACH_BONE or r == "BackpackStrap" for r, _p, _v in jobs):
         # Same pad as the outfit: hang the rack on slot bones instead of the feet.
-        attach_to = armature_on_first_slot_missing("Backpack")
+        if any(r == "Backpack" for r, _p, _v in jobs):
+            attach_to = armature_on_first_slot_missing("Backpack")
+        else:
+            # Accessories belong to the selected/existing rack, including one
+            # already carrying a container. Only a new backpack needs a free pad.
+            attach_to = find_target_armature(context) or _reusable_strap_armature(require_empty_backpack=False)
 
     if not jobs:
         return 0, msgs or ["Nothing selected to import"], []
@@ -2423,9 +2455,11 @@ def import_appearance_parts(
         if "Backpack" in replace_roles:
             replace_roles.add("BackpackFrame")
             replace_roles.add("BackpackStrap")
+        if "Charm" in replace_roles:
+            replace_roles.add("CharmConnector")
         for role in replace_roles:
             victims = find_selected_role_objects(context, role, attach_to=pad_arm)
-            if not victims and role in ("BackpackFrame", "BackpackStrap"):
+            if not victims and role in ("BackpackFrame", "BackpackStrap", "CharmConnector"):
                 continue  # harness/rack optional on first replace
             if not victims and role not in ("BackpackFrame",):
                 msgs.append(
@@ -2434,7 +2468,7 @@ def import_appearance_parts(
                 )
                 return 0, msgs, []
             if victims:
-                msgs.extend(remove_appearance_objects(victims))
+                msgs.extend(remove_appearance_objects(victims, keep_armature=pad_arm))
 
     before = set(bpy.data.objects)
     # Track slot role per imported batch (Hair vs FacialHair).
@@ -2473,6 +2507,14 @@ def import_appearance_parts(
                     obj["arc_body_variant"] = body_variant
                 except Exception:
                     pass
+        if role == "Charm" and _charm_needs_connector(objs):
+            connector_host = attach_to if attach_to is not None else _reusable_strap_armature(require_empty_backpack=False)
+            if not _charm_connector_on_armature(connector_host):
+                connector = _resolve_pioneer_mesh_rel(_BACKPACK_CHARM_CONNECTOR_RELS)
+                if connector:
+                    jobs.append(("CharmConnector", connector, "NONE"))
+                else:
+                    msgs.append("Charm connector SM_BackpackCharm_Karabiner not found in the Pioneer folder or paks")
         if role == "BackpackStrap":
             objs = _bind_strap_armature(path, objs)
         alive = [o for o in objs if _object_alive(o)]

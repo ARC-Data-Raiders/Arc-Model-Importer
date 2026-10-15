@@ -461,9 +461,9 @@ def _draw_outfit_tools_content(layout, context):
             search_lower = scene.arc_outfit_search.lower()
             all_items = properties.make_outfit_selector_items(None, context)
             filtered = [
-                (k, l)
-                for k, l, d in all_items
-                if k != "NONE" and (not search_lower or search_lower in l.lower())
+                (item[0], item[1])
+                for item in all_items
+                if item[0] != "NONE" and (not search_lower or search_lower in item[1].lower())
             ]
             filtered.sort(key=lambda t: (1 if "unnamed" in t[1].lower() else 0, t[1].lower()))
 

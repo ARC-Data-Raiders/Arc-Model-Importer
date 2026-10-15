@@ -2098,16 +2098,15 @@ def _queue_selected_outfit_psks(context):
     if pak_extract.configured_dir(scene) or not root:
         if not pak_extract.configured_dir(scene):
             return False, row, label, [], "Set the PioneerGame root folder or the Paks folder."
-        model = (row.get("Model Folder Name") or "").strip()
-        parts = [p.strip() for p in (row.get("Model Folder Parts") or "").split(",") if p.strip()]
-        rels = []
-        if model and parts:
-            rels = [f"Characters/Assets/{model}/{part}" for part in parts]
-        elif model:
-            rels = [f"Characters/Assets/{model}"]
+        from . import outfit_catalog
+        rels = outfit_catalog.resolve_pak_outfit_paths(scene, row)
         meshes = pak_extract.ensure_rels(scene, rels) if rels else []
         if not meshes:
-            return False, row, label, [], f"No meshes for '{label}' in the paks."
+            if not rels:
+                message = f"'{label}' has no cooked outfit meshes in this game's Pak index."
+            else:
+                message = f"Could not extract the {len(rels)} indexed mesh path(s) for '{label}'. See the Arc Pak log."
+            return False, row, label, [], message
         scene.arc_psk_entries.clear()
         for mesh in meshes:
             entry = scene.arc_psk_entries.add()

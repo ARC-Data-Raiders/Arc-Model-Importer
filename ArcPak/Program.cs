@@ -866,6 +866,67 @@ internal static class Program
         }
     }
 
+    private static int QueueMasterMaterialTextures(
+        UMaterialInterface material,
+        ExportSession session,
+        HashSet<string> visitedMaterials)
+    {
+        // AllLayersNoRef preserves the authored MI parameter names. Master
+        // materials can also reference textures directly in their expressions,
+        // outside those parameters (glass/snow, breakup, overlays, etc.). Export
+        // that dependency closure separately without changing shader metadata.
+        var queued = 0;
+        for (UUnrealMaterial? cursor = material;
+             cursor is not null && visitedMaterials.Add(cursor.GetPathName());
+             cursor = (cursor as UMaterialInstance)?.Parent)
+        {
+            if (cursor is not UMaterial master) continue;
+            foreach (var texture in master.ReferencedTextures)
+            {
+                // Cooked lists can retain empty references for inactive layers.
+                if (texture is null) continue;
+                try
+                {
+                    var before = session.TotalQueued;
+                    session.Add(texture);
+                    queued += session.TotalQueued - before;
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Master material texture export skipped {Material} {Texture}", master.Name, texture.Name);
+                }
+            }
+        }
+        return queued;
+    }
+
+    private static int QueueMeshMasterTextures(
+        UObject mesh,
+        ExportSession session,
+        HashSet<string> visitedMaterials)
+    {
+        var materials = mesh switch
+        {
+            USkinnedAsset skinned => skinned.Materials,
+            UStaticMesh staticMesh => staticMesh.Materials,
+            _ => []
+        };
+        var queued = 0;
+        foreach (var reference in materials)
+        {
+            try
+            {
+                if (reference?.Load<UMaterialInterface>() is { } material)
+                    queued += QueueMasterMaterialTextures(material, session, visitedMaterials);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Master material dependencies skipped for {Mesh}", mesh.Name);
+            }
+        }
+        return queued;
+    }
+
     private static int ExportQueued(AbstractVfsFileProvider provider, List<string> paths, string outDir)
     {
         var options = new ExportOptions(
@@ -878,6 +939,7 @@ internal static class Program
         var session = new ExportSession { MaxDegreeOfParallelism = Workers };
         var queued = 0;
         var jsonPackages = new List<(IPackage Package, string Path)>();
+        var visitedMaterials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         ExpandFromFiles(provider, paths);
 
         foreach (var path in paths)
@@ -900,6 +962,7 @@ internal static class Program
                 queued++;
                 Log.Information("queue {Type} {Name}", mesh.ExportType, mesh.Name);
                 queued += QueueSiblingTextures(provider, path, session);
+                queued += QueueMeshMasterTextures(mesh, session, visitedMaterials);
                 QueueVisualParts(provider, path, jsonPackages);
                 continue;
             }
@@ -911,6 +974,7 @@ internal static class Program
                 {
                     session.Add(material);
                     queued++;
+                    queued += QueueMasterMaterialTextures(material, session, visitedMaterials);
                     Log.Information("queue {Type} {Name}", material.ExportType, material.Name);
                     continue;
                 }
@@ -940,7 +1004,11 @@ internal static class Program
                 var leaf = reference.Split('/').Last().Split('.')[0];
                 if (!leaf.StartsWith("MI_", StringComparison.OrdinalIgnoreCase)) continue;
                 var material = FindPackage(provider, reference)?.GetExports().OfType<UMaterialInterface>().FirstOrDefault();
-                if (material is not null) session.Add(material);
+                if (material is not null)
+                {
+                    session.Add(material);
+                    queued += QueueMasterMaterialTextures(material, session, visitedMaterials);
+                }
                 else Log.Warning("Authored material not mounted {Path}", reference);
             }
         }

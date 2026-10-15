@@ -34,6 +34,7 @@ from .classify import (
     FAMILY_EMISSIVE,
     FAMILY_ENVIRONMENT,
     FAMILY_FOLIAGE,
+    FAMILY_FLIPBOOK,
     FAMILY_GLASS,
     FAMILY_METAL,
     FAMILY_ROAD,
@@ -93,6 +94,9 @@ def _get_or_build_shared_mi_material(
             mi_probe = _parse_flat_mi_json(mi_path)
         except Exception:
             mi_probe = {}
+        parent_l = str(mi_probe.get("parent") or "").lower()
+        if stem.lower().startswith("mi_beacon") or parent_l.endswith("m_beacon"):
+            return "beacon"
         return classify_mi_family(mi_probe, stem.lower(), slot_l)
 
     def _stale_decal_misclass(mat) -> bool:
@@ -104,8 +108,11 @@ def _get_or_build_shared_mi_material(
         return expected != FAMILY_DECAL
 
     def _stale_shared(mat) -> bool:
+        expected = _expected_family()
         return (
-            _stale_decal_misclass(mat)
+            str(mat.get("arc_mi_family") or "") != expected
+            or (expected == "simple" and str(mat.get("arc_simple_setup") or "") != "v4")
+            or _stale_decal_misclass(mat)
             or _needs_map_decal_mask_rebuild(mat, mi_path)
             or _needs_trim_setup_rebuild(mat, mi_path)
             or _needs_proptrim_or_glass_rebuild(mat, mi_path, stem)
@@ -120,7 +127,7 @@ def _get_or_build_shared_mi_material(
             if _stale_shared(mat):
                 _SHARED_MI_MATERIALS.pop(key, None)
                 try:
-                    mat.name = f"{mat.name}_stale_decal"
+                    mat.name = f"{mat.name}_stale_material"
                 except Exception:
                     pass
                 mat = None
@@ -140,7 +147,7 @@ def _get_or_build_shared_mi_material(
     if existing is not None and str(existing.get("arc_mi_path", "") or "") == key:
         if _stale_shared(existing):
             try:
-                existing.name = f"{existing.name}_stale_decal"
+                existing.name = f"{existing.name}_stale_material"
             except Exception:
                 pass
         else:
@@ -195,6 +202,9 @@ def _dispatch_weapon_slot_material(mat, mi_path: str, psk_path: str, mi_stem_low
             setup_beacon_material(mat, mi_path, psk_path)
         elif family == FAMILY_EMISSIVE:
             _setup_weapon_emissive_material(mat, mi_path)
+        elif family == FAMILY_FLIPBOOK:
+            from .items import _setup_flipbook_material
+            _setup_flipbook_material(mat, mi_path, psk_path)
         elif family == FAMILY_SCAN:
             _setup_enemy_scan_display_material(mat, mi_path)
         elif family == FAMILY_DECAL:
@@ -346,7 +356,16 @@ def fix_object_materials_from_mi_slots(
             # Fall through to resolve below (CTX_MAP will refuse Characters).
         elif existing_key:
             if path_allowed_for_context(existing_key, context):
-                fixed += 1
+                # Update Materials must run the same version/family gate as a
+                # fresh import, including materials retained in saved blends.
+                current = _get_or_build_shared_mi_material(
+                    slot.material.get("arc_mi_stem") or resolve_stem,
+                    existing_key, os.path.join(asset_folder, "mesh.psk"),
+                    resolve_stem.lower(),
+                )
+                if current is not None:
+                    slot.material = current
+                    fixed += 1
                 continue
             # Stamped path failed context gate without TEX hits — wipe anyway.
             try:

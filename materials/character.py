@@ -107,10 +107,10 @@ def setup_body_material(obj, psk_path: str, body_variant: str):
         ramp.interpolation = "CONSTANT"
         ramp.elements[0].position = 0.0
         ramp.elements[0].color = (0.0, 0.0, 0.0, 0.0)
-        ramp.elements[1].position = 0.05
+        ramp.elements[1].position = 0.01
         ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
         links.new(albedo_node.outputs["Color"], ramp_node.inputs["Fac"])
-        # Alpha: black@0 → white@0.05, Constant (hard cut for skin mask).
+        # Alpha: black@0 → white@0.01, Constant (hard cut for skin mask).
         links.new(ramp_node.outputs["Alpha"], principled.inputs["Alpha"])
         _set_material_alpha_mode(mat, mode="CLIP", threshold=0.05, two_sided=False)
 

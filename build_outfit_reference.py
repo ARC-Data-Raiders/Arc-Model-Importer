@@ -14,6 +14,8 @@ Inputs:
   --npc            ST_NPC.json                     (ID_<Name>_NAME -> NPC name)
   --customization  ST_CharacterCustomizationOptions.json (resolves DA_UIMetaData refs to this table)
   --input          Re-process an existing output CSV instead of rebuilding from --root/--st/--tags
+  --pak-paths      JSON array of mounted package paths (from the Pak index).
+  --pak-build      Steam build id for the audited package paths.
   --out            Output CSV path (default outfit_reference.csv)
 
 --st/--tags/--npc/--customization default to a same-named file under --root if not
@@ -496,7 +498,7 @@ def resolve_npc_outfit_overlaps(st_map: dict, model_map: dict, outfit_map: dict,
 
 FIELDNAMES = ["ST", "Flavour", "Model Folder Name", "Item/UI Folder Name",
               "Online Persistence Tag Name", "Model Folder Parts", "DA_OI Parts",
-              "Merged with", "Warning"]
+              "Merged with", "Warning", "Visual Part Paths", "Pak Mesh Paths", "Pak Build", "Pak Status"]
 
 # Columns that hold multiple '; '-joined values and are unioned, not
 # overwritten, on merge.
@@ -1001,6 +1003,45 @@ def annotate_parts_columns(rows: list, root: str) -> list:
     return rows
 
 
+def annotate_pak_columns(rows, root, package_paths, build_id=""):
+    """Record exact cook paths and DA_OI shared parts, rather than guessed labels.
+
+    package_paths is the canonical mounted index list. This supplements the
+    existing human-readable folder/part columns with reproducible identifiers.
+    """
+    try:
+        from . import outfit_catalog as catalog
+    except ImportError:
+        import outfit_catalog as catalog
+    paths = catalog.unique_paths(package_paths)
+    mesh_paths = [path for path in paths if catalog.is_mesh(path)]
+    for row in rows:
+        authored = []
+        for folder in catalog.values(row.get("Item/UI Folder Name")):
+            _filename, entry = find_base_oi_file(root, folder) if root else (None, None)
+            if entry:
+                authored.extend(catalog.document_visual_parts([entry]))
+        authored = catalog.unique_paths(authored)
+        # Keep prior authored identifiers if no DA dump was supplied.
+        if authored or root:
+            row["Visual Part Paths"] = "; ".join(authored)
+        resolved = catalog.row_mesh_paths(row, mesh_paths, authored if root else None)
+        # An empty live list must mean no indexed meshes, never guessed folders.
+        resolved = [path for path in resolved if catalog.is_mesh(path)]
+        row["Pak Mesh Paths"] = "; ".join(resolved)
+        row["Pak Build"] = str(build_id)
+        row["Pak Status"] = "available" if resolved else "no cooked mesh"
+        models = {model.casefold() for model in catalog.values(row.get("Model Folder Name"))}
+        own_parts = set()
+        for path in resolved:
+            tail = path.split('/Characters/Assets/', 1)[-1].split('/')
+            if len(tail) >= 3 and tail[0].casefold() in models:
+                own_parts.add(tail[1])
+        if own_parts:
+            row["Model Folder Parts"] = ", ".join(sorted(own_parts, key=str.casefold))
+    return rows
+
+
 def load_rows_from_csv(path: str) -> list:
     """Loads a previously-written CSV. DERIVED_COLUMNS are reset to blank
     (they're computed output, not persistent data); everything else,
@@ -1086,6 +1127,8 @@ def main():
     ap.add_argument("--npc", default="")
     ap.add_argument("--customization", default="")
     ap.add_argument("--input", default="")
+    ap.add_argument("--pak-paths", default="")
+    ap.add_argument("--pak-build", default="")
     ap.add_argument("--out", default="outfit_reference.csv")
     args = ap.parse_args()
 
@@ -1129,6 +1172,12 @@ def main():
     rows = annotate_npc_matches(rows, npc_map, resolved_keys=resolved_norm_keys)
     rows = annotate_st_key_format(rows)
 
+    if args.pak_paths:
+        with open(args.pak_paths, encoding="utf-8-sig") as stream:
+            package_paths = json.load(stream)
+        if not isinstance(package_paths, list):
+            ap.error("--pak-paths must contain a JSON array of package path strings")
+        rows = annotate_pak_columns(rows, args.root, package_paths, args.pak_build)
     rows = sort_rows_by_tier(rows)
 
     with open(args.out, "w", newline="", encoding="utf-8-sig") as fh:

@@ -68,6 +68,35 @@ def _albedo_tex_node(nodes, path: str):
 
 
 def setup_misc_material(obj, psk_path: str):
+    # Accessories use the same authored slot families as other meshes: packed
+    # metal, masked tickets, glass shells, emissive displays, and layered cloth.
+    # Resolve those MIs before the legacy basename-only texture fallback. A
+    # folder CR alone cannot describe a separate opacity map or multiple slots.
+    from .common import CTX_OUTFIT
+    from .dispatch import fix_object_materials_from_mi_slots
+    from .weapon import setup_weapon_material
+
+    wired = fix_object_materials_from_mi_slots(
+        obj, os.path.dirname(psk_path), context=CTX_OUTFIT,
+    )
+    if not wired:
+        wired = setup_weapon_material(obj, psk_path)
+    if wired:
+        # Some charms have hair-card sections and a packed body surface on the
+        # same mesh. Keep the established coverage shader on those sections.
+        from .character import setup_hair_material
+        from .clothing import apply_embedded_fur_slots
+        original_index = obj.active_material_index
+        for i, slot in enumerate(obj.material_slots):
+            mi_path = str(slot.material.get("arc_mi_path") or "") if slot.material else ""
+            if mi_path and textures.is_hair_cards_mi(mi_path):
+                obj.active_material_index = i
+                setup_hair_material(obj, mi_path)
+        obj.active_material_index = original_index
+        apply_embedded_fur_slots(obj, psk_path)
+        _fill_shell_slots(obj, os.path.dirname(psk_path))
+        obj["arc_accessory_material_route"] = "authored-mi-slots"
+        return
     folder = os.path.dirname(psk_path)
     texs = _find_misc_textures(folder)
 
@@ -204,6 +233,14 @@ def _fill_shell_slots(obj, folder: str) -> None:
         mat = slot.material
         if mat is None or "shell" not in (mat.name or "").lower():
             continue
+        from .common import _parse_flat_mi_json
+        mi_path = str(mat.get("arc_mi_path") or "")
+        mi = _parse_flat_mi_json(mi_path) if mi_path else {}
+        params = mi.get("scalars") or {}
+        if {"FallingSpeed", "ZScale", "Threshold", "SnowShadowIntensity"}.issubset(params):
+            from .accessory_static import setup_static_snow_shell
+            setup_static_snow_shell(mat, mi, smoke, obj)
+            continue
         mat.use_nodes = True
         nodes = mat.node_tree.nodes
         links = mat.node_tree.links
@@ -245,3 +282,55 @@ def _fill_shell_slots(obj, folder: str) -> None:
         except Exception:
             pass
 
+
+
+def _setup_flipbook_material(mat, mi_path: str, psk_path: str = ""):
+    """Authored texture atlas display (Rows/Columns, Speed, Tint, Emissive)."""
+    from .common import (_parse_flat_mi_json, _tex_lookup_from_flat_mi,
+                         _character_layout_search_folders, _find_env_tex,
+                         _mi_colour, _mi_scalar, _mix_rgba, _new_tex_image)
+    mi = _parse_flat_mi_json(mi_path)
+    lookup = _tex_lookup_from_flat_mi(mi, local_folders=_character_layout_search_folders(mi_path, psk_path))
+    path, image = _find_env_tex(lookup, "Flipbook")
+    if image is None:
+        raise ValueError("Authored Flipbook atlas is missing: " + mi_path)
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    nodes.clear()
+    s = mi.get("scalars") or {}
+    rows = max(1, int(_mi_scalar(s, "Rows", "Number of rows", default=1)))
+    columns = max(1, int(_mi_scalar(s, "Columns", default=rows)))
+    speed = _mi_scalar(s, "Speed", default=1)
+    uv = nodes.new("ShaderNodeTexCoord")
+    sep = nodes.new("ShaderNodeSeparateXYZ");links.new(uv.outputs["UV"], sep.inputs[0])
+    def math_node(operation, a, b=0):
+        n = nodes.new("ShaderNodeMath");n.operation = operation
+        for i,v in enumerate((a,b)):
+            if hasattr(v, "node"):links.new(v,n.inputs[i])
+            else:n.inputs[i].default_value = v
+        return n.outputs[0]
+    frame = nodes.new("ShaderNodeValue");frame.label = "Flipbook frame"
+    # Static appearance pass: use an authored capture frame/time when provided,
+    # otherwise the first atlas frame. Animated effects are intentionally deferred.
+    capture = next((float(s[k]) for k in ("Capture Frame", "Frame") if k in s and s[k] is not None), None)
+    if capture is None:
+        capture = _mi_scalar(s, "IconCaptureTime", "Capture Time", default=0) * speed * rows * columns
+    frame.outputs[0].default_value = capture
+    mat["arc_flipbook_static_frame"] = float(capture)
+    cell = math_node("MODULO",math_node("FLOOR",frame.outputs[0]), rows * columns)
+    col = math_node("MODULO",cell,columns)
+    row = math_node("FLOOR",math_node("DIVIDE",cell,columns))
+    coords = nodes.new("ShaderNodeCombineXYZ")
+    links.new(math_node("DIVIDE",math_node("ADD",sep.outputs["X"],col),columns),coords.inputs["X"])
+    top_row = math_node("SUBTRACT",rows - 1,row)
+    links.new(math_node("DIVIDE",math_node("ADD",sep.outputs["Y"],top_row),rows),coords.inputs["Y"])
+    atlas = _new_tex_image(nodes,image,"Authored flipbook atlas",(-500,0));atlas.extension = "CLIP"
+    links.new(coords.outputs[0],atlas.inputs["Vector"])
+    tint = nodes.new("ShaderNodeRGB");tint.outputs[0].default_value = _mi_colour(mi.get("colours") or [],"Tint",default=(1,1,1,1))
+    color = _mix_rgba(nodes,links,atlas.outputs["Color"],tint.outputs[0],1,(0,0),"Display tint",blend="MULTIPLY")
+    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+    links.new(color,bsdf.inputs["Base Color"]);links.new(color,bsdf.inputs["Emission Color"])
+    bsdf.inputs["Emission Strength"].default_value = _mi_scalar(s,"Emissive","Emissive Power",default=1)
+    bsdf.inputs["Roughness"].default_value = max(0,min(1,_mi_scalar(s,"Roughness",default=.5)))
+    out = nodes.new("ShaderNodeOutputMaterial");links.new(bsdf.outputs[0],out.inputs["Surface"])
+    mat["arc_flipbook_rows"] = rows;mat["arc_flipbook_columns"] = columns
+    mat["arc_flipbook_atlas"] = path

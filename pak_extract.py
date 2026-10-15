@@ -13,8 +13,8 @@ import hashlib
 import json
 
 import bpy
-from bpy.props import StringProperty
-from bpy.types import Operator
+from bpy.props import CollectionProperty, StringProperty
+from bpy.types import Operator, OperatorFileListElement
 from bpy_extras.io_utils import ImportHelper
 
 from . import appearance, textures, utils
@@ -70,7 +70,7 @@ def _extraction_revision(scene=None) -> str:
     if not mapping or not os.path.isfile(mapping):
         return ""
     with open(mapping, "rb") as stream:
-        return "2.19.8:" + hashlib.sha256(stream.read()).hexdigest()
+        return "2.19.10:" + hashlib.sha256(stream.read()).hexdigest()
 
 
 def mesh_cache_is_current(path: str, scene=None) -> bool:
@@ -207,78 +207,108 @@ def _normalize_asset_path(path: str) -> str:
     return text
 
 
-def _expected_uemodel(out_dir: str, asset_path: str) -> str:
+def _package_aliases(asset_path: str) -> list[str]:
     clean = _normalize_asset_path(asset_path).lstrip("/")
-    leaf = clean.split("/")[-1].split(".")[0]
-    if not leaf:
-        return ""
-    rel = clean
-    if "." in rel.split("/")[-1]:
-        rel = rel[: rel.rfind(".")]
+    if "." in clean.rsplit("/", 1)[-1]:
+        clean = clean.rsplit(".", 1)[0]
+    aliases = [clean]
+    for prefix in ("PioneerGame/Content/", "RemappedPlugins/Content/", "Game/"):
+        if clean.casefold().startswith(prefix.casefold()):
+            tail = clean[len(prefix):]
+            aliases.extend(root + tail for root in ("PioneerGame/Content/", "RemappedPlugins/Content/"))
+            break
+    return list(dict.fromkeys(aliases))
+
+
+def _expected_uemodel(out_dir: str, asset_path: str) -> str:
+    from . import pak_catalog
     candidates = []
-    if rel.lower().startswith("game/"):
-        tail = rel[len("game/") :]
-        candidates.append(
-            os.path.join(out_dir, "PioneerGame", "Content", *tail.split("/")) + ".uemodel"
-        )
-    candidates.append(os.path.join(out_dir, *rel.split("/")) + ".uemodel")
-    candidates.append(os.path.join(out_dir, *rel.split("/"), leaf + ".uemodel"))
-    for candidate in candidates:
-        if os.path.isfile(candidate):
-            return candidate
-    target = leaf.lower() + ".uemodel"
-    for candidate in candidates:
-        folder = os.path.dirname(candidate)
-        if not os.path.isdir(folder):
+    for rel in _package_aliases(asset_path):
+        leaf = rel.rsplit("/", 1)[-1]
+        if not leaf:
             continue
-        for name in os.listdir(folder):
-            if name.lower() == target:
-                return os.path.join(folder, name)
-    # RemappedPlugins/Content is another mount of the same package. Never
-    # substitute a same-basename mesh from an unrelated package.
-    if rel.casefold().startswith("pioneergame/content/"):
-        tail = rel[len("PioneerGame/Content/"):]
-        candidate = os.path.join(out_dir, "RemappedPlugins", "Content", *tail.split("/")) + ".uemodel"
-        if os.path.isfile(candidate):
-            return candidate
-    return ""
+        direct = os.path.join(out_dir, *rel.split("/"))
+        for candidate in (direct + ".uemodel", os.path.join(direct, leaf + ".uemodel")):
+            candidate = pak_catalog.filesystem_path(candidate)
+            if os.path.isfile(candidate):
+                candidates.append(candidate)
+                continue
+            folder = os.path.dirname(candidate)
+            if not os.path.isdir(folder):
+                continue
+            target = os.path.basename(candidate).casefold()
+            for name in os.listdir(folder):
+                if name.casefold() == target:
+                    candidates.append(os.path.join(folder, name))
+    # An extraction may change mount aliases across builds. Prefer its latest
+    # output while retaining exact package identity; never search by basename.
+    return max(candidates, key=lambda p: os.stat(p).st_mtime_ns) if candidates else ""
 
 
 def _collect_uemodels(out_dir: str, asset_paths: list[str]) -> list[str]:
-    found: list[str] = []
-    seen: set[str] = set()
+    from . import pak_catalog
+    found = {}
 
-    def add(path: str) -> None:
-        if not path or not os.path.isfile(path):
-            return
-        key = os.path.normcase(os.path.normpath(path))
-        if key in seen:
-            return
-        seen.add(key)
-        found.append(path)
+    def add(path):
+        path = pak_catalog.filesystem_path(pak_catalog.display_path(path))
+        relative = os.path.relpath(pak_catalog.display_path(path), pak_catalog.display_path(out_dir)).replace("\\", "/")
+        package = pak_catalog.canonical_path(relative[:-len(".uemodel")]).casefold()
+        previous = found.get(package)
+        if previous is None or os.stat(path).st_mtime_ns > os.stat(previous).st_mtime_ns:
+            found[package] = path
 
     for asset in asset_paths:
         direct = _expected_uemodel(out_dir, asset)
         if direct:
             add(direct)
             continue
-        clean = _normalize_asset_path(asset).lstrip("/")
-        if clean.casefold().startswith("game/"):
-            clean = "PioneerGame/Content/" + clean[len("game/") :]
-        folder = os.path.join(out_dir, *clean.split("/")) if clean else ""
-        if not folder or not os.path.isdir(folder):
-            continue
-        for dirpath, _dirs, files in os.walk(folder):
-            for name in files:
-                low = name.casefold()
-                if not low.endswith(".uemodel"):
-                    continue
-                if low.endswith("_skeleton.uemodel") or low.endswith("_physics.uemodel"):
-                    continue
-                stem = low[: -len(".uemodel")]
-                if stem.startswith("sk_") or stem.startswith("sm_"):
-                    add(os.path.join(dirpath, name))
-    return found
+        for clean in _package_aliases(asset):
+            folder = os.path.join(out_dir, *clean.split("/")) if clean else ""
+            if not folder:
+                continue
+            folder = str(pak_catalog._io_path(folder))
+            if not os.path.isdir(folder):
+                continue
+            for dirpath, _dirs, files in os.walk(folder):
+                for name in files:
+                    low = name.casefold()
+                    if low.endswith(".uemodel") and pak_catalog.is_mesh(low[:-len(".uemodel")]):
+                        add(os.path.join(dirpath, name))
+    return list(found.values())
+
+
+def load_pak_index(scene, *, allow_reindex: bool = False):
+    from . import pak_catalog
+    game = configured_dir(scene)
+    if not game:
+        return None
+    index = pak_catalog.find_index(game, index_dir())
+    if index is None and allow_reindex:
+        code, log = reindex(game, resolve_usmap(scene))
+        if code:
+            raise RuntimeError(_log_tail(log))
+        index = pak_catalog.find_index(game, index_dir())
+    return index
+
+
+def indexed_package_paths(scene, *, mesh_only: bool = False) -> tuple[str, ...]:
+    from . import pak_catalog
+    index = load_pak_index(scene)
+    if index is None:
+        return ()
+    return pak_catalog.mesh_paths(index) if mesh_only else index["paths"]
+
+
+def indexed_mesh_paths(scene) -> tuple[str, ...]:
+    return indexed_package_paths(scene, mesh_only=True)
+
+
+def ensure_pak_browser(scene) -> tuple[dict, str]:
+    from . import pak_catalog
+    index = load_pak_index(scene, allow_reindex=True)
+    if index is None:
+        raise RuntimeError("No current Pak mesh index. Load / Refresh Paks in Settings.")
+    return index, pak_catalog.browser_tree(index, cache_dir(), configured_dir(scene))
 
 
 def extract_paths(game_dir: str, usmap: str, asset_paths: list[str]) -> tuple[int, str, list[str]]:
@@ -390,6 +420,11 @@ def reindex(game_dir: str, usmap: str = "") -> tuple[int, str]:
     log = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
     if proc.returncode == 0:
         utils.set_pak_cache_root(cache_dir())
+        from . import pak_catalog
+        index = pak_catalog.find_index(game_dir, index_dir())
+        if index is not None:
+            root = pak_catalog.browser_tree(index, cache_dir(), game_dir)
+            log += f"\nPak browser ready: {len(pak_catalog.mesh_paths(index))} meshes ({root})"
     return proc.returncode, log
 
 
@@ -414,11 +449,22 @@ class ARC_OT_pick_pak_dir(Operator, ImportHelper):
             bpy.path.abspath(getattr(self, "filepath", "") or ""),
             bpy.path.abspath(getattr(self, "directory", "") or ""),
         )
-        if not folder or not os.path.isdir(folder):
-            self.report({"ERROR"}, "Not a valid folder")
+        if not pak_dir_has_game_files(folder):
+            context.scene.arc_pak_dir = ""
+            context.scene["arc_pak_dir_user_cleared"] = True
+            self.report({"ERROR"}, "Select a folder containing game .pak or .utoc files")
             return {"CANCELLED"}
         context.scene.arc_pak_dir = folder
         context.scene["arc_pak_dir_user_cleared"] = False
+        context.window_manager.cursor_set("WAIT")
+        try:
+            index, _root = ensure_pak_browser(context.scene)
+            from . import pak_catalog
+            self.report({"INFO"}, f"Paks loaded: {len(pak_catalog.mesh_paths(index))} meshes available")
+        except Exception as exc:
+            self.report({"WARNING"}, f"Paks folder saved; catalog could not load: {exc}")
+        finally:
+            context.window_manager.cursor_set("DEFAULT")
         return {"FINISHED"}
 
 
@@ -465,7 +511,7 @@ class ARC_OT_reindex_paks(Operator):
     """
 
     bl_idname = "arc_outfits.reindex_paks"
-    bl_label = "Reindex Paks"
+    bl_label = "Load / Refresh Paks"
     bl_options = {"REGISTER"}
 
     def execute(self, context):
@@ -486,7 +532,7 @@ class ARC_OT_reindex_paks(Operator):
         return {"FINISHED"}
 
 
-class ARC_OT_import_from_pak(Operator):
+class ARC_OT_import_from_pak(Operator, ImportHelper):
     """Extract a mesh from the Arc Raiders paks and import it.
 
     Static meshes come in with materials. Skinned meshes import without skin weights.
@@ -495,6 +541,11 @@ class ARC_OT_import_from_pak(Operator):
     bl_idname = "arc_outfits.import_from_pak"
     bl_label = "Import from Pak"
     bl_options = {"REGISTER", "UNDO"}
+    filename_ext = ".uasset"
+    filter_glob: StringProperty(default="*.uasset", options={"HIDDEN"})
+    directory: StringProperty(subtype="DIR_PATH", options={"HIDDEN"})
+    files: CollectionProperty(type=OperatorFileListElement, options={"HIDDEN", "SKIP_SAVE"})
+    browser_root: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
 
     asset_path: StringProperty(
         name="Asset Path",
@@ -503,14 +554,40 @@ class ARC_OT_import_from_pak(Operator):
     )
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self, width=520)
+        if self.asset_path:
+            return self.execute(context)
+        try:
+            _index, root = ensure_pak_browser(context.scene)
+        except Exception as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.browser_root = root
+        self.directory = root + os.sep
+        self.filepath = self.directory
+        self.files.clear()
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def draw(self, context):
+        self.layout.label(text="Select meshes, or import the current folder.", icon="MESH_DATA")
 
     def execute(self, context):
         scene = context.scene
-        asset = _normalize_asset_path(self.asset_path)
-        if not asset:
-            self.report({"ERROR"}, "Enter a /Game/... asset path or a content folder")
-            return {"CANCELLED"}
+        if self.asset_path:
+            assets = [_normalize_asset_path(self.asset_path)]
+        else:
+            try:
+                from . import pak_catalog
+                index, root = ensure_pak_browser(scene)
+                if self.browser_root and os.path.normcase(os.path.realpath(self.browser_root)) != os.path.normcase(os.path.realpath(root)):
+                    raise ValueError("The Pak index changed. Reopen Import from Pak.")
+                selections = [os.path.join(self.directory, item.name) for item in self.files]
+                if not selections:
+                    selections = [self.filepath or self.directory]
+                assets = pak_catalog.resolve_selection(index, root, selections)
+            except Exception as exc:
+                self.report({"ERROR"}, str(exc))
+                return {"CANCELLED"}
         game_dir = configured_dir(scene)
         if not game_dir:
             self.report({"ERROR"}, "Set the Paks folder in Settings")
@@ -520,7 +597,7 @@ class ARC_OT_import_from_pak(Operator):
             self.report({"ERROR"}, "No usmap. Pick one in Settings or ship one under ArcPak/mappings")
             return {"CANCELLED"}
         try:
-            code, log, meshes = extract_paths(game_dir, usmap, [asset])
+            code, log, meshes = extract_paths(game_dir, usmap, assets)
         except Exception as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}

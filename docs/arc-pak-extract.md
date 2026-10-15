@@ -171,3 +171,27 @@ Appearance, outfit, weapon, and weapon-mod imports use that extract when Pioneer
 - Deleting `GAME_UE4_*` branches inside mesh and property readers.
 - Audio banks.
 - A usmap editor. Settings only select a file.
+
+
+## Mesh browser and exact outfit catalog (2.19.10)
+
+Import from Pak now opens Blender's file browser. Load/Refresh Paks creates
+empty .uasset selectors under ArcPak/cache/browser/<build>-<index-stamp>/,
+mirroring the indexed mesh paths. Select meshes or a folder (up to128 per
+import); extraction remains on demand. Reopening an unchanged tree reuses it.
+The browser validates build/container identity and rejects selections outside
+the current catalog. Windows long package paths are supported.
+
+Outfits resolve exact live mesh paths and current DA_OI shared-part references.
+Both normal and RemappedPlugins cache mounts are collected, fixing Abyss and
+other successful extractions that previously appeared empty. The reference CSV
+records exact visual-part/mesh paths and build availability. Own-model meshes
+queue before borrowed pieces. Stable enum IDs synchronize list, Browse All,
+preview and import; Abyss is first/default. String-only uncooked entries report
+their availability explicitly. Display labels are never mesh identities.
+
+Accessory materials use authored MI slots, masks, channel packing and material
+families before basename fallbacks. The ticket artwork, body alpha .01, proper
+UEModel bone reflection and shared charm connector are covered by the 2.19.10
+regression reports under dist/.local. Shared docs sections/blender-import-paths.md
+and sections/backpack-frame-slots.md record the detailed evidence and limits.

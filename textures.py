@@ -449,18 +449,17 @@ def scan_skins(psk_path: str, manual_folder: str = "") -> list:
     return results
 
 def _fs_abspath(path: str) -> str:
-    """Absolute filesystem path without requiring bpy (worker-safe when already abs)."""
+    """Absolute, Windows-long-path-safe filesystem path (worker-safe if abs)."""
+    from .pak_catalog import filesystem_path
     if not path:
         return ""
+    if os.path.isabs(path):
+        return filesystem_path(os.path.normpath(path))
     try:
-        if os.path.isabs(path):
-            return os.path.normpath(path)
+        absolute = bpy.path.abspath(path)
     except Exception:
-        pass
-    try:
-        return os.path.normpath(bpy.path.abspath(path))
-    except Exception:
-        return os.path.normpath(os.path.abspath(path))
+        absolute = os.path.abspath(path)
+    return filesystem_path(os.path.normpath(absolute))
 
 
 def get_skins_folder(psk_path: str):
@@ -474,6 +473,8 @@ def get_skins_folder(psk_path: str):
         root, tail = normalized[:offset], normalized[offset + len(boundary):]
         for mount in ("PioneerGame/Content", "RemappedPlugins/Content"):
             candidates.append(os.path.join(root, *mount.split("/"), *tail.split("/"), "Skins"))
+    # Alias matching uses slashes; normalize back before extended Windows IO.
+    candidates = [_fs_abspath(p) for p in candidates]
     candidates = [p for p in dict.fromkeys(candidates) if os.path.isdir(p)]
     def revision(folder):
         return max((os.path.getmtime(os.path.join(base, name)) for base, _dirs, files in os.walk(folder) for name in files if name.lower().startswith("mi_") and name.lower().endswith(".json")), default=0)
@@ -1583,6 +1584,13 @@ def is_hair_cards_mi(json_path: str) -> bool:
     data = _load_mi_json_data(json_path)
     if data is None:
         return False
+    # Direct pak exports use the compact Textures map instead of UE property
+    # arrays. Coverage plus an attribute atlas is an unambiguous card setup.
+    flat = data[0] if isinstance(data, list) and data else data
+    if isinstance(flat, dict):
+        names = {str(k).lower() for k in (flat.get("Textures") or {})}
+        if "coverage" in names and names & {"globalhaircolor", "attributemap", "tangent"}:
+            return True
     try:
         entry = None
         if isinstance(data, list):

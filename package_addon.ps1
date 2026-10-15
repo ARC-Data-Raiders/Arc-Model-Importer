@@ -74,6 +74,8 @@ $RootFilesShared = @(
     "import_layout.py",
     "uemodel_import.py",
     "pak_extract.py",
+    "pak_catalog.py",
+    "outfit_catalog.py",
     "textures.py",
     "utils.py",
     "fmdex.py",

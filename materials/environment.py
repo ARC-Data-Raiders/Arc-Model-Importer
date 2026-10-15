@@ -4144,6 +4144,7 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
     links = mat.node_tree.links
     nodes.clear()
     _stamp_mi_family(mat, FAMILY_SIMPLE)
+    mat["arc_simple_setup"] = "v4"
 
     log = utils.get_logger()
     params = sorted(_mi_tex_params(mi))
@@ -4176,7 +4177,7 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
         principled.inputs["Metallic"].default_value = min(max(float(metal), 0.0), 1.0)
         _set_material_alpha_mode(mat, mode="OPAQUE", threshold=1.0, two_sided=True)
         try:
-            mat["arc_simple_setup"] = "v2"
+            mat["arc_simple_setup"] = "v4"
         except Exception:
             pass
         return
@@ -4233,11 +4234,16 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
     a_node = None
     if albedo_img:
         albedo_param = next((p for p, (_fp, im) in tex_lookup.items() if im == albedo_img), "")
-        # Probe opacity usefulness BEFORE neutralizing dead alpha (NONE rewrites A→1).
+        # Packed CR alpha is roughness, including authored all-zero roughness.
+        # CHANNEL_PACKED keeps RGB independent while retaining that data channel;
+        # NONE would rewrite zero roughness into one.
+        albedo_file = next((fp for _p, (fp, im) in tex_lookup.items() if im == albedo_img), "")
+        packed_cr = os.path.splitext(albedo_file)[0].lower().endswith("_cr") or albedo_param.lower() in ("cr", "cr texture", "bc")
         opacity_clip = float(mi.get("opacity_clip") or 0.3333)
         alpha_ok = _image_alpha_usable(albedo_img, clip=opacity_clip)
-        # Dead alpha (FoxHat default BaseColor): keep RGB on Color, never a black stub.
-        if not alpha_ok:
+        if packed_cr:
+            albedo_img.alpha_mode = "CHANNEL_PACKED"
+        elif not alpha_ok:
             _fix_unusable_image_alpha(albedo_img)
         a_node = _new_tex_image(nodes, albedo_img, f"Albedo ({albedo_param})", (COL_TEX, 300))
         # CR alpha → roughness; CA/BaseColor/Color alpha → opacity when masked
@@ -4365,15 +4371,92 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
             principled.inputs["Base Color"].default_value = tint
         log.warning("Simple MI '%s' has no resolvable albedo texture", os.path.basename(mi_path))
 
+    # M_ItemPreset's active RGB Tint Mask permutation samples the mask's R
+    # channel and computes saturate(lerp(CR, 2*CR*Tint, mask.R)). This is the
+    # current Fuel/Gas shader, not a three-colour palette or full-surface tint.
+    if a_node is not None and _mi_switch(switches, "Use Tinting", default=False) and _mi_switch(switches, "RGB Tint Mask", default=False):
+        _path, tint_img = _find_env_tex(tex_lookup, "RGB Tint Mask Input")
+        tint_value = _mi_colour(colours, "Tint", default=None)
+        if tint_img is not None and tint_value is not None:
+            tint_node = _new_tex_image(nodes, tint_img, "Authored RGB tint mask (R)", (COL_TEX, -600), non_color=True)
+            channels = nodes.new("ShaderNodeSeparateColor")
+            links.new(tint_node.outputs["Color"], channels.inputs["Color"])
+            tint_rgb = _rgb_node(nodes, tuple(float(v)*2 for v in tint_value[:3]), "Authored Tint × 2", (COL_MIX, 650))
+            tinted = _mix_rgba(nodes, links, a_node.outputs["Color"], tint_rgb, 1.0,
+                               (COL_MIX+180, 600), "CR × authored tint", blend="MULTIPLY")
+            color = _mix_rgba(nodes, links, a_node.outputs["Color"], tinted, channels.outputs["Red"],
+                              (COL_MIX+360, 600), "Authored masked tint")
+            color.node.clamp_result = True
+            links.new(color, principled.inputs["Base Color"])
+            mat["arc_item_tint_setup"] = "mask-red-lerp-v1"
+
     if normal_img:
-        _fix_unusable_image_alpha(normal_img)
+        # Packed normals carry material data in B/A. Keep a zero metallic
+        # channel zero while preventing premultiplication of the XY normal.
+        normal_img.alpha_mode = "CHANNEL_PACKED"
         n_param = next((p for p, (_fp, im) in tex_lookup.items() if im == normal_img), "")
         n_node = _new_tex_image(
             nodes, normal_img, f"Normal ({n_param})", (COL_TEX, -50), non_color=True,
         )
         n_str = min(max(_mi_scalar(scalars, "Normal Strength", default=1.0), 0.0), 2.5)
+        normal_color = n_node.outputs["Color"]
+        normal_path = next((fp for _p, (fp, im) in tex_lookup.items() if im == normal_img), "")
+        packed_code = os.path.splitext(normal_path)[0].rsplit("_", 1)[-1].lower()
+        if packed_code in {"nox", "nom", "nxm", "nmx", "noh", "nmr", "nra", "nrm", "nx", "nm", "nam", "nem"}:
+            packed = nodes.new("ShaderNodeSeparateColor")
+            packed.label = packed_code.upper() + " packed channels"
+            links.new(normal_color, packed.inputs["Color"])
+            xy = nodes.new("ShaderNodeCombineColor")
+            xy.label = "Packed normal RG + reconstructed Z"
+            links.new(packed.outputs["Red"], xy.inputs["Red"])
+            links.new(packed.outputs["Green"], xy.inputs["Green"])
+            def packed_math(operation, a, b=0.0):
+                node = nodes.new("ShaderNodeMath");node.operation = operation
+                for index, value in enumerate((a, b)):
+                    if hasattr(value, "node"):
+                        links.new(value, node.inputs[index])
+                    else:
+                        node.inputs[index].default_value = value
+                return node.outputs[0]
+            nx = packed_math("SUBTRACT", packed_math("MULTIPLY", packed.outputs["Red"], 2.0), 1.0)
+            ny = packed_math("SUBTRACT", packed_math("MULTIPLY", packed.outputs["Green"], 2.0), 1.0)
+            squared_xy = packed_math("ADD", packed_math("MULTIPLY", nx, nx), packed_math("MULTIPLY", ny, ny))
+            nz = packed_math("SQRT", packed_math("MAXIMUM", packed_math("SUBTRACT", 1.0, squared_xy), 0.0))
+            encoded_z = packed_math("ADD", packed_math("MULTIPLY", nz, .5), .5)
+            encoded_z.node.label = "Shipping packed normal Z = sqrt(1-X²-Y²)"
+            links.new(encoded_z, xy.inputs["Blue"])
+            normal_color = xy.outputs["Color"]
+            # Character accessory packs share RG normals but use B for very
+            # different authored channels. Do not infer opacity from CR alpha.
+            if packed_code == "nam" and _is_masked_blend(mi):
+                clip = nodes.new("ShaderNodeMath")
+                clip.operation = "GREATER_THAN"
+                clip.label = "NAM opacity clip"
+                clip.inputs[1].default_value = float(mi.get("opacity_clip") or 0.3333)
+                links.new(packed.outputs["Blue"], clip.inputs[0])
+                links.new(clip.outputs[0], principled.inputs["Alpha"])
+                _set_material_alpha_mode(mat, mode="CLIP", threshold=clip.inputs[1].default_value,
+                                         two_sided=bool(mi.get("two_sided")))
+            if packed_code == "nem" and _mi_switch(switches, "Use Emissive", default=False):
+                if a_node is not None and _mi_switch(switches, "Use CR as Emissive", default=False):
+                    links.new(a_node.outputs["Color"], principled.inputs["Emission Color"])
+                else:
+                    principled.inputs["Emission Color"].default_value = _mi_colour(
+                        colours, "EmissiveColor", "Emissive Color", default=(1, 1, 1, 1),
+                    )
+                energy = nodes.new("ShaderNodeMath")
+                energy.operation = "MULTIPLY"
+                energy.label = "NEM emissive mask × power"
+                energy.inputs[1].default_value = _mi_scalar(scalars, "Emissive Power", default=1.0)
+                links.new(packed.outputs["Blue"], energy.inputs[0])
+                links.new(energy.outputs[0], principled.inputs["Emission Strength"])
+            if packed_code in {"nox", "nom"} and principled.inputs["Base Color"].links:
+                base = principled.inputs["Base Color"].links[0].from_socket
+                ao = _mix_rgba(nodes, links, base, packed.outputs["Blue"], 1.0,
+                               (COL_MIX + 180, 240), "Packed normal occlusion", blend="MULTIPLY")
+                links.new(ao, principled.inputs["Base Color"])
         n_sock = _wire_normal_map(
-            nodes, links, n_node.outputs["Color"], (COL_MIX, -50), strength=n_str,
+            nodes, links, normal_color, (COL_MIX, -50), strength=n_str,
         )
         links.new(n_sock, principled.inputs["Normal"])
         stem = os.path.splitext(os.path.basename(
@@ -4386,7 +4469,7 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
             k in scalars and scalars[k] is not None
             for k in ("Metallic", "3. Metallic")
         )
-        pack_metal_a = any(stem.endswith(s) for s in ("_nxm", "_nmx", "_nom")) or npl in (
+        pack_metal_a = any(stem.endswith(s) for s in ("_nxm", "_nmx", "_nom", "_nam", "_nem", "_nm")) or npl in (
             "nxm", "nmx", "nom",
         )
         if (
@@ -4430,6 +4513,27 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
         if not principled.inputs["Metallic"].links:
             links.new(sep.outputs["Green"], principled.inputs["Metallic"])
 
+    # A separate authored Mask can cut a window through an otherwise opaque
+    # CR surface (tickets, visors and other accessory shells). CR alpha remains
+    # roughness; treating it as coverage hides the printed insert behind metal.
+    mask_path, mask_img = _find_env_tex(tex_lookup, "Mask", "Opacity Mask", "OpacityMask")
+    use_mask = _mi_switch(switches, "Use Mask Texture", "UseMaskTexture", default=None)
+    if mask_img is not None and use_mask is not False and _is_masked_blend(mi):
+        mask_node = _new_tex_image(
+            nodes, mask_img, "Authored opacity mask", (COL_TEX, -800), non_color=True,
+        )
+        clip = nodes.new("ShaderNodeMath")
+        clip.operation = "GREATER_THAN"
+        clip.label = "Authored opacity clip"
+        clip.location = (COL_MIX, -800)
+        clip.inputs[1].default_value = float(mi.get("opacity_clip") or 0.3333)
+        channel = "Alpha" if _map_decal_mask_from_alpha(mi, mask_path) else "Color"
+        links.new(mask_node.outputs[channel], clip.inputs[0])
+        links.new(clip.outputs[0], principled.inputs["Alpha"])
+        _set_material_alpha_mode(mat, mode="CLIP", threshold=clip.inputs[1].default_value,
+                                 two_sided=bool(mi.get("two_sided")))
+        mat["arc_separate_opacity_mask"] = os.path.abspath(mask_path)
+
     if tintmask_img is not None:
         # Colourway tint mask — keep as inspectable Image when no tint vectors present.
         _new_tex_image(
@@ -4448,7 +4552,7 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
         )
     if not principled.inputs["Metallic"].links:
         principled.inputs["Metallic"].default_value = _mi_scalar(
-            scalars, "Metallic", "3. Metallic", default=0.0,
+            scalars, "Metallic", "3. Metallic", "Metalness Value", default=0.0,
         )
     # FoxHat-style SimplePBR: SpecularMultiplier is an authored scalar (0–1-ish).
     if "SpecularMultiplier" in scalars or "Specular Multiplier" in scalars:
@@ -4461,6 +4565,43 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
                     0.0, min(1.0, spec_mul),
                 )
                 break
+
+    if _mi_switch(switches, "SubsurfaceScattering", default=False):
+        scatter_color = _mi_colour(colours, "SubsurfaceColor", default=(1, 1, 1, 1))
+        if _mi_switch(switches, "UseCrAsSubsurface", default=False) and a_node is not None:
+            scatter_source = a_node.outputs["Color"]
+        else:
+            rgb = _rgb_node(nodes, scatter_color, "Authored SubsurfaceColor", (COL_MIX, -1100))
+            scatter_source = rgb
+        scatter = nodes.new("ShaderNodeSubsurfaceScattering")
+        scatter.label = "Unreal subsurface response (Blender approximation)"
+        links.new(scatter_source, scatter.inputs["Color"])
+        if "Scale" in scatter.inputs:
+            scatter.inputs["Scale"].default_value = .01
+        opacity = max(0.0, min(1.0, _mi_scalar(scalars, "SSSOpacity", default=.5)))
+        mix = nodes.new("ShaderNodeMixShader")
+        mix.label = "Authored SSSOpacity → scatter contribution"
+        mix.inputs[0].default_value = 1.0-opacity
+        links.new(principled.outputs["BSDF"], mix.inputs[1])
+        links.new(scatter.outputs[0], mix.inputs[2])
+        links.new(mix.outputs[0], out_node.inputs["Surface"])
+        mat["arc_subsurface_opacity"] = opacity
+        mat["arc_subsurface_approximation"] = "Independent colour; scatter contribution = 1-SSSOpacity. UE thickness/lighting response differs."
+
+    rough_power = _mi_scalar(scalars, "Roughness Power", default=1.0)
+    if principled.inputs["Roughness"].links and abs(rough_power - 1.0) > 1e-5:
+        source = principled.inputs["Roughness"].links[0].from_socket
+        power = nodes.new("ShaderNodeMath");power.operation = "POWER"
+        power.label = "Authored roughness power"
+        power.inputs[1].default_value = max(0.0, rough_power)
+        links.new(source, power.inputs[0]);links.new(power.outputs[0], principled.inputs["Roughness"])
+    metal_scale = _mi_scalar(scalars, "Metalness Value", default=1.0)
+    if principled.inputs["Metallic"].links and abs(metal_scale - 1.0) > 1e-5:
+        source = principled.inputs["Metallic"].links[0].from_socket
+        scale = nodes.new("ShaderNodeMath");scale.operation = "MULTIPLY"
+        scale.label = "Authored metalness multiplier"
+        scale.inputs[1].default_value = max(0.0, metal_scale)
+        links.new(source, scale.inputs[0]);links.new(scale.outputs[0], principled.inputs["Metallic"])
 
     handled = {
         node.image.filepath

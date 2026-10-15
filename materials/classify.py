@@ -218,6 +218,8 @@ FAMILY_EMISSIVE = "emissive"
 
 FAMILY_SCAN = "scan_display"
 
+FAMILY_FLIPBOOK = "flipbook_display"
+
 FAMILY_DECAL = "decal"
 
 # Stamp on map-mask / branding / CA+NOH decal graphs after UseAlphaForMask fix.
@@ -489,7 +491,7 @@ def _needs_env_props_rebuild(mat, mi_path: str = "") -> bool:
     if not uses_env_props:
         # Null / procedural MIs (elevator cables) used to stay flat-grey forever.
         if fam == FAMILY_SIMPLE and bool(mi.get("is_null")) and (mi.get("colours") or []):
-            return str(mat.get("arc_simple_setup") or "") != "v2"
+            return str(mat.get("arc_simple_setup") or "") != "v4"
         return False
     if fam == FAMILY_SIMPLE:
         return True
@@ -581,6 +583,13 @@ def _is_water_mi(mi: dict, mi_stem_lower: str = "") -> bool:
     if "deep" in colour_names and "shallow" in colour_names:
         if any(k in stem for k in ("water", "river", "ocean", "lake", "lagoon", "swamp")):
             return True
+
+    # Textured bottles/canteens are solid props. Name routing for water planes
+    # must not override their authored packed surface just because of "Water".
+    if _mi_tex_params(mi) & {"CR", "BaseColor", "PM_Diffuse"} and any(
+        token in stem for token in ("waterbottle", "water_bottle", "watercan", "water_can", "waterskin", "water_skin", "canteen")
+    ):
+        return False
 
     # Empty stub MIs (inherit parent) — name routing
     if any(
@@ -684,6 +693,8 @@ def _is_glass_env_mi(mi: dict, mi_stem_lower: str = "", slot_lower: str = "") ->
         if "character" in parent_l and "glass_opaque" in parent_l:
             return False
         return True
+    if "CR" in params and any(str(ref).lower().split(".")[0].endswith("_nam") for _, ref in mi.get("textures") or []):
+        return False
     if "glass" in stem and (
         params & {"C", "NXX", "MaskTexture", "CubemapInside", "CubemapOutside"}
         or _is_translucent_blend(mi)
@@ -812,6 +823,10 @@ def classify_mi_family(mi: dict, mi_stem_lower: str = "", slot_lower: str = "") 
     stem = (mi_stem_lower or "").lower()
     slot = (slot_lower or "").lower()
 
+    # Texture-backed displays use their authored atlas, not the unrelated
+    # procedural enemy ScanDisplay LED grid selected by a "screen" name.
+    if "Flipbook" in _mi_tex_params(mi):
+        return FAMILY_FLIPBOOK
     if _is_weapon_emissive_light_mi(stem):
         return FAMILY_EMISSIVE
     if _is_enemy_scan_display_mi(mi, stem, slot):

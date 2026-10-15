@@ -4,6 +4,9 @@ Property definitions for the Arc Raiders Importer
 
 import bpy
 import os
+import zlib
+from types import SimpleNamespace
+from bpy.app.handlers import persistent
 from bpy.props import StringProperty, CollectionProperty, BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
 from bpy.types import PropertyGroup
 
@@ -26,10 +29,11 @@ def rebuild_csv_outfit_map(csv_path=None):
     rows = load_outfit_csv(csv_path)
     _csv_model_to_ui_folder.clear()
     for row in rows:
-        model = (row.get("Model Folder Name") or "").strip()
+        models = [model.strip() for model in (row.get("Model Folder Name") or "").split(";") if model.strip()]
         ui = (row.get("Item/UI Folder Name") or "").strip().split(";")[0].strip()
-        if model and ui:
-            _csv_model_to_ui_folder[utils.normalize_folder_name(model)] = ui
+        for model in models:
+            if ui:
+                _csv_model_to_ui_folder[utils.normalize_folder_name(model)] = ui
 
 # ---------------------------------------------------------------------------
 # Body variant data (not hardcoded in drawing)
@@ -233,9 +237,68 @@ def make_outfit_preset_items(self, context):
         context, is_outfit_queue=queue_supports_outfit_batch(context)
     )
 
+_OUTFIT_SELECTION_UPDATING = False
+_DEFAULT_OUTFIT_KEY = 'ID_PLAYERSKIN_ABYSS'
+
+
 def _on_browse_outfit_changed(self, context):
-    if self.arc_selected_outfit_browse and self.arc_selected_outfit_browse != 'NONE':
+    if not _OUTFIT_SELECTION_UPDATING and self.arc_selected_outfit_browse != 'NONE':
         self.arc_selected_outfit = self.arc_selected_outfit_browse
+
+
+def _on_selected_outfit_changed(self, context):
+    if not _OUTFIT_SELECTION_UPDATING:
+        ensure_outfit_selection(self, context)
+
+
+def ensure_outfit_selection(scene, context=None):
+    """Keep list, Browse All, preview and import on one stable outfit identity."""
+    global _OUTFIT_SELECTION_UPDATING
+    if _OUTFIT_SELECTION_UPDATING:
+        return
+    context = context or SimpleNamespace(scene=scene)
+    items = make_outfit_selector_items(scene, context)
+    keys = {item[0] for item in items}
+    selected = getattr(scene, 'arc_selected_outfit', '')
+    if selected not in keys:
+        selected = _DEFAULT_OUTFIT_KEY if _DEFAULT_OUTFIT_KEY in keys else items[0][0]
+    _OUTFIT_SELECTION_UPDATING = True
+    try:
+        scene.arc_selected_outfit = selected
+        scene.arc_selected_outfit_browse = selected
+        scene['arc_outfit_enum_schema'] = 1
+    finally:
+        _OUTFIT_SELECTION_UPDATING = False
+
+
+def _initialize_outfit_defaults():
+    scenes = getattr(bpy.data, 'scenes', None)
+    if scenes is None:
+        return 0.1
+    for scene in scenes:
+        if hasattr(scene, 'arc_selected_outfit_browse'):
+            ensure_outfit_selection(scene)
+    return None
+
+
+@persistent
+def _load_outfit_defaults(_unused):
+    _initialize_outfit_defaults()
+
+
+def register_outfit_defaults():
+    unregister_outfit_defaults()
+    bpy.app.handlers.load_post.append(_load_outfit_defaults)
+    delay = _initialize_outfit_defaults()
+    if delay is not None:
+        bpy.app.timers.register(_initialize_outfit_defaults, first_interval=delay)
+
+
+def unregister_outfit_defaults():
+    while _load_outfit_defaults in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_load_outfit_defaults)
+    if bpy.app.timers.is_registered(_initialize_outfit_defaults):
+        bpy.app.timers.unregister(_initialize_outfit_defaults)
 
 
 def _on_mask_debug_color_n(self, context):
@@ -269,9 +332,9 @@ _OUTFIT_ENUM_CACHE = {"key": None, "items": None}
 
 def make_outfit_selector_items(self, context):
     """Dynamic EnumProperty items callback for outfit selector."""
-    from .importing import load_outfit_csv, get_outfit_csv_path, outfit_row_key, outfit_display_label
+    from .importing import load_outfit_csv, get_outfit_csv_path, outfit_row_key, outfit_display_label, default_outfit_csv_path
 
-    csv_path = get_outfit_csv_path(context)
+    csv_path = get_outfit_csv_path(context) if getattr(context, 'scene', None) is not None else default_outfit_csv_path()
     try:
         mtime = os.path.getmtime(csv_path) if csv_path else 0.0
     except OSError:
@@ -288,10 +351,10 @@ def make_outfit_selector_items(self, context):
         st = row.get("ST", "")
         if st and not st.upper().startswith("ID_PLAYERSKIN_"):
             continue
-        if not row.get("Item/UI Folder Name") and not row.get("Model Folder Name"):
-            continue
         key = outfit_row_key(row)
         label = outfit_display_label(row)
+        if row.get("Pak Status") == "no cooked mesh" or not (row.get("Item/UI Folder Name") or row.get("Model Folder Name")):
+            label += " (no cooked mesh)"
         if "unnamed" in label.lower():
             unnamed.append((key, label, label))
         else:
@@ -299,7 +362,18 @@ def make_outfit_selector_items(self, context):
     items.sort(key=lambda t: t[1].lower())
     unnamed.sort(key=lambda t: t[1].lower())
     items.extend(unnamed)
-    result = items or [('NONE', '(no outfits found — check CSV path)', '')]
+    # Dynamic Blender enums normally store list indices. Stable numeric IDs keep
+    # saved selections intact when names/order change; Abyss is the first/default.
+    items.sort(key=lambda item: (item[0] != _DEFAULT_OUTFIT_KEY, 'unnamed' in item[1].lower(), item[1].lower()))
+    numbered = []
+    used = set()
+    for key, label, description in items:
+        number = 0 if key == _DEFAULT_OUTFIT_KEY else (zlib.crc32(key.encode('utf-8')) & 0x7fffffff) or 1
+        while number in used:
+            number = (number + 1) & 0x7fffffff
+        used.add(number)
+        numbered.append((key, label, description, 0, number))
+    result = numbered or [('NONE', '(no outfits found — check CSV path)', '', 0, 0)]
     cached["key"] = cache_key
     cached["items"] = result
     return result
@@ -405,6 +479,10 @@ classes = (
 
 
 def _safe_register_class(cls):
+    # Re-registering the same live PropertyGroup invalidates existing Scene
+    # CollectionProperty RNA even when its fixed_type identifier stays equal.
+    if getattr(cls, "is_registered", False):
+        return
     try:
         bpy.utils.register_class(cls)
         return
@@ -717,7 +795,10 @@ def _assign_collection_prop(name: str, expected_cls, prop) -> None:
     expected = getattr(expected_cls, "__name__", "") or ""
     current = _scene_collection_fixed_type_id(name)
     if current == expected and hasattr(bpy.types.Scene, name):
-        return
+        fixed_type = bpy.types.Scene.bl_rna.properties[name].fixed_type
+        required = getattr(expected_cls, "__annotations__", {})
+        if all(field in fixed_type.properties for field in required):
+            return
     if hasattr(bpy.types.Scene, name):
         if current and current != expected:
             print(
@@ -738,6 +819,18 @@ def register():
     def _assign_if_free(name, prop):
         if hasattr(bpy.types.Scene, name):
             return
+        setattr(bpy.types.Scene, name, prop)
+
+    def _assign_outfit_selector(name, prop):
+        from . import addon_line
+        if addon_line.is_map_importer_line():
+            _assign_if_free(name, prop)
+            return
+        # Older Map Importer builds may have registered these shared properties
+        # first. Outfits owns their callbacks and stable enum IDs; underlying
+        # Scene ID properties (including the selected ST key) are retained.
+        if hasattr(bpy.types.Scene, name):
+            delattr(bpy.types.Scene, name)
         setattr(bpy.types.Scene, name, prop)
 
     _assign_collection_prop(
@@ -1077,20 +1170,22 @@ def register():
         default="", subtype='FILE_PATH',
     )
     )
-    _assign_if_free(
+    _assign_outfit_selector(
         "arc_selected_outfit",
         StringProperty(
         name="Selected Outfit Key",
         description="Key of the currently selected outfit for import",
-        default="",
+        default=_DEFAULT_OUTFIT_KEY,
+        update=_on_selected_outfit_changed,
     )
     )
-    _assign_if_free(
+    _assign_outfit_selector(
         "arc_selected_outfit_browse",
         EnumProperty(
         name="Browse Outfits",
         description="Browse all outfits — selecting one also selects it above",
         items=make_outfit_selector_items,
+        default=0,
         update=_on_browse_outfit_changed,
     )
     )
@@ -1884,7 +1979,11 @@ def register():
 
 
 
+    register_outfit_defaults()
+
+
 def unregister():
+    unregister_outfit_defaults()
     from . import addon_line as _addon_line
 
     # Always drop this line's exclusive Scene props.

@@ -240,7 +240,7 @@ def load_outfit_csv(csv_path: str) -> list:
     return rows
 
 def outfit_row_key(row: dict) -> str:
-    return row.get("ST") or row.get("Item/UI Folder Name") or row.get("Flavour") or "?"
+    return row.get("ST") or row.get("Item/UI Folder Name") or row.get("Model Folder Name") or row.get("Flavour") or "?"
 
 def outfit_display_label(row: dict) -> str:
     import re
