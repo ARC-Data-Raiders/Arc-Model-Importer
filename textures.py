@@ -445,6 +445,10 @@ def scan_skins(psk_path: str, manual_folder: str = "") -> list:
             path = _pick_valid_mi_json_in_dir(skin_dir)
             if path:
                 results.append((skin_name, path))
+    for directory in authored_shared_skin_dirs(psk_path):
+        path = _pick_valid_mi_json_in_dir(directory)
+        if path and all(os.path.normcase(existing) != os.path.normcase(path) for _label, existing in results):
+            results.append((os.path.basename(directory), path))
     results.extend(_scan_main_folder_skins(psk_path))
     return results
 
@@ -567,19 +571,58 @@ def _scan_mi_jsons_in_folder(folder: str) -> list:
 def _scan_main_folder_skins(psk_path: str) -> list:
     return _scan_mi_jsons_in_folder(os.path.dirname(bpy.path.abspath(psk_path)))
 
+def referenced_texture_array_slices(json_path: str) -> list:
+    """Resolve exact inherited TA references, including another skin's bank."""
+    result = []
+    for parameter in load_mi_properties(json_path).get("TextureParameterValues") or []:
+        reference = parameter.get("ParameterValue") or {}
+        object_path = reference.get("ObjectPath") or reference.get("AssetPathName") or ""
+        stem = mi_stem_from_material_ref(reference)
+        if not stem.casefold().startswith("ta_") or not object_path:
+            continue
+        package = object_path.rsplit(".", 1)[0] if "." in object_path.rsplit("/", 1)[-1] else object_path
+        first = ""
+        for suffix in ("_LAYER0", "_0"):
+            first = find_asset_from_object_path(package + suffix, ".png")
+            if first:
+                break
+        if not first:
+            continue
+        directory = os.path.dirname(first)
+        pattern = re.compile(re.escape(stem) + r"_(?:LAYER_?)?\d+\.png$", re.IGNORECASE)
+        try:
+            for name in sorted(os.listdir(directory)):
+                if pattern.fullmatch(name):
+                    path = os.path.join(directory, name)
+                    if path not in result:
+                        result.append(path)
+        except OSError:
+            continue
+    return result
+
+
 def scan_base_skin_textures(psk_path: str, selected_skin_name: str = "", manual_folder: str = "") -> list:
     # Use filesystem abspath so ThreadPool IO workers never touch bpy.
     manual_folder = _fs_abspath(manual_folder) if manual_folder else ""
     skins_folder = manual_folder if (manual_folder and os.path.isdir(manual_folder)) else get_skins_folder(psk_path)
+    if not skins_folder:
+        # Toggle meshes may have no local Skins folder while their authored
+        # DA_VP points to another part's layered texture-array bank.
+        shared = authored_shared_skin_dirs(psk_path)
+        skins_folder = os.path.dirname(shared[0]) if shared else ""
     if not skins_folder:
         return []
     all_dirs = get_all_skin_dirs(skins_folder)
     if not all_dirs:
         if manual_folder:
             try:
-                return [os.path.join(skins_folder, f)
+                pngs = [os.path.join(skins_folder, f)
                         for f in sorted(os.listdir(skins_folder))
                         if f.lower().endswith(".png")]
+                mi_json = _pick_valid_mi_json_in_dir(skins_folder)
+                if mi_json:
+                    pngs.extend(path for path in referenced_texture_array_slices(mi_json) if path not in pngs)
+                return pngs
             except OSError:
                 return []
         return []
@@ -594,6 +637,11 @@ def scan_base_skin_textures(psk_path: str, selected_skin_name: str = "", manual_
                     pngs.append(os.path.join(skin_dir, fname))
         except OSError:
             pass
+        mi_json = _pick_valid_mi_json_in_dir(skin_dir)
+        if mi_json:
+            for path in referenced_texture_array_slices(mi_json):
+                if path not in pngs:
+                    pngs.append(path)
     return pngs
 
 def is_variant(name: str, all_dirs: list) -> bool:
@@ -738,6 +786,85 @@ def _pick_valid_mi_json_in_dir(skin_dir: str, *, prefer_non_fur: bool = True) ->
     return candidates[0]
 
 
+def authored_visual_part_materials(psk_path: str) -> list:
+    """Exact DA_VP Mesh/MaterialOverrides bindings for this mesh, across mount aliases.
+
+    Raised/retracted parts can legitimately reference another part's material
+    bank. Only an authored binding authorizes that reuse; names are not guessed.
+    """
+    mesh = _fs_abspath(psk_path)
+    folder = os.path.dirname(mesh)
+    folders = [folder]
+    normalized = folder.replace("\\", "/")
+    for source, target in (("/RemappedPlugins/Content/", "/PioneerGame/Content/"),
+                           ("/PioneerGame/Content/", "/RemappedPlugins/Content/")):
+        if source.casefold() in normalized.casefold():
+            index = normalized.casefold().index(source.casefold())
+            folders.append((normalized[:index] + target + normalized[index + len(source):]).replace("/", os.sep))
+    mesh_stem = os.path.splitext(os.path.basename(mesh))[0].casefold()
+    result = []
+    seen = set()
+    for directory in folders:
+        try:
+            names = sorted(name for name in os.listdir(directory) if name.casefold().startswith("da_vp_") and name.casefold().endswith(".json"))
+        except OSError:
+            continue
+        for name in names:
+            try:
+                with open(os.path.join(directory, name), encoding="utf-8-sig") as stream:
+                    data = json.load(stream)
+            except (OSError, ValueError):
+                continue
+            for entry in utils.ue_export_entries(data):
+                props = entry.get("Properties") or {}
+                mesh_ref = props.get("Mesh") or {}
+                if mi_stem_from_material_ref(mesh_ref).casefold() != mesh_stem:
+                    continue
+                overrides = props.get("MaterialOverrides") or []
+                if isinstance(overrides, dict):
+                    overrides = [{"Key": key, "Value": value} for key, value in overrides.items()]
+                for override in overrides:
+                    reference = override.get("Value") or {}
+                    material_path = reference.get("ObjectPath") or reference.get("AssetPathName") or ""
+                    path = find_asset_from_object_path(material_path, ".json")
+                    path = resolve_part_mi_json(path, mi_stem_from_material_ref(reference)) if path else ""
+                    key = (str(override.get("Key") or ""), os.path.normcase(path))
+                    if path and key not in seen:
+                        seen.add(key)
+                        result.append({"slot": key[0], "path": path, "material_path": material_path,
+                                       "visual_part": os.path.join(directory, name)})
+    return result
+
+
+def authored_shared_skin_dirs(psk_path: str) -> list:
+    """Colourway folders explicitly shared through the mesh's DA_VP materials."""
+    own_folder = os.path.normcase(os.path.dirname(_fs_abspath(psk_path)))
+    result = []
+    for binding in authored_visual_part_materials(psk_path):
+        material_dir = os.path.dirname(binding["path"])
+        root = os.path.dirname(material_dir)
+        if os.path.basename(root).casefold() != "skins" or os.path.normcase(os.path.dirname(root)) == own_folder:
+            continue
+        for skin in get_all_skin_dirs(root):
+            directory = os.path.join(root, skin)
+            if directory not in result:
+                result.append(directory)
+    return result
+
+
+def prefer_authored_part_material(psk_path: str, json_path: str) -> str:
+    """Repair an older preview-only stamp using this mesh's authored binding."""
+    if not json_path or not psk_path:
+        return json_path
+    if os.path.normcase(os.path.dirname(_fs_abspath(json_path))) != os.path.normcase(os.path.dirname(_fs_abspath(psk_path))):
+        return json_path
+    if parse_clothing_mi(json_path).get("colours"):
+        return json_path
+    authored = [binding["path"] for binding in authored_visual_part_materials(psk_path)]
+    candidates = [path for path in authored if not is_fur_mi(path) and parse_clothing_mi(path).get("colours")]
+    return candidates[0] if len(set(candidates)) == 1 else json_path
+
+
 def get_base_skin_json(psk_path: str, manual_folder: str = "") -> str:
     """Resolve the MI JSON that drives colours for a part.
 
@@ -757,6 +884,13 @@ def get_base_skin_json(psk_path: str, manual_folder: str = "") -> str:
                 path = _pick_valid_mi_json_in_dir(skin_dir, prefer_non_fur=True)
                 if path:
                     return path
+    # A toggle mesh can reuse an authored material bank on another part (e.g.
+    # Goalie HelmetUp -> Helmet/Plastic). Prefer it over its preview-only MI.
+    if not manual_folder:
+        authored = [binding["path"] for binding in authored_visual_part_materials(psk_path)]
+        non_fur_authored = [path for path in authored if not is_fur_mi(path)]
+        if len(set(non_fur_authored)) == 1:
+            return non_fur_authored[0]
     # No Skins/ (or empty): use MI beside the PSK — PonchoFringe / shared SimplePBR.
     fallback_folder = skins_folder if manual_folder else os.path.dirname(bpy.path.abspath(psk_path))
     scanned = _scan_mi_jsons_in_folder(fallback_folder)
@@ -789,7 +923,8 @@ def identify_texture(fname: str):
 
 def base_skin_texture_group(fname: str) -> str:
     stem = os.path.splitext(fname)[0].lower()
-    stem = re.sub(r"_\d+$", "", stem)
+    # FModel uses _0; current UEFormat/ArcPak emits _LAYER0.
+    stem = re.sub(r"_(?:layer_?)?\d+$", "", stem)
     if stem.endswith("_normals") or stem.endswith("_normal"):
         return "normals"
     if stem.endswith("_masks") or stem.endswith("_mask"):
@@ -879,7 +1014,9 @@ def mi_stem_from_material_ref(material_ref: dict) -> str:
     """Extract MI stem from a UE Material soft reference (ObjectPath / ObjectName)."""
     if not material_ref:
         return ""
-    obj_path = material_ref.get("ObjectPath", "") or ""
+    if isinstance(material_ref, str):
+        material_ref = {"ObjectPath": material_ref}
+    obj_path = material_ref.get("ObjectPath", "") or material_ref.get("AssetPathName", "") or ""
     if obj_path:
         leaf = obj_path.split("/")[-1]
         return os.path.splitext(leaf)[0]
@@ -1390,22 +1527,27 @@ def parse_texture_array_ids(json_path: str) -> dict:
         return {}
 
 
+def _texture_array_slice_index(path: str) -> int | None:
+    """Read FModel ``_N`` or UEFormat ``_LAYERN`` array-slice filenames."""
+    stem = os.path.splitext(os.path.basename(path))[0]
+    match = re.search(r"_(?:LAYER_?)?(\d+)$", stem, flags=re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
 def find_slice_png(png_list: list, slice_idx: int) -> str:
     for fpath in png_list:
-        stem = os.path.splitext(os.path.basename(fpath))[0]
-        if stem.endswith(f'_{slice_idx}'):
+        if _texture_array_slice_index(fpath) == slice_idx:
             return fpath
     return ''
 
 
 def build_slice_png_map(png_list: list) -> dict:
-    """Map trailing _N slice index -> png path for O(1) lookups."""
+    """Map FModel/UEFormat slice index to PNG path for O(1) lookups."""
     result = {}
     for fpath in png_list:
-        stem = os.path.splitext(os.path.basename(fpath))[0]
-        m = re.search(r'_(\d+)$', stem)
-        if m:
-            result[int(m.group(1))] = fpath
+        index = _texture_array_slice_index(fpath)
+        if index is not None:
+            result[index] = fpath
     return result
 
 
@@ -1712,6 +1854,7 @@ def find_skin_json_for_mi_stem(psk_path: str, mi_stem: str) -> str:
     for _name, skin_dir in iter_part_colorway_dirs(part_folder):
         if skin_dir not in candidate_dirs:
             candidate_dirs.append(skin_dir)
+    candidate_dirs.extend(directory for directory in authored_shared_skin_dirs(psk_path) if directory not in candidate_dirs)
     candidate_dirs.append(part_folder)
     for d in candidate_dirs:
         candidate = os.path.join(d, mi_stem + ".json")

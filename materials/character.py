@@ -1334,8 +1334,7 @@ def _resolve_scene_hair_color_rgba(colour_json: str = "") -> tuple:
 
             cid = getattr(bpy.context.scene, "arc_appearance_hair_color", "NONE") or "NONE"
             if cid != "NONE":
-                choice = _appearance.resolve_choice(cid)
-                path = (choice or {}).get("path") or ""
+                path = _appearance.resolve_hair_color_path(cid)
         except Exception:
             path = path or ""
     if path and path != "NONE" and os.path.isfile(path):
@@ -1540,8 +1539,7 @@ def setup_face_material(obj, psk_path: str):
         if hair_color_json and hair_color_json != "NONE" and not os.path.isfile(hair_color_json):
             from .. import appearance as _appearance
 
-            choice = _appearance.resolve_choice(hair_color_json)
-            hair_color_json = (choice or {}).get("path") or ""
+            hair_color_json = _appearance.resolve_hair_color_path(hair_color_json)
     except Exception:
         hair_color_json = ""
     meta = _ensure_head_material_slots(obj, psk_path)
@@ -2772,6 +2770,11 @@ def setup_hair_material(obj, json_path: str, colour_json: str = ""):
         mat["arc_hair_shader"] = "Principled"
         if colour_json and colour_json != "NONE":
             mat["arc_hair_color_mi"] = os.path.abspath(colour_json)
+            obj["arc_hair_color_mi"] = os.path.abspath(colour_json)
+        else:
+            for target in (mat, obj):
+                if "arc_hair_color_mi" in target:
+                    del target["arc_hair_color_mi"]
     except Exception:
         pass
 

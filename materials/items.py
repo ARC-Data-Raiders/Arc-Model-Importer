@@ -291,7 +291,8 @@ def _setup_flipbook_material(mat, mi_path: str, psk_path: str = ""):
                          _mi_colour, _mi_scalar, _mix_rgba, _new_tex_image)
     mi = _parse_flat_mi_json(mi_path)
     lookup = _tex_lookup_from_flat_mi(mi, local_folders=_character_layout_search_folders(mi_path, psk_path))
-    path, image = _find_env_tex(lookup, "Flipbook")
+    _param, image = _find_env_tex(lookup, "Flipbook")
+    path = bpy.path.abspath(image.filepath) if image else ""
     if image is None:
         raise ValueError("Authored Flipbook atlas is missing: " + mi_path)
     nodes, links = mat.node_tree.nodes, mat.node_tree.links

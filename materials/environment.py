@@ -542,6 +542,57 @@ def setup_beacon_material(mat, mi_path: str, psk_path: str = "") -> None:
     mat["arc_mi_family"] = "beacon"
 
 
+def _is_packed_prop_preset(mi: dict) -> bool:
+    """Recognize the CR+NOM prop preset in compact exports without Parent.
+
+    These exports omit false master switches; inherited Overlay/Tint textures
+    and parameters therefore do not establish that those stages are enabled.
+    """
+    parent = str(mi.get("parent") or "").strip().lower()
+    if parent:
+        # Only these masters explicitly default both optional stages off.
+        # Parallax and Cinematics/..._Color are distinct shader families;
+        # a similar name or compact parameter signature cannot establish
+        # their defaults when the parent is actually known.
+        parent_name = parent.replace("\\", "/").rsplit("/", 1)[-1].split(".", 1)[0]
+        return parent_name in {
+            "m_proppreset_cr+nom",
+            "m_proppreset_cr+nom+skinned",
+            "m_proppreset_cr+nox+xem",
+        }
+    params = _mi_tex_params(mi)
+    scalars = mi.get("scalars") or {}
+    return (
+        "CR" in params and bool(params & {"Normal", "NOM", "PM_Normals"})
+        and "Roughness Power" in scalars and bool({"Metallic Strength", "Metalness Value"} & set(scalars))
+        and "Overlay_BaseColor_Strength" in scalars
+    )
+
+
+def _packed_rg_normal_color(nodes, links, red, green):
+    """Reconstruct encoded normal Z without consuming packed AO/metal channels."""
+    xy = nodes.new("ShaderNodeCombineColor")
+    xy.label = "Packed normal RG + reconstructed Z"
+    links.new(red, xy.inputs["Red"])
+    links.new(green, xy.inputs["Green"])
+    def math(operation, a, b=0):
+        node = nodes.new("ShaderNodeMath");node.operation = operation
+        for index,value in enumerate((a,b)):
+            if hasattr(value,"node"):
+                links.new(value,node.inputs[index])
+            else:
+                node.inputs[index].default_value=value
+        return node.outputs[0]
+    x=math("SUBTRACT",math("MULTIPLY",red,2),1)
+    y=math("SUBTRACT",math("MULTIPLY",green,2),1)
+    square=math("ADD",math("MULTIPLY",x,x),math("MULTIPLY",y,y))
+    z=math("SQRT",math("MAXIMUM",math("SUBTRACT",1,square),0))
+    encoded=math("ADD",math("MULTIPLY",z,.5),.5)
+    encoded.node.label="Shipping packed normal Z = sqrt(1-X²-Y²)"
+    links.new(encoded,xy.inputs["Blue"])
+    return xy.outputs["Color"]
+
+
 def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: str = FAMILY_ENVIRONMENT):
     """Principled setup for Arc environment MIs (concrete, buildings, roads, metal trims).
 
@@ -561,6 +612,8 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     nodes.clear()
     fam = family or FAMILY_ENVIRONMENT
     _stamp_mi_family(mat, fam)
+    mat["arc_env_surface_setup"] = "packed-prop-v1"
+    packed_prop = _is_packed_prop_preset(mi)
     scalars = mi.get("scalars") or {}
     switches = mi.get("switches") or {}
     colours = mi.get("colours") or []
@@ -762,6 +815,9 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     cr1_node = None
     cr2_node = None
     if cr1_img:
+        cr1_file = next((fp for _p,(fp,im) in tex_lookup.items() if im==cr1_img), "")
+        if os.path.splitext(cr1_file)[0].lower().endswith("_cr") or cr1_param.lower() in {"cr","cr texture"}:
+            cr1_img.alpha_mode = "CHANNEL_PACKED"
         cr1_node = _new_tex_image(nodes, cr1_img, "CR / Layer1", (COL_TEX, y_cr))
         _bind_tex_vec(cr1_node, y_cr)
         albedo_sock = cr1_node.outputs["Color"]
@@ -820,9 +876,19 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             )
             ao_sock = ao_from_nao
         else:
-            n_color, ao_from_noh = _noh_ao_from_tex(
-                nodes, links, noh1_node, (COL_UTIL, y_n),
-            )
+            if nao_stem.endswith(("_nom", "_nox", "_nxm", "_nmx")):
+                noh1_img.alpha_mode = "CHANNEL_PACKED"
+                packed = nodes.new("ShaderNodeSeparateColor")
+                packed.label = "Packed prop normal / occlusion / metal"
+                links.new(noh1_node.outputs["Color"], packed.inputs["Color"])
+                n_color = _packed_rg_normal_color(nodes, links, packed.outputs["Red"], packed.outputs["Green"])
+                # NOM.B is AO; A remains metallic. NOH families keep their
+                # existing family-specific height/occlusion response below.
+                ao_from_noh = packed.outputs["Blue"]
+            else:
+                n_color, ao_from_noh = _noh_ao_from_tex(
+                    nodes, links, noh1_node, (COL_UTIL, y_n),
+                )
             normal_sock = _wire_normal_map(
                 nodes, links, n_color, (COL_MIX - 200, y_n),
                 strength=n_str, label="Base Normal",
@@ -930,8 +996,9 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
 
     # ── Overlay color variation (concrete ColorVar / rust overlays) ────────
     use_overlay = _mi_switch(
-        switches, "UseOverlay", "EnableOverlay", "Color Overlay", default=None,
+        switches, "UseOverlay", "EnableOverlay", "Color Overlay", default=False if packed_prop else None,
     )
+    mat["arc_env_overlay_enabled"] = bool(use_overlay is not False)
     ov_str = _mi_scalar(
         scalars,
         "Overlay_BaseColor_Strength", "Overlay Strength", "4. Overlay Strength",
@@ -1222,7 +1289,8 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     )
     tint = _mi_colour(colours, *_TINT_PARAMS, default=None)
     tint_rgb = env_props.tint_multiplier(mi, preset_key, *_TINT_PARAMS)
-    tint_on = _mi_switch(switches, "Use Tint", "Enable Tinting", default=True)
+    tint_on = _mi_switch(switches, "Use Tinting", "Use Tint", "Enable Tinting", default=not packed_prop)
+    mat["arc_env_tint_enabled"] = bool(tint_on)
     # Concrete_01 tints around mid-grey: albedo * Tint * 2 (Revamped profile).
     if concrete_profile and albedo_sock is not None and tint is not None:
         rgb = nodes.new("ShaderNodeRGB")
@@ -1329,6 +1397,19 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         local_folders=local_folders, loc=(COL_TEX - 700, y_extra - 2600),
     )
 
+    # CR+NOX+XEM props use the separate mask's B channel for metalness;
+    # NOX.A is unused and must not stand in for the metallic input.
+    if packed_prop and _mi_switch(switches, "Use Masks", default=False):
+        _mask_param, packed_mask = _find_env_tex(tex_lookup, "Packed Mask")
+        mask_path = bpy.path.abspath(packed_mask.filepath) if packed_mask else ""
+        if packed_mask is not None and os.path.splitext(mask_path)[0].lower().endswith("_xem"):
+            packed_mask.alpha_mode = "CHANNEL_PACKED"
+            node = _new_tex_image(nodes, packed_mask, "XEM packed material channels", (COL_TEX, y_mask), non_color=True)
+            channels = nodes.new("ShaderNodeSeparateColor")
+            channels.label = "XEM.B → Metallic"
+            links.new(node.outputs["Color"], channels.inputs["Color"])
+            links.new(channels.outputs["Blue"], principled.inputs["Metallic"])
+
     # ── Bind Principled ────────────────────────────────────────────────────
     if albedo_sock is not None:
         links.new(albedo_sock, principled.inputs["Base Color"])
@@ -1338,11 +1419,25 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         principled.inputs["Base Color"].default_value = fallback
 
     if rough_sock is not None:
-        # Soft remap UE roughness alphas that sit very dark/bright
+        # Prop presets author the exponent over the packed CR roughness.
+        # Disabled overlays must not replace it with an inherited texture alpha.
+        power = _mi_scalar(scalars, "Roughness Power", default=1.0)
+        if packed_prop and abs(power - 1.0) > 1e-5:
+            node = nodes.new("ShaderNodeMath");node.operation = "POWER"
+            node.label = "Authored prop roughness power"
+            node.inputs[1].default_value = max(0.0,power)
+            links.new(rough_sock,node.inputs[0]);rough_sock=node.outputs[0]
         links.new(rough_sock, principled.inputs["Roughness"])
     else:
         principled.inputs["Roughness"].default_value = 0.55
 
+    if packed_prop and principled.inputs["Metallic"].links:
+        strength = _mi_scalar(scalars, "Metallic Strength", "Metalness Value", default=1.0)
+        if abs(strength - 1.0) > 1e-5:
+            source = principled.inputs["Metallic"].links[0].from_socket
+            node = nodes.new("ShaderNodeMath");node.operation = "MULTIPLY"
+            node.label = "Authored prop metallic strength";node.inputs[1].default_value = strength
+            links.new(source,node.inputs[0]);links.new(node.outputs[0],principled.inputs["Metallic"])
     if normal_sock is not None:
         links.new(normal_sock, principled.inputs["Normal"])
 
@@ -4406,26 +4501,7 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
             packed = nodes.new("ShaderNodeSeparateColor")
             packed.label = packed_code.upper() + " packed channels"
             links.new(normal_color, packed.inputs["Color"])
-            xy = nodes.new("ShaderNodeCombineColor")
-            xy.label = "Packed normal RG + reconstructed Z"
-            links.new(packed.outputs["Red"], xy.inputs["Red"])
-            links.new(packed.outputs["Green"], xy.inputs["Green"])
-            def packed_math(operation, a, b=0.0):
-                node = nodes.new("ShaderNodeMath");node.operation = operation
-                for index, value in enumerate((a, b)):
-                    if hasattr(value, "node"):
-                        links.new(value, node.inputs[index])
-                    else:
-                        node.inputs[index].default_value = value
-                return node.outputs[0]
-            nx = packed_math("SUBTRACT", packed_math("MULTIPLY", packed.outputs["Red"], 2.0), 1.0)
-            ny = packed_math("SUBTRACT", packed_math("MULTIPLY", packed.outputs["Green"], 2.0), 1.0)
-            squared_xy = packed_math("ADD", packed_math("MULTIPLY", nx, nx), packed_math("MULTIPLY", ny, ny))
-            nz = packed_math("SQRT", packed_math("MAXIMUM", packed_math("SUBTRACT", 1.0, squared_xy), 0.0))
-            encoded_z = packed_math("ADD", packed_math("MULTIPLY", nz, .5), .5)
-            encoded_z.node.label = "Shipping packed normal Z = sqrt(1-X²-Y²)"
-            links.new(encoded_z, xy.inputs["Blue"])
-            normal_color = xy.outputs["Color"]
+            normal_color = _packed_rg_normal_color(nodes, links, packed.outputs["Red"], packed.outputs["Green"])
             # Character accessory packs share RG normals but use B for very
             # different authored channels. Do not infer opacity from CR alpha.
             if packed_code == "nam" and _is_masked_blend(mi):
@@ -4516,7 +4592,8 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
     # A separate authored Mask can cut a window through an otherwise opaque
     # CR surface (tickets, visors and other accessory shells). CR alpha remains
     # roughness; treating it as coverage hides the printed insert behind metal.
-    mask_path, mask_img = _find_env_tex(tex_lookup, "Mask", "Opacity Mask", "OpacityMask")
+    _mask_param, mask_img = _find_env_tex(tex_lookup, "Mask", "Opacity Mask", "OpacityMask")
+    mask_path = bpy.path.abspath(mask_img.filepath) if mask_img else ""
     use_mask = _mi_switch(switches, "Use Mask Texture", "UseMaskTexture", default=None)
     if mask_img is not None and use_mask is not False and _is_masked_blend(mi):
         mask_node = _new_tex_image(

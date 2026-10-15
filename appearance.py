@@ -1115,6 +1115,46 @@ def list_head_choices() -> list[dict]:
     return result
 
 
+_HAIR_COLOR_PAK_READY = set()
+
+
+def resolve_hair_color_path(choice_id=None, scene=None) -> str:
+    """Resolve and extract the selected palette MI before applying a hairstyle.
+
+    The catalog can list a palette that has never been extracted. Its display
+    name alone must not silently leave the hairstyle's default brown colours.
+    """
+    scene = scene or bpy.context.scene
+    choice_id = choice_id or getattr(scene, "arc_appearance_hair_color", "NONE")
+    if not choice_id or choice_id == "NONE":
+        return ""
+    choice = resolve_choice(choice_id)
+    if not choice or choice.get("kind") != "hair_color":
+        return ""
+    path = choice.get("path") or ""
+    from . import pak_extract
+    game = pak_extract.configured_dir(scene)
+    rel = choice.get("rel_path") or ""
+    if game and rel:
+        package = pak_extract.game_path(rel)
+        token = (os.path.normcase(game), package.casefold(), pak_extract._extraction_revision(scene))
+        if token not in _HAIR_COLOR_PAK_READY or not (path and os.path.isfile(path)):
+            code, log, _meshes = pak_extract.extract_paths(game, pak_extract.resolve_usmap(scene), [package])
+            if code:
+                print("Arc Pak hair colour: " + log[-1200:])
+                return ""
+        candidates = [os.path.join(pak_extract.cache_dir(), *package.split("/")) + ".json"]
+        candidates.append(candidates[0].replace("PioneerGame" + os.sep + "Content", "RemappedPlugins" + os.sep + "Content"))
+        path = next((candidate for candidate in candidates if os.path.isfile(candidate)), "")
+        if path:
+            _HAIR_COLOR_PAK_READY.add(token)
+    if path and os.path.isfile(path):
+        choice["path"] = path
+        _register_choice(choice)
+        return path
+    return ""
+
+
 def list_hair_color_choices() -> list[dict]:
     """Shared HairColors palette (MI_Hair_01_*) plus base Brunette."""
     cache_key = ("hair_colors", utils.get_pioneer_root() or "", get_appearance_csv_path())
@@ -2322,6 +2362,10 @@ def import_appearance_parts(
     body_skin = getattr(scene, "arc_appearance_body_skin", "NONE") or "NONE"
     head_id = getattr(scene, "arc_appearance_head", "NONE") or "NONE"
     hair_id = getattr(scene, "arc_appearance_hair", "NONE") or "NONE"
+    hair_colour_id = getattr(scene, "arc_appearance_hair_color", "NONE") or "NONE"
+    if "Hair" in want and hair_colour_id != "NONE" and not resolve_hair_color_path(hair_colour_id, scene):
+        msgs.append("Selected Hair Color MI could not be loaded from the Pioneer folder or Paks")
+        want.discard("Hair")
     do_replace = (
         bool(replace_selected)
         if replace_selected is not None

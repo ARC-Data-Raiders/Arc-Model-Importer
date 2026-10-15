@@ -195,3 +195,18 @@ families before basename fallbacks. The ticket artwork, body alpha .01, proper
 UEModel bone reflection and shared charm connector are covered by the 2.19.10
 regression reports under dist/.local. Shared docs sections/blender-import-paths.md
 and sections/backpack-frame-slots.md record the detailed evidence and limits.
+
+## Material fidelity (2.19.11)
+
+Array slices support both ArcPak `_LAYERN` and FModel `_N` filenames. This
+restores clothing roughness masks and detail normals without changing the
+authored roughness math or working decal placement. Exact inherited array
+references can span material folders, including Goalie HelmetUp's shared
+Helmet/Plastic bank. Old preview-only helmet stamps repair from the mesh's
+DA_VP MaterialOverrides; no similar-name donor is used.
+
+Packed prop materials honor disabled tint/overlay stages and their authored
+roughness exponent and NOM/NOX/XEM channels. Existing environment graphs
+repair through Update Materials. Hair Color extracts its selected palette MI
+on demand, applies it at import/update and supports resetting to From style MI.
+Detailed evidence and limits are in the shared blender-import-paths section.

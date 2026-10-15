@@ -112,6 +112,8 @@ def _get_or_build_shared_mi_material(
         return (
             str(mat.get("arc_mi_family") or "") != expected
             or (expected == "simple" and str(mat.get("arc_simple_setup") or "") != "v4")
+            or (expected in (FAMILY_ENVIRONMENT, FAMILY_METAL, FAMILY_ROAD)
+                and str(mat.get("arc_env_surface_setup") or "") != "packed-prop-v1")
             or _stale_decal_misclass(mat)
             or _needs_map_decal_mask_rebuild(mat, mi_path)
             or _needs_trim_setup_rebuild(mat, mi_path)

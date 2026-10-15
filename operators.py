@@ -312,6 +312,11 @@ def _apply_materials_to_object_impl(
         return "skipped (not a mesh)"
 
     folder = os.path.dirname(psk_path) if psk_path else ""
+    normalized_source = (psk_path or "").replace("\\", "/")
+    cache_marker = "/arcpak/cache/"
+    if cache_marker in normalized_source.casefold():
+        marker_index = normalized_source.casefold().index(cache_marker)
+        utils.set_pak_cache_root(normalized_source[:marker_index + len(cache_marker) - 1])
     # Hard folder-path domains (Outfit / Environment / Gun / Arc) win over stamps.
     from . import asset_domain as _ad
     domain = _ad.classify_asset_domain(psk_path or "")
@@ -402,13 +407,9 @@ def _apply_materials_to_object_impl(
         try:
             from . import appearance as _appearance
             cid = getattr(bpy.context.scene, "arc_appearance_hair_color", "NONE") or "NONE"
-            choice = _appearance.resolve_choice(cid) if cid != "NONE" else None
-            colour_json = (choice or {}).get("path") or ""
+            colour_json = _appearance.resolve_hair_color_path(cid) if cid != "NONE" else ""
         except Exception:
             colour_json = ""
-        if not colour_json:
-            # Keep stamped colour when the sidebar enum is NONE (Update Materials).
-            colour_json = str(obj.get("arc_hair_color_mi", "") or "")
         try:
             if hair_json:
                 obj["arc_hair_mi"] = hair_json
@@ -438,6 +439,17 @@ def _apply_materials_to_object_impl(
                 )
                 # Prefer another valid colourway / mesh-folder MI over a cross-wired MIC.
                 json_path = textures.get_base_skin_json(psk_path, manual_skins_folder) or ""
+        previous_json = json_path
+        json_path = textures.prefer_authored_part_material(psk_path, json_path)
+        if json_path != previous_json:
+            # Update Materials on older imports inferred these hints from the
+            # preview MI. They must not keep texture-array scans in that folder.
+            if manual_skins_folder and os.path.normcase(os.path.abspath(manual_skins_folder)) == os.path.normcase(os.path.dirname(os.path.abspath(previous_json))):
+                manual_skins_folder = ""
+            if skin_choice == previous_json:
+                skin_choice = json_path
+            mi_data = None
+            base_pngs = None
         # Only persist real values. Empty/default fallbacks must not erase a prior colorway stamp.
         try:
             if json_path:
@@ -557,8 +569,7 @@ def _apply_materials_to_object_impl(
             try:
                 from . import appearance as _appearance
                 cid = getattr(bpy.context.scene, "arc_appearance_hair_color", "NONE") or "NONE"
-                choice = _appearance.resolve_choice(cid) if cid != "NONE" else None
-                colour_json = (choice or {}).get("path") or ""
+                colour_json = _appearance.resolve_hair_color_path(cid) if cid != "NONE" else ""
             except Exception:
                 pass
             try:
@@ -602,8 +613,7 @@ def _apply_materials_to_object_impl(
             try:
                 from . import appearance as _appearance
                 cid = getattr(bpy.context.scene, "arc_appearance_hair_color", "NONE") or "NONE"
-                choice = _appearance.resolve_choice(cid) if cid != "NONE" else None
-                colour_json = (choice or {}).get("path") or ""
+                colour_json = _appearance.resolve_hair_color_path(cid) if cid != "NONE" else ""
             except Exception:
                 pass
             materials.setup_hair_material(obj, folder_mi, colour_json=colour_json)
@@ -808,6 +818,10 @@ def _collect_batch_io_jobs(context, entries, selected_presets) -> list:
                     "selected_skin_name": selected_skin_name or "",
                     "manual_skins_folder": manual,
                     "decal_folder": decal_folder,
+                    # Authored shared materials / inherited TA paths can require
+                    # Scene-aware resolution. Resolve them here, never in workers.
+                    "resolved_base_pngs": textures.scan_base_skin_textures(
+                        psk_path, selected_skin_name or "", manual),
                 })
     finally:
         _restore_entry_skin_choices(snap)
@@ -841,14 +855,9 @@ def _batch_io_prefetch_one(job: dict) -> dict:
         ) if folder and os.path.isdir(folder) else []
     except OSError:
         main_pngs = []
-    try:
-        base_pngs = textures.scan_base_skin_textures(
-            job.get("psk_path") or "",
-            job.get("selected_skin_name") or "",
-            job.get("manual_skins_folder") or "",
-        )
-    except Exception:
-        base_pngs = []
+    if "resolved_base_pngs" not in job:
+        raise RuntimeError("Clothing IO job needs main-thread texture-array resolution")
+    base_pngs = list(job["resolved_base_pngs"])
     try:
         paths = materials.collect_clothing_image_paths(
             folder,
@@ -2276,12 +2285,8 @@ class ARC_OUTFITS_OT_UpdateHairColor(Operator):
         from . import appearance as _appearance
 
         cid = getattr(context.scene, "arc_appearance_hair_color", "NONE") or "NONE"
-        if cid == "NONE":
-            self.report({'ERROR'}, "Select a Hair Color first")
-            return {'CANCELLED'}
-        choice = _appearance.resolve_choice(cid)
-        colour_json = (choice or {}).get("path") or ""
-        if not colour_json or not os.path.isfile(colour_json):
+        colour_json = _appearance.resolve_hair_color_path(cid, context.scene) if cid != "NONE" else ""
+        if cid != "NONE" and (not colour_json or not os.path.isfile(colour_json)):
             self.report({'ERROR'}, f"Hair Color MI not found for '{cid}'")
             return {'CANCELLED'}
 
@@ -2326,7 +2331,10 @@ class ARC_OUTFITS_OT_UpdateHairColor(Operator):
                 print(f"Arc Raiders: Update Hair Color skipped '{obj.name}' (no hair MI)")
                 continue
             try:
-                obj["arc_hair_color_mi"] = os.path.abspath(colour_json)
+                if colour_json:
+                    obj["arc_hair_color_mi"] = os.path.abspath(colour_json)
+                elif "arc_hair_color_mi" in obj:
+                    del obj["arc_hair_color_mi"]
                 obj["arc_hair_mi"] = os.path.abspath(hair_json)
             except Exception:
                 pass
@@ -2349,7 +2357,10 @@ class ARC_OUTFITS_OT_UpdateHairColor(Operator):
                             head_targets.append(other)
             for head in head_targets:
                 try:
-                    head["arc_hair_color_mi"] = os.path.abspath(colour_json)
+                    if colour_json:
+                        head["arc_hair_color_mi"] = os.path.abspath(colour_json)
+                    elif "arc_hair_color_mi" in head:
+                        del head["arc_hair_color_mi"]
                 except Exception:
                     pass
                 for slot in head.material_slots:
