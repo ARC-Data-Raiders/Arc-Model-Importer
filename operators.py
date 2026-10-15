@@ -188,6 +188,7 @@ def import_psk_with_materials(
     skin_json: str = "",
     manual_skins_folder: str = "",
     skin_choice: str = "NONE",
+    import_slot=None,
 ) -> tuple:
     """Import a PSK and apply default Arc materials (no outfit dialog).
 
@@ -211,6 +212,9 @@ def import_psk_with_materials(
     except RuntimeError as e:
         return False, str(e), []
 
+    if import_slot is not None:
+        from . import import_layout
+        import_layout.stamp_objects(new_objects, slot=import_slot)
     mesh_objects = [o for o in new_objects if o.type == "MESH"]
     for obj in mesh_objects:
         try:
@@ -4402,6 +4406,9 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
         return {'FINISHED'}
 
 
+from .appearance_queue import ARC_OUTFITS_OT_AddAllAppearance, ARC_OUTFITS_OT_CancelAppearanceQueue
+
+
 _outfit_classes = (
     ARC_OUTFITS_OT_SelectNS,
     ARC_OUTFITS_OT_ClearNSSearch,
@@ -4417,6 +4424,8 @@ _outfit_classes = (
     ARC_OUTFITS_OT_DeepPathSearch,
     ARC_OUTFITS_OT_ClearDeepPathSearch,
     ARC_OUTFITS_OT_AddAppearancePart,
+    ARC_OUTFITS_OT_AddAllAppearance,
+    ARC_OUTFITS_OT_CancelAppearanceQueue,
     ARC_OUTFITS_OT_ImportReference,
     ARC_OUTFITS_OT_UpdateHairColor,
     ARC_OUTFITS_OT_ImportColorBenchmark,

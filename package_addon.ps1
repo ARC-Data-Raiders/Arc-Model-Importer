@@ -68,6 +68,7 @@ $RootFilesShared = @(
     "ui.py",
     "importing.py",
     "appearance.py",
+    "appearance_queue.py",
     "pose_presets.py",
     "reference_planes.py",
     "revamped_bridge.py",

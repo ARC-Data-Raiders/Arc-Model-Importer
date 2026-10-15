@@ -232,3 +232,28 @@ skin alpha without changing geometry. Goalie retains its authored exposed
 left-hand regions; Abyss covers the whole shared body. Ambiguous definitions
 produce diagnostics. The shared character-cosmetic-clipping section records
 the decoded equations, old-dump correction, validation evidence and limits.
+
+
+## Add All appearance queues (2.19.13)
+
+Each Add Body, Head, Hair, Backpack, Attachment, Charm and Raider Tool button
+has an Add All button immediately below it. Hair includes facial styles;
+Bodies includes the four skin/gender variants. Every entry gets a separate
+character slot, with replacement and attachment to selected outfits disabled
+only for that entry. Existing choices and import settings are restored.
+
+Queues process at most four entries per batch. Missing Pak exports run in a
+worker subprocess; Blender mesh, material and reference work stays on the main
+thread. All four entries finish or report failure before the next batch starts.
+The same import/material paths serve single imports and exported-file mode.
+Each gear entry gets independent support geometry/rigs; early slot stamps
+prevent new heads from changing existing bodies. Exact mount aliases resolve
+cached meshes without redundant extraction. Cancel retains completed entries,
+waits for an active extraction to finish and prevents subsequent batches.
+Failed entries roll back only their new objects; the final UI reports failures.
+Changing source or loading another blend cancels the active queue.
+
+The older Pak index omits Head_* entries, so authored head paths are attempted
+rather than silently removed. Missing uncooked entries (Celeste Cin observed)
+report their exact path and do not stop the queue. No new extraction-cache
+revision is needed; morph revision remains 2.19.12.

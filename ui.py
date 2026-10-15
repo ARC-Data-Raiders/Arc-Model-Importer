@@ -130,6 +130,8 @@ def _draw_head_section(layout, context):
         "arc_outfits.add_appearance_part", text="Add Head", icon="USER",
     )
     op.part = "HEAD"
+    op = left.operator("arc_outfits.add_all_appearance", text="Add All Heads", icon="IMPORT")
+    op.part = "HEAD"
     _draw_preview_icon(right, icon_id)
 
 
@@ -159,6 +161,8 @@ def _draw_hair_section(layout, context):
         "arc_outfits.add_appearance_part", text="Add Hair", icon="PARTICLE_DATA",
     )
     op.part = "HAIR"
+    op = left.operator("arc_outfits.add_all_appearance", text="Add All Hair", icon="IMPORT")
+    op.part = "HAIR"
     _draw_preview_icon(right, icon_id)
 
 
@@ -175,12 +179,37 @@ def _draw_gear_section(layout, context, *, prop: str, part: str, label: str, ico
         "arc_outfits.add_appearance_part", text=f"Add {label}", icon=icon,
     )
     op.part = part
+    plural = {"Backpack": "Backpacks", "Attachment": "Attachments", "Charm": "Charms", "Raider Tool": "Raider Tools"}[label]
+    op = left.operator("arc_outfits.add_all_appearance", text=f"Add All {plural}", icon="IMPORT")
+    op.part = part
     _draw_preview_icon(right, icon_id)
 
 
 def _draw_appearance_section(layout, context):
     """Body / head / hair / gear as sidebar options (not sequential dialogs)."""
     scene = context.scene
+    from . import appearance_queue
+    status = appearance_queue.queue_status()
+    if status:
+        box = layout.box()
+        box.label(text=f"Add All: {status['done']}/{status['total']} · Batch {status['batch']}")
+        box.label(text=status["phase"])
+        box.operator("arc_outfits.cancel_appearance_queue", text="Cancel Add All", icon="CANCEL")
+    elif scene.get("arc_add_all_last_report"):
+        import json
+        try:
+            last = json.loads(scene["arc_add_all_last_report"])
+            box = layout.box()
+            label = appearance_queue.PARTS[last["part"]][1]
+            box.label(text=f"Last Add All {label}: {last['imported']}/{last['total']}")
+            for item in [item for item in last["items"] if not item["ok"]][:3]:
+                box.label(text="Missing / failed: " + item["label"], icon="ERROR")
+            if last["cancelled"]:
+                box.label(text="Cancelled; completed imports kept")
+            if last.get("error"):
+                box.label(text=last["error"][:90], icon="ERROR")
+        except (ValueError, KeyError, TypeError):
+            pass
     if hasattr(scene, "arc_pose_preset"):
         layout.prop(scene, "arc_pose_preset", text="Pose")
     if not hasattr(scene, "arc_appearance_head"):
@@ -195,6 +224,8 @@ def _draw_appearance_section(layout, context):
         op = body_sec.operator(
             "arc_outfits.add_appearance_part", text="Add Body", icon="ARMATURE_DATA",
         )
+        op.part = "BODY"
+        op = body_sec.operator("arc_outfits.add_all_appearance", text="Add All Bodies", icon="IMPORT")
         op.part = "BODY"
 
     head_sec = _collapsible(layout, "arc_appearance_head_sec", "Head", default_closed=True)

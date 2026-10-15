@@ -1655,27 +1655,9 @@ def _mesh_file_usable(path: str) -> bool:
 
 
 def _cached_mesh_from_rel(rel: str) -> str:
-    """UEModel already written under the pak cache for this Pioneer-relative path."""
-    try:
-        from . import pak_extract
-
-        cooked = pak_extract.game_path(rel)
-    except Exception:
-        return ""
-    if not cooked:
-        return ""
-    leaf = cooked.split("/")[-1]
-    parent = os.path.join(pak_extract.cache_dir(), *cooked.split("/")[:-1])
-    if not leaf or not os.path.isdir(parent):
-        return ""
-    target = leaf.casefold() + ".uemodel"
-    try:
-        for name in os.listdir(parent):
-            if name.casefold() == target:
-                return os.path.join(parent, name)
-    except OSError:
-        return ""
-    return ""
+    """Newest exact cached mesh across equivalent cooked mount aliases."""
+    from . import pak_extract
+    return pak_extract._expected_uemodel(pak_extract.cache_dir(), pak_extract.game_path(rel))
 
 
 def locate_appearance_mesh(rel: str) -> str:
@@ -2178,7 +2160,7 @@ def _parent_meshes_to_armature(arm, objects: list) -> None:
             pass
 
 
-def _bind_strap_armature(path: str, objects: list) -> list:
+def _bind_strap_armature(path: str, objects: list, *, reuse_existing=True) -> list:
     """Add the strap skeleton when a UEModel import did not bring an armature.
 
     PSK imports already include one. The strap mesh stays in component space,
@@ -2187,7 +2169,7 @@ def _bind_strap_armature(path: str, objects: list) -> list:
     alive = [o for o in objects if _object_alive(o)]
     if any(getattr(o, "type", "") == "ARMATURE" for o in alive):
         return alive
-    existing = _reusable_strap_armature()
+    existing = _reusable_strap_armature() if reuse_existing else None
     if existing is not None:
         _parent_meshes_to_armature(existing, alive)
         if existing not in alive:
@@ -2221,7 +2203,7 @@ def _import_uemodel_outfit(mesh_path: str) -> list:
 
 
 def import_appearance_mesh(path: str, *, body_variant: str = "NONE", hair_mi: str = "NONE",
-                           skin_json: str = "", manual_skins_folder: str = "", skin_choice: str = "NONE"):
+                           skin_json: str = "", manual_skins_folder: str = "", skin_choice: str = "NONE", import_slot=None):
     """Import .psk/.pskx/.uemodel and apply Arc materials. Returns (ok, msg, objs)."""
     path = bpy.path.abspath(path)
     if not os.path.isfile(path):
@@ -2243,7 +2225,7 @@ def import_appearance_mesh(path: str, *, body_variant: str = "NONE", hair_mi: st
 
                     return import_psk_with_materials(
                         sibling, body_variant=body_variant, hair_mi=hair_mi,
-                        skin_json=skin_json, manual_skins_folder=manual_skins_folder, skin_choice=skin_choice,
+                        skin_json=skin_json, manual_skins_folder=manual_skins_folder, skin_choice=skin_choice, import_slot=import_slot,
                     )
             tip = ""
             try:
@@ -2262,6 +2244,9 @@ def import_appearance_mesh(path: str, *, body_variant: str = "NONE", hair_mi: st
             ), []
         from .operators import apply_materials_to_object
 
+        if import_slot is not None:
+            from . import import_layout
+            import_layout.stamp_objects(objs, slot=import_slot)
         for obj in objs:
             if obj.type != "MESH":
                 continue
@@ -2281,13 +2266,13 @@ def import_appearance_mesh(path: str, *, body_variant: str = "NONE", hair_mi: st
 
     return import_psk_with_materials(
         path, body_variant=body_variant, hair_mi=hair_mi,
-        skin_json=skin_json, manual_skins_folder=manual_skins_folder, skin_choice=skin_choice,
+        skin_json=skin_json, manual_skins_folder=manual_skins_folder, skin_choice=skin_choice, import_slot=import_slot,
     )
 
 
-def _default_slot_armature():
+def _default_slot_armature(*, reuse_existing=True):
     """Strap skeleton used when no outfit is in the scene. Mesh is not kept."""
-    existing = _reusable_strap_armature()
+    existing = _reusable_strap_armature() if reuse_existing else None
     if existing is not None:
         return existing, ""
     path = resolve_backpack_strap_mesh() or locate_appearance_mesh(_BACKPACK_STRAP_RELS[0])
@@ -2295,7 +2280,7 @@ def _default_slot_armature():
         reason = getattr(_mesh_from_pak, "last_reason", "") or "SK_Default_Strap was not found"
         return None, f"No default strap skeleton ({reason})"
     if path.casefold().endswith(".uemodel"):
-        bound = _bind_strap_armature(path, [])
+        bound = _bind_strap_armature(path, [], reuse_existing=reuse_existing)
         arm = next((o for o in bound if _object_alive(o) and o.type == "ARMATURE"), None)
         if arm is None:
             return None, "Strap UEModel has no skeleton"
@@ -2323,6 +2308,8 @@ def import_appearance_parts(
     roles: set[str] | list[str] | None = None,
     attach_to=None,
     replace_selected: bool | None = None,
+    standalone: bool = False,
+    layout_slot: int | None = None,
 ) -> tuple[int, list[str], list]:
     """Import body/head/hair from scene props for the given *roles*.
 
@@ -2468,7 +2455,7 @@ def import_appearance_parts(
                 "Characters/Backpacks/Frames/Default"
             )
 
-    if attach_to is None and any(r in _GEAR_ATTACH_BONE or r == "BackpackStrap" for r, _p, _v in jobs):
+    if not standalone and attach_to is None and any(r in _GEAR_ATTACH_BONE or r == "BackpackStrap" for r, _p, _v in jobs):
         # Same pad as the outfit: hang the rack on slot bones instead of the feet.
         if any(r == "Backpack" for r, _p, _v in jobs):
             attach_to = armature_on_first_slot_missing("Backpack")
@@ -2480,7 +2467,7 @@ def import_appearance_parts(
     if not jobs:
         return 0, msgs or ["Nothing selected to import"], []
 
-    prefer_slot = None
+    prefer_slot = layout_slot
     if do_replace:
         # Prefer the outfit armature even when not merging (Add off) so we can
         # find the old part on that pad from a clothing-mesh selection.
@@ -2537,7 +2524,7 @@ def import_appearance_parts(
         ok, msg, objs = import_appearance_mesh(
             path,
             body_variant=body_variant,
-            hair_mi=hair_mi,
+            hair_mi=hair_mi, import_slot=layout_slot,
         )
         if not ok:
             msgs.append(f"{role}: {msg}")
@@ -2552,7 +2539,7 @@ def import_appearance_parts(
                 except Exception:
                     pass
         if role == "Charm" and _charm_needs_connector(objs):
-            connector_host = attach_to if attach_to is not None else _reusable_strap_armature(require_empty_backpack=False)
+            connector_host = attach_to if attach_to is not None else (None if standalone else _reusable_strap_armature(require_empty_backpack=False))
             if not _charm_connector_on_armature(connector_host):
                 connector = _resolve_pioneer_mesh_rel(_BACKPACK_CHARM_CONNECTOR_RELS)
                 if connector:
@@ -2560,7 +2547,7 @@ def import_appearance_parts(
                 else:
                     msgs.append("Charm connector SM_BackpackCharm_Karabiner not found in the Pioneer folder or paks")
         if role == "BackpackStrap":
-            objs = _bind_strap_armature(path, objs)
+            objs = _bind_strap_armature(path, objs, reuse_existing=not standalone)
         alive = [o for o in objs if _object_alive(o)]
         new_objects.extend(alive)
         role_meshes.setdefault(slot_role, []).extend(
@@ -2626,7 +2613,7 @@ def import_appearance_parts(
             and str(o.get("arc_assembly_role") or "") == "BackpackStrap"
         ]
         if not strap_arms:
-            host, note = _default_slot_armature()
+            host, note = _default_slot_armature(reuse_existing=not standalone)
             if host is not None:
                 strap_arms = [host]
                 new_objects.append(host)

@@ -311,52 +311,46 @@ def ensure_pak_browser(scene) -> tuple[dict, str]:
     return index, pak_catalog.browser_tree(index, cache_dir(), configured_dir(scene))
 
 
-def extract_paths(game_dir: str, usmap: str, asset_paths: list[str]) -> tuple[int, str, list[str]]:
-    """Run the helper for package paths or folders. Returns (exit code, log, uemodel paths)."""
+def extraction_command(game_dir: str, usmap: str, paths: list[str], *, out_dir=None) -> list[str]:
+    """Build extraction arguments on the main thread; workers receive strings only."""
     exe = exe_path()
     if not exe:
-        raise FileNotFoundError(
-            "ArcPak.Export.exe is not next to the addon. Publish ArcPak or reinstall the packaged addon."
-        )
-    paths = [p for p in (asset_paths or []) if p]
-    if not paths:
-        return 1, "no asset path", []
-    out_dir = cache_dir()
-    cmd = [
-        exe,
-        "extract",
-        "--game-dir",
-        game_dir,
-        "--usmap",
-        usmap,
-        "--out",
-        out_dir,
-        "--index-dir",
-        index_dir(),
-    ]
+        raise FileNotFoundError("ArcPak.Export.exe is missing; reinstall the packaged addon")
+    cmd = [exe, "extract", "--game-dir", game_dir, "--usmap", usmap,
+           "--out", out_dir or cache_dir(), "--index-dir", index_dir()]
     for asset in paths:
         cmd.extend(["--path", asset])
     bundled_index = os.path.join(_addon_dir(), "ArcPak", "mappings", "pak-index.bin")
     if os.path.isfile(bundled_index):
         cmd.extend(["--index", bundled_index])
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=600,
-        creationflags=_CREATE_NO_WINDOW,
-    )
-    log = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+    return cmd
+
+
+def complete_extraction(out_dir, paths, code, log, revision):
+    """Finalize cache state on the main thread after an exporter has finished."""
     global _LAST_EXTRACT_LOG
     _LAST_EXTRACT_LOG = log
     meshes = _collect_uemodels(out_dir, paths)
-    if proc.returncode == 0:
-        revision = _extraction_revision()
+    if code == 0:
         for mesh in meshes:
             with open(mesh + ".arc-extract.json", "w", encoding="utf-8") as stream:
                 json.dump({"revision": revision}, stream)
     utils.set_pak_cache_root(out_dir)
     textures.clear_clothing_path_caches()
+    return meshes
+
+
+def extract_paths(game_dir: str, usmap: str, asset_paths: list[str]) -> tuple[int, str, list[str]]:
+    """Extract packages/folders, then finalize their material/mesh caches."""
+    paths = [path for path in (asset_paths or []) if path]
+    if not paths:
+        return 1, "no asset path", []
+    out_dir = cache_dir()
+    command = extraction_command(game_dir, usmap, paths, out_dir=out_dir)
+    proc = subprocess.run(command, capture_output=True, text=True, timeout=600,
+                          creationflags=_CREATE_NO_WINDOW)
+    log = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+    meshes = complete_extraction(out_dir, paths, proc.returncode, log, _extraction_revision())
     return proc.returncode, log, meshes
 
 
