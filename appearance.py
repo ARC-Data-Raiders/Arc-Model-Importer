@@ -2440,7 +2440,7 @@ def repair_hair_object(obj, scene=None, *, place_static=True):
             owner = plane.parent
             if owner == obj or (obj.parent is not None and owner == obj.parent) or str(plane.get("arc_reference_anchor") or "") == obj.name:
                 references.append((plane, plane.matrix_world.copy()))
-        placed, message = hair_placement.place_static_hair(obj, scene)
+        placed, message = hair_placement.place_hair_at_head(obj, scene)
         if placed and references:
             bpy.context.view_layer.update()
             delta = center() - old_center
@@ -2881,7 +2881,7 @@ def import_appearance_parts(
         hair_targets.extend(o for o in context.scene.objects if o.type == "MESH" and o not in hair_targets and str(o.get("arc_assembly_role") or "") in {"Hair", "FacialHair"})
     for hair in hair_targets:
         try:
-            placed, note = hair_placement.place_static_hair(hair, context.scene)
+            placed, note = hair_placement.place_hair_at_head(hair, context.scene)
             if placed:
                 msgs.append(note)
         except (ValueError, OSError) as exc:

@@ -4239,7 +4239,7 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
     links = mat.node_tree.links
     nodes.clear()
     _stamp_mi_family(mat, FAMILY_SIMPLE)
-    mat["arc_simple_setup"] = "v4"
+    mat["arc_simple_setup"] = "v5"
 
     log = utils.get_logger()
     params = sorted(_mi_tex_params(mi))
@@ -4272,7 +4272,7 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
         principled.inputs["Metallic"].default_value = min(max(float(metal), 0.0), 1.0)
         _set_material_alpha_mode(mat, mode="OPAQUE", threshold=1.0, two_sided=True)
         try:
-            mat["arc_simple_setup"] = "v4"
+            mat["arc_simple_setup"] = "v5"
         except Exception:
             pass
         return
@@ -4466,24 +4466,47 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
             principled.inputs["Base Color"].default_value = tint
         log.warning("Simple MI '%s' has no resolvable albedo texture", os.path.basename(mi_path))
 
-    # M_ItemPreset's active RGB Tint Mask permutation samples the mask's R
-    # channel and computes saturate(lerp(CR, 2*CR*Tint, mask.R)). This is the
-    # current Fuel/Gas shader, not a three-colour palette or full-surface tint.
-    if a_node is not None and _mi_switch(switches, "Use Tinting", default=False) and _mi_switch(switches, "RGB Tint Mask", default=False):
-        _path, tint_img = _find_env_tex(tex_lookup, "RGB Tint Mask Input")
-        tint_value = _mi_colour(colours, "Tint", default=None)
-        if tint_img is not None and tint_value is not None:
-            tint_node = _new_tex_image(nodes, tint_img, "Authored RGB tint mask (R)", (COL_TEX, -600), non_color=True)
-            channels = nodes.new("ShaderNodeSeparateColor")
-            links.new(tint_node.outputs["Color"], channels.inputs["Color"])
+    # Shipping M_ItemPreset permutations use the same masked tint equation,
+    # with either a separate RGB mask.R (Fuel/Gas) or packed normal.B
+    # (RelaxedAustronautTool). Other inherited tint/swatch flags can be dead;
+    # never tint when Use Tinting is off or borrow a mask from another family.
+    packed_item_tint = False
+    tint_value = _mi_colour(colours, "Tint", default=None)
+    if a_node is not None and tint_value is not None and _mi_switch(switches, "Use Tinting", default=False):
+        tint_mask = None
+        tint_profile = ""
+        if _mi_switch(switches, "RGB Tint Mask", default=False):
+            _path, tint_img = _find_env_tex(tex_lookup, "RGB Tint Mask Input")
+            if tint_img is not None:
+                tint_node = _new_tex_image(nodes, tint_img, "Authored RGB tint mask (R)", (COL_TEX, -600), non_color=True)
+                channels = nodes.new("ShaderNodeSeparateColor")
+                links.new(tint_node.outputs["Color"], channels.inputs["Color"])
+                tint_mask = channels.outputs["Red"]
+                tint_profile = "mask-red-lerp-v1"
+        else:
+            normal_path = next((fp for _p, (fp, im) in tex_lookup.items() if im == normal_img), "")
+            packed_code = os.path.splitext(normal_path)[0].rsplit("_", 1)[-1].lower()
+            item_preset = "m_itempreset" in str(mi.get("parent") or "").lower() or (
+                "RGB Tint Mask Input" in params and "Packed Mask" in params
+                and "Metalness Value" in scalars and "Roughness Power" in scalars
+            )
+            if normal_img is not None and packed_code in {"nxm", "nmx", "nom"} and item_preset:
+                normal_img.alpha_mode = "CHANNEL_PACKED"
+                tint_node = _new_tex_image(nodes, normal_img, "Authored packed normal tint mask (B)", (COL_TEX, -600), non_color=True)
+                channels = nodes.new("ShaderNodeSeparateColor")
+                links.new(tint_node.outputs["Color"], channels.inputs["Color"])
+                tint_mask = channels.outputs["Blue"]
+                tint_profile = "normal-blue-lerp-v1"
+                packed_item_tint = True
+        if tint_mask is not None:
             tint_rgb = _rgb_node(nodes, tuple(float(v)*2 for v in tint_value[:3]), "Authored Tint × 2", (COL_MIX, 650))
             tinted = _mix_rgba(nodes, links, a_node.outputs["Color"], tint_rgb, 1.0,
                                (COL_MIX+180, 600), "CR × authored tint", blend="MULTIPLY")
-            color = _mix_rgba(nodes, links, a_node.outputs["Color"], tinted, channels.outputs["Red"],
+            color = _mix_rgba(nodes, links, a_node.outputs["Color"], tinted, tint_mask,
                               (COL_MIX+360, 600), "Authored masked tint")
             color.node.clamp_result = True
             links.new(color, principled.inputs["Base Color"])
-            mat["arc_item_tint_setup"] = "mask-red-lerp-v1"
+            mat["arc_item_tint_setup"] = tint_profile
 
     if normal_img:
         # Packed normals carry material data in B/A. Keep a zero metallic
@@ -4526,7 +4549,7 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
                 energy.inputs[1].default_value = _mi_scalar(scalars, "Emissive Power", default=1.0)
                 links.new(packed.outputs["Blue"], energy.inputs[0])
                 links.new(energy.outputs[0], principled.inputs["Emission Strength"])
-            if packed_code in {"nox", "nom"} and principled.inputs["Base Color"].links:
+            if packed_code in {"nox", "nom"} and not packed_item_tint and principled.inputs["Base Color"].links:
                 base = principled.inputs["Base Color"].links[0].from_socket
                 ao = _mix_rgba(nodes, links, base, packed.outputs["Blue"], 1.0,
                                (COL_MIX + 180, 240), "Packed normal occlusion", blend="MULTIPLY")

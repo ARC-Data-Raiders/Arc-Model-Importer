@@ -421,3 +421,8 @@ remain zero. Raider Tool artwork rotates 23 degrees clockwise before UV cropping
 keeping the original PNG unchanged and both sides readable. Head/facial fitting
 preserves those fixed defaults. Exact charm connector geometry shares automatically
 while object socket placement and material overrides remain independent.
+
+### 2.19.18 hair, studio lighting and reference-safe comparisons
+
+Hair and facial-hair repairs preserve dedicated strand shaders through generic material updates, resolve wrapped MI exports and prefer exact cache identities. Skeletal hair uses the character component frame; static styles retain authored head-bone placement. RelaxedAustronautTool now uses its verified packed blue-channel orange tint mask. Pose is directly below Inherit Shape Key; grouping controls lead Settings.
+Explicit studio receiver sets stay synchronized with imports/regrouping. Optional model saturation grading bypasses reference pixels via Cryptomatte for final renders; reference scenes keep viewport compositing disabled. Neutral Standard viewing matches the original sRGB UI PNG; references cannot bypass a later global display transform. Current Paks expose exact customization/player-card/weapon capture spotlights, but do not prove the baked inventory-icon lighting rig. Agent scratch and Blender temp storage use Z; completed unused test profiles are cleaned.

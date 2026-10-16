@@ -1801,13 +1801,43 @@ def _parse_hair_mi(json_path: str) -> dict:
 
 
 
-def _resolve_hair_texture(tex_stem: str, obj_path: str = "") -> str:
+def _hair_source_asset(source: str, object_path: str, extension: str) -> str:
+    """Resolve an exact package beside this mesh/MI before legacy donor trees."""
+    if not source or not object_path:
+        return ""
+    normalized = textures._fs_abspath(source).replace("\\", "/")
+    reference = object_path.replace("\\", "/").strip("/")
+    for prefix in ("Game/", "PioneerGame/Content/", "RemappedPlugins/Content/"):
+        if reference.casefold().startswith(prefix.casefold()):
+            relative = reference[len(prefix):]
+            break
+    else:
+        return ""
+    if "." in relative.rsplit("/", 1)[-1]:
+        relative = relative.rsplit(".", 1)[0]
+    for boundary in ("/PioneerGame/Content/", "/RemappedPlugins/Content/", "/Game/"):
+        offset = normalized.casefold().find(boundary.casefold())
+        if offset < 0:
+            continue
+        root = normalized[:offset]
+        mounts = (boundary.strip("/"), "PioneerGame/Content", "RemappedPlugins/Content", "Game")
+        candidates = [textures._fs_abspath(root + "/" + mount + "/" + relative + extension)
+                      for mount in dict.fromkeys(mounts)]
+        candidates = [path for path in candidates if os.path.isfile(path)]
+        return max(candidates, key=os.path.getmtime) if candidates else ""
+    return ""
+
+
+def _resolve_hair_texture(tex_stem: str, obj_path: str = "", source: str = "") -> str:
     """Resolve a hair atlas / colour map PNG from ObjectPath, FMDex, or Hairs/.
 
     FoxHatCards only overrides GlobalHairColor; Coverage/Depth/Tangent/Attribute
     come from TextureStreamingData names (BobSlick atlases) with no ObjectPath.
     FMDex often lacks those texture packages, so fall back to Content walks.
     """
+    local = _hair_source_asset(source, obj_path, ".png")
+    if local:
+        return local
     if obj_path:
         fpath = textures.find_texture_from_object_path(obj_path)
         if fpath:
@@ -2448,7 +2478,7 @@ def apply_hair_nxa_bridge(
 def setup_hair_material(obj, json_path: str, colour_json: str = ""):
     """Build every authored card/accessory slot, including existing old imports."""
     from .. import textures, uemodel_import
-    source = str(obj.get("arc_source_mesh") or obj.get("arc_psk_path") or "")
+    source = textures._fs_abspath(str(obj.get("arc_source_mesh") or obj.get("arc_psk_path") or ""))
     native = os.path.splitext(source)[0] + ".uemodel"
     sections = []
     if os.path.isfile(native):
@@ -2473,8 +2503,10 @@ def setup_hair_material(obj, json_path: str, colour_json: str = ""):
             mi_path = ""
             for binding in bindings:
                 if binding["slot"].casefold() == str(slot).casefold():
-                    mi_path = binding["path"]
+                    mi_path = _hair_source_asset(source, binding["material_path"], ".json") or binding["path"]
                     break
+            if not mi_path:
+                mi_path = _hair_source_asset(source, reference, ".json")
             if not mi_path:
                 mi_path = textures.find_asset_from_object_path(reference, ".json") if reference else ""
             if not mi_path:
@@ -2549,7 +2581,7 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
     for param_name, tex_stem, obj_path in mi["textures"]:
         fpath = obj_path if obj_path and os.path.isfile(obj_path) else ""
         if not fpath:
-            fpath = _resolve_hair_texture(tex_stem, obj_path)
+            fpath = _resolve_hair_texture(tex_stem, obj_path, source=json_path)
         if not fpath:
             continue
         img = bpy.data.images.load(fpath, check_existing=True)
@@ -2821,6 +2853,10 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
 
     try:
         mat["arc_mi_path"] = os.path.abspath(json_path)
+        mat["arc_mi_family"] = "hair"
+        for stamp in ("arc_simple_setup", "arc_mi_stem"):
+            if stamp in mat:
+                del mat[stamp]
         mat["arc_hair_cards"] = 1
         mat["arc_hair_shader"] = "Principled"
         if colour_json and colour_json != "NONE":

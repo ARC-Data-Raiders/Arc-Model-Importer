@@ -44,6 +44,62 @@ def _head_anchor(path):
     return None
 
 
+def place_hair_at_head(obj, scene=None):
+    """Align authored component-space hair to its same-slot character frame.
+
+    Origin recentering must not center an asymmetric hairstyle independently of
+    the skull. Static styles still use the verified head-bone attachment path.
+    """
+    from . import import_layout, reference_planes
+    scene = scene or bpy.context.scene
+    source = _source(obj)
+    norm = source.replace('\\', '/').casefold()
+    if not source or ('/characters/hairs/' not in norm and '/characters/facialhairs/' not in norm):
+        return False, 'Not an authored hairstyle'
+    if not uemodel_import.parse_uemodel_bones(source):
+        cards = [(p, p.matrix_world.copy()) for p in scene.objects
+                 if p.get('arc_reference_plane') and int(p.get('arc_reference_layout_schema') or 0) >= 2
+                 and p.parent == obj]
+        result = place_static_hair(obj, scene)
+        bpy.context.view_layer.update()
+        for plane, world in cards:
+            reference_planes._anchor_plane(plane, obj, organize=False, world_matrix=world)
+        return result
+    # Facial cages have their own authored correspondence/transform transfer.
+    if '/characters/facialhairs/' in norm:
+        return False, 'Facial hair retains its authored cage frame'
+    frame = _frame(obj, source)
+    slot = import_layout.slot_of_object(obj)
+    candidates = [o for o in scene.objects if o.type == 'MESH' and o != obj
+                  and import_layout.infer_role(o) in {'Head', 'Body'}
+                  and import_layout.slot_of_object(o) == slot and _source(o)]
+    candidates.sort(key=lambda o: 0 if import_layout.infer_role(o) == 'Head' else 1)
+    component = None
+    reference = ''
+    for candidate in candidates:
+        try:
+            component = candidate.matrix_world @ _frame(candidate, _source(candidate))
+        except ValueError:
+            continue
+        reference = candidate.name
+        break
+    if component is None:
+        if slot is None:
+            return False, 'No verified character slot for component-space hair'
+        x, y = import_layout.slot_world_xy(slot, scene)
+        component = Matrix.Translation((x, y, 0.0))
+        reference = 'character pad'
+    cards = [(p, p.matrix_world.copy()) for p in scene.objects
+             if p.get('arc_reference_plane') and int(p.get('arc_reference_layout_schema') or 0) >= 2
+             and p.parent == obj]
+    obj.matrix_world = component @ frame.inverted()
+    obj['arc_hair_component_reference'] = reference
+    bpy.context.view_layer.update()
+    for plane, world in cards:
+        reference_planes._anchor_plane(plane, obj, organize=False, world_matrix=world)
+    return True, 'Skeletal hair aligned to authored character component frame'
+
+
 def place_static_hair(obj, scene=None):
     """Attach static hair to its authored head rest bone; repeated calls are safe.
 

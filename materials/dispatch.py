@@ -333,8 +333,31 @@ def fix_object_materials_from_mi_slots(
     from .. import textures as texmod
 
     log = utils.get_logger()
+    # Cosmetic repair must retain the dedicated card shader and opaque tie slots.
+    # Generic MI family dispatch has no character object/section context.
+    source = str(obj.get("arc_source_mesh") or obj.get("arc_psk_path") or "")
+    colour_json = str(obj.get("arc_hair_color_mi") or "")
+    if context != CTX_MAP and source and os.path.isfile(source) and texmod.is_hair(source):
+        from .character import setup_hair_material
+        setup_hair_material(obj, str(obj.get("arc_hair_mi") or ""), colour_json=colour_json)
+        return sum(slot.material is not None for slot in obj.material_slots)
+
+    def rebuild_hair_slot(index, mi_path):
+        if context == CTX_MAP or not texmod.is_hair_cards_mi(mi_path):
+            return False
+        from .character import _setup_hair_card_material
+        old_index = obj.active_material_index
+        try:
+            obj.active_material_index = index
+            if obj.active_material and obj.active_material.users > 1:
+                obj.active_material = obj.active_material.copy()
+            _setup_hair_card_material(obj, mi_path, colour_json=colour_json)
+        finally:
+            obj.active_material_index = old_index
+        return True
+
     fixed = 0
-    for slot in obj.material_slots:
+    for index, slot in enumerate(obj.material_slots):
         if not slot.material:
             continue
         # Already wired to a shared Arc MI — skip rebuild unless out of context
@@ -358,6 +381,9 @@ def fix_object_materials_from_mi_slots(
             # Fall through to resolve below (CTX_MAP will refuse Characters).
         elif existing_key:
             if path_allowed_for_context(existing_key, context):
+                if rebuild_hair_slot(index, existing_key):
+                    fixed += 1
+                    continue
                 # Update Materials must run the same version/family gate as a
                 # fresh import, including materials retained in saved blends.
                 current = _get_or_build_shared_mi_material(
@@ -438,6 +464,9 @@ def fix_object_materials_from_mi_slots(
                     "FMDex tags for '%s' are %s — still routing as MI slot",
                     mi_stem, tags,
                 )
+            if rebuild_hair_slot(index, mi_path):
+                fixed += 1
+                continue
             mat = _get_or_build_shared_mi_material(
                 mi_stem, mi_path, psk_hint, mi_stem.lower(),
             )

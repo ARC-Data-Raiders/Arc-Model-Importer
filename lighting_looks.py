@@ -28,7 +28,7 @@ from . import utils
 _LUT_PREFIX = "RGBTable16x1_Kodak5218"
 _LUT_RE = re.compile(r"^RGBTable16x1_Kodak5218(?:_(.+))?$", re.IGNORECASE)
 _GROUP_NAME = "ArcLightingLook"
-_STACK_VERSION = 8  # v8: skip Kodak LUT on reference planes (Object Index / ID Mask)
+_STACK_VERSION = 9  # v9: raw-reference bypass, active RGBA sockets and optional mesh saturation
 # Must match reference_planes.REF_PASS_INDEX — UI art is already display-referred.
 _REF_PASS_INDEX = 64
 # Common Pioneer SkyLight / reflection SourceCubemapAngle (degrees) — not Blender-default Z.
@@ -971,7 +971,10 @@ def _enable_viewport_compositor() -> None:
                 for space in area.spaces:
                     if space.type == "VIEW_3D" and hasattr(space.shading, "use_compositor"):
                         # ALWAYS: Material + Rendered previews; CAMERA only when looking through camera.
-                        space.shading.use_compositor = "ALWAYS"
+                        # Viewport render passes cannot provide an object matte.
+                        # Keep reference cards ungraded there; F12 uses Cryptomatte.
+                        space.shading.use_compositor = ("DISABLED" if any(
+                            o.get('arc_reference_plane') for o in bpy.context.scene.objects) else "ALWAYS")
     except Exception as exc:
         print(f"Arc Lighting Look: could not enable viewport compositor ({exc})")
 
@@ -1127,6 +1130,26 @@ def _set_rgb_curve_points(curve_node, r_pts, g_pts, b_pts) -> None:
         pass
 
 
+def _rgba_input(node, name):
+    return next(socket for socket in node.inputs if socket.name == name and socket.type == 'RGBA')
+
+
+def _rgba_output(node):
+    return next(socket for socket in node.outputs if socket.type == 'RGBA')
+
+
+def sync_reference_compositor_mask(scene=None):
+    scene = scene or bpy.context.scene
+    tree = scene.compositing_node_group
+    if tree is None or not tree.get('arc_stack_version'):
+        return
+    mask = _find_node(tree.nodes, label='ArcLightingRefMask')
+    if mask is not None and mask.bl_idname == 'CompositorNodeCryptomatteV2':
+        mask.scene = scene
+        mask.layer_name = scene.view_layers[0].name + '.CryptoObject'
+        mask.matte_id = ', '.join(o.name for o in scene.objects if o.get('arc_reference_plane'))
+
+
 def _ensure_compositor_stack(
     scene: bpy.types.Scene,
     *,
@@ -1143,6 +1166,8 @@ def _ensure_compositor_stack(
     Gray-axis RGB Curves from the Kodak RGBTable are used instead (strength-mixable).
     """
     atmos = atmos or {}
+    for layer in scene.view_layers:
+        layer.use_pass_cryptomatte_object = True
     nt = bpy.data.node_groups.get(_GROUP_NAME)
     if nt is None or nt.bl_idname != "CompositorNodeTree":
         if nt is not None:
@@ -1196,19 +1221,23 @@ def _ensure_compositor_stack(
             pass
         _set_fac(lut_mix, 1.0)
 
-        # Skip Kodak on reference UI planes (already display-referred icons).
-        id_mask = nodes.new("CompositorNodeIDMask")
+        # Cryptomatte retains reference transparency and antialiased edges.
+        id_mask = nodes.new("CompositorNodeCryptomatteV2")
         id_mask.label = "ArcLightingRefMask"
-        id_mask.location = (x0 + 780, -220)
-        # Blender 5: Index / Anti-Alias are sockets (not RNA props).
-        if "Index" in id_mask.inputs:
-            id_mask.inputs["Index"].default_value = int(_REF_PASS_INDEX)
-        if "Anti-Alias" in id_mask.inputs:
-            id_mask.inputs["Anti-Alias"].default_value = False
+        id_mask.location = (x0 + 780, -300)
+        id_mask.scene = scene
+        id_mask.layer_name = scene.view_layers[0].name + '.CryptoObject'
+
+        saturation = nodes.new("CompositorNodeHueSat")
+        saturation.label = "ArcMeshSaturation"
+        saturation.location = (x0 + 980, 80)
+        hue = nodes.new("CompositorNodeHueCorrect")
+        hue.label = "ArcMeshHueSaturation"
+        hue.location = (x0 + 1200, 80)
 
         ref_hold = nodes.new("ShaderNodeMix")
         ref_hold.label = "ArcLightingRefHoldout"
-        ref_hold.location = (x0 + 1000, 0)
+        ref_hold.location = (x0 + 1440, 0)
         try:
             ref_hold.data_type = "RGBA"
             ref_hold.clamp_factor = True
@@ -1217,41 +1246,28 @@ def _ensure_compositor_stack(
         _set_fac(ref_hold, 0.0)
 
         go = nodes.new("NodeGroupOutput")
-        go.location = (x0 + 1260, 0)
+        go.location = (x0 + 1700, 0)
 
         viewer = nodes.new("CompositorNodeViewer")
         viewer.label = "ArcLightingViewer"
-        viewer.location = (x0 + 1260, -160)
+        viewer.location = (x0 + 1700, -160)
 
         links.new(rl.outputs["Image"], bloom.inputs["Image"])
         curve_in = curves.inputs.get("Image") or curves.inputs[0]
         links.new(bloom.outputs["Image"], curve_in)
         curve_out = curves.outputs.get("Image") or curves.outputs[0]
 
-        a_sock = lut_mix.inputs.get("A_Color") or lut_mix.inputs.get("A")
-        b_sock = lut_mix.inputs.get("B_Color") or lut_mix.inputs.get("B")
-        if a_sock is not None:
-            links.new(bloom.outputs["Image"], a_sock)
-        if b_sock is not None:
-            links.new(curve_out, b_sock)
-
-        lut_result = lut_mix.outputs.get("Result_Color") or lut_mix.outputs.get("Result") or lut_mix.outputs[0]
-        # Fac = reference mask → B (ungraded bloom) over A (LUT result).
+        links.new(bloom.outputs["Image"], _rgba_input(lut_mix, 'A'))
+        links.new(curve_out, _rgba_input(lut_mix, 'B'))
+        links.new(_rgba_output(lut_mix), saturation.inputs['Image'])
+        links.new(saturation.outputs['Image'], hue.inputs['Image'])
+        links.new(rl.outputs['Image'], id_mask.inputs['Image'])
         fac_sock = ref_hold.inputs.get("Factor") or ref_hold.inputs.get("Fac")
-        a_hold = ref_hold.inputs.get("A_Color") or ref_hold.inputs.get("A")
-        b_hold = ref_hold.inputs.get("B_Color") or ref_hold.inputs.get("B")
-        idx_out = rl.outputs.get("IndexOB") or rl.outputs.get("Index Object")
-        if idx_out is not None and "ID value" in id_mask.inputs:
-            links.new(idx_out, id_mask.inputs["ID value"])
-        mask_out = id_mask.outputs.get("Alpha") or id_mask.outputs[0]
-        if fac_sock is not None:
-            links.new(mask_out, fac_sock)
-        if a_hold is not None:
-            links.new(lut_result, a_hold)
-        if b_hold is not None:
-            links.new(bloom.outputs["Image"], b_hold)
-
-        result = ref_hold.outputs.get("Result_Color") or ref_hold.outputs.get("Result") or ref_hold.outputs[0]
+        links.new(id_mask.outputs['Matte'], fac_sock)
+        links.new(hue.outputs['Image'], _rgba_input(ref_hold, 'A'))
+        # UI cards bypass every compositor adjustment, including bloom.
+        links.new(rl.outputs['Image'], _rgba_input(ref_hold, 'B'))
+        result = _rgba_output(ref_hold)
         out_in = _group_output_socket(go)
         links.new(result, out_in)
         links.new(result, viewer.inputs["Image"])
@@ -1318,7 +1334,27 @@ def _ensure_compositor_stack(
         else:
             _set_fac(lut_mix, 0.0)
 
+    saturation = _find_node(nodes, label='ArcMeshSaturation')
+    if saturation is not None:
+        saturation.inputs['Saturation'].default_value = max(0.0, float(scene.get('arc_preview_saturation', 1.0)))
+    hue = _find_node(nodes, label='ArcMeshHueSaturation')
+    if hue is not None:
+        curve = hue.mapping.curves[1]  # S curve: neutral ordinate is 0.5.
+        points = [(0.0, float(scene.get('arc_preview_red_saturation', 1.0))),
+                  (1/6, float(scene.get('arc_preview_yellow_saturation', 1.0))),
+                  (1/3, 1.0), (0.5, 1.0),
+                  (2/3, float(scene.get('arc_preview_blue_saturation', 1.0))),
+                  (5/6, 1.0), (1.0, float(scene.get('arc_preview_red_saturation', 1.0)))]
+        while len(curve.points) > 2:
+            curve.points.remove(curve.points[1])
+        curve.points[0].location = (0.0, 0.5*points[0][1])
+        curve.points[-1].location = (1.0, 0.5*points[-1][1])
+        for x, gain in points[1:-1]:
+            curve.points.new(x, 0.5*gain)
+        hue.mapping.update()
+
     scene.compositing_node_group = nt
+    sync_reference_compositor_mask(scene)
     try:
         scene.render.use_compositing = True
     except Exception:

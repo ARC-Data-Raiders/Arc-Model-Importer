@@ -1690,19 +1690,9 @@ def _mi_parent_blob(json_path: str) -> str:
     data = _load_mi_json_data(json_path)
     if data is None:
         return ""
-    entry = None
     try:
-        if isinstance(data, list):
-            for e in data:
-                if isinstance(e, dict) and e.get("Type") in (
-                    "MaterialInstanceConstant", "MaterialInstance",
-                ):
-                    entry = e
-                    break
-        elif isinstance(data, dict) and data.get("Type") in (
-            "MaterialInstanceConstant", "MaterialInstance",
-        ):
-            entry = data
+        entry = (utils.first_ue_export(data, "MaterialInstanceConstant")
+                 or utils.first_ue_export(data, "MaterialInstance"))
         if not isinstance(entry, dict):
             return ""
         parent = (entry.get("Properties") or {}).get("Parent") or {}
@@ -1733,16 +1723,8 @@ def is_hair_cards_mi(json_path: str) -> bool:
         if "coverage" in names and names & {"globalhaircolor", "attributemap", "tangent"}:
             return True
     try:
-        entry = None
-        if isinstance(data, list):
-            for e in data:
-                if isinstance(e, dict) and e.get("Type") in (
-                    "MaterialInstanceConstant", "MaterialInstance",
-                ):
-                    entry = e
-                    break
-        elif isinstance(data, dict):
-            entry = data
+        entry = (utils.first_ue_export(data, "MaterialInstanceConstant")
+                 or utils.first_ue_export(data, "MaterialInstance"))
         props = (entry or {}).get("Properties") or {}
         for tp in props.get("TextureParameterValues") or []:
             pname = str((tp.get("ParameterInfo") or {}).get("Name", "") or "").lower()

@@ -173,6 +173,32 @@ def _tree(root):
     return result
 
 
+def sync_light_receivers(scene=None):
+    """Maintain explicitly configured studio receiver sets across imports/regrouping."""
+    scene = scene or bpy.context.scene
+    characters = {'Body', 'Head', 'Hair', 'FacialHair', 'Outfit'}
+    meshes = [o for o in scene.objects if o.type == 'MESH' and not o.get('arc_reference_plane')]
+    counts = {}
+    configured = {light.light_linking.receiver_collection for light in scene.objects
+                  if light.type == 'LIGHT' and light.light_linking.receiver_collection}
+    for collection in configured:
+        group = collection.get('arc_light_receiver_group')
+        if group not in {'CHARACTERS', 'ACCESSORIES'}:
+            continue
+        wanted = {o for o in meshes if role_for(o) in characters} if group == 'CHARACTERS' else {
+            o for o in meshes if role_for(o) and role_for(o) not in characters}
+        for obj in list(collection.objects):
+            if obj not in wanted:
+                collection.objects.unlink(obj)
+        for obj in wanted:
+            if obj.name not in collection.objects:
+                collection.objects.link(obj)
+        for entry in collection.collection_objects:
+            entry.light_linking.link_state = 'INCLUDE'
+        counts[group] = len(wanted)
+    return counts
+
+
 def organize_objects(objects=None, scene=None, mode=None):
     scene=scene or bpy.context.scene
     if mode is not None:scene[MODE_KEY]=mode
@@ -215,6 +241,9 @@ def organize_objects(objects=None, scene=None, mode=None):
             if obj.name in layer.objects:obj.hide_set(hidden,view_layer=layer);obj.select_set(selected,view_layer=layer)
     for layer,obj in active.items():
         if obj is not None and obj.name in layer.objects:layer.objects.active=obj
+    sync_light_receivers(scene)
+    from .lighting_looks import sync_reference_compositor_mask
+    sync_reference_compositor_mask(scene)
     return {'objects':len(objects),'renamed':renamed}
 
 

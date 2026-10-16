@@ -491,7 +491,7 @@ def _needs_env_props_rebuild(mat, mi_path: str = "") -> bool:
     if not uses_env_props:
         # Null / procedural MIs (elevator cables) used to stay flat-grey forever.
         if fam == FAMILY_SIMPLE and bool(mi.get("is_null")) and (mi.get("colours") or []):
-            return str(mat.get("arc_simple_setup") or "") != "v4"
+            return str(mat.get("arc_simple_setup") or "") != "v5"
         return False
     if fam == FAMILY_SIMPLE:
         return True

@@ -41,8 +41,8 @@ def _draw_offset_settings(layout, context):
             row.prop(scene, "arc_import_slot_row_spacing", text="Y")
     if hasattr(scene, "arc_inherit_shape_key"):
         layout.prop(scene, "arc_inherit_shape_key", text="Inherit Shape Key")
-    layout.operator("arc_outfits.group_by_asset_type", text="Group by Asset Type", icon="OUTLINER_COLLECTION")
-    layout.operator("arc_outfits.group_by_outfit_slot", text="Group by Outfit Slot", icon="OUTLINER_COLLECTION")
+    if hasattr(scene, "arc_pose_preset"):
+        layout.prop(scene, "arc_pose_preset", text="Pose")
 
 
 # Head/Hair previews: ~128px (template_icon scale unit ≈ 32px).
@@ -205,8 +205,6 @@ def _draw_queue_report(layout, context):
 def _draw_appearance_section(layout, context):
     """Body / head / hair / gear as sidebar options (not sequential dialogs)."""
     scene = context.scene
-    if hasattr(scene, "arc_pose_preset"):
-        layout.prop(scene, "arc_pose_preset", text="Pose")
     if not hasattr(scene, "arc_appearance_head"):
         return
     pak_dir = getattr(scene, "arc_pak_dir", "") or ""
@@ -579,6 +577,9 @@ def _draw_settings_content(layout, context):
     from .map_tools import fmodel_bridge as bridge
 
     scene = context.scene
+
+    layout.operator("arc_outfits.group_by_asset_type", text="Group by Asset Type", icon="OUTLINER_COLLECTION")
+    layout.operator("arc_outfits.group_by_outfit_slot", text="Group by Outfit Slot", icon="OUTLINER_COLLECTION")
 
     pioneer_row = layout.row(align=True)
     pioneer_root = getattr(scene, "arc_pioneer_root", "") or ""
