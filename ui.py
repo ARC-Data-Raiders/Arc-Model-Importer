@@ -28,6 +28,23 @@ def _draw_pak_folder_picker(layout, context):
         row.operator("arc_outfits.clear_pak_dir", text="", icon="X")
 
 
+def _draw_fmodel_folder_picker(layout, context):
+    scene = context.scene
+    pioneer_row = layout.row(align=True)
+    pioneer_root = getattr(scene, "arc_pioneer_root", "") or ""
+    if pioneer_root:
+        pioneer_row.label(
+            text="FModel Output: " + os.path.basename(pioneer_root.rstrip("/\\")),
+            icon="CHECKMARK",
+        )
+    else:
+        pioneer_row.label(text="FModel Output", icon="FILE_FOLDER")
+    pioneer_row.operator("arc_outfits.pick_pioneer_root", text="", icon="FILEBROWSER")
+    if pioneer_root:
+        pioneer_row.operator("arc_outfits.clear_pioneer_root", text="", icon="X")
+
+
+
 def _draw_import_section(layout, context):
     box = layout.box()
     scene = context.scene
@@ -41,6 +58,7 @@ def _draw_import_section(layout, context):
         op = box.operator("arc_outfits.import_from_pak", text="Import Folder", icon="FILE_FOLDER")
         op.select_folder = True
     else:
+        _draw_fmodel_folder_picker(box, context)
         box.operator("arc_outfits.import_single_psk", text="Import Single Model", icon="FILE")
         box.operator("arc_outfits.import_outfit_folder", text="Import Folder", icon="FILE_FOLDER")
 
@@ -600,18 +618,7 @@ def _draw_settings_content(layout, context):
         "arc_outfits.group_by_outfit_slot", text="Group by Outfit Slot", icon="OUTLINER_COLLECTION"
     )
 
-    pioneer_row = layout.row(align=True)
-    pioneer_root = getattr(scene, "arc_pioneer_root", "") or ""
-    if pioneer_root:
-        pioneer_row.label(
-            text="FModel Output: " + os.path.basename(pioneer_root.rstrip("/\\")),
-            icon="CHECKMARK",
-        )
-    else:
-        pioneer_row.label(text="FModel Output", icon="FILE_FOLDER")
-    pioneer_row.operator("arc_outfits.pick_pioneer_root", text="", icon="FILEBROWSER")
-    if pioneer_root:
-        pioneer_row.operator("arc_outfits.clear_pioneer_root", text="", icon="X")
+    _draw_fmodel_folder_picker(layout, context)
 
     _draw_pak_folder_picker(layout, context)
 
