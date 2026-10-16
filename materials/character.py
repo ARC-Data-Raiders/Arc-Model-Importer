@@ -1706,6 +1706,10 @@ def _parse_hair_mi(json_path: str) -> dict:
                     "Coverage", "AttributeMap", "Depth", "Tangent", "GlobalHairColor",
                 ) else (_hair_streaming_param_for_tex(name) or _hair_streaming_param_for_tex(stem) or name)
                 if param == "PM_Diffuse":
+                    # ColorMap fur aliases its albedo as PM_Diffuse. An explicit
+                    # coverage atlas must win regardless of JSON key order.
+                    if "Coverage" in data["Textures"]:
+                        continue
                     param = "Coverage"
                 if param in have:
                     continue
@@ -2591,6 +2595,9 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
     nodes.clear()
+    for stamp in ("arc_fur_card_profile", "arc_fur_card_uv"):
+        if stamp in mat:
+            del mat[stamp]
 
     if not json_path or json_path == "NONE":
         principled = nodes.new("ShaderNodeBsdfPrincipled")
@@ -2613,10 +2620,14 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         img = bpy.data.images.load(fpath, check_existing=True)
         loaded[param_name] = (fpath, img)
 
-    uv_channels = mi.get("uv_channels") or {}
+    uv_channels = dict(mi.get("uv_channels") or {})
+    color_map_profile = any(k in (mi.get("scalars") or {}) for k in ("ColorMap_Tiling", "ColorMapBlend", "ColorMapStrandUVOffset"))
     # FoxHatCards: GlobalHairColor → UV1; Coverage/atlases → UV0.
     if "GlobalHairColor" in loaded and "GlobalHairColor" not in uv_channels:
         uv_channels["GlobalHairColor"] = 1
+    if color_map_profile and "GlobalHairColor" in loaded:
+        # Native local vertex factory clamps TexCoord1 to the last stored UV.
+        uv_channels["GlobalHairColor"] = min(int(uv_channels.get("GlobalHairColor", 1)), max(0, len(obj.data.uv_layers) - 1))
 
     uv_cache = {}
 
@@ -2671,6 +2682,7 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
     rgb_b.location = (x - 200, row - 20)
 
     base_color_src = None
+    global_map_node = None
     attr_ao_sock = None
     attr_rough_sock = None
 
@@ -2679,6 +2691,7 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         node = nodes.new("ShaderNodeTexImage")
         node.image = img
         node.label = "GlobalHairColor"
+        global_map_node = node
         node.interpolation = "Cubic"
         node.location = (x, row)
         uv = _uv_for("GlobalHairColor", (x - 280, row))
@@ -2789,6 +2802,14 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         links.new(root_pow.outputs["Value"], root_mul.inputs["Fac"])
         links.new(darkened.outputs["Color"], root_mul.inputs["Color1"])
         links.new(palette, root_mul.inputs["Color2"])
+        if color_map_profile and global_map_node is not None:
+            from .fur_cards import wire_color_map
+            base_color_src = wire_color_map(
+                nodes, links, global_map_node, sep.outputs["Red"],
+                root_pow.outputs["Value"], scalar_params,
+            )
+            mat["arc_fur_card_profile"] = "native-colormap-v1"
+            mat["arc_fur_card_uv"] = uv_channels["GlobalHairColor"]
         if base_color_src is None:
             base_color_src = root_mul.outputs["Color"]
         else:

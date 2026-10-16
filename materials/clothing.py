@@ -6606,6 +6606,9 @@ def _ensure_fur_displacement_subdiv(obj) -> None:
     """Densify fur material faces only (GN); leave cloth faces alone."""
     if obj is None or getattr(obj, "type", "") != "MESH":
         return
+    from . import fur_shells
+    if fur_shells.reconcile_geometry(obj).get('managed'):
+        return
     indices = _fur_slot_indices(obj)
     if not indices:
         return
@@ -6718,6 +6721,9 @@ def _setup_fur_material(mat, mi_path: str, psk_path: str = "", obj=None):
 
     Matches the hand-tuned GWRanger UpperBody_Fur graph. ColorTint ignored.
     """
+    from . import fur_shells
+    if fur_shells.setup_material(mat, mi_path, source=psk_path, obj=obj):
+        return
     del psk_path  # unused; kept for call-site compatibility
     mi = _parse_fur_mi(mi_path)
     if not mat.use_nodes:
@@ -6917,6 +6923,31 @@ def apply_embedded_fur_slots(obj, psk_path: str, skin_json: str = "") -> int:
         sk_slots = _parse_sk_material_slots(psk_path) if psk_path else []
     except Exception:
         sk_slots = []
+    # Native UEModel sections carry exact authored MI paths and LOD order.
+    # Fuzzy stem lookup can confuse FurTop_FurTop with the base FurTop_Fur;
+    # mesh JSON material order can also differ from the exported LOD order.
+    native_slots = False
+    fur_names = [value for slot in sk_slots for value in slot[:2]] + [
+        slot.material.name if slot.material else "" for slot in obj.material_slots
+    ]
+    if str(psk_path or "").lower().endswith(".uemodel") and any(
+        "fur" in str(name or "").lower() for name in fur_names
+    ):
+        try:
+            from . import fur_shells
+            from .. import uemodel_import
+            _name, _version, lods = uemodel_import.parse_uemodel(psk_path)
+            lod_name = str(obj.data.get("arc_uemodel_lod", "LOD0"))
+            lod = next((item for item in lods if item.name == lod_name), None)
+            if lod is not None:
+                sk_slots = [
+                    (name, reference.rsplit("/", 1)[-1].split(".")[0],
+                     fur_shells._asset(psk_path, reference, ".json"))
+                    for name, reference, _first, _count in lod.materials
+                ]
+                native_slots = True
+        except (OSError, ValueError, RuntimeError):
+            pass
     # Fast path: single-slot clothing with no fur name → skip resolve/FMDex probes.
     if sk_slots and len(sk_slots) == 1:
         sk_name, mi_stem, mi_json = sk_slots[0]
@@ -6946,7 +6977,7 @@ def apply_embedded_fur_slots(obj, psk_path: str, skin_json: str = "") -> int:
             mat_name_probe = obj.material_slots[i].material.name
         names_probe = (sk_name, mi_stem, mat_name_probe)
         mi_path = mi_json if mi_json and os.path.isfile(mi_json) else ""
-        if not mi_path:
+        if not mi_path and not native_slots:
             for stem in names_probe:
                 if not stem:
                     continue
