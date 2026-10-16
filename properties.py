@@ -253,9 +253,18 @@ _OUTFIT_SELECTION_UPDATING = False
 _DEFAULT_OUTFIT_KEY = 'ID_PLAYERSKIN_ABYSS'
 
 
-def _on_browse_outfit_changed(self, context):
-    if not _OUTFIT_SELECTION_UPDATING and self.arc_selected_outfit_browse != 'NONE':
-        self.arc_selected_outfit = self.arc_selected_outfit_browse
+def _browse_outfit_get(self):
+    # The string key owns selection; RNA never stores a second competing value.
+    items = make_outfit_selector_items(self, SimpleNamespace(scene=self))
+    selected = getattr(self, 'arc_selected_outfit', '')
+    return next((item[4] for item in items if item[0] == selected), 0)
+
+
+def _browse_outfit_set(self, value):
+    items = make_outfit_selector_items(self, SimpleNamespace(scene=self))
+    selected = next((item[0] for item in items if item[4] == value), None)
+    if selected is not None:
+        self.arc_selected_outfit = selected
 
 
 def _on_selected_outfit_changed(self, context):
@@ -277,7 +286,6 @@ def ensure_outfit_selection(scene, context=None):
     _OUTFIT_SELECTION_UPDATING = True
     try:
         scene.arc_selected_outfit = selected
-        scene.arc_selected_outfit_browse = selected
         scene['arc_outfit_enum_schema'] = 1
     finally:
         _OUTFIT_SELECTION_UPDATING = False
@@ -299,7 +307,9 @@ def _initialize_outfit_defaults():
                 scene.arc_appearance_hair = 'NONE'
             scene['arc_hair_selector_schema'] = 1
         if hasattr(scene, 'arc_selected_outfit_browse'):
-            ensure_outfit_selection(scene)
+            if not scene.get('arc_outfit_selection_initialized'):
+                ensure_outfit_selection(scene)
+                scene['arc_outfit_selection_initialized'] = True
     return None
 
 
@@ -390,9 +400,9 @@ def make_outfit_selector_items(self, context):
     numbered = []
     used = set()
     for key, label, description in items:
-        number = 0 if key == _DEFAULT_OUTFIT_KEY else (zlib.crc32(key.encode('utf-8')) & 0x7fffffff) or 1
+        number = 0 if key == _DEFAULT_OUTFIT_KEY else (zlib.crc32(key.encode('utf-8')) & 0x00ffffff) or 1
         while number in used:
-            number = (number + 1) & 0x7fffffff
+            number = ((number + 1) & 0x00ffffff) or 1
         used.add(number)
         numbered.append((key, label, description, 0, number))
     result = numbered or [('NONE', '(no outfits found — check CSV path)', '', 0, 0)]
@@ -1277,15 +1287,17 @@ def register():
         description="Browse all outfits — selecting one also selects it above",
         items=make_outfit_selector_items,
         default=0,
-        update=_on_browse_outfit_changed,
+        get=_browse_outfit_get,
+        set=_browse_outfit_set,
     )
     )
-    _assign_if_free(
+    _assign_outfit_selector(
         "arc_outfit_search",
         StringProperty(
         name="Search Outfits",
-        description="Filter the outfit list",
+        description="Filter the outfit list as you type",
         default="",
+        options={'TEXTEDIT_UPDATE'},
     )
     )
     # FModel bridge (outfits + map-importer): listener for import_models / import_outfit
@@ -2045,7 +2057,10 @@ def register():
 
     # Migrate legacy mode ints: old FalseColor becomes Mode 3.
     try:
-        for scene in bpy.data.scenes:
+        # addon_utils.enable() may call register() while bpy.data is restricted.
+        # Skip this migration until Scene data is available; defaults remain valid.
+        scenes = getattr(bpy.data, "scenes", None)
+        for scene in scenes or ():
             raw = getattr(scene, "arc_mask_debug_mode", "0")
             try:
                 mi = int(raw)

@@ -32,7 +32,7 @@ def _draw_offset_settings(layout, context):
     if not hasattr(scene, "arc_import_slot_offset"):
         return
     row = layout.row(align=True)
-    row.prop(scene, "arc_import_slot_offset", text="Offset Characters")
+    row.prop(scene, "arc_import_slot_offset", text="Offset Asset")
     if getattr(scene, "arc_import_slot_offset", True) and hasattr(
         scene, "arc_import_slot_spacing"
     ):
@@ -45,49 +45,82 @@ def _draw_offset_settings(layout, context):
         layout.prop(scene, "arc_pose_preset", text="Pose")
 
 
-# Head/Hair previews: ~128px (template_icon scale unit ≈ 32px).
-_APPEARANCE_PREVIEW_SCALE = 128.0 / 32.0
-# Outfit preview shares the selector row on wide sidebars.
-_OUTFIT_PREVIEW_SCALE = 256.0 / 32.0
-_OUTFIT_SPLIT_MIN_PX = 430.0
+# Layout sizes are in UI-scaled pixels (including N-panel zoom).
+_PREVIEW_SPLIT_MIN_PX = 430.0
 
 
-def _outfit_split_width(context):
+def _sidebar_width(context):
     region = getattr(context, "region", None)
-    width = float(getattr(region, "width", 0) or 0)
+    width = float(getattr(region, "width", 320) or 320)
     system = getattr(getattr(context, "preferences", None), "system", None)
-    ui_scale = float(getattr(system, "ui_scale", 1.0) or 1.0)
-    return width / max(ui_scale, 0.5), ui_scale
+    scale = float(getattr(system, "ui_scale", 1.0) or 1.0)
+    view = getattr(region, "view2d", None)
+    if view:
+        try:
+            x0 = view.region_to_view(0, 0)[0]
+            x1 = view.region_to_view(int(width), 0)[0]
+            if x1 > x0:
+                return max(64.0, x1 - x0 - 40.0)
+        except (AttributeError, RuntimeError):
+            pass
+    return max(64.0, width / max(scale, 0.5) - 40.0)
+
+
+def _split_controls_preview(layout, context, icon_id, *, rows=3):
+    """Return controls and a sized preview, stacking below in narrow panels."""
+    width = _sidebar_width(context)
+    if not icon_id:
+        return layout.column(align=True), None
+    if width >= _PREVIEW_SPLIT_MIN_PX - 40.0:
+        split = layout.split(factor=0.5, align=False)
+        controls, preview = split.column(align=True), split.column(align=True)
+        # One control row is approximately 20 UI pixels plus spacing.
+        size = min(width * 0.5 - 12.0, rows * 20.0)
+    else:
+        controls = layout.column(align=True)
+        centered = layout.row(align=True)
+        margins = centered.split(factor=0.125, align=True)
+        margins.column()
+        content = margins.split(factor=6.0 / 7.0, align=True)
+        preview = content.column(align=True)
+        content.column()
+        size = width * 0.75
+    preview.alignment = "CENTER"
+    return controls, (preview, max(0.5, size / 20.0))
+
+
+def _draw_preview_icon(preview, icon_id):
+    if preview is None or not icon_id:
+        return
+    column, scale = preview
+    column.template_icon(icon_value=icon_id, scale=scale)
 
 
 def _draw_outfit_selector_preview(layout, context, icon_id):
-    width, ui_scale = _outfit_split_width(context)
-    side_by_side = width >= _OUTFIT_SPLIT_MIN_PX
-    if not side_by_side:
-        controls = layout.column(align=True)
-        preview = layout.column(align=True)
+    from . import properties
+    scene = context.scene
+    controls, preview = _split_controls_preview(layout, context, icon_id, rows=8)
+    search_row = controls.row(align=True)
+    search_row.prop(scene, "arc_outfit_search", text="", icon="VIEWZOOM")
+    if scene.arc_outfit_search:
+        search_row.operator("arc_outfits.clear_outfit_search", text="", icon="X")
+    query = scene.arc_outfit_search.casefold()
+    filtered = [item for item in properties.make_outfit_selector_items(scene, context)
+                if item[0] != "NONE" and (not query or query in item[1].casefold())]
+    if filtered:
+        results = controls.box()
+        for key, label, *_ in filtered[:3]:
+            icon = "RADIOBUT_ON" if key == scene.arc_selected_outfit else "RADIOBUT_OFF"
+            op = results.operator("arc_outfits.select_outfit", text=label, icon=icon)
+            op.outfit_key = key
+        if len(filtered) > 3:
+            results.label(text=f"... and {len(filtered) - 3} more (refine search)")
     else:
-        split = layout.row(align=False).split(factor=0.5, align=False)
-        controls, preview = split.column(align=True), split.column(align=True)
-
-    if hasattr(context.scene, "arc_selected_outfit_browse"):
-        controls.prop(context.scene, "arc_selected_outfit_browse", text="Browse for Outfit Selector")
+        controls.label(text="No matching outfits", icon="INFO")
+    controls.prop(scene, "arc_selected_outfit_browse", text="Browse:")
     controls.operator("arc_outfits.load_outfit", text="Load Outfit", icon="IMPORT")
     controls.operator("arc_outfits.load_all_colorways", text="Load All Colorways", icon="DUPLICATE")
-    preview.alignment = "CENTER"
-    if icon_id:
-        try:
-            preview_width = width * (0.5 if side_by_side else 1.0)
-            icon_scale = min(_OUTFIT_PREVIEW_SCALE,
-                             max(1.0, (preview_width - 20.0) / (32.0 * ui_scale)))
-            preview.template_icon(icon_value=icon_id, scale=icon_scale)
-        except Exception:
-            pass
-    else:
-        preview.label(text="No outfit preview", icon="IMAGE_DATA")
-# Cap preview column width so dropdowns keep the rest when the N-panel expands.
-# Blender has no true px layout; ui_units_x ≈ 20px/unit, and icon scale uses ~32px.
-_PREVIEW_UI_UNITS = 4.0  # ~128px icon column
+    _draw_preview_icon(preview, icon_id)
 
 
 def _appearance_preview_icon_id(choice_id: str) -> int:
@@ -99,45 +132,6 @@ def _appearance_preview_icon_id(choice_id: str) -> int:
         return int(appearance.preview_icon_id(choice_id) or 0)
     except Exception:
         return 0
-
-
-def _split_controls_preview(layout, context, icon_id):
-    """Left grows with sidebar; right preview column capped near 128px.
-
-    ``layout.split(factor=0.5)`` wastes half the N-panel on the icon. Prefer a
-    fixed ``ui_units_x`` preview column; fall back to a region-width factor.
-    """
-    if not icon_id:
-        return layout, None
-    row = layout.row(align=False)
-    left = row.column()
-    right = row.column()
-    try:
-        right.ui_units_x = _PREVIEW_UI_UNITS
-        right.scale_x = 1.0
-        return left, right
-    except Exception:
-        pass
-    # Fallback when ui_units_x is unavailable: compute split from region width.
-    try:
-        rw = float(getattr(getattr(context, "region", None), "width", 0) or 0)
-    except Exception:
-        rw = 0.0
-    if rw > 160.0:
-        factor = max(0.45, min(0.88, 1.0 - (128.0 + 28.0) / rw))
-        split = layout.split(factor=factor)
-        return split.column(), split.column()
-    split = layout.split(factor=0.62)
-    return split.column(), split.column()
-
-
-def _draw_preview_icon(column, icon_id):
-    if column is None or not icon_id:
-        return
-    try:
-        column.template_icon(icon_value=icon_id, scale=_APPEARANCE_PREVIEW_SCALE)
-    except Exception:
-        pass
 
 
 def _draw_head_section(layout, context):
@@ -172,7 +166,10 @@ def _draw_hair_section(layout, context, *, facial=False):
             icon_id = 0
     else:
         icon_id = _appearance_preview_icon_id(choice_id)
-    left, right = _split_controls_preview(layout, context, icon_id)
+    left, right = _split_controls_preview(
+        layout, context, icon_id,
+        rows=5 if hasattr(scene, "arc_appearance_hair_color") else 3,
+    )
     left.prop(scene, prop, text=label)
     if hasattr(scene, "arc_appearance_hair_color"):
         left.prop(scene, "arc_appearance_hair_color", text="Hair Color")
@@ -197,7 +194,10 @@ def _draw_gear_section(layout, context, *, prop: str, part: str, label: str, ico
         return
     choice_id = getattr(scene, prop, "NONE")
     icon_id = _appearance_preview_icon_id(choice_id)
-    left, right = _split_controls_preview(layout, context, icon_id)
+    left, right = _split_controls_preview(
+        layout, context, icon_id,
+        rows=5 if part == "BACKPACK" and hasattr(scene, "arc_appearance_backpack_colorway") else 3,
+    )
     left.prop(scene, prop, text=label)
     if part == "BACKPACK" and hasattr(scene, "arc_appearance_backpack_colorway"):
         left.prop(scene, "arc_appearance_backpack_colorway", text="Colorway")
@@ -550,32 +550,6 @@ def _draw_outfit_tools_content(layout, context):
                 icon="ERROR",
             )
         else:
-            search_row = outfit_sec.row(align=True)
-            search_row.prop(scene, "arc_outfit_search", text="", icon="VIEWZOOM")
-            if scene.arc_outfit_search:
-                search_row.operator("arc_outfits.clear_outfit_search", text="", icon="X")
-
-            search_lower = scene.arc_outfit_search.lower()
-            all_items = properties.make_outfit_selector_items(None, context)
-            filtered = [
-                (item[0], item[1])
-                for item in all_items
-                if item[0] != "NONE" and (not search_lower or search_lower in item[1].lower())
-            ]
-            filtered.sort(key=lambda t: (1 if "unnamed" in t[1].lower() else 0, t[1].lower()))
-
-            if filtered:
-                list_box = outfit_sec.box()
-                selected_key = getattr(scene, "arc_selected_outfit", "")
-                for key, label in filtered[:4]:
-                    row = list_box.row()
-                    icon = "RADIOBUT_ON" if key == selected_key else "RADIOBUT_OFF"
-                    op = row.operator("arc_outfits.select_outfit", text=label, icon=icon)
-                    op.outfit_key = key
-                if len(filtered) > 4:
-                    list_box.label(text=f"... and {len(filtered) - 4} more (refine search)")
-
-            outfit_sec.separator()
             try:
                 from . import appearance as _appearance
 

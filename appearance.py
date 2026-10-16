@@ -554,6 +554,35 @@ def _icon_file_for_choice(choice: dict) -> str:
     return _scan_gear_icon(segment, prefix, stems)
 
 
+def _crop_sidebar_preview(preview):
+    """Trim only the UI thumbnail; preserve source art and reference cards."""
+    import numpy as np
+    width, height = preview.image_size
+    if not width or not height:
+        return
+    pixels = np.asarray(preview.image_pixels_float[:], dtype=np.float32).reshape(height, width, 4)
+    visible = pixels[:, :, 3] > 1.0 / 255.0
+    if np.all(visible):
+        corners = pixels[[0, 0, -1, -1], [0, -1, 0, -1], :3]
+        background = np.median(corners, axis=0)
+        edge = np.concatenate((pixels[0, :, :3], pixels[-1, :, :3], pixels[:, 0, :3], pixels[:, -1, :3]))
+        tolerance = 2.0 / 255.0
+        if (np.max(np.abs(corners - background)) <= tolerance
+                and np.mean(np.max(np.abs(edge - background), axis=1) <= tolerance) > 0.98):
+            visible &= np.max(np.abs(pixels[:, :, :3] - background), axis=2) > tolerance
+    ys, xs = np.nonzero(visible)
+    if not len(xs):
+        return
+    cropped = pixels[ys.min():ys.max()+1, xs.min():xs.max()+1]
+    h, w = cropped.shape[:2]
+    side = max(h, w) + 2 * max(1, round(max(h, w) * 0.02))
+    canvas = np.zeros((side, side, 4), dtype=np.float32)
+    x, y = (side - w) // 2, (side - h) // 2
+    canvas[y:y+h, x:x+w] = cropped
+    preview.image_size = (side, side)
+    preview.image_pixels_float = canvas.ravel()
+
+
 def _preview_icon_id_for_path(path: str) -> int:
     """Load *path* into the shared preview collection; return icon_id or 0."""
     if not path or not os.path.isfile(path):
@@ -566,7 +595,8 @@ def _preview_icon_id_for_path(path: str) -> int:
         return 0
     if key not in _PREVIEW_COLLECTION:
         try:
-            _PREVIEW_COLLECTION.load(key, path, "IMAGE")
+            preview = _PREVIEW_COLLECTION.load(key, path, "IMAGE")
+            _crop_sidebar_preview(preview)
         except Exception:
             _PREVIEW_FAILED.add(key)
             return 0
