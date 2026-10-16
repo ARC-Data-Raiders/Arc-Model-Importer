@@ -4,9 +4,9 @@ Import Arc Raiders models by selecting an outfit folder.
 """
 
 bl_info = {
-    "name": "Arc Model Importer v2.19.24",
+    "name": "Arc Model Importer v2.19.25",
     "author": "Silarious (Ai Vibe Code)/ Naryun & Zebulon Core Functions",
-    "version": (2, 19, 24),
+    "version": (2, 19, 25),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Arc Model Importer",
     "description": "Import Arc Raiders outfits, weapons, and models by selecting content folders.",
@@ -140,6 +140,9 @@ def _initialize_runtime():
     except Exception as e:
         print(f"Arc Raiders PSK Importer: ensure_psk_addon failed: {e}")
 
+    from . import reference_overlay
+    reference_overlay.register()
+
     try:
         utils.preload_arc_node_groups()
     except Exception as e:
@@ -225,6 +228,8 @@ def _auto_start_listener():
 
 def unregister():
     """Unregister all modules and properties (safe if partially registered)."""
+    from . import reference_overlay
+    reference_overlay.unregister()
     from . import appearance_queue
     appearance_queue.unregister()
     pak_extract.unregister_defaults()

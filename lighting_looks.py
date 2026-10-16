@@ -961,6 +961,8 @@ def _set_fac(node, value: float) -> None:
 def _enable_viewport_compositor() -> None:
     """Turn on viewport compositor so Kodak LUT is visible without F12."""
     try:
+        from . import reference_overlay
+        protected = reference_overlay.ensure_enabled()
         for window in bpy.context.window_manager.windows:
             screen = window.screen
             if screen is None:
@@ -970,11 +972,10 @@ def _enable_viewport_compositor() -> None:
                     continue
                 for space in area.spaces:
                     if space.type == "VIEW_3D" and hasattr(space.shading, "use_compositor"):
-                        # ALWAYS: Material + Rendered previews; CAMERA only when looking through camera.
-                        # Viewport render passes cannot provide an object matte.
-                        # Keep reference cards ungraded there; F12 uses Cryptomatte.
-                        space.shading.use_compositor = ("DISABLED" if any(
-                            o.get('arc_reference_plane') for o in bpy.context.scene.objects) else "ALWAYS")
+                        # Image overlays draw after the viewport compositor.
+                        # Keep the safe fallback if their setup did not succeed.
+                        has_references = any(o.get('arc_reference_plane') for o in bpy.context.scene.objects)
+                        space.shading.use_compositor = "ALWAYS" if protected or not has_references else "DISABLED"
     except Exception as exc:
         print(f"Arc Lighting Look: could not enable viewport compositor ({exc})")
 
@@ -1148,6 +1149,22 @@ def sync_reference_compositor_mask(scene=None):
         mask.scene = scene
         mask.layer_name = scene.view_layers[0].name + '.CryptoObject'
         mask.matte_id = ', '.join(o.name for o in scene.objects if o.get('arc_reference_plane'))
+        hold = _find_node(tree.nodes, label='ArcLightingRefHoldout')
+        if hold is not None:
+            # Restore the entire original pixel wherever reference coverage is
+            # nonzero. A second fractional mix grades translucent artwork/edges
+            # again. Shared background pixels deliberately bypass grading too.
+            coverage = _find_node(tree.nodes, label='ArcLightingRefCoverage')
+            if coverage is None:
+                coverage = tree.nodes.new('ShaderNodeMath')
+                coverage.label = 'ArcLightingRefCoverage'
+                coverage.location = (hold.location.x - 190, hold.location.y - 240)
+            coverage.operation = 'GREATER_THAN'
+            coverage.inputs[1].default_value = 0.0
+            factor = hold.inputs.get('Factor') or hold.inputs.get('Fac')
+            tree.links.new(mask.outputs['Matte'], coverage.inputs[0])
+            tree.links.new(coverage.outputs[0], factor)
+            tree['arc_reference_coverage_revision'] = 1
 
 
 def _ensure_compositor_stack(

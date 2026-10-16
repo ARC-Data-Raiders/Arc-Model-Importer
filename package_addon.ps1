@@ -75,6 +75,7 @@ $RootFilesShared = @(
     "backpack_catalog.py",
     "pose_presets.py",
     "reference_planes.py",
+    "reference_overlay.py",
     "revamped_bridge.py",
     "import_layout.py",
     "character_fit.py",
