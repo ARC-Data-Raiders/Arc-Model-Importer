@@ -842,6 +842,21 @@ def _assign_collection_prop(name: str, expected_cls, prop) -> None:
     setattr(bpy.types.Scene, name, prop)
 
 
+def _get_backpack_colorway(self):
+    """Return a valid stable enum number even for unset or obsolete saved values."""
+    from . import appearance
+    items = appearance.make_backpack_colorway_enum_items(self, None)
+    raw = self.get('arc_appearance_backpack_colorway', 0)
+    for identifier, _label, _description, number in items:
+        if raw == number or raw == identifier:
+            return number
+    return 0  # Game Default is always present, including before a Pak index loads.
+
+
+def _set_backpack_colorway(self, value):
+    self['arc_appearance_backpack_colorway'] = int(value)
+
+
 def _update_backpack_choice(self, context):
     self.arc_appearance_backpack_colorway = 'BASE'
 
@@ -1026,6 +1041,9 @@ def register():
             name="Colorway",
             description="Authored backpack color option; Default follows the game's item definition",
             items=_appearance.make_backpack_colorway_enum_items,
+            default=0,
+            get=_get_backpack_colorway,
+            set=_set_backpack_colorway,
         ),
     )
     _assign_if_free(
