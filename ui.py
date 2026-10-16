@@ -27,7 +27,7 @@ def _draw_import_section(layout, context):
 
 
 def _draw_offset_settings(layout, context):
-    """Character pad offset — first control under Outfit Tools."""
+    """Asset placement and character fit controls at the top of Settings."""
     scene = context.scene
     if not hasattr(scene, "arc_import_slot_offset"):
         return
@@ -47,8 +47,44 @@ def _draw_offset_settings(layout, context):
 
 # Head/Hair previews: ~128px (template_icon scale unit ≈ 32px).
 _APPEARANCE_PREVIEW_SCALE = 128.0 / 32.0
-# Outfit preview sits under Load buttons (full row) — larger + alpha-bbox crops.
+# Outfit preview shares the selector row on wide sidebars.
 _OUTFIT_PREVIEW_SCALE = 256.0 / 32.0
+_OUTFIT_SPLIT_MIN_PX = 430.0
+
+
+def _outfit_split_width(context):
+    region = getattr(context, "region", None)
+    width = float(getattr(region, "width", 0) or 0)
+    system = getattr(getattr(context, "preferences", None), "system", None)
+    ui_scale = float(getattr(system, "ui_scale", 1.0) or 1.0)
+    return width / max(ui_scale, 0.5), ui_scale
+
+
+def _draw_outfit_selector_preview(layout, context, icon_id):
+    width, ui_scale = _outfit_split_width(context)
+    side_by_side = width >= _OUTFIT_SPLIT_MIN_PX
+    if not side_by_side:
+        controls = layout.column(align=True)
+        preview = layout.column(align=True)
+    else:
+        split = layout.row(align=False).split(factor=0.5, align=False)
+        controls, preview = split.column(align=True), split.column(align=True)
+
+    if hasattr(context.scene, "arc_selected_outfit_browse"):
+        controls.prop(context.scene, "arc_selected_outfit_browse", text="Browse for Outfit Selector")
+    controls.operator("arc_outfits.load_outfit", text="Load Outfit", icon="IMPORT")
+    controls.operator("arc_outfits.load_all_colorways", text="Load All Colorways", icon="DUPLICATE")
+    preview.alignment = "CENTER"
+    if icon_id:
+        try:
+            preview_width = width * (0.5 if side_by_side else 1.0)
+            icon_scale = min(_OUTFIT_PREVIEW_SCALE,
+                             max(1.0, (preview_width - 20.0) / (32.0 * ui_scale)))
+            preview.template_icon(icon_value=icon_id, scale=icon_scale)
+        except Exception:
+            pass
+    else:
+        preview.label(text="No outfit preview", icon="IMAGE_DATA")
 # Cap preview column width so dropdowns keep the rest when the N-panel expands.
 # Blender has no true px layout; ui_units_x ≈ 20px/unit, and icon scale uses ~32px.
 _PREVIEW_UI_UNITS = 4.0  # ~128px icon column
@@ -289,6 +325,11 @@ def _draw_appearance_section(layout, context):
     layout.operator(
         "arc_outfits.import_reference", text="Import Reference", icon="IMAGE_DATA",
     )
+    layout.operator(
+        "arc_outfits.merge_selected_armatures",
+        text="Merge Selected Armatures",
+        icon="BONE_DATA",
+    )
 
 
 def _draw_weapons_content(layout, context):
@@ -464,13 +505,39 @@ def _draw_animations_content(layout, context):
     layout.operator("arc_outfits.refresh_anim_catalog", text="Refresh Catalog", icon="FILE_REFRESH")
 
 
+def _draw_mask_debug(layout, scene):
+    if not hasattr(scene, "arc_mask_debug_mode"):
+        return
+    dbg = _collapsible(layout, "arc_mask_debug", "Mask Debug", default_closed=True)
+    if dbg is None:
+        return
+    if hasattr(scene, "arc_mask_debug_source"):
+        dbg.prop(scene, "arc_mask_debug_source", text="Source")
+    dbg.prop(scene, "arc_mask_debug_mode", text="Mode")
+    try:
+        mode_i = int(getattr(scene, "arc_mask_debug_mode", 0) or 0)
+    except Exception:
+        mode_i = 0
+    if mode_i == 1:
+        dbg.prop(scene, "arc_mask_debug_color_n", text="Color N")
+    dbg.prop(scene, "arc_mask_debug_show_colormask", text="Show ColorMask")
+    dbg.prop(scene, "arc_mask_debug_show_numbers", text="Show Numbers")
+    dbg.prop(scene, "arc_mask_debug_grid_scale", text="Grid Scale")
+    if hasattr(scene, "arc_mask_debug_overlay_opacity"):
+        dbg.prop(scene, "arc_mask_debug_overlay_opacity", text="Overlay Opacity")
+    else:
+        dbg.prop(scene, "arc_mask_debug_opacity", text="Overlay Opacity")
+    if hasattr(scene, "arc_mask_debug_colormask_opacity"):
+        dbg.prop(scene, "arc_mask_debug_colormask_opacity", text="ColorMask Opacity")
+    dbg.prop(scene, "arc_mask_debug_numbers_opacity", text="Numbers Opacity")
+    dbg_row = dbg.row(align=True)
+    dbg_row.operator("arc_outfits.mask_debug_apply", text="Apply", icon="HIDE_OFF")
+    dbg_row.operator("arc_outfits.mask_debug_clear", text="Clear", icon="LOOP_BACK")
+
 def _draw_outfit_tools_content(layout, context):
     from . import properties, importing
 
     scene = context.scene
-
-    _draw_offset_settings(layout, context)
-    layout.separator()
 
     outfit_sec = _collapsible(layout, "arc_outfit_selector", "Outfit Selector", default_closed=False)
     if outfit_sec is not None:
@@ -509,68 +576,16 @@ def _draw_outfit_tools_content(layout, context):
                     list_box.label(text=f"... and {len(filtered) - 4} more (refine search)")
 
             outfit_sec.separator()
-            if hasattr(scene, "arc_selected_outfit_browse"):
-                outfit_sec.prop(scene, "arc_selected_outfit_browse", text="Browse All")
-
-            load_col = outfit_sec.column(align=True)
-            load_col.operator("arc_outfits.load_outfit", text="Load Outfit", icon="IMPORT")
-            load_col.operator(
-                "arc_outfits.load_all_colorways",
-                text="Load All Colorways",
-                icon="DUPLICATE",
-            )
             try:
                 from . import appearance as _appearance
 
                 outfit_icon = int(_appearance.outfit_preview_icon_id(context) or 0)
             except Exception:
                 outfit_icon = 0
-            if outfit_icon:
-                try:
-                    load_col.template_icon(
-                        icon_value=outfit_icon, scale=_OUTFIT_PREVIEW_SCALE,
-                    )
-                except Exception:
-                    pass
+            _draw_outfit_selector_preview(outfit_sec, context, outfit_icon)
 
+    _draw_mask_debug(layout, scene)
     _draw_appearance_section(layout, context)
-
-    if hasattr(scene, "arc_mask_debug_mode"):
-        dbg = _collapsible(layout, "arc_mask_debug", "Mask Debug", default_closed=True)
-        if dbg is not None:
-            if hasattr(scene, "arc_mask_debug_source"):
-                dbg.prop(scene, "arc_mask_debug_source", text="Source")
-            dbg.prop(scene, "arc_mask_debug_mode", text="Mode")
-            try:
-                mode_i = int(getattr(scene, "arc_mask_debug_mode", 0) or 0)
-            except Exception:
-                mode_i = 0
-            if mode_i == 1:
-                dbg.prop(scene, "arc_mask_debug_color_n", text="Color N")
-            dbg.prop(scene, "arc_mask_debug_show_colormask", text="Show ColorMask")
-            dbg.prop(scene, "arc_mask_debug_show_numbers", text="Show Numbers")
-            dbg.prop(scene, "arc_mask_debug_grid_scale", text="Grid Scale")
-            if hasattr(scene, "arc_mask_debug_overlay_opacity"):
-                dbg.prop(scene, "arc_mask_debug_overlay_opacity", text="Overlay Opacity")
-            else:
-                dbg.prop(scene, "arc_mask_debug_opacity", text="Overlay Opacity")
-            if hasattr(scene, "arc_mask_debug_colormask_opacity"):
-                dbg.prop(scene, "arc_mask_debug_colormask_opacity", text="ColorMask Opacity")
-            dbg.prop(scene, "arc_mask_debug_numbers_opacity", text="Numbers Opacity")
-            dbg_row = dbg.row(align=True)
-            dbg_row.operator("arc_outfits.mask_debug_apply", text="Apply", icon="HIDE_OFF")
-            dbg_row.operator("arc_outfits.mask_debug_clear", text="Clear", icon="LOOP_BACK")
-
-
-def _draw_rig_section(layout, context):
-    rig_box = layout.box()
-    rig_box.label(text="Rig", icon="ARMATURE_DATA")
-    rig_box.operator(
-        "arc_outfits.merge_selected_armatures",
-        text="Merge Selected Armatures",
-        icon="BONE_DATA",
-    )
-
 
 def _draw_settings_content(layout, context):
     from . import importing
@@ -578,8 +593,17 @@ def _draw_settings_content(layout, context):
 
     scene = context.scene
 
-    layout.operator("arc_outfits.group_by_asset_type", text="Group by Asset Type", icon="OUTLINER_COLLECTION")
-    layout.operator("arc_outfits.group_by_outfit_slot", text="Group by Outfit Slot", icon="OUTLINER_COLLECTION")
+    _draw_offset_settings(layout, context)
+    layout.separator()
+
+    group_row = layout.row(align=True)
+    group_split = group_row.split(factor=0.5, align=True)
+    group_split.column(align=True).operator(
+        "arc_outfits.group_by_asset_type", text="Group by Asset Type", icon="OUTLINER_COLLECTION"
+    )
+    group_split.column(align=True).operator(
+        "arc_outfits.group_by_outfit_slot", text="Group by Outfit Slot", icon="OUTLINER_COLLECTION"
+    )
 
     pioneer_row = layout.row(align=True)
     pioneer_root = getattr(scene, "arc_pioneer_root", "") or ""
@@ -704,12 +728,6 @@ class ARC_OUTFITS_PT_MainPanel(bpy.types.Panel):
         except Exception as exc:
             layout.label(text=f"Animations failed: {exc}", icon="ERROR")
             print(f"Arc Raiders: Animations draw failed: {exc}")
-
-        try:
-            _draw_rig_section(layout, context)
-        except Exception as exc:
-            layout.label(text=f"Rig failed: {exc}", icon="ERROR")
-            print(f"Arc Raiders: Rig draw failed: {exc}")
 
         try:
             fx_body = _collapsible(layout, "arc_niagara_fx", "Niagara FX", default_closed=True)
