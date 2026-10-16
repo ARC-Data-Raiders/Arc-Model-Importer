@@ -84,6 +84,44 @@ def _catalog_flavour(obj, role, fallback):
     return fallback
 
 
+def source_display_names(paths):
+    """Snapshot display catalogs once for a whole browser build (no Blender RNA)."""
+    appearance_names = {}
+    outfit_names = []
+    for filename in ('appearance_reference.csv', 'outfit_reference.csv'):
+        try:
+            with open(os.path.join(os.path.dirname(__file__), filename), encoding='utf-8-sig', newline='') as stream:
+                rows = list(csv.DictReader(stream))
+        except OSError:
+            continue
+        for row in rows:
+            if filename == 'appearance_reference.csv':
+                code = os.path.splitext((row.get('rel_path') or '').replace('\\', '/').rsplit('/', 1)[-1])[0]
+                label = re.sub(r'^Facial\s*[^A-Za-z0-9]*\s*', '', row.get('label') or '').strip()
+                if code and label:
+                    appearance_names.setdefault(code.casefold(), label)
+            else:
+                label = (row.get('Flavour') or '').strip()
+                if label:
+                    outfit_names.extend(('/' + folder.strip().casefold() + '/', label)
+                                        for folder in (row.get('Model Folder Name') or '').split(';') if folder.strip())
+    enemies = sorted(_ENEMY_FLAVOURS.items(), key=lambda pair: -len(pair[0]))
+    result = {}
+    for path in paths:
+        code = path.rsplit('/', 1)[-1]
+        stem = re.sub(r'^(SK|SM)_', '', code, flags=re.I)
+        low = '/' + path.casefold().strip('/') + '/'
+        label = ''
+        if '/enemies/' in low:
+            label = next((value for key, value in enemies
+                          if stem.casefold() == key.casefold() or stem.casefold().startswith(key.casefold() + '_')), '')
+        label = label or appearance_names.get(code.casefold(), '')
+        if not label:
+            label = next((value for folder, value in outfit_names if folder in low), '')
+        result[path] = label or stem
+    return result
+
+
 def role_for(obj):
     from . import import_layout
     if obj.get('arc_reference_plane'):

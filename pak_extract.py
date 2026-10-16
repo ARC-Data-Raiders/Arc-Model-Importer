@@ -584,8 +584,8 @@ class ARC_OT_import_from_pak(Operator, ImportHelper):
     bl_idname = "arc_outfits.import_from_pak"
     bl_label = "Import from Pak"
     bl_options = {"REGISTER", "UNDO"}
-    filename_ext = ".uasset"
-    filter_glob: StringProperty(default="*.uasset", options={"HIDDEN"})
+    filename_ext = ""
+    filter_glob: StringProperty(default="*", options={"HIDDEN"})
     directory: StringProperty(subtype="DIR_PATH", options={"HIDDEN"})
     files: CollectionProperty(type=OperatorFileListElement, options={"HIDDEN", "SKIP_SAVE"})
     browser_root: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
@@ -638,7 +638,7 @@ class ARC_OT_import_from_pak(Operator, ImportHelper):
                     selections = [os.path.join(self.directory, item.name) for item in self.files]
                     if not selections:
                         selections = [self.filepath]
-                    if len(selections) != 1 or not selections[0].casefold().endswith('.uasset'):
+                    if len(selections) != 1 or not pak_catalog._io_path(selections[0]).is_file():
                         raise ValueError("Choose one mesh, or use Import Folder")
                 assets = pak_catalog.resolve_selection(index, root, selections)
             except Exception as exc:

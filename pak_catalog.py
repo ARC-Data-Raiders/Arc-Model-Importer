@@ -1,6 +1,6 @@
 """Read ArcPak's cached path index and expose meshes to Blender's file browser.
 
-The tree contains empty .uasset selection files, never extracted asset data.
+The tree contains extensionless, friendly-named mesh selectors, never extracted data.
 Paths are package identities from the same build index used by the exporter.
 """
 from __future__ import annotations
@@ -16,6 +16,8 @@ import threading
 _INDEX_CACHE = {}
 _BROWSER_CACHE = {}
 _BROWSER_LOCK = threading.RLock()
+_BROWSER_SCHEMA = 2
+_NAMING_REVISION_CACHE = {}
 
 
 def _io_path(path) -> Path:
@@ -191,9 +193,44 @@ def mesh_paths(index: dict) -> tuple[str, ...]:
     return index['_mesh_paths']
 
 
+def _naming_revision():
+    from . import asset_organization
+    files = [Path(__file__).with_name(name) for name in ('appearance_reference.csv', 'outfit_reference.csv')]
+    stamps = tuple((str(path), path.stat().st_mtime_ns, path.stat().st_size) if path.exists() else (str(path), 0, 0) for path in files)
+    if stamps not in _NAMING_REVISION_CACHE:
+        digest = hashlib.sha256(repr((_BROWSER_SCHEMA, sorted(asset_organization._ENEMY_FLAVOURS.items()))).encode())
+        for path in files:
+            if path.exists():
+                digest.update(path.read_bytes())
+        _NAMING_REVISION_CACHE[stamps] = digest.hexdigest()
+    return _NAMING_REVISION_CACHE[stamps]
+
+
+def selector_paths(index):
+    """Display-only filenames map explicitly to unchanged cooked package paths."""
+    revision = _naming_revision()
+    cached = index.get('_browser_selectors')
+    if cached and cached[0] == revision:
+        return cached[1]
+    from . import asset_organization
+    labels = asset_organization.source_display_names(mesh_paths(index))
+    selectors = {}
+    for package, label in labels.items():
+        folder, _, code = package.rpartition('/')
+        # Windows forbids these characters in display filenames.
+        label = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', label).strip().rstrip('.') or code
+        filename = f'{label} ({code})'
+        relative = folder + '/' + filename
+        if relative.casefold() in selectors:
+            raise ValueError('Pak display filename collision')
+        selectors[relative.casefold()] = (relative, package)
+    index['_browser_selectors'] = (revision, selectors)
+    return selectors
+
+
 def browser_tree(index: dict, cache_dir: str, game_dir: str) -> str:
     """Reuse a prebuilt tree; serialize startup and interactive construction."""
-    key = (index['stamp'], os.path.normcase(os.path.abspath(game_dir)), os.path.abspath(cache_dir))
+    key = (index['stamp'], os.path.normcase(os.path.abspath(game_dir)), os.path.abspath(cache_dir), _naming_revision())
     with _BROWSER_LOCK:
         cached = _BROWSER_CACHE.get(key)
         if cached and os.path.isdir(cached):
@@ -211,7 +248,7 @@ def browser_start(root: str) -> str:
 
 def _build_browser_tree(index: dict, cache_dir: str, game_dir: str) -> str:
     """Create a build-specific, safe mirror of mesh package paths on demand."""
-    signature = hashlib.sha256(repr((index['stamp'], os.path.normcase(os.path.abspath(game_dir)))).encode()).hexdigest()[:12]
+    signature = hashlib.sha256(repr((index['stamp'], os.path.normcase(os.path.abspath(game_dir)), _naming_revision())).encode()).hexdigest()[:12]
     build = index['build'] if index['build'].isdigit() else 'custom'
     root = Path(cache_dir) / 'browser' / (build + '-' + signature)
     root.mkdir(parents=True, exist_ok=True)
@@ -220,12 +257,12 @@ def _build_browser_tree(index: dict, cache_dir: str, game_dir: str) -> str:
     marker = root / '.arc-browser.json'
     try:
         previous = json.loads(marker.read_text(encoding='utf-8'))
-        if previous.get('signature') == signature and previous.get('meshes') == len(paths):
+        if previous.get('schema') == _BROWSER_SCHEMA and previous.get('signature') == signature and previous.get('meshes') == len(paths):
             return str(root)
     except (OSError, ValueError):
         pass
-    for path in paths:
-        placeholder = root.joinpath(*path.split('/')).with_suffix('.uasset')
+    for relative, _package in selector_paths(index).values():
+        placeholder = root.joinpath(*relative.split('/'))
         if not placeholder.resolve().is_relative_to(resolved_root):
             raise ValueError('Pak browser path escapes its catalog root')
         physical = _io_path(placeholder)
@@ -233,7 +270,7 @@ def _build_browser_tree(index: dict, cache_dir: str, game_dir: str) -> str:
         # Never truncate existing files. These are selectors, not cache exports.
         if not physical.exists():
             physical.touch(exist_ok=False)
-    metadata = {'schema': 1, 'build': index['build'], 'index': index['path'], 'meshes': len(paths), 'signature': signature}
+    metadata = {'schema': _BROWSER_SCHEMA, 'build': index['build'], 'index': index['path'], 'meshes': len(paths), 'signature': signature}
     marker.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
     return str(root)
 
@@ -242,6 +279,7 @@ def resolve_selection(index: dict, root: str, selections: list[str]) -> list[str
     """Resolve selected placeholders/folders back to current indexed packages."""
     base = Path(root).resolve()
     known = {path.casefold(): path for path in mesh_paths(index)}
+    selectors = selector_paths(index)
     found = {}
     for selected in selections:
         path = Path(selected).resolve()
@@ -255,11 +293,12 @@ def resolve_selection(index: dict, root: str, selections: list[str]) -> list[str
                 if key.startswith(prefix):
                     found[key] = package
         else:
-            if path.suffix.casefold() != '.uasset' or not physical.is_file():
-                raise ValueError('Choose an indexed .uasset mesh')
-            package = canonical_path(relative)
-            if package.casefold() not in known:
+            if not physical.is_file():
+                raise ValueError('Choose an indexed mesh')
+            entry = selectors.get(relative.casefold())
+            if entry is None:
                 raise ValueError('Selected mesh is absent from the current Pak index')
+            package = entry[1]
             found[package.casefold()] = known[package.casefold()]
     if not found:
         raise ValueError('This folder contains no indexed meshes')
