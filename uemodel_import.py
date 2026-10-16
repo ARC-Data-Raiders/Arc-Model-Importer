@@ -110,6 +110,7 @@ class _Lod:
     materials: list[tuple[str, str, int, int]] = field(default_factory=list)
     normals: np.ndarray | None = None
     morph_targets: list[UeMorphTarget] = field(default_factory=list)
+    vertex_colors: list[tuple[str, np.ndarray]] = field(default_factory=list)
 
 
 @dataclass
@@ -189,6 +190,51 @@ def _parse_morph_targets(payload: bytes, *, scale: float, flip_y: bool) -> list[
     return morphs
 
 
+def _parse_vertex_colors(payload: bytes, vertex_count: int) -> list[tuple[str, np.ndarray]]:
+    if not payload:
+        return []
+    buf = io.BytesIO(payload)
+    result = []
+    for _ in range(_read_array_header(buf)):
+        name = _read_fstring(buf)
+        count = _read_array_header(buf)
+        if count != vertex_count:
+            raise UeModelError('vertex colour count differs from positions')
+        rgba = np.frombuffer(_read_exact(buf, count * 4), dtype=np.uint8).reshape(count, 4).copy()
+        result.append((name, rgba))
+    if buf.read(1):
+        raise UeModelError('unexpected trailing vertex colour data')
+    return result
+
+
+def _assign_vertex_colors(mesh, lod) -> list[str]:
+    added = []
+    # Existing colours may contain deliberate user edits; never replace them.
+    for name, rgba in lod.vertex_colors:
+        if name in mesh.color_attributes:
+            continue
+        if len(rgba) != len(mesh.vertices):
+            raise UeModelError('vertex colour topology differs from destination')
+        attr = mesh.color_attributes.new(name=name, type='FLOAT_COLOR', domain='POINT')
+        attr.data.foreach_set('color', (rgba.astype(np.float32) / 255.0).ravel())
+        added.append(name)
+    return added
+
+
+def ensure_uemodel_vertex_colors(obj, path: str) -> list[str]:
+    """Hydrate exact native vertex masks; no nearest-point transfer or fake layers."""
+    if obj is None or obj.type != 'MESH' or obj.data.color_attributes.get('COL0'):
+        return []
+    _name, _version, lods = parse_uemodel(path, scale=float(obj.data.get('arc_uemodel_scale', .01)))
+    lod_name = str(obj.data.get('arc_uemodel_lod') or 'LOD0')
+    lod = next((l for l in lods if l.name == lod_name),None)
+    if lod is None or len(lod.vertices) != len(obj.data.vertices) or len(lod.indices) != len(obj.data.polygons):
+        raise UeModelError('native vertex colour topology differs')
+    if any(tuple(p.vertices) != tuple(face) for p,face in zip(obj.data.polygons,lod.indices)):
+        raise UeModelError('native vertex colour index order differs')
+    return _assign_vertex_colors(obj.data,lod)
+
+
 def _parse_lods_attribute(payload: bytes, *, scale: float, flip_y: bool) -> list[_Lod]:
     buf = io.BytesIO(payload)
     count = _read_array_header(buf)
@@ -221,6 +267,7 @@ def _parse_lods_attribute(payload: bytes, *, scale: float, flip_y: bool) -> list
                 normals=normals,
                 morph_targets=_parse_morph_targets(attrs["MORPHTARGETS"], scale=scale, flip_y=flip_y)
                 if attrs.get("MORPHTARGETS") else [],
+                vertex_colors=_parse_vertex_colors(attrs.get("VERTEXCOLORS") or b"", len(verts)),
             )
         )
     return lods
@@ -733,6 +780,7 @@ def import_uemodel_v10(path: str, *, scale: float = 0.01, import_lods: bool = Fa
         obj = bpy.data.objects.new(mesh_name, mesh)
         bpy.context.collection.objects.link(obj)
         _apply_lod_shape_keys(obj, lod)
+        _assign_vertex_colors(mesh, lod)
         try:
             _assign_uvs(mesh, lod)
         except Exception as exc:

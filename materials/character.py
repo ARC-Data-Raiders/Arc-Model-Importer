@@ -564,8 +564,8 @@ def _ensure_head_material_slots(obj, psk_path: str) -> list:
                 for slot_name, sk_stem, sk_json in sk_slots:
                     sk_role = _mat_slot_role(sk_stem or slot_name, slot_name, sk_stem)
                     if role and sk_role == role:
-                        mi_stem = mi_stem or sk_stem
-                        mi_json = mi_json if mi_json and os.path.isfile(mi_json) else sk_json
+                        mi_stem = sk_stem or mi_stem
+                        mi_json = sk_json or mi_json
                         break
                     if mi_stem and sk_stem and mi_stem.lower() == sk_stem.lower():
                         role = role or sk_role
@@ -758,6 +758,10 @@ def _setup_head_principled_from_mi(slot, psk_path: str, mi_path: str) -> None:
 
 
 def _resolve_head_mi_path(psk_path: str, slot, mi_stem: str = "", mi_json: str = "") -> str:
+    local_stem = mi_stem or str(slot.material.get("arc_mi_stem") or "") if slot and slot.material else mi_stem
+    local_path = _find_head_mi_json(psk_path, local_stem) if local_stem else ""
+    if local_path:
+        return local_path
     if mi_json and os.path.isfile(mi_json):
         return mi_json
     mat = slot.material if slot else None
@@ -846,14 +850,25 @@ def _setup_head_slot_head(slot, psk_path: str, mi_path: str = ""):
     skin = _parse_skin_color_mi(skin_mi) if skin_mi else {}
     if utils.ensure_node_group("Face Shader"):
         utils.repair_face_shader_normal_flipper()
-        _align_face_shader_skin_defaults(subsurface_color=skin.get("subsurface_color"))
         mat = _reuse_or_new_material(slot, src_name)
         nodes = mat.node_tree.nodes
         links = mat.node_tree.links
+        previous_face = next((n.node_tree for n in nodes if n.type == "GROUP" and n.node_tree
+                              and (n.node_tree.get("arc_face_shader") or n.node_tree.name == "Face Shader")), None)
+        from .character_fidelity import prepare_face_shader
+        base_face = utils.find_node_group("Face Shader") or bpy.data.node_groups.get("Face Shader")
+        face_tree = prepare_face_shader(mat, base_face, previous_face)
+        if previous_face is None:
+            for bsdf in face_tree.nodes:
+                if bsdf.type == "BSDF_PRINCIPLED":
+                    _apply_default_skin_bsdf(bsdf, subsurface_color=skin.get("subsurface_color"))
         nodes.clear()
         group_node = nodes.new("ShaderNodeGroup")
-        face_tree = utils.find_node_group("Face Shader") or bpy.data.node_groups.get("Face Shader")
         group_node.node_tree = face_tree
+        parsed_face = _parse_flat_mi_json(mi_path) if mi_path else {}
+        scalars = parsed_face.get("scalars") or {}
+        for parameter, default in (("NormalFlatness",0.0),("Hair Mask Amount",1.0),("FacialHair Mask Amount",0.0)):
+            group_node.inputs[parameter].default_value = float(scalars.get(parameter, default))
         group_node.location = (200, 0)
         out_node = nodes.new("ShaderNodeOutputMaterial")
         out_node.location = (480, 0)
@@ -1121,6 +1136,13 @@ def _setup_head_slot_eyes(slot, psk_path: str, mi_path: str = ""):
 
     Reverts the EyeShell-merge / Principled-Metal experiment — shared Eyes mat only.
     """
+    from .character_fidelity import _authored_eye_material
+    layers = getattr(getattr(slot.id_data, "data", None), "uv_layers", ())
+    uv_name = "UV0" if layers and "UV0" in layers else layers[0].name if layers else ""
+    authored = _authored_eye_material(mi_path, uv_name)
+    if authored is not None:
+        slot.material = authored
+        return
     if not utils.ensure_material("Eyes"):
         return
     _patch_eye_colour_backend()
@@ -1494,7 +1516,7 @@ def _retint_paired_body_from_head(head_obj, skin_mi: str) -> None:
     except Exception:
         slot = None
     for other in bpy.data.objects:
-        if other == head_obj or other.type != "MESH":
+        if other == head_obj or other.type != "MESH" or other.get("arc_reference_plane"):
             continue
         try:
             if other.get("arc_assembly_role") != "Body" and other.get("arc_model_type") != "body":
@@ -1553,9 +1575,7 @@ def setup_face_material(obj, psk_path: str):
             except Exception:
                 role = ""
             role = role or _mat_slot_role(slot.material.name, mi_stem=mi_stem)
-        mi_path = mi_json if mi_json and os.path.isfile(mi_json) else ""
-        if not mi_path:
-            mi_path = _resolve_head_mi_path(psk_path, slot, mi_stem=mi_stem, mi_json=mi_json)
+        mi_path = _resolve_head_mi_path(psk_path, slot, mi_stem=mi_stem, mi_json=mi_json)
         if role == "head":
             _setup_head_slot_head(slot, psk_path, mi_path)
         elif role in ("teeth", "saliva"):
@@ -2126,7 +2146,10 @@ def resolve_hair_nxa_textures(hair_hint: str) -> dict:
         scalp_json = _guess_scalp_mi_json(style_dir)
     out["scalp_mi"] = scalp_json
     hair_nxa, facial_nxa = _parse_scalp_nxa_pngs(scalp_json)
-    if not hair_nxa:
+    if "/facialhairs/" in style_dir.replace("\\", "/").casefold():
+        facial_nxa = facial_nxa or hair_nxa or _nxa_png_near_style(style_dir)
+        hair_nxa = ""
+    elif not hair_nxa:
         hair_nxa = _nxa_png_near_style(style_dir)
     out["hair_nxa"] = hair_nxa
     out["facial_nxa"] = facial_nxa
@@ -2142,13 +2165,17 @@ def _wire_face_shader_image(
     img = bpy.data.images.load(fpath, check_existing=True)
     try:
         img.colorspace_settings.name = "Non-Color"
+        img.alpha_mode = "CHANNEL_PACKED"
     except Exception:
         pass
+    coverage = group_node.inputs.get("Hair Coverage" if sock_name == "Normal 2" else "FacialHair Coverage")
     if sock.links:
         src = sock.links[0].from_node
         if getattr(src, "type", "") == "TEX_IMAGE":
             src.image = img
             src.label = label
+            if coverage is not None:
+                links.new(src.outputs["Alpha"], coverage)
             return True
         for link in list(sock.links):
             links.remove(link)
@@ -2158,6 +2185,8 @@ def _wire_face_shader_image(
     tex.interpolation = "Cubic"
     tex.location = loc
     links.new(tex.outputs["Color"], sock)
+    if coverage is not None:
+        links.new(tex.outputs["Alpha"], coverage)
     return True
 
 
@@ -2314,7 +2343,8 @@ def apply_nxa_to_head_object(head_obj, hair_nxa: str = "", facial_nxa: str = "")
                 n
                 for n in mat.node_tree.nodes
                 if n.type == "GROUP"
-                and getattr(getattr(n, "node_tree", None), "name", "") == "Face Shader"
+                and (getattr(getattr(n, "node_tree", None), "name", "") == "Face Shader"
+                     or (n.node_tree and n.node_tree.get("arc_face_shader")))
             ),
             None,
         )
@@ -2324,6 +2354,8 @@ def apply_nxa_to_head_object(head_obj, hair_nxa: str = "", facial_nxa: str = "")
             if hair_nxa and _wire_face_shader_image(
                 nodes, links, group_node, "Normal 2", hair_nxa, "Hair NXA", (-400, -200),
             ):
+                if group_node.inputs.get("Hair Mask Amount") is not None:
+                    group_node.inputs["Hair Mask Amount"].default_value = 1.0
                 wired += 1
                 try:
                     mat["arc_hair_nxa"] = os.path.abspath(hair_nxa)
@@ -2332,6 +2364,8 @@ def apply_nxa_to_head_object(head_obj, hair_nxa: str = "", facial_nxa: str = "")
             if facial_nxa and _wire_face_shader_image(
                 nodes, links, group_node, "Normal 3", facial_nxa, "FacialHairNXA", (-400, -480),
             ):
+                if group_node.inputs.get("FacialHair Mask Amount") is not None:
+                    group_node.inputs["FacialHair Mask Amount"].default_value = 1.0
                 wired += 1
                 try:
                     mat["arc_facial_hair_nxa"] = os.path.abspath(facial_nxa)
@@ -2356,7 +2390,7 @@ def _iter_paired_heads(hair_obj):
     except Exception:
         slot = None
     for other in bpy.data.objects:
-        if other == hair_obj or other.type != "MESH":
+        if other == hair_obj or other.type != "MESH" or other.get("arc_reference_plane"):
             continue
         try:
             mtype = str(other.get("arc_model_type") or "").lower()
@@ -2378,7 +2412,7 @@ def _iter_paired_hairs(head_obj):
     except Exception:
         slot = None
     for other in bpy.data.objects:
-        if other == head_obj or other.type != "MESH":
+        if other == head_obj or other.type != "MESH" or other.get("arc_reference_plane"):
             continue
         try:
             mtype = str(other.get("arc_model_type") or "").lower()
@@ -2421,21 +2455,13 @@ def apply_hair_nxa_bridge(
     hair_hint: str = "",
 ) -> int:
     """Resolve style Scalps NXA and overlay onto Face Shader head materials."""
+    if head_obj is not None and hair_obj is None and not hair_hint:
+        paired = list(_iter_paired_hairs(head_obj))
+        if paired:
+            return sum(apply_hair_nxa_bridge(hair_obj=hair, head_obj=head_obj) for hair in paired)
     hint = (hair_hint or "").strip()
     if not hint and hair_obj is not None:
-        try:
-            hint = str(hair_obj.get("arc_psk_path") or hair_obj.get("arc_hair_mi") or "")
-        except Exception:
-            hint = ""
-    if not hint and head_obj is not None:
-        for hair in _iter_paired_hairs(head_obj):
-            try:
-                hint = str(hair.get("arc_psk_path") or hair.get("arc_hair_mi") or "")
-            except Exception:
-                hint = ""
-            if hint:
-                hair_obj = hair_obj or hair
-                break
+        hint = str(hair_obj.get("arc_source_mesh") or hair_obj.get("arc_psk_path") or hair_obj.get("arc_hair_mi") or "")
     if not hint:
         hint = _scene_hair_hint()
     if not hint:
@@ -2664,8 +2690,11 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
     # Soft Coverage: never hard-CLIP at MI OpacityMaskClipValue 0.333.
     alpha_thresh = 0.05
 
-    rough_min = float((mi.get("scalars") or {}).get("Roughness min", 0.35) or 0.35)
-    rough_max = float((mi.get("scalars") or {}).get("Roughness max", 0.65) or 0.65)
+    scalar_params = mi.get("scalars") or {}
+    rough_min = float(scalar_params.get("Roughness min", 0.29981))
+    rough_max = float(scalar_params.get("Roughness max", 0.824))
+    principled.inputs["Specular IOR Level"].default_value = max(0.0,min(1.0,float(scalar_params.get("Spec0",0.45))))
+    mat["arc_hair_scattering_note"] = "Blender anisotropic cards approximate UE multi-lobe hair; native PDO/temporal dithering are not reconstructed."
     mid_rough = max(0.0, min(1.0, (rough_min + rough_max) * 0.5))
     rough_in = _rough_input()
     if rough_in is not None:
@@ -2698,16 +2727,48 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         mix_col.use_clamp = True
         mix_col.label = "ColorA/B"
         mix_col.location = (x + 500, row + 40)
-        links.new(attr_a, mix_col.inputs["Fac"])
+        variation = nodes.new("ShaderNodeMath")
+        variation.operation = "MAXIMUM"
+        variation.label = "Authored ColorVariationInfluence"
+        variation.inputs[1].default_value = 1.0 - float((mi.get("scalars") or {}).get("ColorVariationInfluence",1.0))
+        links.new(attr_a, variation.inputs[0])
+        links.new(variation.outputs[0], mix_col.inputs["Fac"])
         links.new(rgb_a.outputs[0], mix_col.inputs["Color1"])
         links.new(rgb_b.outputs[0], mix_col.inputs["Color2"])
+        palette = mix_col.outputs["Color"]
+        secondary_enable = float((mi.get("scalars") or {}).get("UseSecondaryColor",0.0))
+        if secondary_enable != 0.0:
+            from .. import uemodel_import
+            native = os.path.splitext(str(obj.get("arc_source_mesh") or obj.get("arc_psk_path") or ""))[0] + ".uemodel"
+            if os.path.isfile(native):
+                try:
+                    uemodel_import.ensure_uemodel_vertex_colors(obj,native)
+                except uemodel_import.UeModelError as exc:
+                    mat['arc_hair_vertex_fallback'] = str(exc)
+            secondary = nodes.new("ShaderNodeMixRGB")
+            secondary.label = "Authored secondary palette"
+            secondary.inputs[1].default_value = colours.get("SecondaryColor",color_a)
+            secondary.inputs[2].default_value = colours.get("SecondaryColorB",color_b)
+            links.new(variation.outputs[0],secondary.inputs[0])
+            factor = nodes.new("ShaderNodeMath");factor.operation="MULTIPLY"
+            factor.inputs[1].default_value=secondary_enable
+            if obj.data.color_attributes.get('COL0'):
+                vertex=nodes.new("ShaderNodeVertexColor");vertex.layer_name='COL0'
+                channels=nodes.new("ShaderNodeSeparateColor");links.new(vertex.outputs["Color"],channels.inputs["Color"])
+                links.new(channels.outputs["Green"],factor.inputs[0])
+            else:
+                factor.inputs[0].default_value=0.0
+                mat["arc_hair_vertex_fallback"]="No authored colour buffer; secondary green0 is a sampled approximation, not verified native fallback."
+            selected=nodes.new("ShaderNodeMixRGB");selected.label="Vertex green secondary palette"
+            links.new(factor.outputs[0],selected.inputs[0]);links.new(palette,selected.inputs[1]);links.new(secondary.outputs[0],selected.inputs[2])
+            palette=selected.outputs[0]
         # Root darken by Attribute.B (Blue).
         root_pow = nodes.new("ShaderNodeMath")
         root_pow.operation = "POWER"
         root_pow.label = "Root Power"
         root_pow.location = (x + 500, row - 120)
         root_pow.inputs[1].default_value = float(
-            (mi.get("scalars") or {}).get("Root position", 4.0) or 4.0
+            (mi.get("scalars") or {}).get("Root position", 4.0)
         )
         links.new(sep.outputs["Blue"], root_pow.inputs[0])
         root_mul = nodes.new("ShaderNodeMixRGB")
@@ -2723,11 +2784,11 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         darkened.blend_type = "MULTIPLY"
         darkened.location = (x + 720, row - 120)
         darkened.inputs["Fac"].default_value = 1.0
-        links.new(mix_col.outputs["Color"], darkened.inputs["Color1"])
+        links.new(palette, darkened.inputs["Color1"])
         links.new(root_tint.outputs[0], darkened.inputs["Color2"])
         links.new(root_pow.outputs["Value"], root_mul.inputs["Fac"])
         links.new(darkened.outputs["Color"], root_mul.inputs["Color1"])
-        links.new(mix_col.outputs["Color"], root_mul.inputs["Color2"])
+        links.new(palette, root_mul.inputs["Color2"])
         if base_color_src is None:
             base_color_src = root_mul.outputs["Color"]
         else:
@@ -2778,9 +2839,17 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         sep_c.location = (x + 280, row)
         links.new(node.outputs["Color"], sep_c.inputs["Color"])
         # Soft Coverage midtones (mean ~0.1–0.4 on cards) → near-opaque via expand.
-        alpha_sock = _soft_mask_to_alpha(
-            nodes, links, sep_c.outputs["Red"], (x + 500, row), from_max=0.5,
-        )
+        power=nodes.new("ShaderNodeMath");power.operation="POWER";power.label="Authored DitherPower"
+        power.inputs[1].default_value=float((mi.get("scalars") or {}).get("DitherPower",1.0))
+        nonnegative=nodes.new('ShaderNodeMath');nonnegative.operation='MAXIMUM';nonnegative.inputs[1].default_value=0.0
+        links.new(sep_c.outputs['Red'],nonnegative.inputs[0])
+        links.new(nonnegative.outputs[0],power.inputs[0])
+        density=nodes.new("ShaderNodeMath");density.operation="DIVIDE";density.label="Authored Opacity amount"
+        density.inputs[1].default_value=max(1.0-float((mi.get("scalars") or {}).get("Opacity amount",0.896)),1e-5)
+        links.new(power.outputs[0],density.inputs[0])
+        visibility=nodes.new("ShaderNodeMath");visibility.operation="MULTIPLY";visibility.use_clamp=True
+        visibility.inputs[1].default_value=float((mi.get("scalars") or {}).get("Visibility",1.0))
+        links.new(density.outputs[0],visibility.inputs[0]);alpha_sock=visibility.outputs[0]
         alpha_in = _alpha_input()
         if alpha_in is not None:
             links.new(alpha_sock, alpha_in)
@@ -2791,33 +2860,13 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
     elif two_sided:
         _set_material_alpha_mode(mat, mode="OPAQUE", two_sided=True)
 
-    # Depth → transmission.
+    # Depth is UE pixel-depth-offset data, not Principled glass transmission.
     if "Depth" in loaded:
-        _, img = loaded["Depth"]
-        try:
-            img.colorspace_settings.name = "Non-Color"
-        except Exception:
-            pass
-        node = nodes.new("ShaderNodeTexImage")
-        node.image = img
-        node.label = "Depth"
-        node.interpolation = "Cubic"
-        node.location = (x, row)
-        uv = _uv_for("Depth", (x - 280, row))
-        links.new(uv.outputs["UV"], node.inputs["Vector"])
-        sep_d = nodes.new("ShaderNodeSeparateColor")
-        sep_d.location = (x + 280, row)
-        links.new(node.outputs["Color"], sep_d.inputs["Color"])
-        mul_d = nodes.new("ShaderNodeMath")
-        mul_d.operation = "MULTIPLY"
-        mul_d.location = (x + 500, row)
-        mul_d.inputs[1].default_value = 0.25
-        links.new(sep_d.outputs["Red"], mul_d.inputs[0])
-        tw = _transmission_input()
-        if tw is not None:
-            links.new(mul_d.outputs["Value"], tw)
-        row -= 300
-
+        _, image = loaded["Depth"]
+        image.colorspace_settings.name="Non-Color"
+        depth=nodes.new("ShaderNodeTexImage");depth.image=image;depth.label="Depth (UE PDO; not glass)"
+        uv=_uv_for("Depth",(x-280,row));links.new(uv.outputs["UV"],depth.inputs["Vector"])
+        row-=300
     # Tangent atlas only on Principled fallback (Specular Cycles has no Tangent sock).
     if "Tangent" in loaded and principled is not None:
         _, img = loaded["Tangent"]
@@ -2834,7 +2883,13 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         links.new(uv.outputs["UV"], node.inputs["Vector"])
         tan_in = _tangent_input()
         if tan_in is not None:
-            links.new(node.outputs["Color"], tan_in)
+            sep_t=nodes.new("ShaderNodeSeparateColor");links.new(node.outputs["Color"],sep_t.inputs["Color"])
+            from .environment import _packed_rg_normal_color
+            encoded=_packed_rg_normal_color(nodes,links,sep_t.outputs["Red"],sep_t.outputs["Green"])
+            tangent=nodes.new("ShaderNodeNormalMap");tangent.uv_map=uv.uv_map;tangent.convention="DIRECTX"
+            tangent.label="Signed strand direction in mesh UV basis"
+            links.new(encoded,tangent.inputs["Color"]);links.new(tangent.outputs["Normal"],tan_in)
+            mat["arc_hair_tangent_note"]="Signed RG + UV basis; RG-only unpack independently verified for BC5, sampled approximation for other atlas formats."
         aniso = principled.inputs.get("Anisotropic")
         if aniso is not None:
             aniso.default_value = 0.75
