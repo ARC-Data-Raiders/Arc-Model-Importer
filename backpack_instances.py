@@ -10,6 +10,7 @@ _ROLES = {'BackpackFrame', 'BackpackStrap'}
 _SOURCES = {
     'BackpackFrame': '/characters/backpacks/frames/default/sm_backpack_frame_01_a',
     'BackpackStrap': '/characters/backpacks/straps/default/strap/sk_default_strap',
+    'CharmConnector': '/characters/backpacks/charms/karabiner/sm_backpackcharm_karabiner',
 }
 
 
@@ -18,8 +19,9 @@ def _source(obj):
     return os.path.splitext(source)[0]
 
 
-def _eligible(obj):
-    return (obj.type == 'MESH' and obj.get('arc_assembly_role') in _ROLES
+def _eligible(obj, roles=None):
+    roles = _ROLES if roles is None else roles
+    return (obj.type == 'MESH' and obj.get('arc_assembly_role') in roles
             and _source(obj).endswith(_SOURCES[obj.get('arc_assembly_role')])
             and obj.mode == 'OBJECT' and not obj.data.shape_keys and not obj.data.animation_data
             and not obj.data.library and not obj.library)
@@ -118,7 +120,7 @@ def material_signature(material):
     return hashlib.sha256(json.dumps(record, sort_keys=True, default=repr).encode()).hexdigest()
 
 
-def share_backpack_data(objects=None, *, scene=None):
+def _share_data(objects=None, *, scene=None, roles):
     """Link exact default geometry; preserve each object's materials, rig and pose.
 
     Objects/armatures remain distinct. Morph-bearing geometry is excluded because
@@ -126,12 +128,12 @@ def share_backpack_data(objects=None, *, scene=None):
     """
     scene = scene or bpy.context.scene
     requested = set(objects) if objects is not None else None
-    candidates = [obj for obj in scene.objects if _eligible(obj)]
+    candidates = [obj for obj in scene.objects if _eligible(obj, roles)]
     ordered = sorted(candidates, key=lambda obj: (requested is not None and obj in requested, obj.name))
     registry, material_registry, mesh_tokens, material_tokens = {}, {}, {}, {}
     result = {'meshes_linked': 0, 'materials_linked': 0, 'eligible': len(candidates), 'morphs_skipped': 0}
     for obj in scene.objects:
-        if obj.type == 'MESH' and obj.get('arc_assembly_role') in _ROLES and obj.data.shape_keys:
+        if obj.type == 'MESH' and obj.get('arc_assembly_role') in roles and obj.data.shape_keys:
             result['morphs_skipped'] += 1
     for obj in ordered:
         pointer = obj.data.as_pointer()
@@ -172,14 +174,24 @@ def share_backpack_data(objects=None, *, scene=None):
     return result
 
 
+def share_backpack_data(objects=None, *, scene=None):
+    """Share exact default frame/strap meshes with independent object materials."""
+    return _share_data(objects, scene=scene, roles=_ROLES)
+
+
+def share_charm_connector_data(objects=None, *, scene=None):
+    """Share exact authored karabiners; retain independent socket poses/materials."""
+    return _share_data(objects, scene=scene, roles={'CharmConnector'})
+
+
 def assign_instance_materials(obj, materials):
-    """Update cached materials on one shared default rack/harness instance.
+    """Update cached materials on one shared default rack/harness/connector instance.
 
     Existing same-count slots remain shared geometry with OBJECT overrides.
     A different slot layout gets its own mesh before changing DATA slot count.
     """
     if (obj is None or obj.type != 'MESH' or not obj.get('arc_shared_backpack_geometry')
-            or obj.get('arc_assembly_role') not in _ROLES or not materials):
+            or obj.get('arc_assembly_role') not in _SOURCES or not materials):
         return False
     values = list(materials)
     if len(values) != len(obj.material_slots):

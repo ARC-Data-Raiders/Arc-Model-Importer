@@ -300,13 +300,14 @@ function New-StagingDir {
         Where-Object { $_.Extension -in ".pyc", ".pyo", ".log", ".blend1" } |
         ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -Confirm:$false -ErrorAction SilentlyContinue }
 
-    # Clothing NCT node positions (GoalieShirt reference layout) — outfits line.
+    # Runtime shader layout and slot-one reference-card calibration.
     if ($ReleaseLine -ne "map-importer") {
-        $refSrc = Join-Path $RepoRoot "reference\goalie_shirt_nct_layout_index.json"
-        if (Test-Path -LiteralPath $refSrc) {
-            $refDstDir = Join-Path $addonStage "reference"
-            New-Item -ItemType Directory -Path $refDstDir -Force | Out-Null
-            Copy-Item -LiteralPath $refSrc -Destination (Join-Path $refDstDir "goalie_shirt_nct_layout_index.json") -Force
+        $refDstDir = Join-Path $addonStage "reference"
+        New-Item -ItemType Directory -Path $refDstDir -Force | Out-Null
+        foreach ($refName in @("goalie_shirt_nct_layout_index.json", "reference_card_defaults.json")) {
+            $refSrc = Join-Path (Join-Path $RepoRoot "reference") $refName
+            if (-not (Test-Path -LiteralPath $refSrc)) { throw "Missing runtime reference file: $refSrc" }
+            Copy-Item -LiteralPath $refSrc -Destination (Join-Path $refDstDir $refName) -Force
         }
     }
 

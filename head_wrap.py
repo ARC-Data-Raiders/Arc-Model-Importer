@@ -210,6 +210,10 @@ def _references(obj, scene):
     for plane in scene.objects:
         if not plane.get('arc_reference_plane') or reference_planes._reference_role(plane) != role:
             continue
+        # Fixed per-type slot defaults do not follow changes in the fitted
+        # mesh's bounds. Older cards retain their established AABB follow.
+        if int(plane.get('arc_reference_layout_schema') or 0) >= 2:
+            continue
         if slot is not None and import_layout.slot_of_object(plane) != slot:
             continue
         if plane.parent == obj or (obj.parent is not None and plane.parent == obj.parent):

@@ -1,0 +1,279 @@
+{
+  "schema_version": 1,
+  "source": "User-calibrated slot 001 reference cards in live Blender; captured 2026-10-15. Position is relative to the character pad. Original images remain unchanged.",
+  "roles": {
+    "Head": {
+      "position_m": [
+        0.19346612691879272,
+        -0.08353888988494873,
+        1.7157971858978271
+      ],
+      "height_m": 0.21910362651027526,
+      "scale": [
+        0.5935549736022949,
+        0.5935549736022949,
+        0.5935549736022949
+      ],
+      "artwork_rotation_deg": 0,
+      "source_icon": "T_UI_Icon_Face_Face_01_Pio.png",
+      "source_card": "Head_Face_Face_01_Pio_Reference (T_UI_Icon_Face_Face_01_Pio)",
+      "source_slot": 0,
+      "source_rotation_deg": [
+        0.0,
+        -0.0,
+        0.0
+      ],
+      "source_scale": [
+        0.5935549736022949,
+        0.5935549736022949,
+        0.5935549736022949
+      ],
+      "source_uv_bounds": [
+        0.029296875,
+        0.0,
+        0.859375,
+        1.0
+      ],
+      "rotated_uv_bounds": [
+        0.029296875,
+        0.0,
+        0.859375,
+        1.0
+      ]
+    },
+    "Hair": {
+      "position_m": [
+        0.0,
+        0.017318695783615112,
+        2.006927490234375
+      ],
+      "height_m": 0.24094295501708984,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "artwork_rotation_deg": 0,
+      "source_icon": "T_UI_Icon_Hair_AfroFade.png",
+      "source_card": "Hair_AfroFade_Reference (T_UI_Icon_Hair_AfroFade)",
+      "source_slot": 0,
+      "source_rotation_deg": [
+        0.0,
+        -0.0,
+        0.0
+      ],
+      "source_scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "source_uv_bounds": [
+        0.0,
+        0.0,
+        0.7890625,
+        0.97265625
+      ],
+      "rotated_uv_bounds": [
+        0.0,
+        0.0,
+        0.7890625,
+        0.97265625
+      ]
+    },
+    "FacialHair": {
+      "position_m": [
+        0.4307132661342621,
+        -0.0528603196144104,
+        1.7068495750427246
+      ],
+      "height_m": 0.2410690039396286,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "artwork_rotation_deg": 0,
+      "source_icon": "T_UI_Icon_FacialHair_BeardFull.png",
+      "source_card": "FacialHair_BeardFull_Reference (T_UI_Icon_FacialHair_BeardFull)",
+      "source_slot": 0,
+      "source_rotation_deg": [
+        0.0,
+        -0.0,
+        0.0
+      ],
+      "source_scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "source_uv_bounds": [
+        0.0,
+        0.0,
+        1.0,
+        1.0
+      ],
+      "rotated_uv_bounds": [
+        0.0,
+        0.0,
+        1.0,
+        1.0
+      ]
+    },
+    "Backpack": {
+      "position_m": [
+        0.3661384880542755,
+        0.31272074580192566,
+        1.3070306777954102
+      ],
+      "height_m": 0.5404459238052368,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "artwork_rotation_deg": 0,
+      "source_icon": "T_UI_Icon_BackpackContainer_ArcPack.png",
+      "source_card": "Backpack_ArcPack_Reference (T_UI_Icon_BackpackContainer_ArcPack)",
+      "source_slot": 0,
+      "source_rotation_deg": [
+        0.0,
+        -0.0,
+        0.0
+      ],
+      "source_scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "source_uv_bounds": [
+        0.197265625,
+        0.021484375,
+        0.7890625,
+        0.984375
+      ],
+      "rotated_uv_bounds": [
+        0.197265625,
+        0.021484375,
+        0.7890625,
+        0.984375
+      ]
+    },
+    "Attachment": {
+      "position_m": [
+        0.560767412185669,
+        0.2449781596660614,
+        0.919009268283844
+      ],
+      "height_m": 0.27463340759277344,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "artwork_rotation_deg": 0,
+      "source_icon": "T_UI_Icon_BackpackAttachment_Antenna.png",
+      "source_card": "Attachment_Antenna_Reference (T_UI_Icon_BackpackAttachment_Antenna)",
+      "source_slot": 0,
+      "source_rotation_deg": [
+        0.0,
+        -0.0,
+        0.0
+      ],
+      "source_scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "source_uv_bounds": [
+        0.18359375,
+        0.24609375,
+        0.78125,
+        0.791015625
+      ],
+      "rotated_uv_bounds": [
+        0.18359375,
+        0.24609375,
+        0.78125,
+        0.791015625
+      ]
+    },
+    "Charm": {
+      "position_m": [
+        0.2782249450683594,
+        0.3727222681045532,
+        0.9753381609916687
+      ],
+      "height_m": 0.14011957483200632,
+      "scale": [
+        0.7600583434104919,
+        0.7600583434104919,
+        0.7600583434104919
+      ],
+      "artwork_rotation_deg": 0,
+      "source_icon": "T_UI_Icon_BackpackCharm_Anchor_01_A.png",
+      "source_card": "Charm_Anchor_01_A_Reference (T_UI_Icon_BackpackCharm_Anchor_01_A)",
+      "source_slot": 0,
+      "source_rotation_deg": [
+        0.0,
+        -0.0,
+        0.0
+      ],
+      "source_scale": [
+        0.7600583434104919,
+        0.7600583434104919,
+        0.7600583434104919
+      ],
+      "source_uv_bounds": [
+        0.33203125,
+        0.23828125,
+        0.677734375,
+        0.78125
+      ],
+      "rotated_uv_bounds": [
+        0.33203125,
+        0.23828125,
+        0.677734375,
+        0.78125
+      ]
+    },
+    "RaiderTool": {
+      "position_m": [
+        0.6468281661582477,
+        0.24216321110725403,
+        1.3608731507147773
+      ],
+      "height_m": 0.5797962138486134,
+      "scale": [
+        0.5509550147366893,
+        0.550955057144165,
+        0.5509550147366893
+      ],
+      "artwork_rotation_deg": 23.0,
+      "source_icon": "T_UI_Icon_RaiderTool_10MilTool.png",
+      "source_card": "RaiderTool_10MilTool_Reference (T_UI_Icon_RaiderTool_10MilTool)",
+      "source_slot": 0,
+      "source_rotation_deg": [
+        0.0,
+        23.002420803729215,
+        0.0
+      ],
+      "source_scale": [
+        0.5509549975395203,
+        0.550955057144165,
+        0.5509549975395203
+      ],
+      "source_uv_bounds": [
+        0.216796875,
+        0.0,
+        0.779296875,
+        0.876953125
+      ],
+      "rotated_uv_bounds": [
+        0.3495264023618318,
+        -0.06938240987849782,
+        0.7380466307058711,
+        0.89126347941506
+      ]
+    }
+  }
+}

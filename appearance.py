@@ -2433,6 +2433,8 @@ def repair_hair_object(obj, scene=None, *, place_static=True):
         for plane in scene.objects:
             if not plane.get("arc_reference_plane") or reference_planes._reference_role(plane) != role:
                 continue
+            if int(plane.get("arc_reference_layout_schema", 0)) >= 2:
+                continue
             if slot is not None and import_layout.slot_of_object(plane) != slot:
                 continue
             owner = plane.parent
@@ -2918,6 +2920,11 @@ def import_appearance_parts(
         shared = backpack_instances.share_backpack_data(new_objects, scene=context.scene)
         if shared["meshes_linked"] or shared["materials_linked"]:
             msgs.append("Shared identical backpack data: " + str(shared["meshes_linked"]) + " meshes, " + str(shared["materials_linked"]) + " materials")
+    if "CharmConnector" in placed_roles:
+        from . import backpack_instances
+        shared = backpack_instances.share_charm_connector_data(new_objects, scene=context.scene)
+        if shared["meshes_linked"] or shared["materials_linked"]:
+            msgs.append("Shared identical charm connector data: " + str(shared["meshes_linked"]) + " meshes, " + str(shared["materials_linked"]) + " materials")
     mesh_count = sum(
         1 for o in new_objects if _object_alive(o) and o.type == "MESH"
     )

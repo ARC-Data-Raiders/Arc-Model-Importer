@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import json
+import math
 from typing import Iterable
 
 import bpy
@@ -25,6 +27,7 @@ _REF_TYPE_COLLECTIONS = {
 REF_PASS_INDEX = 64
 _ICON_PACKAGE_LOOKUPS = {}
 _IMAGE_CROP_CACHE = {}
+_REFERENCE_DEFAULTS_CACHE = {}
 # Measured from the user's Toolbox, Mouse, Football and Moustache cards.
 _BACKPACK_HEIGHT_RATIO = 1.06908
 _BACKPACK_GAP_M = 0.0113
@@ -36,12 +39,52 @@ _FACIAL_CARD_X_OFFSET_M = 0.472453
 _FACIAL_CARD_Z_OFFSET_M = 0.048221
 
 
-def image_crop_bounds(image) -> tuple[float, float, float, float]:
+def reference_defaults(role: str) -> dict:
+    path = os.path.join(os.path.dirname(__file__), "reference", "reference_card_defaults.json")
+    try:
+        stamp = os.stat(path).st_mtime_ns
+    except OSError:
+        return {}
+    if _REFERENCE_DEFAULTS_CACHE.get("stamp") != stamp:
+        with open(path, encoding="utf-8") as stream:
+            data = json.load(stream)
+        _REFERENCE_DEFAULTS_CACHE.clear()
+        _REFERENCE_DEFAULTS_CACHE.update(stamp=stamp, roles=data.get("roles", {}))
+    return _REFERENCE_DEFAULTS_CACHE["roles"].get(role, {})
+
+
+def _calibrated_layout(role, objects, scene=None):
+    defaults = reference_defaults(role)
+    if not defaults:
+        return None
+    from . import import_layout
+    slots = [import_layout.slot_of_object(obj) for obj in objects]
+    slot = next((value for value in slots if value is not None), 0)
+    x, y = import_layout.slot_world_xy(slot, scene)
+    location = Vector(defaults["position_m"]) + Vector((x, y, 0.0))
+    return float(defaults["height_m"]), location
+
+
+def _reference_scale(role):
+    return Vector(reference_defaults(role).get("scale", (1.0, 1.0, 1.0)))
+
+
+def _artwork_rotation(role):
+    return float(reference_defaults(role).get("artwork_rotation_deg", 0.0))
+
+
+def _card_matrix(location, scale):
+    matrix = Matrix.Diagonal(Vector((*scale, 1.0)))
+    matrix.translation = Vector(location)
+    return matrix
+
+
+def image_crop_bounds(image, artwork_rotation_deg=0.0) -> tuple[float, float, float, float]:
     """UV rectangle of visible art; original pixels and files stay untouched."""
     width, height = int(image.size[0]), int(image.size[1])
     if width < 1 or height < 1:
         return (0.0, 0.0, 1.0, 1.0)
-    key = (image.as_pointer(), width, height)
+    key = (image.as_pointer(), width, height, float(artwork_rotation_deg))
     if key in _IMAGE_CROP_CACHE:
         return _IMAGE_CROP_CACHE[key]
     pixels = np.empty(width * height * 4, dtype=np.float32)
@@ -62,9 +105,22 @@ def image_crop_bounds(image) -> tuple[float, float, float, float]:
             if np.count_nonzero(foreground) >= 4:
                 visible &= foreground
     rows, columns = np.nonzero(visible)
-    bounds = ((float(columns.min()) / width, float(rows.min()) / height,
-               float(columns.max() + 1) / width, float(rows.max() + 1) / height)
-              if len(rows) else (0.0, 0.0, 1.0, 1.0))
+    if len(rows) and abs(artwork_rotation_deg) > 1e-8:
+        angle = math.radians(artwork_rotation_deg)
+        cosine, sine = math.cos(angle), math.sin(angle)
+        x, y = columns + 0.5 - width * 0.5, rows + 0.5 - height * 0.5
+        u = 0.5 + (cosine * x + sine * y) / width
+        v = 0.5 + (-sine * x + cosine * y) / height
+        # Include complete rotated pixel footprints. Bounds may extend beyond
+        # the source canvas; clamping would clip the 10Mil handle tip.
+        half_u = (abs(cosine) + abs(sine)) * 0.5 / width
+        half_v = (abs(cosine) + abs(sine)) * 0.5 / height
+        bounds = (float(u.min() - half_u), float(v.min() - half_v),
+                  float(u.max() + half_u), float(v.max() + half_v))
+    else:
+        bounds = ((float(columns.min()) / width, float(rows.min()) / height,
+                   float(columns.max() + 1) / width, float(rows.max() + 1) / height)
+                  if len(rows) else (0.0, 0.0, 1.0, 1.0))
     _IMAGE_CROP_CACHE[key] = bounds
     return bounds
 
@@ -303,10 +359,27 @@ def _anchor_plane(plane, anchor, *, organize=True, world_matrix=None, update=Tru
         if update:
             _depsgraph_update()
         mw = world_matrix.copy() if world_matrix is not None else plane.matrix_world.copy()
+        location, rotation, scale = mw.decompose()
+        if abs(rotation.angle) > 1e-7:
+            if plane.data.users > 1:
+                plane.data = plane.data.copy()
+            scaling = Matrix.Diagonal(Vector((*scale, 1.0)))
+            plane.data.transform(scaling.inverted() @ rotation.to_matrix().to_4x4() @ scaling)
+            mw = _card_matrix(location, scale)
         plane.parent = anchor
-        # Identity parent-inverse + local = parent^-1 * world (handles scale 0.01).
-        plane.matrix_parent_inverse = Matrix.Identity(4)
-        plane.matrix_local = anchor.matrix_world.inverted() @ mw
+        plane.parent_type = 'OBJECT'
+        plane.parent_bone = ''
+        # Cancel the initial parent frame, preserving operative world scale
+        # and zero local/world Euler rotation. Later parent movement still follows.
+        plane.matrix_parent_inverse = anchor.matrix_world.inverted()
+        plane.rotation_mode = 'XYZ'
+        plane.delta_location = (0.0, 0.0, 0.0)
+        plane.delta_rotation_euler = (0.0, 0.0, 0.0)
+        plane.delta_rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        plane.delta_scale = (1.0, 1.0, 1.0)
+        plane.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        plane.rotation_axis_angle = (0.0, 0.0, 0.0, 1.0)
+        plane.matrix_basis = mw
         if update:
             _depsgraph_update()
         plane["arc_reference_anchor"] = anchor.name
@@ -357,7 +430,7 @@ def _configure_ref_image(img) -> None:
         pass
 
 
-def _make_emission_material(name: str, image, bounds=(0.0, 0.0, 1.0, 1.0), material=None) -> bpy.types.Material:
+def _make_emission_material(name: str, image, bounds=(0.0, 0.0, 1.0, 1.0), material=None, *, artwork_rotation_deg=0.0) -> bpy.types.Material:
     mat = (material.copy() if material is not None and material.users > 1 else material)
     mat = mat or bpy.data.materials.new(name=name)
     mat.use_nodes = True
@@ -399,7 +472,30 @@ def _make_emission_material(name: str, image, bounds=(0.0, 0.0, 1.0, 1.0), mater
     links.new(geometry.outputs["Backfacing"], select.inputs[0])
     links.new(coordinates.outputs["UV"], select.inputs[1])
     links.new(combine.outputs[0], select.inputs[2])
-    links.new(select.outputs[0], tex.inputs["Vector"])
+    sampled_uv = select.outputs[0]
+    if abs(artwork_rotation_deg) > 1e-8:
+        # First reflect the back view in the rotated card's crop space, then
+        # inverse-rotate into the original texture. W/H keeps pixel angles exact.
+        aspect = float(image.size[0]) / max(float(image.size[1]), 1.0)
+        subtract = nodes.new("ShaderNodeVectorMath"); subtract.operation = 'SUBTRACT'
+        subtract.inputs[1].default_value = (0.5, 0.5, 0.0)
+        links.new(sampled_uv, subtract.inputs[0])
+        pixel_scale = nodes.new("ShaderNodeVectorMath"); pixel_scale.operation = 'MULTIPLY'
+        pixel_scale.inputs[1].default_value = (aspect, 1.0, 1.0)
+        links.new(subtract.outputs[0], pixel_scale.inputs[0])
+        rotate = nodes.new("ShaderNodeVectorRotate")
+        rotate.rotation_type = 'AXIS_ANGLE'
+        rotate.inputs['Axis'].default_value = (0.0, 0.0, 1.0)
+        rotate.inputs['Angle'].default_value = math.radians(artwork_rotation_deg)
+        links.new(pixel_scale.outputs[0], rotate.inputs['Vector'])
+        uv_scale = nodes.new("ShaderNodeVectorMath"); uv_scale.operation = 'MULTIPLY'
+        uv_scale.inputs[1].default_value = (1.0 / aspect, 1.0, 1.0)
+        links.new(rotate.outputs[0], uv_scale.inputs[0])
+        add = nodes.new("ShaderNodeVectorMath"); add.operation = 'ADD'
+        add.inputs[1].default_value = (0.5, 0.5, 0.0)
+        links.new(uv_scale.outputs[0], add.inputs[0])
+        sampled_uv = add.outputs[0]
+    links.new(sampled_uv, tex.inputs["Vector"])
     links.new(tex.outputs["Color"], emit.inputs["Color"])
     transparent = nodes.new("ShaderNodeBsdfTransparent")
     transparent.location = (250, -180)
@@ -426,13 +522,16 @@ def _make_emission_material(name: str, image, bounds=(0.0, 0.0, 1.0, 1.0), mater
         mat.use_transparent_shadow = True
     mat["arc_reference_camera_only"] = True
     mat["arc_reference_double_sided"] = True
+    mat["arc_reference_artwork_rotation_deg"] = float(artwork_rotation_deg)
     return mat
 
 
-def _set_plane_geometry(plane, width_m, height_m, bounds, facing_y=True):
+def _set_plane_geometry(plane, width_m, height_m, bounds, facing_y=True, *, artwork_rotation_deg=0.0):
     # Fixed plane orientation, not a camera-facing constraint. UV cropping
     # removes margins geometrically and never creates or edits a PNG.
     half_w, half_h = width_m * 0.5, height_m * 0.5
+    if plane.data.users > 1:
+        plane.data = plane.data.copy()
     vertices = ([(-half_w, 0, -half_h), (half_w, 0, -half_h),
                  (half_w, 0, half_h), (-half_w, 0, half_h)] if facing_y else
                 [(-half_w, -half_h, 0), (half_w, -half_h, 0),
@@ -447,6 +546,7 @@ def _set_plane_geometry(plane, width_m, height_m, bounds, facing_y=True):
         loop.uv = value
     plane.data.update()
     plane["arc_reference_uv_bounds"] = list(bounds)
+    plane["arc_reference_artwork_rotation_deg"] = float(artwork_rotation_deg)
     _configure_camera_only(plane)
 
 
@@ -458,14 +558,19 @@ def create_image_plane(
     image = _load_image(image_path)
     if image is None:
         return None
-    bounds = image_crop_bounds(image)
+    if not reference_role:
+        reference_role = next((r for r in _REF_TYPE_COLLECTIONS if name.startswith("REF_" + r)), "")
+    angle = _artwork_rotation(reference_role)
+    scale = _reference_scale(reference_role)
+    bounds = image_crop_bounds(image, angle)
     height_m = max(float(height_m), 1e-3)
     width_m = height_m * _image_aspect(image, bounds)
     mesh = bpy.data.meshes.new(name + "_Mesh")
     plane = bpy.data.objects.new(name, mesh)
-    _set_plane_geometry(plane, width_m, height_m, bounds, facing_y)
-    plane.matrix_world = Matrix.Translation(Vector(location))
-    mat = _make_emission_material(f"{name}_Mat", image, bounds)
+    _set_plane_geometry(plane, width_m / scale.x, height_m / scale.z, bounds,
+                        facing_y, artwork_rotation_deg=angle)
+    plane.matrix_world = _card_matrix(location, scale)
+    mat = _make_emission_material(f"{name}_Mat", image, bounds, artwork_rotation_deg=angle)
     mesh.materials.append(mat)
     if not reference_role:
         reference_role = next((r for r in _REF_TYPE_COLLECTIONS if name.startswith("REF_" + r)), "")
@@ -473,6 +578,8 @@ def create_image_plane(
     plane["arc_reference_plane"] = 1
     plane["arc_reference_image"] = image_path
     plane["arc_reference_role"] = reference_role
+    if reference_defaults(reference_role):
+        plane["arc_reference_layout_schema"] = 2
     _depsgraph_update()
     return plane
 
@@ -582,16 +689,16 @@ def _move_ref_plane(plane, location: Vector) -> None:
     plane.matrix_world = mw
     parent = plane.parent
     if parent is not None:
-        try:
-            plane.matrix_parent_inverse = Matrix.Identity(4)
-            plane.matrix_local = parent.matrix_world.inverted() @ plane.matrix_world
-        except Exception:
-            pass
+        _anchor_plane(plane, parent, organize=False, world_matrix=mw)
     _depsgraph_update()
 
 
 def layout_head_hair_stack(objects, head_plane=None, hair_plane=None) -> None:
     """Place face and hair cards using the working-blend offsets."""
+    if head_plane is not None and reference_defaults("Head"):
+        head_plane = None
+    if hair_plane is not None and reference_defaults(_reference_role(hair_plane)):
+        hair_plane = None
     if hair_plane is not None and _reference_role(hair_plane) == "FacialHair":
         hair_plane = None  # facial portraits use the measured Moustache layout
     if head_plane is not None:
@@ -618,6 +725,8 @@ def layout_head_hair_stack(objects, head_plane=None, hair_plane=None) -> None:
 
 
 def place_head_reference(objects, image_path: str) -> bpy.types.Object | None:
+    if reference_defaults("Head"):
+        return place_asset_reference(objects, image_path, "Head")
     meshes = _head_meshes(objects)
     bb = _world_bbox(meshes)
     if bb is None or not image_path:
@@ -648,6 +757,8 @@ def place_hair_reference(objects, image_path: str) -> bpy.types.Object | None:
     meshes = _hair_meshes(objects)
     if _meshes_with_role(objects, "FacialHair") and not _meshes_with_role(objects, "Hair"):
         return place_asset_reference(objects, image_path, "FacialHair")
+    if reference_defaults("Hair"):
+        return place_asset_reference(objects, image_path, "Hair")
     # Stack against the head when one is in the same import; else the hair mesh.
     anchor_meshes = _head_meshes(objects) or meshes
     bb = _world_bbox(anchor_meshes)
@@ -685,7 +796,9 @@ def place_asset_reference(objects, image_path: str, role: str) -> bpy.types.Obje
     image = _load_image(image_path)
     if image is None:
         return None
-    height, location = _asset_card_layout(mins, maxs, role, _image_aspect(image, image_crop_bounds(image)))
+    height, location = (_calibrated_layout(role, objects)
+                        or _asset_card_layout(mins, maxs, role,
+                                              _image_aspect(image, image_crop_bounds(image, _artwork_rotation(role)))))
     plane = create_image_plane(name=f"REF_{role}", image_path=image_path,
                                height_m=height,
                                location=location,
@@ -718,6 +831,9 @@ def _asset_card_layout(mins, maxs, role, aspect):
 
 
 def _card_layout(meshes, role, aspect, *, bbox=None):
+    calibrated = _calibrated_layout(role, meshes)
+    if calibrated:
+        return calibrated
     bb = bbox if bbox is not None else _world_bbox(meshes)
     if bb is None:
         return None
@@ -756,7 +872,9 @@ def _update_card(plane, meshes, role, *, preserve_calibration=True, model_bbox=N
     image = _load_image(path)
     if image is None:
         return False
-    bounds = image_crop_bounds(image)
+    angle = _artwork_rotation(role)
+    scale = _reference_scale(role)
+    bounds = image_crop_bounds(image, angle)
     aspect = _image_aspect(image, bounds)
     layout = _card_layout(meshes, role, aspect, bbox=model_bbox)
     calibration = os.path.basename(path).casefold() in {
@@ -764,23 +882,28 @@ def _update_card(plane, meshes, role, *, preserve_calibration=True, model_bbox=N
         "t_ui_icon_facialhair_moustacheregular.png",
         "t_ui_icon_backpackcharm_computermouse_01_a.png",
     }
-    if preserve_calibration and calibration:
+    if preserve_calibration and calibration and not reference_defaults(role):
         layout = _preserved_visible_layout(plane, bounds)
     if layout is None:
         return False
     height, location = layout
     anchor = plane.parent or (meshes[0].parent or meshes[0])
-    _set_plane_geometry(plane, height * aspect, height, bounds)
+    _set_plane_geometry(plane, height * aspect / scale.x, height / scale.z, bounds,
+                        artwork_rotation_deg=angle)
     material = plane.data.materials[0] if plane.data.materials else None
-    material = _make_emission_material(plane.name + "_Mat", image, bounds, material)
+    material = _make_emission_material(plane.name + "_Mat", image, bounds, material,
+                                       artwork_rotation_deg=angle)
     if plane.data.materials:
         plane.data.materials[0] = material
     else:
         plane.data.materials.append(material)
-    plane.matrix_world = Matrix.Translation(location)
+    world = _card_matrix(location, scale)
+    plane.matrix_world = world
     _anchor_plane(plane, anchor, organize=False,
-                  world_matrix=Matrix.Translation(location), update=False)
+                  world_matrix=world, update=False)
     plane["arc_reference_role"] = role
+    if reference_defaults(role):
+        plane["arc_reference_layout_schema"] = 2
     return True
 
 

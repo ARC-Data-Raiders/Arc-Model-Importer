@@ -412,3 +412,12 @@ and nine null-sidecar recovery checks pass, including an empty repeat plan.
 Cached material repair also respects shared frame/strap OBJECT overrides. A
 different material-slot count first forks that instance mesh, preventing changes
 to sibling variants; 22 compatibility checks pass.
+
+### 2.19.17 reference defaults and charm connector sharing
+
+Reference defaults now come from the user's seven calibrated cards in slot 001.
+Positions and operative scales persist across imports, while local/world rotations
+remain zero. Raider Tool artwork rotates 23 degrees clockwise before UV cropping,
+keeping the original PNG unchanged and both sides readable. Head/facial fitting
+preserves those fixed defaults. Exact charm connector geometry shares automatically
+while object socket placement and material overrides remain independent.
