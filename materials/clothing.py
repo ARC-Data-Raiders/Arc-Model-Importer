@@ -1148,33 +1148,17 @@ def _find_colortex_slice_png(png_lists, slice_idx: int) -> str:
 
 
 def _find_pattern_slice_png(png_lists, slice_idx: int) -> str:
-    """Resolve TextureArray pattern slice. Callers must refuse ID < 1."""
+    """Resolve a zero-based Patterns array slice (_N or _LAYERN exports)."""
     try:
         idx = int(round(float(slice_idx)))
     except (TypeError, ValueError):
         return ""
-    if idx < 1:
+    if idx < 0:
         return ""
-    preferred = []
-    fallback = []
+    # Restrict resolution to Patterns: Colors and Normals may share this ID.
     for png_list in png_lists or ():
-        for fpath in png_list or ():
-            stem = os.path.splitext(os.path.basename(fpath))[0]
-            if not stem.endswith(f"_{idx}"):
-                continue
-            low = stem.lower()
-            if "pattern" in low:
-                preferred.append(fpath)
-            elif "colormask" in low or "basecolor" in low or "huevariation" in low:
-                continue
-            else:
-                fallback.append(fpath)
-    if preferred:
-        return preferred[0]
-    if fallback:
-        return fallback[0]
-    for png_list in png_lists or ():
-        hit = textures.find_slice_png(list(png_list or []), idx)
+        candidates = [p for p in png_list or () if "pattern" in os.path.basename(p).lower()]
+        hit = textures.find_slice_png(candidates, idx)
         if hit:
             return hit
     return ""
@@ -1216,36 +1200,24 @@ def _live_pattern_rgba(colours: dict | None, zone: int, suffix: str):
         a = float(rgba[3]) if len(rgba) > 3 else 0.0
         if abs(a) <= 1e-4:
             return None
-        if textures.skip_colour(rgba):
-            return None
+        # White, black and pure-red are valid authored pattern colours;
+        # only alpha decides whether this swatch contributes.
         return (float(rgba[0]), float(rgba[1]), float(rgba[2]), a)
     except (TypeError, ValueError, IndexError):
         return None
 
 
 def _wire_gt_zone_pattern_hue(
-    nodes,
-    links,
-    parent,
-    colours: dict,
-    zone_scalars: dict,
-    ta_ids: dict | None,
-    zone: int,
-    colour_src,
-    y0: float,
-    png_lists,
-    pattern_images: dict,
-    hue_cache: dict,
-    *,
-    col_x=None,
-    hide=True,
-    omit_hue_variation: bool = False,
+    nodes, links, parent, colours: dict, zone_scalars: dict, ta_ids: dict | None,
+    zone: int, colour_src, y0: float, png_lists, pattern_images: dict,
+    hue_cache: dict, *, col_x=None, hide=True, omit_hue_variation: bool = False,
+    color_mask_socket=None, zone_mask_socket=None, global_tiling: float = 1.0,
 ):
-    """Layered DXBC: Patterns×PatternColorA/B/C then optional HueVariation.
+    """Composite linear pattern-array weights, then optional legacy hue.
 
-    Arc Texturer ``Pattern N`` sockets stay on the legacy group; GT must mix
-    here so Colour N matches Snooper ``ArcZoneColor``. Revamped omits hue
-    variation — pass ``omit_hue_variation=True`` for GT parity.
+    GT calls this after ColorTex and before crease/edge overlays. Optional
+    sockets preserve legacy callers; absent ColorMask has zero coverage.
+    Pattern IDs are zero-based, with activity determined by authored masks.
     """
     def _xy(legacy_x, dy=0.0, step=0):
         if col_x is None:
@@ -1253,47 +1225,53 @@ def _wire_gt_zone_pattern_hue(
         pitch = 0.0 if hide else 140.0
         return (col_x + step * pitch, y0 + dy)
 
+    def mix(name, a, b, *, factor=None, value=None, dtype="RGBA"):
+        nd = nodes.new("ShaderNodeMix")
+        nd.name = f"GT_Pattern_{name}_z{zone}"
+        nd.label = f"Pattern {name} z{zone}"
+        nd.data_type = dtype
+        nd.blend_type = "MIX"
+        _gt_attach_local(nd, parent, _xy(160.0, 0.0, 4), hide=hide)
+        return _gt_mix_link(links, nd, a, b, fac_sock=factor, fac_value=value)
+
+    def value(name, val):
+        nd = nodes.new("ShaderNodeValue")
+        nd.name = f"GT_Pattern_{name}_z{zone}"
+        nd.outputs[0].default_value = float(val)
+        _gt_attach_local(nd, parent, _xy(40.0, 40.0, 3), hide=hide)
+        return nd.outputs[0]
+
     pattern_id = _mi_layer_float(ta_ids, zone, "PatternID", 0.0)
+    pm = _colour_rgba(colours, f"{zone}_PatternMask", (0.0, 0.0, 0.0, 0.0))
     live = []
     for suffix, channel in (("PatternColorA", "Red"), ("PatternColorB", "Green"), ("PatternColorC", "Blue")):
         rgba = _live_pattern_rgba(colours, zone, suffix)
         if rgba is not None:
             live.append((suffix, channel, rgba))
-    if pattern_id >= 1.0 and live and png_lists:
+    if pattern_id >= 0.0 and any(abs(v) > 1e-8 for v in pm[:3]) and (abs(pm[3]) > 1e-8 or live) and png_lists:
         png_path = _find_pattern_slice_png(png_lists, pattern_id)
         img = pattern_images.get(png_path) if png_path else None
         if img is None and png_path:
             img = _load_image_cached(png_path)
             if img is not None:
-                try:
-                    img.colorspace_settings.name = "sRGB"
-                except Exception:
-                    pass
                 pattern_images[png_path] = img
         if img is not None:
-            tiling = _mi_layer_float(zone_scalars, zone, "PatternTiling", 0.0)
-            if tiling <= 1e-6:
-                tiling = _mi_layer_float(zone_scalars, zone, "ColorTextureTiling", 1.0)
-            if tiling <= 1e-6:
-                tiling = 1.0
+            # Patterns are RGB blend weights, not display colour.
+            img.colorspace_settings.name = "Non-Color"
+            img.alpha_mode = "CHANNEL_PACKED"
+            tiling = float(global_tiling) * _mi_layer_float(zone_scalars, zone, "PatternTiling", 1.0)
             uv = hue_cache.get("pattern_uv")
             uv_sock = hue_cache.get("pattern_uv_sock")
             if uv is None:
                 uv = nodes.new("ShaderNodeUVMap")
                 uv.name = "GT_Pattern_UV"
                 uv.label = "UV1 Pattern"
-                try:
-                    uv.uv_map = "UV1"
-                except Exception:
-                    pass
-                uv.location = (-1080.0, 540.0) if col_x is None else (_gt_pbr.maps_uv_x(), _gt_pbr.colour_row_y("pattern"))
+                uv.uv_map = "UV1"
+                uv.location = (-1080.0, 540.0) if col_x is None else (_gt_pbr.maps_uv_x(), y0)
                 uv.hide = hide
                 uv.parent = None if col_x is not None else parent
                 hue_cache["pattern_uv"] = uv
-                uv_sock = _gt_pbr.orient_uv(
-                    nodes, links, uv.outputs["UV"], "GT_Pattern_UV_orient",
-                    (uv.location[0] + 200.0), uv.location[1], hide=True,
-                )
+                uv_sock = _gt_pbr.orient_uv(nodes, links, uv.outputs["UV"], "GT_Pattern_UV_orient", uv.location[0] + 200.0, uv.location[1], hide=True)
                 hue_cache["pattern_uv_sock"] = uv_sock
             if uv_sock is None:
                 uv_sock = uv.outputs["UV"]
@@ -1307,44 +1285,43 @@ def _wire_gt_zone_pattern_hue(
             tex_nd.name = f"GT_Pattern_z{zone}"
             tex_nd.label = os.path.basename(png_path)
             tex_nd.image = img
-            tex_nd.interpolation = "Cubic"
+            tex_nd.interpolation = "Linear"
             _gt_attach_local(tex_nd, parent, _xy(-160.0, 80.0, 1), hide=hide)
             links.new(mapping.outputs["Vector"], tex_nd.inputs["Vector"])
             sep = nodes.new("ShaderNodeSeparateColor")
             sep.name = f"GT_Pattern_sep_z{zone}"
-            sep.label = f"GT Pattern.rgb z{zone}"
             _gt_attach_local(sep, parent, _xy(-40.0, 80.0, 2), hide=hide)
             links.new(tex_nd.outputs["Color"], sep.inputs["Color"])
             hue_cache.setdefault("pattern_zones", []).append(zone)
+            original = colour_src
+            patterned = mix("RawRGB", colour_src, tex_nd.outputs["Color"], value=float(pm[3]))
             for suffix, channel, rgba in live:
                 rgb_nd = nodes.get(f"{zone}_{suffix}")
                 if rgb_nd is None:
                     rgb_nd = nodes.new("ShaderNodeRGB")
                     rgb_nd.name = f"{zone}_{suffix}"
                     rgb_nd.label = f"{zone}_{suffix}"
-                    rgb_nd.outputs[0].default_value = (*rgba,)
+                    rgb_nd.outputs[0].default_value = rgba
                     _gt_attach_local(rgb_nd, parent, _xy(40.0, 0.0, 3), hide=hide)
-                fac = _new_math(
-                    nodes,
-                    "MULTIPLY",
-                    f"GT_Pattern_fac_{suffix}_z{zone}",
-                    _xy(40.0, 40.0, 3),
-                    parent=parent,
-                    value=rgba[3],
-                )
-                _link_mix_factor_from_sep(links, sep, fac, channel=channel, index={"Red": 0, "Green": 1, "Blue": 2}[channel])
-                # Math: input 0 from pattern channel, input 1 = alpha (value=)
-                # _new_math with value sets one input; we need channel × alpha.
-                # Relink: Separate → Math[0], alpha stays on Math[1].
-                mix = nodes.new("ShaderNodeMix")
-                mix.data_type = "RGBA"
-                mix.blend_type = "MIX"
-                mix.name = f"GT_Pattern_{suffix}_z{zone}"
-                mix.label = f"GT lerp(col,{suffix},a×pat) z{zone}"
-                _gt_attach_local(mix, parent, _xy(160.0, 0.0, 4), hide=hide)
-                colour_src = _gt_mix_link(
-                    links, mix, colour_src, rgb_nd.outputs[0], fac_sock=fac.outputs[0]
-                )
+                fac = _new_math(nodes, "MULTIPLY", f"GT_Pattern_fac_{suffix}_z{zone}", _xy(40.0, 40.0, 3), parent=parent, value=rgba[3])
+                links.new(sep.outputs[channel], fac.inputs[0])
+                patterned = mix(suffix, patterned, rgb_nd.outputs[0], factor=fac.outputs[0])
+            cm_sep = nodes.new("ShaderNodeSeparateColor")
+            cm_sep.name = f"GT_Pattern_ColorMask_z{zone}"
+            _gt_attach_local(cm_sep, parent, _xy(-40.0, 0.0, 2), hide=hide)
+            if color_mask_socket is not None:
+                links.new(color_mask_socket, cm_sep.inputs["Color"])
+            else:
+                cm_sep.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
+            gate = value("Gate0", 0.0)
+            for channel, amount in zip(("Red", "Green", "Blue"), pm[:3]):
+                gate = mix("Mask"+channel, gate, value("MaskValue"+channel, amount), factor=cm_sep.outputs[channel], dtype="FLOAT")
+            if zone_mask_socket is not None:
+                zone_gate = _new_math(nodes, "MULTIPLY", f"GT_Pattern_ZoneGate_z{zone}", _xy(40.0, 40.0, 3), parent=parent)
+                links.new(gate, zone_gate.inputs[0])
+                links.new(zone_mask_socket, zone_gate.inputs[1])
+                gate = zone_gate.outputs[0]
+            colour_src = mix("Coverage", original, patterned, factor=gate)
 
     if omit_hue_variation:
         return colour_src
@@ -1911,26 +1888,28 @@ def _wire_outfit_color_ground_truth(
                 zone_colortex[zone] = tex_nd.outputs["Color"]
                 colortex_wired.append(zone)
 
-        _pat_y = loc("pat")[1] if bypass_arc else y0
-        colour_src = _wire_gt_zone_pattern_hue(
-            nodes,
-            links,
-            row_parent,
-            colours or {},
-            zone_scalars,
-            ta_ids,
-            zone,
-            colour_src,
-            _pat_y,
-            png_lists,
-            pattern_images,
-            hue_cache,
-            col_x=0.0 if bypass_arc else None,
-            hide=True if bypass_arc else hide,
-            # Revamped warns and omits HueVariation / MediumNormal.
-            omit_hue_variation=bool(bypass_arc),
-        )
-
+        if not bypass_arc:
+            _pat_y = y0
+            colour_src = _wire_gt_zone_pattern_hue(
+                nodes,
+                links,
+                row_parent,
+                colours or {},
+                zone_scalars,
+                ta_ids,
+                zone,
+                colour_src,
+                _pat_y,
+                png_lists,
+                pattern_images,
+                hue_cache,
+                col_x=0.0 if bypass_arc else None,
+                hide=True if bypass_arc else hide,
+                # Revamped warns and omits HueVariation / MediumNormal.
+                omit_hue_variation=False,
+                color_mask_socket=cm_src.outputs["Color"] if cm_src is not None else None,
+                global_tiling=_mi_global_float(zone_scalars, "Tiling", 1.0),
+            )
         # Revamped omits weather/wet; keep wet only on the legacy Arc path.
         if not bypass_arc:
             _wet_y = loc("wet")[1] if bypass_arc else y0
@@ -3497,7 +3476,13 @@ def _setup_gt_bypass_material(
         sparse_colormask=("radiobag" in f"{_material_key} {_mat_name} {json_path or ''}".lower()),
         breakup_node=breakup_node,
         colortex_outputs=_gt.get("colortex_outputs") or {},
+        pattern_png_lists=(base_other, base_pngs),
     )
+    _gt["pattern_zones"] = [z for z in range(1, 9) if nodes.get(f"GT_Pattern_z{z}") is not None]
+    mat["arc_layered_pattern_zones"] = json.dumps(_gt["pattern_zones"])
+    mat["arc_layered_medium_zones"] = json.dumps([z for z in range(1, 9) if nodes.get(f"GT_z{z}_MediumN") is not None])
+    mat["arc_layered_surface_schema"] = "native-pattern-medium-v1"
+    mat["arc_medium_mip_note"] = "Native mask/strength/RNM; BOX reconstructed OCM mips approximate cooked filtering/compression."
     # Keep Colour-row frames; do not unparent/declutter (that made the spaghetti graph).
     n_moved = 0
     print(

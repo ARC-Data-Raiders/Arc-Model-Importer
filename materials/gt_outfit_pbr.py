@@ -2166,6 +2166,7 @@ def finish_gt_outfit_graph(
     sparse_colormask: bool = False,
     breakup_node=None,
     colortex_outputs: dict | None = None,
+    pattern_png_lists=None,
 ):
     """Mux cooked colour + PBR into Principled. Returns the BSDF node."""
     from . import clothing as C
@@ -2314,6 +2315,7 @@ def finish_gt_outfit_graph(
     n_base = {}
     n_crease = {}
     n_edge = {}
+    n_medium = {}
     uv1 = uv_bus["uv1"]
     uv_layer = {
         "base": uv1,
@@ -2366,6 +2368,7 @@ def finish_gt_outfit_graph(
         uv_emask = _stage_uv(
             C._mi_layer_float(zone_scalars, zone, "EdgeMaskTiling", 1.0) or 1.0, "e_rough", "EMask",
         )
+        uv_bn = _stage_uv(1.0, "n_base", "BaseN")
         uv_cn = _stage_uv(C._mi_layer_float(zone_scalars, zone, "CreaseNormalTiling", 1.0) or 1.0, "n_crease", "CreaseN")
         uv_en = _stage_uv(C._mi_layer_float(zone_scalars, zone, "EdgeNormalTiling", 1.0) or 1.0, "n_edge", "EdgeN")
         # Revamped: clamp(Masks.r + Base/Crease/EdgeRoughness offset).
@@ -2435,7 +2438,7 @@ def finish_gt_outfit_graph(
                 metal_v, subcol_x(tx), colour_row_y("metal"),
             )
         nd = _slice_sample(
-            nodes, links, ta_cache, base_normals, bn, uv_base, 1.0,
+            nodes, links, ta_cache, base_normals, bn, uv_bn, 1.0,
             non_color=True, name=f"GT_z{zone}_BaseN", x=tx, y=shared_row_y("ta_n_base"),
         )
         if nd is not None:
@@ -2452,7 +2455,14 @@ def finish_gt_outfit_graph(
         )
         if nd is not None:
             n_edge[zone] = _decode_dx_color(nodes, links, _sock_color(nd), f"GT_z{zone}_EdgeN_dx", tx, colour_row_y("n_edge"))
-        # MediumNormal omitted (Revamped warn-only).
+        medium_strength = C._mi_layer_float(zone_scalars, zone, "MediumNormalStrength", 0.0)
+        if abs(medium_strength) > 1e-8:
+            medium_uv = _stage_uv(C._mi_layer_float(zone_scalars, zone, "MediumNormalTiling", 1.0), "n_med", "MediumN")
+            medium_id = C._gt_ta_id(ta_ids, zone, "MediumNormalID")
+            sample = _slice_sample(nodes, links, ta_cache, base_normals, medium_id, medium_uv, 1.0,
+                non_color=True, name=f"GT_z{zone}_MediumN", x=tx, y=colour_row_y("n_med"))
+            if sample is not None:
+                n_medium[zone] = _decode_dx_color(nodes, links, _sock_color(sample), f"GT_z{zone}_MediumN_dx", tx, colour_row_y("n_med"))
 
     # Wear: packed G/B + curvature + TA crease/edge masks + BreakupMask (Revamped character.py).
     if ocm_g is not None:
@@ -2704,6 +2714,21 @@ def finish_gt_outfit_graph(
             pass
         albedo = _link_mix(links, mul, None, albedo, detail_c)
 
+    # Native layered order: ColorTex first, pattern swatches next, wear last.
+    # Pattern ID 0 is a real array slice. Zone and ColorMask gates keep each
+    # swatch confined to its authored material/palette channels.
+    if pattern_png_lists and cm_src is not None:
+        pattern_images, pattern_cache = {}, {}
+        for zone in range(1, 9):
+            albedo = C._wire_gt_zone_pattern_hue(
+                nodes, links, None, colours or {}, zone_scalars, ta_ids,
+                zone, albedo, colour_row_y("pattern"), pattern_png_lists,
+                pattern_images, pattern_cache, col_x=colour_col_x(zone),
+                hide=True, omit_hue_variation=True,
+                color_mask_socket=_sock_color(cm_src),
+                zone_mask_socket=zone_eq.get(zone), global_tiling=tiling,
+            )
+
     if sparse_colormask and cm_src is not None and base_tex is not None:
         cm_sep = nodes.new("ShaderNodeSeparateColor")
         cm_sep.name = "GT_ColorMask_cov"
@@ -2904,7 +2929,9 @@ def finish_gt_outfit_graph(
             )
         mix = _new_mix(nodes, "GT_n_edge", "N →Edge", gx, colour_row_y("n_edge") + 150.0, dtype="VECTOR")
         detail = _link_mix(links, mix, edge_fac, detail, ne)
-    # Revamped omits MediumNormalStrength (warn-only); keep Base/Crease/Edge only.
+    from .layered_medium import wire_medium
+    detail = wire_medium(nodes, links, detail, n_medium, zone_eq, zone_scalars, mi_data,
+        ocm_node.image if ocm_node is not None else None, uv_bus["uv0"])
     mesh_n = _decode_dx_color(
         nodes, links, _sock_color(normal_node), "GT_meshN_dx", gx, colour_row_y("mux_n"),
     ) if normal_node is not None else None
