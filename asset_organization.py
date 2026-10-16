@@ -1,6 +1,7 @@
 """Collection-only organization and readable names for imported assets."""
 from __future__ import annotations
 import json
+import csv
 import os
 import re
 import bpy
@@ -12,7 +13,75 @@ LABELS = {'Body':'Bodies','Head':'Heads','Hair':'Hair','FacialHair':'Facial Hair
           'Outfit':'Outfits','Backpack':'Backpacks','BackpackFrame':'Backpack Frames',
           'BackpackStrap':'Backpack Straps','Attachment':'Attachments','Charm':'Charms',
           'CharmConnector':'Charm Connectors','RaiderTool':'Raider Tools',
-          'Weapon':'Weapons','WeaponMod':'Weapon Mods','Prop':'Props'}
+          'Weapon':'Weapons','WeaponMod':'Weapon Mods','Prop':'Props',
+          'Enemies':'Enemies','Environment':'Environment'}
+
+
+_NAME_CATALOG_CACHE = {}
+_ENEMY_FLAVOURS = {
+    'BullCrab': 'Leaper', 'Bastion': 'Bastion', 'Chonk': 'Bastion',
+    'Monk': 'Bombardier', 'Peppermint': 'Queen', 'Spearmint': 'Matriarch',
+    'RollBot': 'Surveyor', 'Sniper': 'Sentinel', 'Snitch': 'Snitch',
+    'Runner': 'Shredder', 'LightDrone_02': 'Wasp', 'LightDroneElite': 'Hornet',
+    'Firefly': 'Firefly', 'Pop': 'Pop', 'Tick': 'Tick', 'Fireball': 'Fireball',
+}
+
+
+def _source_path(obj):
+    return str(obj.get('arc_source_mesh') or obj.get('arc_psk_path') or '').replace('\\', '/')
+
+
+def _folder_category(obj):
+    path = '/' + _source_path(obj).strip('/') + '/'
+    low = path.casefold()
+    if '/enemies/' in low:
+        return 'Enemies'
+    if '/environment/' in low:
+        return 'Environment'
+    if '/pioneer/' in low:
+        tail = path[low.index('/pioneer/') + len('/pioneer/'):]
+        category = tail.split('/')[0]
+        if category and category.casefold() not in {'characters','items','shared'}:
+            return category
+    return ''
+
+
+def _catalog_flavour(obj, role, fallback):
+    explicit = str(obj.get('arc_asset_flavour') or '').strip()
+    if explicit:
+        return explicit
+    if role == 'Enemies':
+        stem = re.sub(r'^(SK|SM)_', '', source_code_name(obj), flags=re.I)
+        for code, label in sorted(_ENEMY_FLAVOURS.items(), key=lambda pair: -len(pair[0])):
+            if stem.casefold() == code.casefold() or stem.casefold().startswith(code.casefold() + '_'):
+                return label
+    if role == 'Body' and obj.get('arc_body_variant') not in (None, '', 'NONE'):
+        return fallback
+    source = _source_path(obj).casefold()
+    stem = source_code_name(obj).casefold()
+    for filename in ('appearance_reference.csv', 'outfit_reference.csv'):
+        path = os.path.join(os.path.dirname(__file__), filename)
+        try:
+            stamp = os.stat(path).st_mtime_ns
+            cached = _NAME_CATALOG_CACHE.get(path)
+            if not cached or cached[0] != stamp:
+                with open(path, encoding='utf-8-sig', newline='') as stream:
+                    rows = list(csv.DictReader(stream))
+                _NAME_CATALOG_CACHE[path] = (stamp, rows)
+            rows = _NAME_CATALOG_CACHE[path][1]
+        except OSError:
+            continue
+        for row in rows:
+            if filename == 'appearance_reference.csv':
+                candidate = os.path.splitext((row.get('rel_path') or '').replace('\\','/').rsplit('/',1)[-1])[0]
+                if candidate.casefold() == stem:
+                    label = (row.get('label') or '').strip()
+                    return re.sub(r'^Facial\s*[^A-Za-z0-9]*\s*', '', label) or fallback
+            else:
+                folders = (row.get('Model Folder Name') or '').split(';')
+                if any('/' + folder.strip().casefold() + '/' in source for folder in folders if folder.strip()):
+                    return (row.get('Flavour') or '').strip() or fallback
+    return fallback
 
 
 def role_for(obj):
@@ -22,6 +91,9 @@ def role_for(obj):
         return _reference_role(obj)
     marked = any(obj.get(k) for k in ('arc_assembly_role','arc_model_type','arc_source_mesh','arc_psk_path','arc_outfit','arc_bridge_source'))
     if marked:
+        category = _folder_category(obj)
+        if category in {'Enemies', 'Environment'}:
+            return category
         stamped = str(obj.get('arc_assembly_role') or '')
         if stamped in LABELS:return stamped
         role = import_layout.infer_role(obj)
@@ -30,7 +102,7 @@ def role_for(obj):
         path = str(obj.get('arc_source_mesh') or obj.get('arc_psk_path') or '').replace('\\','/').casefold()
         if model == 'weapon' or '/weapons/' in path:return 'Weapon'
         if '/weaponmod/' in path:return 'WeaponMod'
-        return 'Prop'
+        return category or 'Prop'
     if obj.type in {'EMPTY','ARMATURE'}:
         roles = {role_for(o) for o in obj.children if o.type == 'MESH'} - {''}
         if len(roles)==1:return next(iter(roles))
@@ -129,6 +201,7 @@ def standard_name(obj, role):
     if len(parts)%2==0 and parts[:n]==parts[n:]:stem='_'.join(parts[:n])
     stem=re.sub(r'_(?:Rig|Skeleton|Pivot)$','',stem,flags=re.I) or 'Asset'
     suffix='_Reference' if obj.get('arc_reference_plane') else '_Rig' if obj.type=='ARMATURE' else '_Pivot' if obj.type=='EMPTY' else ''
+    stem = _catalog_flavour(obj, role, stem)
     code = source_code_name(obj)
     obj['arc_asset_code_name'] = code
     return role+'_'+stem+suffix+' ('+code+')'
@@ -203,7 +276,7 @@ def organize_objects(objects=None, scene=None, mode=None):
     scene=scene or bpy.context.scene
     if mode is not None:scene[MODE_KEY]=mode
     full_scene = objects is None
-    normalize_names = not full_scene or int(scene.get('arc_asset_naming_schema', 0)) < 2
+    normalize_names = not full_scene or int(scene.get('arc_asset_naming_schema', 0)) < 3
     objects=[o for o in (list(objects) if objects is not None else list(scene.objects)) if role_for(o)]
     if not objects:return {'objects':0,'renamed':{}}
     state={o: [(layer,o.hide_get(view_layer=layer),o.select_get(view_layer=layer)) for layer in scene.view_layers if o.name in layer.objects] for o in objects}
@@ -215,7 +288,7 @@ def organize_objects(objects=None, scene=None, mode=None):
     managed=set(objects)
     old_groups.update(c for c in current if c.all_objects and set(c.all_objects).issubset(managed))
     renamed=rename_objects(objects,scene) if normalize_names else {}
-    if full_scene:scene['arc_asset_naming_schema']=2
+    if full_scene:scene['arc_asset_naming_schema']=3
     for obj in objects:
         destination=collection_for_object(obj,scene)
         if obj.name not in destination.objects:destination.objects.link(obj)

@@ -330,6 +330,26 @@ def preload_arc_node_groups() -> None:
 # Folder scanning
 # ---------------------------------------------------------------------------
 
+def find_import_models(folder: str) -> list[str]:
+    """Recursively find exported meshes, preferring ActorX and authored LOD0."""
+    groups = {}
+    priority = {'.psk': 0, '.pskx': 1, '.uemodel': 2}
+    for directory, _dirs, files in os.walk(folder):
+        for name in files:
+            stem, extension = os.path.splitext(name)
+            if extension.casefold() not in priority:
+                continue
+            base = re.sub(r'_lod\d+$', '', stem, flags=re.I).casefold()
+            base = re.sub(r'^(SK|SM)_', '', base, flags=re.I)
+            key = (os.path.normcase(directory), base)
+            lod = re.search(r'_lod(\d+)$', stem, re.I)
+            rank = (int(lod.group(1)) if lod else 0, priority[extension.casefold()], name.casefold())
+            path = os.path.join(directory, name)
+            if key not in groups or rank < groups[key][0]:
+                groups[key] = (rank, path)
+    return sorted((item[1] for item in groups.values()), key=str.casefold)
+
+
 def find_psks_in_folder(folder: str) -> tuple:
     """Scan a folder (and subfolders) for PSK/PSKX files.
 

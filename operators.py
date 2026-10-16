@@ -1957,9 +1957,11 @@ class ARC_OUTFITS_OT_ImportSinglePSK(Operator):
     bl_label = "Import Single Model"
     bl_options = {'REGISTER', 'UNDO'}
     filepath: StringProperty(subtype='FILE_PATH')
-    filter_glob: StringProperty(default="*.psk;*.pskx", options={'HIDDEN'})
+    filter_glob: StringProperty(default="*.psk;*.pskx;*.uemodel", options={'HIDDEN'})
 
     def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = bpy.path.abspath(getattr(context.scene, "arc_pioneer_root", "") or "") + os.sep
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
@@ -1989,6 +1991,8 @@ class ARC_OUTFITS_OT_ImportOutfitFolder(Operator):
     directory: StringProperty(subtype='DIR_PATH')
 
     def invoke(self, context, event):
+        if not self.directory:
+            self.directory = bpy.path.abspath(getattr(context.scene, "arc_pioneer_root", "") or "")
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
@@ -1997,9 +2001,10 @@ class ARC_OUTFITS_OT_ImportOutfitFolder(Operator):
         if not os.path.isdir(folder):
             self.report({'ERROR'}, f"Not a valid folder: {folder}")
             return {'CANCELLED'}
-        psks, skipped_pskx = utils.find_psks_in_folder(folder)
+        psks = utils.find_import_models(folder)
+        skipped_pskx = []
         if not psks:
-            self.report({'ERROR'}, f"No .psk/.pskx files found in folder (or its subfolders): {folder}")
+            self.report({'ERROR'}, f"No .psk/.pskx/.uemodel files found in folder (or its subfolders): {folder}")
             return {'CANCELLED'}
         scene = context.scene
         scene["arc_import_folder_layout"] = os.path.abspath(folder)

@@ -11,8 +11,11 @@ import os
 from pathlib import Path
 import re
 import struct
+import threading
 
 _INDEX_CACHE = {}
+_BROWSER_CACHE = {}
+_BROWSER_LOCK = threading.RLock()
 
 
 def _io_path(path) -> Path:
@@ -134,7 +137,7 @@ def read_index(path: str) -> dict:
     # Old revisions of a file need not stay in memory after a reindex.
     for old in list(_INDEX_CACHE):
         if old[0] == key[0]:
-            del _INDEX_CACHE[old]
+            _INDEX_CACHE.pop(old, None)
     _INDEX_CACHE[key] = result
     return result
 
@@ -154,13 +157,15 @@ def installed_build(game_dir: str) -> str:
     return ''
 
 
-def find_index(game_dir: str, index_dir: str) -> dict | None:
+def find_index(game_dir: str, index_dir: str, bundled_path: str = "") -> dict | None:
     """Select only an index matching the configured game's build/containers."""
     build = installed_build(game_dir)
     if build:
         candidates = [Path(index_dir) / ('pak-index-' + build + '.bin')]
     else:
         candidates = sorted(Path(index_dir).glob('pak-index*.bin'), key=lambda p: p.stat().st_mtime_ns, reverse=True)
+    if bundled_path and Path(bundled_path) not in candidates:
+        candidates.append(Path(bundled_path))
     try:
         live = {p.name.casefold(): p.stat().st_size for p in Path(game_dir).iterdir() if p.suffix.casefold() == '.utoc'}
     except OSError:
@@ -181,10 +186,30 @@ def find_index(game_dir: str, index_dir: str) -> dict | None:
 
 
 def mesh_paths(index: dict) -> tuple[str, ...]:
-    return tuple(path for path in index['paths'] if is_mesh(path))
+    if '_mesh_paths' not in index:
+        index['_mesh_paths'] = tuple(path for path in index['paths'] if is_mesh(path))
+    return index['_mesh_paths']
 
 
 def browser_tree(index: dict, cache_dir: str, game_dir: str) -> str:
+    """Reuse a prebuilt tree; serialize startup and interactive construction."""
+    key = (index['stamp'], os.path.normcase(os.path.abspath(game_dir)), os.path.abspath(cache_dir))
+    with _BROWSER_LOCK:
+        cached = _BROWSER_CACHE.get(key)
+        if cached and os.path.isdir(cached):
+            return cached
+        result = _build_browser_tree(index, cache_dir, game_dir)
+        _BROWSER_CACHE[key] = result
+        return result
+
+
+def browser_start(root: str) -> str:
+    start = Path(root) / 'PioneerGame' / 'Content' / 'Pioneer'
+    start.mkdir(parents=True, exist_ok=True)
+    return str(start)
+
+
+def _build_browser_tree(index: dict, cache_dir: str, game_dir: str) -> str:
     """Create a build-specific, safe mirror of mesh package paths on demand."""
     signature = hashlib.sha256(repr((index['stamp'], os.path.normcase(os.path.abspath(game_dir)))).encode()).hexdigest()[:12]
     build = index['build'] if index['build'].isdigit() else 'custom'

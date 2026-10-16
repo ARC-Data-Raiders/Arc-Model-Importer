@@ -11,9 +11,10 @@ import os
 import subprocess
 import hashlib
 import json
+import threading
 
 import bpy
-from bpy.props import CollectionProperty, StringProperty
+from bpy.props import BoolProperty, CollectionProperty, IntProperty, StringProperty
 from bpy.types import Operator, OperatorFileListElement
 from bpy_extras.io_utils import ImportHelper
 
@@ -25,6 +26,7 @@ DEFAULT_PAK_DIR = (
     r"\PioneerGame\Content\Paks"
 )
 _DEFAULT_PAK_HAS_FILES = None
+_BROWSER_WARMING = set()
 BUNDLED_USMAP_FILENAME = "ArcRaiders_2.1.0_inheritance_fixed.usmap"
 
 
@@ -110,6 +112,15 @@ def pak_dir_has_game_files(path: str) -> bool:
     return False
 
 
+def resolve_pak_folder(path: str) -> str:
+    """Accept either the Steam game installation or its Content/Paks folder."""
+    for candidate in (path, os.path.join(path, 'PioneerGame', 'Content', 'Paks'),
+                      os.path.join(path, 'Content', 'Paks')):
+        if path and pak_dir_has_game_files(candidate):
+            return candidate
+    return ''
+
+
 def default_pak_has_files() -> bool:
     return pak_dir_has_game_files(DEFAULT_PAK_DIR)
 
@@ -148,6 +159,7 @@ def _initialize_pak_defaults():
         return 0.1
     for scene in scenes:
         reconcile_pak_dir(scene, restore_default=True)
+        prewarm_pak_browser(scene)
     return None
 
 
@@ -283,7 +295,8 @@ def load_pak_index(scene, *, allow_reindex: bool = False):
     game = configured_dir(scene)
     if not game:
         return None
-    index = pak_catalog.find_index(game, index_dir())
+    bundled = os.path.join(_addon_dir(), "ArcPak", "mappings", "pak-index.bin")
+    index = pak_catalog.find_index(game, index_dir(), bundled)
     if index is None and allow_reindex:
         code, log = reindex(game, resolve_usmap(scene))
         if code:
@@ -302,6 +315,30 @@ def indexed_package_paths(scene, *, mesh_only: bool = False) -> tuple[str, ...]:
 
 def indexed_mesh_paths(scene) -> tuple[str, ...]:
     return indexed_package_paths(scene, mesh_only=True)
+
+
+def prewarm_pak_browser(scene):
+    """Build selectors from an existing index without blocking addon startup."""
+    game = configured_dir(scene)
+    if not game:
+        return
+    cache, indexes = cache_dir(), index_dir()
+    bundled = os.path.join(_addon_dir(), "ArcPak", "mappings", "pak-index.bin")
+    key = (game, cache, indexes)
+    if key in _BROWSER_WARMING:
+        return
+    _BROWSER_WARMING.add(key)
+    def worker():
+        try:
+            from . import pak_catalog
+            index = pak_catalog.find_index(game, indexes, bundled)
+            if index is not None:
+                pak_catalog.browser_start(pak_catalog.browser_tree(index, cache, game))
+        except Exception as exc:
+            print(f"Arc Pak: browser prebuild deferred: {exc}")
+        finally:
+            _BROWSER_WARMING.discard(key)
+    threading.Thread(target=worker, name='ArcPak browser prebuild', daemon=True).start()
 
 
 def ensure_pak_browser(scene) -> tuple[dict, str]:
@@ -444,7 +481,7 @@ class ARC_OT_pick_pak_dir(Operator, ImportHelper):
     """Folder that contains the shipping .utoc/.ucas files (PioneerGame/Content/Paks)."""
 
     bl_idname = "arc_outfits.pick_pak_dir"
-    bl_label = "Select Paks Folder"
+    bl_label = "Select Steam Install / Paks Folder"
     filename_ext = ""
     filter_glob: StringProperty(default="*", options={"HIDDEN"})
     directory: StringProperty(subtype="DIR_PATH", options={"HIDDEN"})
@@ -454,7 +491,8 @@ class ARC_OT_pick_pak_dir(Operator, ImportHelper):
             bpy.path.abspath(getattr(self, "filepath", "") or ""),
             bpy.path.abspath(getattr(self, "directory", "") or ""),
         )
-        if not pak_dir_has_game_files(folder):
+        folder = resolve_pak_folder(folder)
+        if not folder:
             context.scene.arc_pak_dir = ""
             context.scene["arc_pak_dir_user_cleared"] = True
             self.report({"ERROR"}, "Select a folder containing game .pak or .utoc files")
@@ -552,6 +590,9 @@ class ARC_OT_import_from_pak(Operator, ImportHelper):
     files: CollectionProperty(type=OperatorFileListElement, options={"HIDDEN", "SKIP_SAVE"})
     browser_root: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
 
+    select_folder: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+    filemode: IntProperty(default=8, options={"HIDDEN", "SKIP_SAVE"})
+
     asset_path: StringProperty(
         name="Asset Path",
         description="Cooked object path or folder, for example PioneerGame/Content/Pioneer/Characters/Assets/Abyss/Airbag",
@@ -567,14 +608,19 @@ class ARC_OT_import_from_pak(Operator, ImportHelper):
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
         self.browser_root = root
-        self.directory = root + os.sep
+        self.filemode = 9 if self.select_folder else 8
+        from . import pak_catalog
+        self.directory = pak_catalog.browser_start(root) + os.sep
         self.filepath = self.directory
         self.files.clear()
         context.window_manager.fileselect_add(self)
         return {"RUNNING_MODAL"}
 
+    def check(self, context):
+        return False if self.select_folder else ImportHelper.check(self, context)
+
     def draw(self, context):
-        self.layout.label(text="Select meshes, or import the current folder.", icon="MESH_DATA")
+        self.layout.label(text="Select the folder to import." if self.select_folder else "Select a mesh to import.", icon="FILE_FOLDER" if self.select_folder else "MESH_DATA")
 
     def execute(self, context):
         scene = context.scene
@@ -586,9 +632,14 @@ class ARC_OT_import_from_pak(Operator, ImportHelper):
                 index, root = ensure_pak_browser(scene)
                 if self.browser_root and os.path.normcase(os.path.realpath(self.browser_root)) != os.path.normcase(os.path.realpath(root)):
                     raise ValueError("The Pak index changed. Reopen Import from Pak.")
-                selections = [os.path.join(self.directory, item.name) for item in self.files]
-                if not selections:
-                    selections = [self.filepath or self.directory]
+                if self.select_folder:
+                    selections = [utils.resolved_picked_dir(self.filepath, self.directory)]
+                else:
+                    selections = [os.path.join(self.directory, item.name) for item in self.files]
+                    if not selections:
+                        selections = [self.filepath]
+                    if len(selections) != 1 or not selections[0].casefold().endswith('.uasset'):
+                        raise ValueError("Choose one mesh, or use Import Folder")
                 assets = pak_catalog.resolve_selection(index, root, selections)
             except Exception as exc:
                 self.report({"ERROR"}, str(exc))

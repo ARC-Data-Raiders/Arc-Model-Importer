@@ -558,6 +558,7 @@ _SHARED_SCENE_PROPS = (
     "arc_outfit_selections",
     "arc_pioneer_root",
     "arc_pak_dir",
+    "arc_import_source",
     "arc_usmap_path",
     "arc_fmdex_root",
     "arc_ns_json_path",
@@ -903,9 +904,18 @@ def register():
         CollectionProperty(type=ArcOutfitsSelection),
     )
     _assign_if_free(
+        "arc_import_source",
+        EnumProperty(
+            name="Import Source",
+            items=[('PAK', 'From Pak/Steam Install', 'Import directly from the Arc Raiders game files'),
+                   ('FILES', 'From FModel Extract/Files', 'Import exported PSK, PSKX or UEModel files')],
+            default='PAK',
+        ),
+    )
+    _assign_if_free(
         "arc_pioneer_root",
         StringProperty(
-            name='PioneerGame Root',
+            name='FModel Output',
             description=(
                 "Content search root for textures, MI JSONs, and outfits. Prefer the full "
                 "FModel output folder (parent of PioneerGame/ + MapPlacements/), not a "
@@ -920,7 +930,7 @@ def register():
     _assign_if_free(
         "arc_pak_dir",
         StringProperty(
-            name="Paks Folder",
+            name="Steam Install",
             description=(
                 "Shipping Arc Raiders IoStore folder (PioneerGame/Content/Paks). "
                 "The addon reads .utoc/.ucas from here. Oodle is loaded from the game install."

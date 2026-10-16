@@ -18,12 +18,31 @@ def _collapsible(layout, panel_id: str, title: str, default_closed: bool = True)
     return box
 
 
+def _draw_pak_folder_picker(layout, context):
+    path = getattr(context.scene, "arc_pak_dir", "") or ""
+    row = layout.row(align=True)
+    row.label(text="Steam Install: " + os.path.basename(path.rstrip("/\\")) if path else "Steam Install", icon="CHECKMARK" if path else "FILE_FOLDER")
+    row.operator("arc_outfits.pick_pak_dir", text="", icon="FILEBROWSER")
+    if path:
+        row.operator("arc_outfits.reindex_paks", text="", icon="FILE_REFRESH")
+        row.operator("arc_outfits.clear_pak_dir", text="", icon="X")
+
+
 def _draw_import_section(layout, context):
-    import_box = layout.box()
-    import_box.label(text="Import", icon="IMPORT")
-    import_box.operator("arc_outfits.import_single_psk", text="Import Single Model", icon="FILE")
-    import_box.operator("arc_outfits.import_outfit_folder", text="Import Folder", icon="FILE_FOLDER")
-    import_box.operator("arc_outfits.import_from_pak", text="Import from Pak", icon="PACKAGE")
+    box = layout.box()
+    scene = context.scene
+    box.prop(scene, "arc_import_source", text="Import:")
+    if getattr(scene, "arc_import_source", "PAK") == "PAK":
+        _draw_pak_folder_picker(box, context)
+        if not getattr(scene, "arc_pak_dir", ""):
+            return
+        op = box.operator("arc_outfits.import_from_pak", text="Import Single Model", icon="FILE")
+        op.select_folder = False
+        op = box.operator("arc_outfits.import_from_pak", text="Import Folder", icon="FILE_FOLDER")
+        op.select_folder = True
+    else:
+        box.operator("arc_outfits.import_single_psk", text="Import Single Model", icon="FILE")
+        box.operator("arc_outfits.import_outfit_folder", text="Import Folder", icon="FILE_FOLDER")
 
 
 def _draw_offset_settings(layout, context):
@@ -585,28 +604,16 @@ def _draw_settings_content(layout, context):
     pioneer_root = getattr(scene, "arc_pioneer_root", "") or ""
     if pioneer_root:
         pioneer_row.label(
-            text="Root: " + os.path.basename(pioneer_root.rstrip("/\\")),
+            text="FModel Output: " + os.path.basename(pioneer_root.rstrip("/\\")),
             icon="CHECKMARK",
         )
     else:
-        pioneer_row.label(text="PioneerGame Folder", icon="FILE_FOLDER")
+        pioneer_row.label(text="FModel Output", icon="FILE_FOLDER")
     pioneer_row.operator("arc_outfits.pick_pioneer_root", text="", icon="FILEBROWSER")
     if pioneer_root:
         pioneer_row.operator("arc_outfits.clear_pioneer_root", text="", icon="X")
 
-    pak_row = layout.row(align=True)
-    pak_dir = getattr(scene, "arc_pak_dir", "") or ""
-    if pak_dir:
-        pak_row.label(
-            text="Paks: " + os.path.basename(pak_dir.rstrip("/\\")),
-            icon="CHECKMARK",
-        )
-    else:
-        pak_row.label(text="Paks Folder", icon="FILE_FOLDER")
-    pak_row.operator("arc_outfits.pick_pak_dir", text="", icon="FILEBROWSER")
-    if pak_dir:
-        pak_row.operator("arc_outfits.reindex_paks", text="", icon="FILE_REFRESH")
-        pak_row.operator("arc_outfits.clear_pak_dir", text="", icon="X")
+    _draw_pak_folder_picker(layout, context)
 
     usmap_row = layout.row(align=True)
     usmap = getattr(scene, "arc_usmap_path", "") or ""
