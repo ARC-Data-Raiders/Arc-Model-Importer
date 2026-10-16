@@ -423,17 +423,21 @@ function Sync-ToAppData([string]$AddonDir, [string]$ReleaseLine, [string]$GitBra
 
     # Mirror runtime tree; purge extras (.git, verify_*, docs, pycache, logs, …).
     # /R:1 /W:1 tolerates Blender holding arc_raiders_debug.log open.
+    $runtimeCache = [IO.Path]::GetFullPath((Join-Path $TargetAppData "ArcPak\cache"))
+    $runtimeCachePrefix = $runtimeCache + [IO.Path]::DirectorySeparatorChar
+    $stagedCache = Join-Path $AddonDir "ArcPak\cache"
     robocopy $AddonDir $TargetAppData /MIR /NFL /NDL /NJH /NJS /nc /ns /np /R:1 /W:1 `
-        /XF arc_raiders_debug.log outfit_toggles.txt | Out-Null
+        /XD $runtimeCache $stagedCache /XF arc_raiders_debug.log outfit_toggles.txt | Out-Null
     if ($LASTEXITCODE -ge 8) {
         throw "robocopy sync failed (exit $LASTEXITCODE)"
     }
 
     # Extra scrub for caches / leftovers robocopy may leave when locked
     Get-ChildItem -LiteralPath $TargetAppData -Recurse -Force -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
+        Where-Object { -not $_.FullName.StartsWith($runtimeCachePrefix, [StringComparison]::OrdinalIgnoreCase) } |
         ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue }
     Get-ChildItem -LiteralPath $TargetAppData -Recurse -Force -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Extension -in ".pyc", ".pyo", ".blend1" } |
+        Where-Object { $_.Extension -in ".pyc", ".pyo", ".blend1" -and -not $_.FullName.StartsWith($runtimeCachePrefix, [StringComparison]::OrdinalIgnoreCase) } |
         ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -Confirm:$false -ErrorAction SilentlyContinue }
     foreach ($junk in @(".git", ".cursor", "docs", "MapPlacement")) {
         $p = Join-Path $TargetAppData $junk
