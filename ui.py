@@ -75,7 +75,8 @@ def _split_controls_preview(layout, context, icon_id, *, rows=3):
         split = layout.split(factor=0.5, align=False)
         controls, preview = split.column(align=True), split.column(align=True)
         # One control row is approximately 20 UI pixels plus spacing.
-        size = min(width * 0.5 - 12.0, rows * 20.0)
+        available_width = width * 0.5 - 12.0
+        max_height = rows * 20.0
     else:
         controls = layout.column(align=True)
         centered = layout.row(align=True)
@@ -84,16 +85,20 @@ def _split_controls_preview(layout, context, icon_id, *, rows=3):
         content = margins.split(factor=6.0 / 7.0, align=True)
         preview = content.column(align=True)
         content.column()
-        size = width * 0.75
+        available_width = width * 0.75
+        max_height = None
     preview.alignment = "CENTER"
-    return controls, (preview, max(0.5, size / 20.0))
+    return controls, (preview, available_width, max_height)
 
 
 def _draw_preview_icon(preview, icon_id):
     if preview is None or not icon_id:
         return
-    column, scale = preview
-    column.template_icon(icon_value=icon_id, scale=scale)
+    column, available_width, max_height = preview
+    # template_icon supports independent thumbnails in the same region.
+    # Blender reserves a square and adds its own small internal border.
+    size = available_width if max_height is None else min(available_width, max_height)
+    column.template_icon(icon_value=icon_id, scale=max(0.5, size / 20.0))
 
 
 def _draw_outfit_selector_preview(layout, context, icon_id):
@@ -139,7 +144,8 @@ def _draw_head_section(layout, context):
     scene = context.scene
     choice_id = getattr(scene, "arc_appearance_head", "NONE")
     icon_id = _appearance_preview_icon_id(choice_id)
-    left, right = _split_controls_preview(layout, context, icon_id)
+    has_eyelash = hasattr(scene, "arc_appearance_eyelash_copy_hair_color")
+    left, right = _split_controls_preview(layout, context, icon_id, rows=4 if has_eyelash else 3)
     left.prop(scene, "arc_appearance_head", text="Head")
     op = left.operator(
         "arc_outfits.add_appearance_part", text="Add Head", icon="USER",
@@ -147,6 +153,8 @@ def _draw_head_section(layout, context):
     op.part = "HEAD"
     op = left.operator("arc_outfits.add_all_appearance", text="Add All Heads", icon="IMPORT")
     op.part = "HEAD"
+    if has_eyelash:
+        left.prop(scene, "arc_appearance_eyelash_copy_hair_color", text="Eyelash copy Hair Color")
     _draw_preview_icon(right, icon_id)
 
 
@@ -260,12 +268,6 @@ def _draw_appearance_section(layout, context):
     head_sec = _collapsible(layout, "arc_appearance_head_sec", "Head", default_closed=True)
     if head_sec is not None:
         _draw_head_section(head_sec, context)
-        if hasattr(scene, "arc_appearance_eyelash_copy_hair_color"):
-            head_sec.prop(
-                scene,
-                "arc_appearance_eyelash_copy_hair_color",
-                text="Eyelash copy Hair Color",
-            )
 
     hair_sec = _collapsible(layout, "arc_appearance_hair_sec", "Hair", default_closed=True)
     if hair_sec is not None:

@@ -573,14 +573,13 @@ def _crop_sidebar_preview(preview):
     ys, xs = np.nonzero(visible)
     if not len(xs):
         return
-    cropped = pixels[ys.min():ys.max()+1, xs.min():xs.max()+1]
+    # Keep the actual artwork rectangle. Re-padding it into a square adds
+    # avoidable vertical margins to Blender's already-square icon widget.
+    cropped = np.ascontiguousarray(pixels[ys.min():ys.max()+1, xs.min():xs.max()+1])
     h, w = cropped.shape[:2]
-    side = max(h, w) + 2 * max(1, round(max(h, w) * 0.02))
-    canvas = np.zeros((side, side, 4), dtype=np.float32)
-    x, y = (side - w) // 2, (side - h) // 2
-    canvas[y:y+h, x:x+w] = cropped
-    preview.image_size = (side, side)
-    preview.image_pixels_float = canvas.ravel()
+    preview.image_size = (w, h)
+    preview.image_pixels_float = cropped.ravel()
+
 
 
 def _preview_icon_id_for_path(path: str) -> int:
