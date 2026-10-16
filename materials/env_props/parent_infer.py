@@ -164,6 +164,15 @@ def infer_preset_key(mi: dict, mi_path: str = "") -> str:
         if preset_defaults.has_preset(parent):
             return parent
 
+    # XEM props carry generic overlay controls also present on trim presets.
+    # Their exact texture packing is stronger evidence than those shared names;
+    # do not inject unrelated trim sheets or replace their UV/material behavior.
+    references = dict((mi or {}).get("textures") or [])
+    packed = str(references.get("Packed Mask") or "").split(".", 1)[0].lower()
+    normal = str(references.get("Normal") or references.get("PM_Normals") or "").split(".", 1)[0].lower()
+    if not parent and "CR" in references and packed.endswith("_xem") and normal.endswith("_nox"):
+        return "M_PropPreset_CR+NOX+XEM"
+
     tex = _tex_params(mi)
     for key, required, rejecting in _SIGNATURES:
         if not required:

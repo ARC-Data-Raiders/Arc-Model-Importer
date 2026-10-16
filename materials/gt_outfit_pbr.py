@@ -2929,6 +2929,10 @@ def finish_gt_outfit_graph(
     # UV1 bus: one reroute per TA image row.
     _wire_array_uv_reroutes(nodes, links, uv_bus["uv1"], bus_x=maps_ocm_x() + 560.0)
 
+    # Emission uses the authored layer colors before surface decals.
+    from .emission import layered_emission
+    emission = layered_emission(nodes, links, mi_data, colours, zone_eq, albedo, crease_fac, edge_fac)
+
     # Decals (FMODEL / ArcDecalUv), mixed here — not Arc sockets.
     albedo, n_color, roughness, metallic = _apply_gt_decals(
         C, nodes, links, albedo, n_color, roughness, metallic,
@@ -2949,6 +2953,9 @@ def finish_gt_outfit_graph(
     bsdf = nodes.new("ShaderNodeBsdfPrincipled")
     bsdf.name = "GT_Principled"
     bsdf.label = "GT Principled (full outfit PBR)"
+    if emission is not None:
+        links.new(emission, bsdf.inputs["Emission Color"])
+        bsdf.inputs["Emission Strength"].default_value = 1.0
     place(bsdf, bsdf_x, bsdf_y, lock=True)
     try:
         links.new(albedo, bsdf.inputs["Base Color"])

@@ -1,0 +1,15 @@
+# Emissive materials 2.19.22
+
+Pure light meshes now use inherited linear LightColor and LightIntensity, including HDR colors and explicit zero. Full exports prefer their own source tree when resolving master defaults. Layered materials now carry Base/Crease/EdgeEmissiveStrength through the existing zone and wear masks, EmissiveColorOverlay alpha and OverallEmissive. The sampled Revamped layered recipe is used without changing the decal stage.
+
+Enabled NEM emission uses B; enabled XEM emission uses G, with B retained for metal. Histogram threshold/mix and intensity are respected. Emissive Power belongs to the optional glare path in the checked permutations and no longer incorrectly scales the base NEM emission. Static pulse peak is used where the native shader animates it; the CR-emission branch bypasses that pulse. Inherited emissive scalars alone never enable glow. SpaceShip and Waterskin remain off because their game permutations disable emission.
+
+Compact CR+NOX+XEM props are recognized before broad trim signatures. Previously, an unrelated PropTrim preset and its atlas textures could be injected, preventing the emissive path from running. Exact texture packing now retains the correct surface family.
+
+Survival lantern has a dedicated static shader using its exact FlickerNoise and Smudges textures, UV height remap, camera-facing falloff, Intensity/Power, zero-input guard, smudges and authored color/roughness. Native formula: height=saturate((V-Bottom)/(Top-Bottom)), facing=saturate((NdotV-MaxSize)/(Falloff-MaxSize)), energy=guarded_pow(height*facing*Intensity,Power); add Smudge.R*SmudgeIntensityMultiplier, multiply Color and Flicker.R(Time*FlickerSpeed,FlickerTrack). UV V is converted from the importer's flipped UVs. Off-state zero parameters remain dark. Current-Pak dependencies are preferred over older donor textures.
+
+Native SM5 evidence: lantern323E967059C5DDC3ACB70904BCDBAC5DF6D21DA2, Arc Tool014E699F1C50184FBF13CAD1D7A2CF365AA46CC6, Harvester04DBB23E5298EF79D5E53B32CDD0395677D70CC6, light master71AEEBC13E7DB549C65741CF025A202C2711E5AC. Lantern uniform preshaders establish reciprocal Top-Bottom and Falloff-MaxSize. Harvester sample t4.xwyz writes Y into the emissive mask and Z into metallic.
+
+32 integration checks pass on real materials and six representative meshes. Four independent emission bake oracles pass: layered maximum error8.8e-8, packed histogram6.3e-6, lantern8.3e-4 (UV raster sampling), and off-state exactly0. Controlled before/after renders were inspected. ZIP install/overwrite/disable/re-enable/restart passed. Live repair preserves788 objects, geometry, polygon material indices, UVs, shape keys and selection. Scene copy: Z:/Datamining/Arc Raiders/Blends/AllAccessories-2.19.22.blend. Reports, shader evidence, renders and ZIP: Z:/Datamining/Arc Raiders/CodexScratch/DataRaiders-BlenderImporter/.local/21922.
+
+Limits: static pulse peak/static lantern time0; UE camera glare, proximity fade and weather states are not reconstructed. Mesh emission is separate from postprocess bloom, which is not added to the user's compositor.

@@ -199,11 +199,14 @@ def _dispatch_weapon_slot_material(mat, mi_path: str, psk_path: str, mi_stem_low
         )
 
         parent_l = str(mi_probe.get("parent") or "").lower()
-        if mi_stem_lower.startswith("mi_beacon") or parent_l.endswith("m_beacon"):
+        from .emission import is_lantern, setup_lantern_material, setup_light_material
+        if is_lantern(mi_probe):
+            setup_lantern_material(mat, mi_path)
+        elif mi_stem_lower.startswith("mi_beacon") or parent_l.endswith("m_beacon"):
             from .environment import setup_beacon_material
             setup_beacon_material(mat, mi_path, psk_path)
         elif family == FAMILY_EMISSIVE:
-            _setup_weapon_emissive_material(mat, mi_path)
+            setup_light_material(mat, mi_path)
         elif family == FAMILY_FLIPBOOK:
             from .items import _setup_flipbook_material
             _setup_flipbook_material(mat, mi_path, psk_path)

@@ -1409,6 +1409,16 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             channels.label = "XEM.B → Metallic"
             links.new(node.outputs["Color"], channels.inputs["Color"])
             links.new(channels.outputs["Blue"], principled.inputs["Metallic"])
+            if _mi_switch(switches, "Use Emissive", default=False):
+                from .emission import packed_emission
+                color = albedo_sock if _mi_switch(switches, "Use CR as Emissive", default=False) else _mi_colour(colours, "EmissiveColor", default=(1, 1, 1, 1))
+                color, energy = packed_emission(nodes, links, channels.outputs["Green"], mi, color)
+                if isinstance(color, bpy.types.NodeSocket):
+                    links.new(color, principled.inputs["Emission Color"])
+                else:
+                    principled.inputs["Emission Color"].default_value = color
+                links.new(energy, principled.inputs["Emission Strength"])
+                mat["arc_emissive_setup"] = "native-xem-green-static-v1"
 
     # ── Bind Principled ────────────────────────────────────────────────────
     if albedo_sock is not None:
@@ -4543,12 +4553,11 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
                     principled.inputs["Emission Color"].default_value = _mi_colour(
                         colours, "EmissiveColor", "Emissive Color", default=(1, 1, 1, 1),
                     )
-                energy = nodes.new("ShaderNodeMath")
-                energy.operation = "MULTIPLY"
-                energy.label = "NEM emissive mask × power"
-                energy.inputs[1].default_value = _mi_scalar(scalars, "Emissive Power", default=1.0)
-                links.new(packed.outputs["Blue"], energy.inputs[0])
-                links.new(energy.outputs[0], principled.inputs["Emission Strength"])
+                from .emission import packed_emission
+                _color, energy = packed_emission(nodes, links, packed.outputs["Blue"], mi, None)
+                links.new(energy, principled.inputs["Emission Strength"])
+                mat["arc_emissive_setup"] = "native-nem-blue-static-v1"
+                mat["arc_emissive_limits"] = "Static pulse peak; animated pulse and optional camera glare omitted."
             if packed_code in {"nox", "nom"} and not packed_item_tint and principled.inputs["Base Color"].links:
                 base = principled.inputs["Base Color"].links[0].from_socket
                 ao = _mix_rgba(nodes, links, base, packed.outputs["Blue"], 1.0,
