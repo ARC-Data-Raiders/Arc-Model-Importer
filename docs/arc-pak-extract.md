@@ -344,3 +344,71 @@ materials,parenting,visibility,selection andsourcepaths unchanged. Current queue
 summary is28/28backpacks with0failures; the supplied screenshot showedtheearlier
 summary. Backup:dist/.local/scene-live-before-21915.blend; organized copy:
 dist/.local/scene-live-organized-21915.blend. Reports:dist/.local/*21915*.
+
+
+## 2.19.16 — Source codes and sidebar order
+
+Game: SK_CurlyShort / Head_Face_20_Pio_Base retain their exact exported identifiers.
+ST: no additional localization mapping is needed for these internal code names.
+Human: asset names now append source code names in parentheses, e.g.
+Hair_CurlyShort (SK_CurlyShort). Rigs and reference cards also retain their exact
+source identity, and arc_asset_code_name stores it separately. Naming schema 2
+upgrades existing imported objects once; later collection regrouping preserves
+custom names. Source paths, driver IDs and association strings remain valid.
+
+The Add All progress/last report is at the top of the sidebar. The plugin name
+and panel header include the version, replacing the separate version row.
+Settings no longer displays the Nonstandard folder layout section.
+
+Verification: the actual 779-object scene passes 3715 naming/UI checks without
+changing transforms, parenting, mesh data or material slots. Twelve existing
+driver/shared-scene/grouping edge checks and 62 Pak regressions also pass.
+
+
+### Reference cards, geometry sharing and authored head fitting
+
+Reference cards crop visible art through UV/geometry bounds without editing PNGs.
+Backpack defaults follow the measured Toolbox card (1.06908 times mesh height,
+0.0113 m right gap, top offset -0.0044 m). Charm and attachment defaults use the
+Computer Mouse and Football spacing with approximately 1:1 visible mesh height.
+Facial icons show a full-face portrait, so their measured Moustache Regular size
+and placement are retained. Cards read identically from either side and are
+camera-only: Cycles and Eevee tests measure no shadow or indirect-light change.
+Missing backpack cards recover from exact catalog identity or source packages.
+
+Triple audit found one default frame and strap geometry, but authored frame
+colour variants and conditional strap bone offsets. Identical geometry shares
+mesh data with OBJECT-linked materials and separate rigs. Edited/morph-bearing
+meshes remain independent; shader graphs only merge on an exact match. The
+actual scene's 56 frame/strap meshes use two mesh datablocks after sharing.
+
+Heads inherit body gender, and normal/facial hair inherit their same-slot head's
+authored gender keys. Facial fitting additionally uses exact cooked cloth cages
+and barycentric bindings, emitted as .arc-cloth.json sidecars by the Pak exporter.
+An importer-owned corrective shape key preserves the original basis, topology
+and user drivers. Target cage morphs apply once, including gender blends; copied
+source physical morph indices are never inferred from facial render morph order.
+All 18 heads and five facial styles pass 270 head/style/gender pairings. This is
+static appearance fitting, not cloth simulation. All 26 normal-hair entries are
+cloth-free; gender and existing headgear keys are retained, with no invented
+head-specific cloth deformation. Static Buzzcut retains its authored placement.
+
+Metadata refresh belongs to user-requested imports/repairs, not registration or
+file-load handlers. Cached meshes refresh under revision 2.19.16; failed exports
+invalidate old current stamps so a retry can recover. Existing offline blends
+retain a valid saved fit for the same head. Mesh data is forked before per-head
+key edits when linked instances need independent fits.
+
+
+Mounted alias recovery: visual-part and sibling-texture directory discovery now
+compare canonical package paths across PioneerGame/Content, RemappedPlugins/Content
+and /Game while retaining original provider paths for loading and output. This
+fixes a real live-cache case where head meshes exported successfully but their
+wrap dependency was missed. Existing sidecars with a null wrap_mesh or missing
+exact target dependencies are treated as incomplete. metadata_paths(objects)
+plans the exact refresh for asynchronous callers. Cold Remapped head extraction
+and nine null-sidecar recovery checks pass, including an empty repeat plan.
+
+Cached material repair also respects shared frame/strap OBJECT overrides. A
+different material-slot count first forks that instance mesh, preventing changes
+to sibling variants; 22 compatibility checks pass.

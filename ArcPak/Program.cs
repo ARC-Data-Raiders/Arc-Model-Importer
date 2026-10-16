@@ -800,7 +800,7 @@ internal static class Program
         string packagePath,
         ExportSession session)
     {
-        var norm = NormalizePackagePath(packagePath).Replace('\\', '/');
+        var norm = CanonicalGamePackagePath(packagePath);
         var slash = norm.LastIndexOf('/');
         if (slash < 0)
             return 0;
@@ -810,7 +810,8 @@ internal static class Program
         {
             if (file is not FIoStoreEntry { IsPackageData: true, IsOptionalPackage: false } entry)
                 continue;
-            var text = entry.PathWithoutExtension.Replace('\\', '/');
+            var originalPath = entry.PathWithoutExtension.Replace('\\', '/');
+            var text = CanonicalGamePackagePath(originalPath);
             if (!text.StartsWith(dir, StringComparison.OrdinalIgnoreCase))
                 continue;
             if (text.Contains("/Skins/", StringComparison.OrdinalIgnoreCase))
@@ -821,7 +822,7 @@ internal static class Program
             IPackage? package;
             try
             {
-                package = FindPackage(provider, text);
+                package = FindPackage(provider, originalPath);
             }
             catch (Exception ex)
             {
@@ -849,7 +850,7 @@ internal static class Program
 
     private static void QueueVisualParts(AbstractVfsFileProvider provider, string meshPath, List<(IPackage Package, string Path)> packages)
     {
-        var normalized = NormalizePackagePath(CookedMountPath(meshPath)).Replace('\\', '/');
+        var normalized = CanonicalGamePackagePath(meshPath);
         var slash = normalized.LastIndexOf('/');
         if (slash < 0) return;
         var directory = normalized[..(slash + 1)];
@@ -857,10 +858,11 @@ internal static class Program
         {
             if (file is not FIoStoreEntry { IsPackageData: true, IsOptionalPackage: false } entry) continue;
             var path = entry.PathWithoutExtension.Replace('\\', '/');
+            var canonical = CanonicalGamePackagePath(path);
             var leaf = path[(path.LastIndexOf('/') + 1)..];
-            if (!path.StartsWith(directory, StringComparison.OrdinalIgnoreCase) ||
-                !leaf.StartsWith("DA_VP_", StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(path[..(path.LastIndexOf('/') + 1)], directory, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!canonical.StartsWith(directory, StringComparison.OrdinalIgnoreCase) ||
+                !(leaf.StartsWith("DA_VP_", StringComparison.OrdinalIgnoreCase) || leaf.StartsWith("Part_Head_", StringComparison.OrdinalIgnoreCase)) ||
+                !string.Equals(canonical[..(canonical.LastIndexOf('/') + 1)], directory, StringComparison.OrdinalIgnoreCase)) continue;
             var package = FindPackage(provider, path);
             if (package is not null) packages.Add((package, path));
         }
@@ -938,6 +940,7 @@ internal static class Program
             exportMorphTargets: true);
         var session = new ExportSession { MaxDegreeOfParallelism = Workers };
         var queued = 0;
+        var clothMetadataFailed = false;
         var jsonPackages = new List<(IPackage Package, string Path)>();
         var visitedMaterials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         ExpandFromFiles(provider, paths);
@@ -963,7 +966,22 @@ internal static class Program
                 Log.Information("queue {Type} {Name}", mesh.ExportType, mesh.Name);
                 queued += QueueSiblingTextures(provider, path, session);
                 queued += QueueMeshMasterTextures(mesh, session, visitedMaterials);
+                var metadataStart = jsonPackages.Count;
                 QueueVisualParts(provider, path, jsonPackages);
+                if (mesh is USkinnedAsset skinned)
+                {
+                    var wrapPath = ClothWrapExport.WrapMesh(jsonPackages.Skip(metadataStart).Select(value => value.Package), path);
+                    if (!ClothWrapExport.Write(package, skinned, CookedMountPath(NormalizePackagePath(path)).Trim('/'), outDir, wrapPath))
+                        clothMetadataFailed = true;
+                    if (!string.IsNullOrWhiteSpace(wrapPath) && FindPackage(provider, wrapPath) is { } wrapPackage &&
+                        wrapPackage.GetExports().OfType<USkinnedAsset>().FirstOrDefault() is { } wrapMesh)
+                    {
+                        session.Add(wrapMesh);
+                        queued++;
+                        if (!ClothWrapExport.Write(wrapPackage, wrapMesh, CookedMountPath(NormalizePackagePath(wrapPath)).Trim('/'), outDir))
+                            clothMetadataFailed = true;
+                    }
+                }
                 continue;
             }
 
@@ -1045,7 +1063,7 @@ internal static class Program
         }
 
         Log.Information("Done queued={Queued} json={Json}", queued, jsonPackages.Count);
-        return wrote ? 0 : 1;
+        return wrote && !clothMetadataFailed ? 0 : 1;
     }
 
     private static bool WritePackageJson(IPackage package, string packagePath, string outDir)
@@ -1213,6 +1231,15 @@ internal static class Program
         }
 
         return null;
+    }
+
+    private static string CanonicalGamePackagePath(string path)
+    {
+        var normalized = NormalizePackagePath(path).Replace('\\', '/').Trim('/');
+        foreach (var prefix in new[] { "PioneerGame/Content/", "RemappedPlugins/Content/", "Game/" })
+            if (normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return "PioneerGame/Content/" + normalized[prefix.Length..];
+        return normalized;
     }
 
     private static string CookedMountPath(string path)

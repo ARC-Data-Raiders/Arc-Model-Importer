@@ -6,25 +6,6 @@ import os
 import bpy
 
 
-def _draw_addon_version(layout):
-    try:
-        import sys as _sys
-
-        _pkg = _sys.modules.get(__package__)
-        _ver = getattr(_pkg, "bl_info", None) if _pkg is not None else None
-        if isinstance(_ver, dict):
-            _tup = _ver.get("version")
-            if _tup and len(_tup) >= 3:
-                layout.label(
-                    text="Arc Model Importer  v{0}.{1}.{2}".format(_tup[0], _tup[1], _tup[2]),
-                    icon="INFO",
-                )
-                return
-    except Exception:
-        pass
-    layout.label(text="Arc Model Importer", icon="INFO")
-
-
 def _collapsible(layout, panel_id: str, title: str, default_closed: bool = True):
     """Blender 4.1+ inline panel; falls back to always-open box."""
     panel_fn = getattr(layout, "panel", None)
@@ -195,8 +176,7 @@ def _draw_gear_section(layout, context, *, prop: str, part: str, label: str, ico
     _draw_preview_icon(right, icon_id)
 
 
-def _draw_appearance_section(layout, context):
-    """Body / head / hair / gear as sidebar options (not sequential dialogs)."""
+def _draw_queue_report(layout, context):
     scene = context.scene
     from . import appearance_queue
     status = appearance_queue.queue_status()
@@ -220,6 +200,11 @@ def _draw_appearance_section(layout, context):
                 box.label(text=last["error"][:90], icon="ERROR")
         except (ValueError, KeyError, TypeError):
             pass
+
+
+def _draw_appearance_section(layout, context):
+    """Body / head / hair / gear as sidebar options (not sequential dialogs)."""
+    scene = context.scene
     if hasattr(scene, "arc_pose_preset"):
         layout.prop(scene, "arc_pose_preset", text="Pose")
     if not hasattr(scene, "arc_appearance_head"):
@@ -589,33 +574,6 @@ def _draw_rig_section(layout, context):
     )
 
 
-def _draw_deep_path_search_row(layout, context):
-    """Offer consent-gated deep folder search when known layouts miss."""
-    from . import utils
-
-    scene = context.scene
-    deep = getattr(scene, "arc_deep_path_search_root", "") or ""
-    row = layout.row(align=True)
-    if deep:
-        row.label(
-            text="Deep search: " + os.path.basename(deep.rstrip("/\\")),
-            icon="VIEWZOOM",
-        )
-        row.operator("arc_outfits.clear_deep_path_search", text="", icon="X")
-    else:
-        miss = utils.last_path_miss()
-        if miss and miss[1]:
-            tip = "/".join(miss[1][:4])
-            row.label(text=f"Layout miss: {tip}", icon="ERROR")
-        else:
-            row.label(text="Nonstandard folder layout?", icon="INFO")
-        row.operator(
-            "arc_outfits.deep_path_search",
-            text="Search Selected Folder…",
-            icon="VIEWZOOM",
-        )
-
-
 def _draw_settings_content(layout, context):
     from . import importing
     from .map_tools import fmodel_bridge as bridge
@@ -659,8 +617,6 @@ def _draw_settings_content(layout, context):
     if usmap:
         usmap_row.operator("arc_outfits.clear_usmap", text="", icon="X")
 
-    _draw_deep_path_search_row(layout, context)
-
     csv_path = importing.get_outfit_csv_path(context)
     csv_row = layout.row(align=True)
     outfit_csv = getattr(scene, "arc_outfit_csv_path", "") or ""
@@ -694,8 +650,14 @@ def _draw_settings_content(layout, context):
             advanced.prop(scene, "arc_placement_listen_port", text="TCP Port")
 
 
+def _panel_name():
+    import sys
+    info = getattr(sys.modules.get(__package__), 'bl_info', {})
+    return info.get('name', 'Arc Model Importer')
+
+
 class ARC_OUTFITS_PT_MainPanel(bpy.types.Panel):
-    bl_label = "Arc Model Importer"
+    bl_label = _panel_name()
     bl_idname = "ARC_OUTFITS_PT_main"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -712,7 +674,7 @@ class ARC_OUTFITS_PT_MainPanel(bpy.types.Panel):
             )
             return
 
-        _draw_addon_version(layout)
+        _draw_queue_report(layout, context)
 
         # Outfit Tools first and open. Weapons/Animations stay closed so FMDex
         # walks and weapon enums are not rebuilt on every N-panel open.

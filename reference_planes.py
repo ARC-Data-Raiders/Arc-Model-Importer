@@ -6,6 +6,7 @@ import os
 from typing import Iterable
 
 import bpy
+import numpy as np
 from mathutils import Matrix, Vector
 
 # Outfit UI art is composed head-to-just-below-knee (not full body).
@@ -23,6 +24,66 @@ _REF_TYPE_COLLECTIONS = {
 # Object Index used by Lighting Look compositor to skip Kodak LUT on UI planes.
 REF_PASS_INDEX = 64
 _ICON_PACKAGE_LOOKUPS = {}
+_IMAGE_CROP_CACHE = {}
+# Measured from the user's Toolbox, Mouse, Football and Moustache cards.
+_BACKPACK_HEIGHT_RATIO = 1.06908
+_BACKPACK_GAP_M = 0.0113
+_BACKPACK_TOP_OFFSET_M = -0.0044
+_CHARM_GAP_M = 0.15925
+_ATTACHMENT_GAP_M = 0.22884
+_FACIAL_CARD_HEIGHT_M = 0.241069
+_FACIAL_CARD_X_OFFSET_M = 0.472453
+_FACIAL_CARD_Z_OFFSET_M = 0.048221
+
+
+def image_crop_bounds(image) -> tuple[float, float, float, float]:
+    """UV rectangle of visible art; original pixels and files stay untouched."""
+    width, height = int(image.size[0]), int(image.size[1])
+    if width < 1 or height < 1:
+        return (0.0, 0.0, 1.0, 1.0)
+    key = (image.as_pointer(), width, height)
+    if key in _IMAGE_CROP_CACHE:
+        return _IMAGE_CROP_CACHE[key]
+    pixels = np.empty(width * height * 4, dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    rgba = pixels.reshape(height, width, 4)
+    visible = rgba[:, :, 3] > (1.0 / 255.0)
+    # An opaque, uniform border can be blank padding too. Only remove it when
+    # all four corners agree and the outer edge is overwhelmingly that colour.
+    if np.all(visible):
+        corners = rgba[[0, 0, -1, -1], [0, -1, 0, -1], :3]
+        background = np.median(corners, axis=0)
+        edge = np.concatenate((rgba[0, :, :3], rgba[-1, :, :3], rgba[:, 0, :3], rgba[:, -1, :3]))
+        tolerance = 2.0 / 255.0
+        if (np.min(background) > 0.8 and np.ptp(background) < 0.02
+                and np.max(np.abs(corners - background)) <= tolerance
+                and np.mean(np.max(np.abs(edge - background), axis=1) <= tolerance) > 0.98):
+            foreground = np.max(np.abs(rgba[:, :, :3] - background), axis=2) > tolerance
+            if np.count_nonzero(foreground) >= 4:
+                visible &= foreground
+    rows, columns = np.nonzero(visible)
+    bounds = ((float(columns.min()) / width, float(rows.min()) / height,
+               float(columns.max() + 1) / width, float(rows.max() + 1) / height)
+              if len(rows) else (0.0, 0.0, 1.0, 1.0))
+    _IMAGE_CROP_CACHE[key] = bounds
+    return bounds
+
+
+def _image_aspect(image, bounds) -> float:
+    u0, v0, u1, v1 = bounds
+    return max(float(image.size[0]) * (u1 - u0)
+               / max(float(image.size[1]) * (v1 - v0), 1e-6), 1e-6)
+
+
+def _configure_camera_only(plane) -> None:
+    """Reference art is visible to the viewer without lighting the model."""
+    for name in ("visible_diffuse", "visible_glossy", "visible_transmission",
+                 "visible_volume_scatter", "visible_shadow"):
+        if hasattr(plane, name):
+            setattr(plane, name, False)
+    if hasattr(plane, "visible_camera"):
+        plane.visible_camera = True
+    plane.pass_index = int(REF_PASS_INDEX)
 
 
 def choice_icon_package(choice: dict, scene=None) -> str:
@@ -137,7 +198,7 @@ def _reference_role(plane) -> str:
     return ""
 
 
-def bind_legacy_reference_planes(scene=None, *, legacy_linear=False) -> int:
+def bind_legacy_reference_planes(scene=None, *, legacy_linear=False, roles=None) -> int:
     """Recover old loose cards' ownership from their icon type and exact pad."""
     from . import import_layout
     sc = scene or bpy.context.scene
@@ -147,6 +208,8 @@ def bind_legacy_reference_planes(scene=None, *, legacy_linear=False) -> int:
         if not plane.get("arc_reference_plane") or plane.parent is not None:
             continue
         role = _reference_role(plane)
+        if roles is not None and role not in roles:
+            continue
         if "arc_import_slot" in plane:
             slot = int(plane["arc_import_slot"])
         elif legacy_linear:
@@ -165,11 +228,12 @@ def bind_legacy_reference_planes(scene=None, *, legacy_linear=False) -> int:
     return count
 
 
-def categorize_reference_planes(scene=None) -> int:
+def categorize_reference_planes(scene=None, *, roles=None) -> int:
     """Move existing cards into their type collection, preserving their poses."""
     sc = scene or bpy.context.scene
     from . import asset_organization
-    planes = [o for o in sc.objects if o.get("arc_reference_plane")]
+    planes = [o for o in sc.objects if o.get("arc_reference_plane")
+              and (roles is None or _reference_role(o) in roles)]
     for plane in planes:
         plane["arc_reference_role"] = _reference_role(plane)
     asset_organization.organize_objects(planes, sc)
@@ -184,8 +248,9 @@ def _depsgraph_update() -> None:
         pass
 
 
-def _world_bbox(objects: Iterable) -> tuple[Vector, Vector] | None:
-    _depsgraph_update()
+def _world_bbox(objects: Iterable, *, update=True) -> tuple[Vector, Vector] | None:
+    if update:
+        _depsgraph_update()
     mins = Vector((1e9, 1e9, 1e9))
     maxs = Vector((-1e9, -1e9, -1e9))
     any_ok = False
@@ -230,25 +295,28 @@ def _outfit_anchor(objects) -> bpy.types.Object | None:
     return None
 
 
-def _anchor_plane(plane, anchor) -> None:
+def _anchor_plane(plane, anchor, *, organize=True, world_matrix=None, update=True) -> None:
     """Parent *plane* to *anchor* while keeping the current world transform."""
     if plane is None or anchor is None:
         return
     try:
-        _depsgraph_update()
-        mw = plane.matrix_world.copy()
+        if update:
+            _depsgraph_update()
+        mw = world_matrix.copy() if world_matrix is not None else plane.matrix_world.copy()
         plane.parent = anchor
         # Identity parent-inverse + local = parent^-1 * world (handles scale 0.01).
         plane.matrix_parent_inverse = Matrix.Identity(4)
         plane.matrix_local = anchor.matrix_world.inverted() @ mw
-        _depsgraph_update()
+        if update:
+            _depsgraph_update()
         plane["arc_reference_anchor"] = anchor.name
         if "arc_import_slot" in anchor:
             plane["arc_import_slot"] = int(anchor["arc_import_slot"])
     except Exception:
         pass
-    from . import asset_organization
-    asset_organization.organize_objects([plane], bpy.context.scene)
+    if organize:
+        from . import asset_organization
+        asset_organization.organize_objects([plane], bpy.context.scene)
 
 
 def _load_image(path: str):
@@ -289,121 +357,123 @@ def _configure_ref_image(img) -> None:
         pass
 
 
-def _make_emission_material(name: str, image) -> bpy.types.Material:
-    mat = bpy.data.materials.new(name=name)
+def _make_emission_material(name: str, image, bounds=(0.0, 0.0, 1.0, 1.0), material=None) -> bpy.types.Material:
+    mat = (material.copy() if material is not None and material.users > 1 else material)
+    mat = mat or bpy.data.materials.new(name=name)
     mat.use_nodes = True
+    mat.use_backface_culling = False
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
     nodes.clear()
     out = nodes.new("ShaderNodeOutputMaterial")
-    out.location = (300, 0)
+    out.location = (850, 0)
     emit = nodes.new("ShaderNodeEmission")
-    emit.location = (80, 0)
-    try:
-        emit.inputs["Strength"].default_value = 1.0
-    except Exception:
-        pass
+    emit.location = (250, 0)
+    emit.inputs["Strength"].default_value = 1.0
     tex = nodes.new("ShaderNodeTexImage")
-    tex.location = (-220, 0)
+    tex.location = (0, 0)
     tex.image = image
-    # Pixel UI art: one nearest sample — Linear/Cubic looks like a second blur pass.
-    try:
-        tex.interpolation = "Closest"
-    except Exception:
-        pass
-    try:
-        tex.extension = "CLIP"
-    except Exception:
-        pass
+    tex.interpolation = "Closest"
+    tex.extension = "CLIP"
+    # A back view must read the same way as the front. Mirror U about the crop
+    # centre rather than the full texture centre, which may contain padding.
+    coordinates = nodes.new("ShaderNodeTexCoord")
+    coordinates.location = (-850, 0)
+    separate = nodes.new("ShaderNodeSeparateXYZ")
+    separate.location = (-650, -80)
+    links.new(coordinates.outputs["UV"], separate.inputs[0])
+    mirror = nodes.new("ShaderNodeMath")
+    mirror.operation = "SUBTRACT"
+    mirror.inputs[0].default_value = bounds[0] + bounds[2]
+    mirror.location = (-470, -100)
+    links.new(separate.outputs["X"], mirror.inputs[1])
+    combine = nodes.new("ShaderNodeCombineXYZ")
+    combine.location = (-300, -100)
+    links.new(mirror.outputs[0], combine.inputs["X"])
+    links.new(separate.outputs["Y"], combine.inputs["Y"])
+    geometry = nodes.new("ShaderNodeNewGeometry")
+    geometry.location = (-650, 220)
+    select = nodes.new("ShaderNodeMixRGB")
+    select.blend_type = "MIX"
+    select.location = (-150, 80)
+    links.new(geometry.outputs["Backfacing"], select.inputs[0])
+    links.new(coordinates.outputs["UV"], select.inputs[1])
+    links.new(combine.outputs[0], select.inputs[2])
+    links.new(select.outputs[0], tex.inputs["Vector"])
     links.new(tex.outputs["Color"], emit.inputs["Color"])
+    transparent = nodes.new("ShaderNodeBsdfTransparent")
+    transparent.location = (250, -180)
+    alpha_mix = nodes.new("ShaderNodeMixShader")
+    alpha_mix.location = (450, 0)
+    links.new(tex.outputs["Alpha"], alpha_mix.inputs[0])
+    links.new(transparent.outputs[0], alpha_mix.inputs[1])
+    links.new(emit.outputs[0], alpha_mix.inputs[2])
+    # Also gate the shader by ray type, so the card does not occlude lights or
+    # appear in glossy/transmission bounces when an engine supports Light Path.
+    light_path = nodes.new("ShaderNodeLightPath")
+    light_path.location = (250, -350)
+    camera_mix = nodes.new("ShaderNodeMixShader")
+    camera_mix.location = (650, 0)
+    links.new(light_path.outputs["Is Camera Ray"], camera_mix.inputs[0])
+    links.new(transparent.outputs[0], camera_mix.inputs[1])
+    links.new(alpha_mix.outputs[0], camera_mix.inputs[2])
+    links.new(camera_mix.outputs[0], out.inputs["Surface"])
     try:
-        links.new(tex.outputs["Alpha"], emit.inputs["Alpha"] if "Alpha" in emit.inputs else emit.inputs[1])
-    except Exception:
+        mat.surface_render_method = "DITHERED"
+    except (AttributeError, TypeError):
         pass
-    # Transparent where icon alpha is 0.
-    bsdf = nodes.new("ShaderNodeBsdfTransparent")
-    bsdf.location = (80, -160)
-    mix = nodes.new("ShaderNodeMixShader")
-    mix.location = (200, 0)
-    try:
-        links.new(tex.outputs["Alpha"], mix.inputs["Fac"])
-    except Exception:
-        mix.inputs[0].default_value = 1.0
-    links.new(bsdf.outputs[0], mix.inputs[1])
-    links.new(emit.outputs[0], mix.inputs[2])
-    links.new(mix.outputs[0], out.inputs["Surface"])
-    try:
-        mat.blend_method = "BLEND"
-    except Exception:
-        pass
-    try:
-        mat.shadow_method = "NONE"
-    except Exception:
-        pass
+    if hasattr(mat, "use_transparent_shadow"):
+        mat.use_transparent_shadow = True
+    mat["arc_reference_camera_only"] = True
+    mat["arc_reference_double_sided"] = True
     return mat
 
 
+def _set_plane_geometry(plane, width_m, height_m, bounds, facing_y=True):
+    # Fixed plane orientation, not a camera-facing constraint. UV cropping
+    # removes margins geometrically and never creates or edits a PNG.
+    half_w, half_h = width_m * 0.5, height_m * 0.5
+    vertices = ([(-half_w, 0, -half_h), (half_w, 0, -half_h),
+                 (half_w, 0, half_h), (-half_w, 0, half_h)] if facing_y else
+                [(-half_w, -half_h, 0), (half_w, -half_h, 0),
+                 (half_w, half_h, 0), (-half_w, half_h, 0)])
+    for layer in list(plane.data.uv_layers):
+        plane.data.uv_layers.remove(layer)
+    plane.data.clear_geometry()
+    plane.data.from_pydata(vertices, [], [(0, 1, 2, 3)])
+    uv = plane.data.uv_layers.new(name="UVMap")
+    u0, v0, u1, v1 = bounds
+    for loop, value in zip(uv.data, [(u0, v0), (u1, v0), (u1, v1), (u0, v1)]):
+        loop.uv = value
+    plane.data.update()
+    plane["arc_reference_uv_bounds"] = list(bounds)
+    _configure_camera_only(plane)
+
+
 def create_image_plane(
-    *,
-    name: str,
-    image_path: str,
-    height_m: float,
-    location: Vector,
-    facing_y: bool = True,
-    reference_role: str = "",
+    *, name: str, image_path: str, height_m: float, location: Vector,
+    facing_y: bool = True, reference_role: str = "",
 ) -> bpy.types.Object | None:
-    """Create an XY (or XZ) image plane of world height *height_m* at *location*."""
+    """Create a cropped, double-sided card with visible art height *height_m*."""
     image = _load_image(image_path)
     if image is None:
         return None
-    try:
-        iw = float(image.size[0]) or 1.0
-        ih = float(image.size[1]) or 1.0
-    except Exception:
-        iw = ih = 1.0
-    aspect = max(iw / ih, 1e-6)
+    bounds = image_crop_bounds(image)
     height_m = max(float(height_m), 1e-3)
-    width_m = height_m * aspect
-
-    bpy.ops.mesh.primitive_plane_add(size=1.0, location=(0.0, 0.0, 0.0))
-    plane = bpy.context.active_object
-    if plane is None:
-        return None
-    plane.name = name
-    # Default plane is XY; rotate to stand in XZ facing +Y (character front).
-    if facing_y:
-        plane.rotation_euler = (1.57079632679, 0.0, 0.0)
-    plane.scale = (width_m, height_m, 1.0)
-    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
-    # Write world matrix (location alone can lag matrix_world until depsgraph update,
-    # which then breaks parenting math on 0.01-scale UE armatures).
+    width_m = height_m * _image_aspect(image, bounds)
+    mesh = bpy.data.meshes.new(name + "_Mesh")
+    plane = bpy.data.objects.new(name, mesh)
+    _set_plane_geometry(plane, width_m, height_m, bounds, facing_y)
     plane.matrix_world = Matrix.Translation(Vector(location))
-    _depsgraph_update()
-
-    mat = _make_emission_material(f"{name}_Mat", image)
-    if plane.data.materials:
-        plane.data.materials[0] = mat
-    else:
-        plane.data.materials.append(mat)
-
+    mat = _make_emission_material(f"{name}_Mat", image, bounds)
+    mesh.materials.append(mat)
     if not reference_role:
         reference_role = next((r for r in _REF_TYPE_COLLECTIONS if name.startswith("REF_" + r)), "")
-    col = _reference_collection(reference_role)
-    try:
-        for c in list(plane.users_collection):
-            c.objects.unlink(plane)
-        col.objects.link(plane)
-    except Exception:
-        pass
-    try:
-        plane["arc_reference_plane"] = 1
-        plane["arc_reference_image"] = image_path
-        plane["arc_reference_role"] = reference_role
-        plane.pass_index = int(REF_PASS_INDEX)
-    except Exception:
-        pass
-    from . import asset_organization
-    asset_organization.organize_objects([plane], bpy.context.scene)
+    _reference_collection(reference_role).objects.link(plane)
+    plane["arc_reference_plane"] = 1
+    plane["arc_reference_image"] = image_path
+    plane["arc_reference_role"] = reference_role
+    _depsgraph_update()
     return plane
 
 
@@ -460,7 +530,8 @@ def place_outfit_reference(objects, image_path: str) -> bpy.types.Object | None:
         height_m=plane_h,
         location=loc,
     )
-    _anchor_plane(plane, _outfit_anchor(objects) or _outfit_anchor(meshes))
+    _anchor_plane(plane, _outfit_anchor(objects) or _outfit_anchor(meshes)
+                  or (meshes[0].parent or meshes[0] if meshes else None))
     return plane
 
 
@@ -521,6 +592,8 @@ def _move_ref_plane(plane, location: Vector) -> None:
 
 def layout_head_hair_stack(objects, head_plane=None, hair_plane=None) -> None:
     """Place face and hair cards using the working-blend offsets."""
+    if hair_plane is not None and _reference_role(hair_plane) == "FacialHair":
+        hair_plane = None  # facial portraits use the measured Moustache layout
     if head_plane is not None:
         bb = _world_bbox(_head_meshes(objects))
         if bb is not None:
@@ -550,7 +623,7 @@ def place_head_reference(objects, image_path: str) -> bpy.types.Object | None:
     if bb is None or not image_path:
         return None
     mins, maxs = bb
-    h = max(maxs.z - mins.z, maxs.x - mins.x, 0.15) * 0.65
+    h = max(maxs.z - mins.z, maxs.x - mins.x, 0.15)
     center = (mins + maxs) * 0.5
     loc = Vector((maxs.x + 0.25, center.y, center.z))
     plane = create_image_plane(
@@ -573,13 +646,15 @@ def place_head_reference(objects, image_path: str) -> bpy.types.Object | None:
 
 def place_hair_reference(objects, image_path: str) -> bpy.types.Object | None:
     meshes = _hair_meshes(objects)
+    if _meshes_with_role(objects, "FacialHair") and not _meshes_with_role(objects, "Hair"):
+        return place_asset_reference(objects, image_path, "FacialHair")
     # Stack against the head when one is in the same import; else the hair mesh.
     anchor_meshes = _head_meshes(objects) or meshes
     bb = _world_bbox(anchor_meshes)
     if bb is None or not image_path:
         return None
     mins, maxs = bb
-    h = max(maxs.z - mins.z, maxs.x - mins.x, 0.12) * 0.65
+    h = max(maxs.z - mins.z, maxs.x - mins.x, 0.12)
     center = (mins + maxs) * 0.5
     loc = Vector((maxs.x + 0.25, center.y, maxs.z + h * 0.5))
     plane = create_image_plane(
@@ -607,12 +682,13 @@ def place_asset_reference(objects, image_path: str, role: str) -> bpy.types.Obje
     if bb is None or not image_path:
         return None
     mins, maxs = bb
-    height = max(maxs.z - mins.z, maxs.x - mins.x, 0.15) * 0.75
-    center = (mins + maxs) * 0.5
+    image = _load_image(image_path)
+    if image is None:
+        return None
+    height, location = _asset_card_layout(mins, maxs, role, _image_aspect(image, image_crop_bounds(image)))
     plane = create_image_plane(name=f"REF_{role}", image_path=image_path,
                                height_m=height,
-                               location=Vector((maxs.x + height * 0.6 + 0.08,
-                                                center.y, center.z)),
+                               location=location,
                                reference_role=role)
     anchor = meshes[0].parent or meshes[0]
     _anchor_plane(plane, anchor)
@@ -621,6 +697,167 @@ def place_asset_reference(objects, image_path: str, role: str) -> bpy.types.Obje
     from . import asset_organization
     asset_organization.organize_objects([plane], bpy.context.scene)
     return plane
+
+
+def _asset_card_layout(mins, maxs, role, aspect):
+    center = (mins + maxs) * 0.5
+    height = max(maxs.z - mins.z, 0.001)
+    gap = 0.08
+    if role == "FacialHair":
+        # These icons show a full face, not an isolated beard/moustache.
+        return _FACIAL_CARD_HEIGHT_M, Vector((center.x + _FACIAL_CARD_X_OFFSET_M,
+                                              center.y, center.z + _FACIAL_CARD_Z_OFFSET_M))
+    if role == "Backpack":
+        height *= _BACKPACK_HEIGHT_RATIO
+        gap = _BACKPACK_GAP_M
+        z = maxs.z + _BACKPACK_TOP_OFFSET_M - height * 0.5
+    else:
+        gap = _CHARM_GAP_M if role == "Charm" else _ATTACHMENT_GAP_M if role == "Attachment" else gap
+        z = mins.z + height * 0.5 + (0.005 if role == "Attachment" else 0.0)
+    return height, Vector((maxs.x + gap + height * aspect * 0.5, center.y, z))
+
+
+def _card_layout(meshes, role, aspect, *, bbox=None):
+    bb = bbox if bbox is not None else _world_bbox(meshes)
+    if bb is None:
+        return None
+    mins, maxs = bb
+    center = (mins + maxs) * 0.5
+    if role == "Outfit":
+        height = max(maxs.z - mins.z, 0.001) * _OUTFIT_ICON_HEIGHT_FRACTION
+        return height, Vector((mins.x - _OUTFIT_REF_LEFT_GAP_M, center.y, maxs.z - height * 0.5))
+    if role == "Head":
+        height = max(maxs.z - mins.z, maxs.x - mins.x, 0.15)
+        return height, Vector((maxs.x + height * aspect * 0.5, center.y, center.z + _HEAD_REF_Z_LIFT))
+    if role == "Hair":
+        height = max(maxs.z - mins.z, maxs.x - mins.x, 0.12)
+        return height, Vector((center.x, center.y, maxs.z + height * 0.5))
+    return _asset_card_layout(mins, maxs, role, aspect)
+
+
+def _preserved_visible_layout(plane, bounds):
+    bb = _world_bbox([plane], update=False)
+    if bb is None:
+        return None
+    mins, maxs = bb
+    previous = list(plane.get("arc_reference_uv_bounds") or (0.0, 0.0, 1.0, 1.0))
+    old_u0, old_v0, old_u1, old_v1 = previous
+    u0, v0, u1, v1 = bounds
+    width, height = maxs.x - mins.x, maxs.z - mins.z
+    left = mins.x + width * (u0 - old_u0) / max(old_u1 - old_u0, 1e-6)
+    right = mins.x + width * (u1 - old_u0) / max(old_u1 - old_u0, 1e-6)
+    bottom = mins.z + height * (v0 - old_v0) / max(old_v1 - old_v0, 1e-6)
+    top = mins.z + height * (v1 - old_v0) / max(old_v1 - old_v0, 1e-6)
+    return max(top - bottom, 0.001), Vector(((left + right) * 0.5, (mins.y + maxs.y) * 0.5, (bottom + top) * 0.5))
+
+
+def _update_card(plane, meshes, role, *, preserve_calibration=True, model_bbox=None):
+    path = str(plane.get("arc_reference_image") or "")
+    image = _load_image(path)
+    if image is None:
+        return False
+    bounds = image_crop_bounds(image)
+    aspect = _image_aspect(image, bounds)
+    layout = _card_layout(meshes, role, aspect, bbox=model_bbox)
+    calibration = os.path.basename(path).casefold() in {
+        "t_ui_icon_backpackcontainer_toolbox.png",
+        "t_ui_icon_facialhair_moustacheregular.png",
+        "t_ui_icon_backpackcharm_computermouse_01_a.png",
+    }
+    if preserve_calibration and calibration:
+        layout = _preserved_visible_layout(plane, bounds)
+    if layout is None:
+        return False
+    height, location = layout
+    anchor = plane.parent or (meshes[0].parent or meshes[0])
+    _set_plane_geometry(plane, height * aspect, height, bounds)
+    material = plane.data.materials[0] if plane.data.materials else None
+    material = _make_emission_material(plane.name + "_Mat", image, bounds, material)
+    if plane.data.materials:
+        plane.data.materials[0] = material
+    else:
+        plane.data.materials.append(material)
+    plane.matrix_world = Matrix.Translation(location)
+    _anchor_plane(plane, anchor, organize=False,
+                  world_matrix=Matrix.Translation(location), update=False)
+    plane["arc_reference_role"] = role
+    return True
+
+
+def _backpack_choice_for_meshes(meshes):
+    """Recover older imports by exact source package when their choice ID is absent."""
+    from . import appearance
+    for obj in meshes:
+        cid = str(obj.get("arc_backpack_choice") or "")
+        choice = appearance.resolve_choice(cid) if cid else None
+        if choice:
+            return choice
+    sources = set()
+    for obj in meshes:
+        path = str(obj.get("arc_source_mesh") or obj.get("arc_psk_path") or "").replace("\\", "/")
+        marker = "/content/pioneer/"
+        pos = path.casefold().rfind(marker)
+        if pos >= 0:
+            sources.add(os.path.splitext(path[pos + len(marker):])[0].casefold())
+    for choice in appearance.list_gear_choices("backpack"):
+        rel = str(choice.get("rel_path") or "").replace("\\", "/")
+        if os.path.splitext(rel)[0].casefold() in sources:
+            return choice
+    return None
+
+
+def refresh_reference_cards(context=None, *, roles=None, add_missing=True, preserve_calibration=True) -> dict:
+    """Explicitly repair the current scene's cards; never called on registration.
+
+    Preserve the user's measured Toolbox/Moustache/Mouse visible placement,
+    update other cards to those defaults, and add missing backpack cards from
+    their stamped exact catalog identity. Original model geometry is untouched.
+    """
+    from . import appearance, import_layout
+    ctx = context or bpy.context
+    scene = ctx.scene
+    wanted = {import_layout.normalize_role_name(role) for role in (roles or _REF_TYPE_COLLECTIONS)}
+    bind_legacy_reference_planes(scene, roles=wanted)
+    _depsgraph_update()
+    groups = {}
+    for obj in scene.objects:
+        role = import_layout.infer_role(obj)
+        if obj.type != "MESH" or role not in wanted:
+            continue
+        slot = import_layout.slot_of_object(obj)
+        groups.setdefault((role, slot), []).append(obj)
+    model_bounds = {key: _world_bbox(meshes, update=False) for key, meshes in groups.items()}
+    report = {"updated": [], "added": [], "missing": []}
+    cards = [o for o in scene.objects if o.get("arc_reference_plane")]
+    covered = set()
+    for plane in cards:
+        role = _reference_role(plane)
+        if role not in wanted:
+            continue
+        key = (role, import_layout.slot_of_object(plane))
+        meshes = groups.get(key, [])
+        if not meshes:
+            continue
+        if _update_card(plane, meshes, role, preserve_calibration=preserve_calibration,
+                        model_bbox=model_bounds[key]):
+            report["updated"].append(plane.name)
+            covered.add(key)
+    if add_missing:
+        for key, meshes in groups.items():
+            role, slot = key
+            if key in covered or role != "Backpack":
+                continue
+            choice = _backpack_choice_for_meshes(meshes)
+            cid = str((choice or {}).get("id") or "")
+            path = ensure_choice_icon(choice, scene) if choice else ""
+            plane = place_asset_reference(meshes, path, role) if path else None
+            if plane is None:
+                report["missing"].append({"role": role, "slot": slot, "choice": cid})
+                continue
+            report["added"].append(plane.name)
+    categorize_reference_planes(scene, roles=wanted)
+    _depsgraph_update()
+    return report
 
 
 def resolve_outfit_icon_path(context) -> str:

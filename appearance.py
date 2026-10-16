@@ -2885,6 +2885,23 @@ def import_appearance_parts(
         except (ValueError, OSError) as exc:
             msgs.append(f"Static hair attachment skipped: {exc}")
 
+    # A user-requested appearance import may need new cloth metadata on an
+    # existing paired head/facial mesh. Extract here on the main thread, never
+    # from registration, file-load or depsgraph reconciliation.
+    if set(placed_roles).intersection({"Body", "Head", "Hair", "FacialHair"}):
+        from . import character_fit, head_wrap, import_layout as _layout
+        fit_objects = [o for o in new_objects if o.type == "MESH" and not o.get("arc_reference_plane")]
+        fit_slots = {_layout.slot_of_object(o) for o in fit_objects}
+        fit_slots.discard(None)
+        fit_objects.extend(o for o in context.scene.objects if o.type == "MESH" and o not in fit_objects and not o.get("arc_reference_plane") and _layout.slot_of_object(o) in fit_slots and _layout.infer_role(o) in {"Head", "Hair", "FacialHair"})
+        try:
+            refresh = head_wrap.ensure_metadata(context.scene, fit_objects)
+            if refresh.get("error"):
+                msgs.append("Head-fit metadata: " + refresh["error"])
+            character_fit.sync_scene(context.scene)
+        except (OSError, ValueError, RuntimeError) as exc:
+            msgs.append(f"Authored head fit skipped: {exc}")
+
     # Hide new armatures that were not merged away (standalone import).
     if attach_to is None:
         for obj in new_objects:
@@ -2896,6 +2913,11 @@ def import_appearance_parts(
             except Exception:
                 pass
 
+    if any(role in {"BackpackFrame", "BackpackStrap"} for role in placed_roles):
+        from . import backpack_instances
+        shared = backpack_instances.share_backpack_data(new_objects, scene=context.scene)
+        if shared["meshes_linked"] or shared["materials_linked"]:
+            msgs.append("Shared identical backpack data: " + str(shared["meshes_linked"]) + " meshes, " + str(shared["materials_linked"]) + " materials")
     mesh_count = sum(
         1 for o in new_objects if _object_alive(o) and o.type == "MESH"
     )

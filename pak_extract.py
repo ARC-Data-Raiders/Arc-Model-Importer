@@ -70,7 +70,7 @@ def _extraction_revision(scene=None) -> str:
     if not mapping or not os.path.isfile(mapping):
         return ""
     with open(mapping, "rb") as stream:
-        return "2.19.12:" + hashlib.sha256(stream.read()).hexdigest()
+        return "2.19.16:" + hashlib.sha256(stream.read()).hexdigest()
 
 
 def mesh_cache_is_current(path: str, scene=None) -> bool:
@@ -333,10 +333,18 @@ def complete_extraction(out_dir, paths, code, log, revision):
     _LAST_EXTRACT_LOG = log
     from .pak_catalog import filesystem_path
     meshes = _collect_uemodels(out_dir, paths)
-    if code == 0:
-        for mesh in meshes:
-            with open(filesystem_path(mesh + ".arc-extract.json"), "w", encoding="utf-8") as stream:
+    for mesh in meshes:
+        stamp = filesystem_path(mesh + ".arc-extract.json")
+        if code == 0:
+            with open(stamp, "w", encoding="utf-8") as stream:
                 json.dump({"revision": revision}, stream)
+        else:
+            # A failed overwrite may leave incomplete metadata beside an old
+            # current stamp. Force the next import to retry the extraction.
+            try:
+                os.remove(stamp)
+            except FileNotFoundError:
+                pass
     utils.set_pak_cache_root(out_dir)
     textures.clear_clothing_path_caches()
     appearance._ICON_SCAN_CACHE.clear()

@@ -92,6 +92,22 @@ def _source_stem(obj):
     return os.path.splitext(stem)[0]
 
 
+def source_code_name(obj):
+    """Retain the exact exported asset identifier independently of readable labels."""
+    if obj.get('arc_reference_plane'):
+        raw = str(obj.get('arc_reference_image') or '')
+        if not raw:
+            anchor = obj.parent or bpy.data.objects.get(str(obj.get('arc_reference_anchor') or ''))
+            return source_code_name(anchor) if anchor is not None else 'Unknown'
+    else:
+        raw = str(obj.get('arc_source_mesh') or obj.get('arc_psk_path') or
+                  obj.get('arc_source_object_name') or obj.name)
+    stem = raw.replace('\\', '/').rsplit('/', 1)[-1]
+    stem = re.sub(r'\.\d{3,}$', '', stem)
+    stem = os.path.splitext(stem)[0]
+    return stem or 'Unknown'
+
+
 def standard_name(obj, role):
     stem=re.sub(r'^(?:SK|SM)_','',_source_stem(obj),flags=re.I)
     # Remove only redundant type wrappers, retaining authored part identifiers.
@@ -113,7 +129,9 @@ def standard_name(obj, role):
     if len(parts)%2==0 and parts[:n]==parts[n:]:stem='_'.join(parts[:n])
     stem=re.sub(r'_(?:Rig|Skeleton|Pivot)$','',stem,flags=re.I) or 'Asset'
     suffix='_Reference' if obj.get('arc_reference_plane') else '_Rig' if obj.type=='ARMATURE' else '_Pivot' if obj.type=='EMPTY' else ''
-    return (role+'_'+stem)[:63-len(suffix)]+suffix
+    code = source_code_name(obj)
+    obj['arc_asset_code_name'] = code
+    return role+'_'+stem+suffix+' ('+code+')'
 
 
 def rename_objects(objects, scene=None):
@@ -133,7 +151,7 @@ def rename_objects(objects, scene=None):
         if old!=obj.name:renamed[old]=obj.name
     if renamed:
         for obj in scene.objects:
-            for key in ('arc_reference_anchor','arc_inherit_body'):
+            for key in ('arc_reference_anchor','arc_inherit_body','arc_inherit_head','arc_head_wrap_head'):
                 value=obj.get(key)
                 if isinstance(value,str) and value in renamed:obj[key]=renamed[value]
         for prop in ('arc_last_weapon_armature','arc_last_applied_anim_armature'):
@@ -159,7 +177,7 @@ def organize_objects(objects=None, scene=None, mode=None):
     scene=scene or bpy.context.scene
     if mode is not None:scene[MODE_KEY]=mode
     full_scene = objects is None
-    normalize_names = not full_scene or not scene.get('arc_asset_naming_schema')
+    normalize_names = not full_scene or int(scene.get('arc_asset_naming_schema', 0)) < 2
     objects=[o for o in (list(objects) if objects is not None else list(scene.objects)) if role_for(o)]
     if not objects:return {'objects':0,'renamed':{}}
     state={o: [(layer,o.hide_get(view_layer=layer),o.select_get(view_layer=layer)) for layer in scene.view_layers if o.name in layer.objects] for o in objects}
@@ -171,7 +189,7 @@ def organize_objects(objects=None, scene=None, mode=None):
     managed=set(objects)
     old_groups.update(c for c in current if c.all_objects and set(c.all_objects).issubset(managed))
     renamed=rename_objects(objects,scene) if normalize_names else {}
-    if full_scene:scene['arc_asset_naming_schema']=1
+    if full_scene:scene['arc_asset_naming_schema']=2
     for obj in objects:
         destination=collection_for_object(obj,scene)
         if obj.name not in destination.objects:destination.objects.link(obj)

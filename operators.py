@@ -254,6 +254,10 @@ def assign_cached_materials(obj, materials: list) -> bool:
     if not obj or obj.type != "MESH" or not materials:
         return False
     try:
+        if obj.get("arc_shared_backpack_geometry"):
+            from . import backpack_instances
+            if backpack_instances.assign_instance_materials(obj, materials):
+                return True
         obj.data.materials.clear()
         for mat in materials:
             if mat is not None:

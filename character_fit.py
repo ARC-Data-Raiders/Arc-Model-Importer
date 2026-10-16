@@ -59,6 +59,28 @@ def body_for_object(obj, scene=None):
     return bodies[0] if len(bodies) == 1 else None
 
 
+def is_head(obj):
+    if obj.type != 'MESH' or obj.get('arc_reference_plane'):
+        return False
+    path = str(obj.get('arc_source_mesh') or obj.get('arc_psk_path') or '').replace('\\', '/').casefold()
+    return '/characters/heads/' in path or import_layout.infer_role(obj) == 'Head'
+
+
+def head_for_object(obj, scene=None):
+    """A unique shared-rig or same-pad head; never borrow a different character."""
+    scene = scene or bpy.context.scene
+    heads = [o for o in scene.objects if is_head(o)]
+    rigs = _armatures(obj)
+    linked = [head for head in heads if rigs and rigs & _armatures(head)]
+    if linked:
+        return linked[0] if len(linked) == 1 else None
+    slot = import_layout.slot_of_object(obj)
+    if slot is not None:
+        same = [head for head in heads if import_layout.slot_of_object(head) == slot]
+        return same[0] if len(same) == 1 else None
+    return heads[0] if len(heads) == 1 else None
+
+
 def character_objects(body, scene=None):
     scene = scene or bpy.context.scene
     return [obj for obj in scene.objects if obj.type == 'MESH' and (obj == body or (not is_body(obj) and body_for_object(obj, scene) == body))]
@@ -153,7 +175,7 @@ def release_object(obj):
             value = key.value
             key.driver_remove('value')
             key.value = value
-    for prop in ('arc_inherited_shape_keys', 'arc_inherit_body'):
+    for prop in ('arc_inherited_shape_keys', 'arc_inherit_body', 'arc_inherit_head'):
         if prop in obj:
             del obj[prop]
 
@@ -164,7 +186,7 @@ def release_scene(scene=None):
         release_object(obj)
 
 
-def _inherit(obj, body):
+def _inherit(obj, body, *, source_role="Body"):
     _ensure_authored_keys(obj)
     keys = _gender_keys(obj)
     if not keys:
@@ -205,35 +227,77 @@ def _inherit(obj, body):
         managed.append(key.name)
     if managed:
         obj['arc_inherited_shape_keys'] = managed
-        obj['arc_inherit_body'] = body.name
+        stamp = 'arc_inherit_head' if source_role == 'Head' else 'arc_inherit_body'
+        other = 'arc_inherit_body' if source_role == 'Head' else 'arc_inherit_head'
+        obj[stamp] = body.name
+        if other in obj:
+            del obj[other]
     return len(managed)
 
 
 def sync_scene(scene=None):
-    """Reconcile either import order and body replacements within each character."""
+    """Reconcile authored fits; runtime head-specific cloth wrapping is separate."""
     scene = scene or bpy.context.scene
     bodies = [o for o in scene.objects if is_body(o)]
+    heads = [o for o in scene.objects if is_head(o)]
     for body in bodies:
         apply_body_gender(body)
-    result = {'bodies': len(bodies), 'meshes': 0, 'keys': 0}
+    result = {'bodies': len(bodies), 'meshes': 0, 'keys': 0,
+              'head_meshes': 0, 'hair_meshes': 0, 'appearance_keys': 0,
+              'missing_head': 0, 'no_authored_gender': 0,
+              'head_specific_wrap': 'authored cage transfer where exact sidecars are available'}
     enabled = bool(getattr(scene, 'arc_inherit_shape_key', True))
     if enabled:
+        # Heads follow their character's body first. Hair then reads the exact
+        # head key values, including manual blends and user-authored drivers.
+        for head in heads:
+            body = body_for_object(head, scene)
+            if body is None:
+                if head.get('arc_inherit_body'):
+                    release_object(head)
+                continue
+            count = _inherit(head, body)
+            if count:
+                result['head_meshes'] += 1
+                result['appearance_keys'] += count
         for obj in scene.objects:
-            if obj.type != 'MESH' or is_body(obj):
+            if obj.type != 'MESH' or is_body(obj) or obj.get('arc_reference_plane'):
                 continue
             role = import_layout.infer_role(obj)
-            if role not in {'Outfit', 'BackpackStrap'}:
-                continue
-            body = body_for_object(obj, scene)
-            if body is None:
-                continue
-            count = _inherit(obj, body)
-            if count:
-                result['meshes'] += 1
-                result['keys'] += count
+            if role in {'Outfit', 'BackpackStrap'}:
+                body = body_for_object(obj, scene)
+                if body is None:
+                    continue
+                count = _inherit(obj, body)
+                if count:
+                    result['meshes'] += 1
+                    result['keys'] += count
+            elif role in {'Hair', 'FacialHair'}:
+                head = head_for_object(obj, scene)
+                if head is None:
+                    result['missing_head'] += 1
+                    if obj.get('arc_inherit_head'):
+                        release_object(obj)
+                    continue
+                _ensure_authored_keys(head)
+                _ensure_authored_keys(obj)
+                if not _gender_keys(obj):
+                    result['no_authored_gender'] += 1
+                    obj['arc_head_fit_note'] = 'No authored gender targets; checking exact authored cloth cage'
+                    continue
+                if not _gender_keys(head):
+                    obj['arc_head_fit_note'] = 'Matching head has no authored gender targets; no fit guessed'
+                    continue
+                count = _inherit(obj, head, source_role='Head')
+                if count:
+                    result['hair_meshes'] += 1
+                    result['appearance_keys'] += count
+                    obj['arc_head_fit_note'] = 'Authored head gender targets inherited'
     else:
         release_scene(scene)
-    from . import body_mask
+    from . import body_mask, head_wrap
+    bpy.context.view_layer.update()
+    result['head_wrap'] = head_wrap.sync_scene(scene, enabled=enabled)
     result['body_masks'] = body_mask.sync_body_masks(scene)
     _SIGNATURES[scene.as_pointer()] = _scene_signature(scene)
     return result
@@ -245,13 +309,13 @@ def _scene_signature(scene):
         if obj.type != 'MESH':
             continue
         body = is_body(obj)
-        if not body and import_layout.infer_role(obj) not in {'Outfit', 'BackpackStrap'}:
+        if obj.get('arc_reference_plane') or (not body and not is_head(obj) and import_layout.infer_role(obj) not in {'Outfit', 'BackpackStrap', 'Hair', 'FacialHair'}):
             continue
-        keys = _gender_keys(obj) if body else {}
-        female = keys.get('female')
+        keys = ({key.name: key for key in obj.data.shape_keys.key_blocks if key != obj.data.shape_keys.reference_key} if is_head(obj) and obj.data.shape_keys else _gender_keys(obj) if body else {})
+        values = tuple(sorted((name, round(float(key.value), 6)) for name, key in keys.items()))
         result.append((obj.as_pointer(), obj.name, obj.get('arc_import_slot'),
                        tuple(sorted(arm.as_pointer() for arm in _armatures(obj))),
-                       str(obj.get('arc_body_variant') or ''), bool(female and female.value >= .5),
+                       str(obj.get('arc_body_variant') or ''), values,
                        bool(obj.hide_render), str(obj.get('arc_visual_part') or obj.get('arc_visual_part_path') or '')))
     return tuple(sorted(result))
 
@@ -276,6 +340,8 @@ def _schedule_sync():
 
 @persistent
 def _load_fit(_unused):
+    from . import head_wrap
+    head_wrap.reset_cache()
     _CHECKED.clear()
     _SIGNATURES.clear()
     _schedule_sync()
@@ -302,6 +368,8 @@ def register():
 
 
 def unregister():
+    from . import head_wrap
+    head_wrap.reset_cache()
     if bpy.app.timers.is_registered(_deferred_sync):
         bpy.app.timers.unregister(_deferred_sync)
     for collection in (bpy.app.handlers.load_post, bpy.app.handlers.depsgraph_update_post):

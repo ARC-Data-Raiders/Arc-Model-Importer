@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Build a clean Blender addon zip (runtime modules only) and optionally sync to AppData.
 
@@ -70,6 +70,7 @@ $RootFilesShared = @(
     "appearance.py",
     "appearance_queue.py",
     "asset_organization.py",
+    "backpack_instances.py",
     "hair_placement.py",
     "backpack_catalog.py",
     "pose_presets.py",
@@ -77,6 +78,7 @@ $RootFilesShared = @(
     "revamped_bridge.py",
     "import_layout.py",
     "character_fit.py",
+    "head_wrap.py",
     "body_mask.py",
     "uemodel_import.py",
     "pak_extract.py",
@@ -154,7 +156,7 @@ function Get-AddonFolderName([string]$ReleaseLine) {
 
 function Get-BlInfoName([string]$ReleaseLine) {
     if ($ReleaseLine -eq "map-importer") { return $script:BlInfoNameMap }
-    return $script:BlInfoNameOutfits
+    return ($script:BlInfoNameOutfits + " v" + (Get-AddonVersion))
 }
 
 function Get-DefaultAppDataAddon([string]$ReleaseLine) {
