@@ -19,6 +19,21 @@ from .importing import get_outfit_folder, scan_outfit_presets, get_character_nam
 
 _csv_model_to_ui_folder = {}
 
+
+def _default_steam_install_dir():
+    """Use the common Steam install only when Arc Raiders pak containers exist."""
+    path = r"C:\Program Files (x86)\Steam\steamapps\common\Arc Raiders"
+    pak_dir = os.path.join(path, "PioneerGame", "Content", "Paks")
+    try:
+        if os.path.isdir(pak_dir) and any(
+            name.lower().endswith((".pak", ".utoc")) and name.lower() != "global.utoc"
+            for name in os.listdir(pak_dir)
+        ):
+            return path
+    except OSError:
+        pass
+    return ""
+
 def rebuild_csv_outfit_map(csv_path=None):
     """Rebuild the Model Folder Name -> Item/UI Folder Name mapping."""
     if csv_path is None:
@@ -935,7 +950,7 @@ def register():
                 "Select any folder from the Steam library through PioneerGame/Content/Paks; "
                 "the addon locates Arc Raiders' Paks automatically. Oodle is loaded from the game install."
             ),
-            default="",
+            default=_default_steam_install_dir(),
             subtype="DIR_PATH",
         ),
     )

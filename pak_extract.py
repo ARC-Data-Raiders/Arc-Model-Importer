@@ -5,8 +5,6 @@ profile stay inside that exe. This module only passes the paks folder, usmap,
 and asset path, then imports the written mesh with the existing material path.
 """
 
-from __future__ import annotations
-
 import os
 import re
 import subprocess
@@ -22,10 +20,8 @@ from bpy_extras.io_utils import ImportHelper
 from . import appearance, textures, utils
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-DEFAULT_PAK_DIR = (
-    r"C:\Program Files (x86)\Steam\steamapps\common\Arc Raiders"
-    r"\PioneerGame\Content\Paks"
-)
+DEFAULT_PAK_DIR = r"C:\Program Files (x86)\Steam\steamapps\common\Arc Raiders"
+DEFAULT_PAK_PICKER_DIR = r"C:\Program Files (x86)\Steam\steamapps\common"
 _DEFAULT_PAK_HAS_FILES = None
 _BROWSER_WARMING = set()
 BUNDLED_USMAP_FILENAME = "ArcRaiders_2.1.0_inheritance_fixed.usmap"
@@ -180,7 +176,7 @@ def resolve_pak_folder(path: str) -> str:
 
 
 def default_pak_has_files() -> bool:
-    return pak_dir_has_game_files(DEFAULT_PAK_DIR)
+    return bool(resolve_pak_folder(DEFAULT_PAK_DIR))
 
 
 def reconcile_pak_dir(scene, *, restore_default: bool = False) -> None:
@@ -189,9 +185,7 @@ def reconcile_pak_dir(scene, *, restore_default: bool = False) -> None:
         return
     current = getattr(scene, "arc_pak_dir", "") or ""
     has = default_pak_has_files()
-    norm_current = os.path.normcase(os.path.normpath(bpy.path.abspath(current))) if current else ""
-    norm_default = os.path.normcase(os.path.normpath(DEFAULT_PAK_DIR))
-    if current and not pak_dir_has_game_files(bpy.path.abspath(current)):
+    if current and not resolve_pak_folder(bpy.path.abspath(current)):
         scene.arc_pak_dir = ""
         scene["arc_pak_dir_user_cleared"] = True
         return
@@ -202,11 +196,9 @@ def reconcile_pak_dir(scene, *, restore_default: bool = False) -> None:
 
 
 def configured_dir(scene) -> str:
-    """Paks folder when it exists and contains game containers."""
+    """Resolve the configured Steam/game folder to its Paks directory."""
     path = bpy.path.abspath(getattr(scene, "arc_pak_dir", "") or "") if scene is not None else ""
-    if path and pak_dir_has_game_files(path):
-        return path
-    return ""
+    return resolve_pak_folder(path) if path else ""
 
 
 def _initialize_pak_defaults():
@@ -217,7 +209,6 @@ def _initialize_pak_defaults():
         return 0.1
     for scene in scenes:
         reconcile_pak_dir(scene, restore_default=True)
-        prewarm_pak_browser(scene)
     return None
 
 
@@ -227,12 +218,10 @@ def _load_pak_defaults(_unused=None):
 
 
 def register_defaults():
-    # Scene writes belong in registration/load handlers, never panel draw().
     unregister_defaults()
+    # Scene property defaults provide the common install path immediately;
+    # reconcile saved/invalid paths after a .blend finishes loading.
     bpy.app.handlers.load_post.append(_load_pak_defaults)
-    delay = _initialize_pak_defaults()
-    if delay is not None:
-        bpy.app.timers.register(_initialize_pak_defaults, first_interval=delay)
 
 
 def unregister_defaults():
@@ -542,19 +531,25 @@ class ARC_OT_pick_pak_dir(Operator, ImportHelper):
     bl_label = "Select Steam Install / Paks Folder"
     filename_ext = ""
     filter_glob: StringProperty(default="*", options={"HIDDEN"})
-    directory: StringProperty(subtype="DIR_PATH", options={"HIDDEN"})
+    directory: StringProperty(
+        subtype="DIR_PATH",
+        options={"HIDDEN"},
+        default=DEFAULT_PAK_PICKER_DIR,
+    )
 
     def execute(self, context):
         folder = utils.resolved_picked_dir(
             bpy.path.abspath(getattr(self, "filepath", "") or ""),
             bpy.path.abspath(getattr(self, "directory", "") or ""),
         )
-        folder = resolve_pak_folder(folder)
-        if not folder:
+        paks_folder = resolve_pak_folder(folder)
+        if not paks_folder:
             context.scene.arc_pak_dir = ""
             context.scene["arc_pak_dir_user_cleared"] = True
             self.report({"ERROR"}, "Select a folder containing game .pak or .utoc files")
             return {"CANCELLED"}
+        # Preserve the selected install/root folder for a clearer UI value;
+        # configured_dir() resolves it to PioneerGame/Content/Paks as needed.
         context.scene.arc_pak_dir = folder
         context.scene["arc_pak_dir_user_cleared"] = False
         window = getattr(context, "window", None)
