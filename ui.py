@@ -290,7 +290,7 @@ def _draw_appearance_section(layout, context):
         return
     pak_dir = getattr(scene, "arc_pak_dir", "") or ""
     if not getattr(scene, "arc_pioneer_root", "") and not pak_dir:
-        layout.label(text="Set PioneerGame Folder or Paks Folder in Settings", icon="ERROR")
+        layout.label(text="Set Steam Install or Paks Folder in Settings", icon="ERROR")
 
     body_sec = _collapsible(layout, "arc_appearance_body", "Body", default_closed=True)
     if body_sec is not None:

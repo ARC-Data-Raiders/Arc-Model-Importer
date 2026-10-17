@@ -932,8 +932,8 @@ def register():
         StringProperty(
             name="Steam Install",
             description=(
-                "Shipping Arc Raiders IoStore folder (PioneerGame/Content/Paks). "
-                "The addon reads .utoc/.ucas from here. Oodle is loaded from the game install."
+                "Select any folder from the Steam library through PioneerGame/Content/Paks; "
+                "the addon locates Arc Raiders' Paks automatically. Oodle is loaded from the game install."
             ),
             default="",
             subtype="DIR_PATH",

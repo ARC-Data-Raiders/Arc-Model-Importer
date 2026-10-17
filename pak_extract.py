@@ -8,6 +8,7 @@ and asset path, then imports the written mesh with the existing material path.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import hashlib
 import json
@@ -113,10 +114,67 @@ def pak_dir_has_game_files(path: str) -> bool:
 
 
 def resolve_pak_folder(path: str) -> str:
-    """Accept either the Steam game installation or its Content/Paks folder."""
-    for candidate in (path, os.path.join(path, 'PioneerGame', 'Content', 'Paks'),
-                      os.path.join(path, 'Content', 'Paks')):
-        if path and pak_dir_has_game_files(candidate):
+    """Resolve any selected folder in the Steam library to Arc Raiders Paks.
+
+    Handles Paks, Content, PioneerGame, Arc Raiders, common, steamapps, and
+    Steam/library roots. Steam roots are resolved through libraryfolders.vdf
+    instead of recursively scanning every installed game.
+    """
+    if not path or not os.path.isdir(path):
+        return ''
+
+    def add(candidates, value):
+        if value:
+            normalized = os.path.normpath(os.path.abspath(value))
+            key = os.path.normcase(normalized)
+            if key not in candidates[0]:
+                candidates[0].add(key)
+                candidates[1].append(normalized)
+
+    candidates = (set(), [])
+    selected = os.path.normpath(os.path.abspath(path))
+    add(candidates, selected)
+    cursor = selected
+    while cursor:
+        leaf = os.path.basename(cursor).casefold()
+        if leaf == 'paks':
+            add(candidates, cursor)
+        elif leaf == 'content':
+            add(candidates, os.path.join(cursor, 'Paks'))
+        elif leaf == 'pioneergame':
+            add(candidates, os.path.join(cursor, 'Content', 'Paks'))
+        elif leaf == 'arc raiders':
+            add(candidates, os.path.join(cursor, 'PioneerGame', 'Content', 'Paks'))
+        elif leaf == 'common':
+            add(candidates, os.path.join(cursor, 'Arc Raiders', 'PioneerGame', 'Content', 'Paks'))
+        elif leaf == 'steamapps':
+            add(candidates, os.path.join(cursor, 'common', 'Arc Raiders', 'PioneerGame', 'Content', 'Paks'))
+
+        # Steam's manifest enumerates secondary libraries such as D:\\SteamLibrary.
+        steamapps = os.path.join(cursor, 'steamapps')
+        vdf = os.path.join(steamapps, 'libraryfolders.vdf')
+        if os.path.isfile(vdf):
+            try:
+                with open(vdf, 'r', encoding='utf-8-sig', errors='replace') as stream:
+                    contents = stream.read()
+                libraries = re.findall(r'"path"\s+"([^"]+)"', contents, re.IGNORECASE)
+                if not libraries:
+                    # Older Steam clients stored numeric library entries directly.
+                    libraries = re.findall(r'^\s*"\d+"\s+"([^"]+)"\s*$', contents, re.MULTILINE)
+                for library in libraries:
+                    library = library.replace('\\\\', '\\')
+                    add(candidates, os.path.join(library, 'steamapps', 'common', 'Arc Raiders',
+                                                  'PioneerGame', 'Content', 'Paks'))
+            except OSError:
+                pass
+
+        parent = os.path.dirname(cursor)
+        if parent == cursor:
+            break
+        cursor = parent
+
+    for candidate in candidates[1]:
+        if pak_dir_has_game_files(candidate):
             return candidate
     return ''
 
@@ -499,7 +557,10 @@ class ARC_OT_pick_pak_dir(Operator, ImportHelper):
             return {"CANCELLED"}
         context.scene.arc_pak_dir = folder
         context.scene["arc_pak_dir_user_cleared"] = False
-        context.window_manager.cursor_set("WAIT")
+        window = getattr(context, "window", None)
+        cursor_set = getattr(window, "cursor_set", None)
+        if callable(cursor_set):
+            cursor_set("WAIT")
         try:
             index, _root = ensure_pak_browser(context.scene)
             from . import pak_catalog
@@ -507,7 +568,8 @@ class ARC_OT_pick_pak_dir(Operator, ImportHelper):
         except Exception as exc:
             self.report({"WARNING"}, f"Paks folder saved; catalog could not load: {exc}")
         finally:
-            context.window_manager.cursor_set("DEFAULT")
+            if callable(cursor_set):
+                cursor_set("DEFAULT")
         return {"FINISHED"}
 
 

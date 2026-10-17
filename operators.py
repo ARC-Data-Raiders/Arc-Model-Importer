@@ -2127,7 +2127,7 @@ def _queue_selected_outfit_psks(context):
     from . import pak_extract
     if pak_extract.configured_dir(scene) or not root:
         if not pak_extract.configured_dir(scene):
-            return False, row, label, [], "Set the PioneerGame root folder or the Paks folder."
+            return False, row, label, [], "Set the Steam Install root or Paks folder."
         from . import outfit_catalog
         rels = outfit_catalog.resolve_pak_outfit_paths(scene, row)
         meshes = pak_extract.ensure_rels(scene, rels) if rels else []
