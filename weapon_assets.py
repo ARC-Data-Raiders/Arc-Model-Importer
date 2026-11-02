@@ -21,7 +21,10 @@ def generated_previews():
 
 def bundled_preview(entry,variant='OFF',mod=False,*,tier=None,stencil='NONE'):
     if not mod and tier is not None:
-        icon=generated_previews()['weapons'].get(entry['stem'],{}).get(variant,{}).get(str(tier),{}).get(stencil or 'NONE')
+        tiers=generated_previews()['weapons'].get(entry['stem'],{}).get(variant,{})
+        icon=tiers.get(str(tier),{}).get(stencil or 'NONE')
+        if not icon and variant!='OFF':
+            icon=tiers.get('3',{}).get('NONE')
         return Path(__file__).parent/'assets/weapon_browser/generated'/icon if icon else None
     data=bundled().get('mods' if mod else 'weapons',{}).get(entry['stem'],{})
     icon=data.get('preview') if mod or variant=='OFF' else next((v.get('preview') for v in data.get('variants',[]) if v['id']==variant),data.get('preview'))

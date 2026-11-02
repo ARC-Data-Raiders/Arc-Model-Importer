@@ -152,6 +152,57 @@ class WeaponBrowserTests(unittest.TestCase):
             select.assert_called_once_with(self.catalog.weapon_by_key(self.scene.arc_weapon_key), 'OFF', tier='1', stencil='CommonBlue')
             preview.assert_called_once()
 
+    def test_ascended_preview_survives_tier_and_stencil_selection(self):
+        for stem, weapon in self.assets.bundled()['weapons'].items():
+            for variant in weapon.get('variants', []):
+                expected = self.assets.generated_previews()['weapons'][stem][variant['id']]['3']['NONE']
+                for tier in ('0', '1', '2', '3'):
+                    for stencil in ('NONE', 'CommonBlue'):
+                        with patch.object(Path, 'is_file', side_effect=AssertionError('browse stat')):
+                            actual = self.assets.bundled_preview({'stem': stem}, variant['id'], tier=tier, stencil=stencil)
+                        self.assertEqual(actual, ROOT / 'assets/weapon_browser/generated' / expected)
+
+    def test_gun_preview_retains_ready_image_until_replacement(self):
+        class PreviewLayout(Layout):
+            def template_preview(self, texture, **kwargs):
+                self.events.append(('preview', texture.name))
+        first = str((ROOT / 'first.png').resolve())
+        second = str((ROOT / 'second.png').resolve())
+        textures = {first: SimpleNamespace(name='first')}
+        callbacks = []
+        timers = SimpleNamespace(is_registered=lambda callback: callback in callbacks,
+                                 register=lambda callback, **kwargs: callbacks.append(callback))
+        context = SimpleNamespace(region=None, preferences=SimpleNamespace(system=SimpleNamespace(ui_scale=1)))
+        with patch.object(self.ui, '_GUN_TEXTURES', textures), patch.object(self.ui, '_GUN_PENDING', set()), patch.object(self.ui, '_GUN_DISPLAY', {}, create=True), patch.object(self.ui, '_GUN_FAILED', set(), create=True), patch.object(self.ui.bpy, 'app', SimpleNamespace(timers=timers), create=True), patch.object(Path, 'is_file', return_value=True):
+            for path, expected in ((first, 'first'), (second, 'first'), (second, 'second')):
+                layout = PreviewLayout()
+                self.ui.draw_gun_preview(layout, context, path)
+                self.assertIn(('preview', expected), layout.events)
+                if path == second:
+                    textures[second] = SimpleNamespace(name='second')
+            self.assertEqual(len(callbacks), 1)
+            layout = PreviewLayout()
+            self.ui.draw_gun_preview(layout, context, None)
+            self.assertFalse(any(event[0] == 'preview' for event in layout.events))
+            self.assertTrue(layout.events)
+            self.ui.draw_gun_preview(PreviewLayout(), context, first)
+            self.ui._GUN_FAILED.add(str((ROOT / 'missing.png').resolve()))
+            layout = PreviewLayout()
+            self.ui.draw_gun_preview(layout, context, ROOT / 'missing.png')
+            self.assertFalse(any(event[0] == 'preview' for event in layout.events))
+            self.assertTrue(layout.events)
+
+    def test_cold_gun_preview_reserves_space_without_decoding(self):
+        callbacks = []
+        timers = SimpleNamespace(is_registered=lambda callback: callback in callbacks,
+                                 register=lambda callback, **kwargs: callbacks.append(callback))
+        context = SimpleNamespace(region=None, preferences=SimpleNamespace(system=SimpleNamespace(ui_scale=1)))
+        layout = Layout()
+        with patch.object(self.ui, '_GUN_TEXTURES', {}), patch.object(self.ui, '_GUN_PENDING', set()), patch.object(self.ui, '_GUN_DISPLAY', {}, create=True), patch.object(self.ui, '_GUN_FAILED', set(), create=True), patch.object(self.ui.bpy, 'app', SimpleNamespace(timers=timers), create=True), patch.object(Path, 'is_file', return_value=True), patch.object(self.ui, 'gun_preview_id', side_effect=AssertionError('decode in draw')):
+            self.ui.draw_gun_preview(layout, context, ROOT / 'cold.png')
+        self.assertTrue(layout.events)
+        self.assertEqual(len(callbacks), 1)
+
     def test_every_generated_identity_is_selected_without_io_when_warm(self):
         index = self.assets.generated_previews()
         self.assertEqual(index['source_level'], '1-4')

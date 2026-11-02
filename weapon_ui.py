@@ -9,6 +9,8 @@ _ENUMS={}
 _PREVIEWS=None
 _GUN_TEXTURES={}
 _GUN_PENDING=set()
+_GUN_DISPLAY={}
+_GUN_FAILED=set()
 _ARC_PENDING=set()
 _ACTIVE_BATCH=None
 _ASCENDED_ENUM_READY=False
@@ -245,26 +247,37 @@ def draw_preview(layout,context,path,width_fraction=1.0):
         row=layout.row();row.alignment='CENTER';row.template_icon(icon_value=icon,scale=scale)
 
 def draw_gun_preview(layout,context,path):
-    if path is None or not Path(path).is_file():return
-    key=str(Path(path).resolve())
+    region=context.region
+    display=region.as_pointer() if region else 0
+    key=str(Path(path).resolve()) if path is not None else None
     texture=_GUN_TEXTURES.get(key)
     if texture is not None:
         try:texture.name
         except ReferenceError:
             _GUN_TEXTURES.pop(key,None);texture=None
-    if texture is None:
+    if texture is None and key is not None and key not in _GUN_FAILED:
         _GUN_PENDING.add(key)
         if not bpy.app.timers.is_registered(_prepare_gun_textures):
             bpy.app.timers.register(_prepare_gun_textures,first_interval=0.0)
-        return
+        texture=_GUN_TEXTURES.get(_GUN_DISPLAY.get(display))
+        if texture is not None:
+            try:texture.name
+            except ReferenceError:texture=None
+    elif texture is not None:
+        _GUN_DISPLAY[display]=key
+    else:
+        _GUN_DISPLAY.pop(display,None)
     # template_icon fits into a square even when its row is rectangular. A
     # native texture preview fills the row; keep its image stable on resize.
-    region=context.region
     width=max(64,(region.width if region else 320)-48)
     row=layout.row()
     row.use_property_split=False;row.use_property_decorate=False
     # The preview is display-only. Disable Blender's built-in resize grip.
     row.enabled=False
+    if texture is None:
+        row.scale_y=width*.4/(20*max(context.preferences.system.ui_scale,.5))
+        row.label(text='')
+        return
     row.scale_y=width*.4/(20*7.6*max(context.preferences.system.ui_scale,.5))
     row.template_preview(texture,show_buttons=False,preview_id='arc_weapon_gun_fixed_5x2')
 
@@ -274,8 +287,16 @@ def _prepare_gun_textures():
         _GUN_PENDING.discard(queued)
         key=str(Path(queued).resolve())
         if key in _GUN_TEXTURES:continue
-        if not gun_preview_id(key):continue
-        preview=_PREVIEWS['gun:'+key]
+        try:
+            gun_preview_id(key)
+            preview=_PREVIEWS.get('gun:'+key) if _PREVIEWS is not None else None
+            if preview is None:
+                _GUN_FAILED.add(key)
+                continue
+        except Exception as error:
+            _GUN_FAILED.add(key)
+            print('Weapon preview:',key,error)
+            continue
         import numpy as np
         pixels=np.asarray(preview.image_pixels_float[:],dtype=np.float32).reshape(-1,4)
         background=np.asarray(bpy.context.preferences.themes[0].user_interface.panel_back[:3],dtype=np.float32)
@@ -444,6 +465,8 @@ def unregister():
     if bpy.app.timers.is_registered(_prepare_gun_textures):
         bpy.app.timers.unregister(_prepare_gun_textures)
     _GUN_PENDING.clear()
+    _GUN_DISPLAY.clear()
+    _GUN_FAILED.clear()
     if bpy.app.timers.is_registered(_prepare_arc_previews):
         bpy.app.timers.unregister(_prepare_arc_previews)
     _ARC_PENDING.clear()
