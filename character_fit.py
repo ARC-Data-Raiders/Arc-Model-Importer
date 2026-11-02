@@ -10,6 +10,7 @@ _CHECKED = {}
 _DRIVER_VAR = 'arc_body_gender'
 _DRIVER_EXPRESSIONS = {_DRIVER_VAR, '1.0 - ' + _DRIVER_VAR}
 _SIGNATURES = {}
+_WATCHED_IDS = {}
 _SYNCING = False
 
 
@@ -297,6 +298,11 @@ def sync_scene(scene=None):
         release_scene(scene)
     from . import body_mask, head_wrap
     bpy.context.view_layer.update()
+    from . import uemodel_import
+    result['normal_meshes'] = 0
+    for obj in scene.objects:
+        if obj.type == 'MESH' and obj.data.get('arc_native_normal_targets'):
+            result['normal_meshes'] += int(uemodel_import.apply_uemodel_morph_normals(obj))
     result['head_wrap'] = head_wrap.sync_scene(scene, enabled=enabled)
     result['body_masks'] = body_mask.sync_body_masks(scene)
     _SIGNATURES[scene.as_pointer()] = _scene_signature(scene)
@@ -305,6 +311,7 @@ def sync_scene(scene=None):
 
 def _scene_signature(scene):
     result = []
+    watched = set()
     for obj in scene.objects:
         if obj.type != 'MESH':
             continue
@@ -317,6 +324,17 @@ def _scene_signature(scene):
                        tuple(sorted(arm.as_pointer() for arm in _armatures(obj))),
                        str(obj.get('arc_body_variant') or ''), values,
                        bool(obj.hide_render), str(obj.get('arc_visual_part') or obj.get('arc_visual_part_path') or '')))
+        # Blender's depsgraph callback can run many times per interaction. Keep
+        # only IDs that contribute to this signature so unrelated scene updates
+        # can be discarded without walking every object and shape key again.
+        watched.add(obj.as_pointer())
+        data = getattr(obj, 'data', None)
+        if data is not None:
+            watched.add(data.as_pointer())
+            shape_keys = getattr(data, 'shape_keys', None)
+            if shape_keys is not None:
+                watched.add(shape_keys.as_pointer())
+    _WATCHED_IDS[scene.as_pointer()] = watched
     return tuple(sorted(result))
 
 
@@ -344,27 +362,51 @@ def _load_fit(_unused):
     head_wrap.reset_cache()
     _CHECKED.clear()
     _SIGNATURES.clear()
+    _WATCHED_IDS.clear()
     _schedule_sync()
 
 
 @persistent
-def _changed_fit(scene, _depsgraph):
+def _changed_fit(scene, depsgraph):
     if _SYNCING:
         return
-    if _SIGNATURES.get(scene.as_pointer()) != _scene_signature(scene):
-        _schedule_sync()
+    # Never compute _scene_signature() from depsgraph_update_post: that scans
+    # every scene mesh, rig, and shape key on each graph evaluation. On large
+    # imports it made an otherwise idle Blender session burn CPU continuously.
+    # The signature is recomputed once, after a relevant update is debounced.
+    watched = _WATCHED_IDS.get(scene.as_pointer(), ())
+    for update in getattr(depsgraph, 'updates', ()):
+        updated_id = getattr(update, 'id', None)
+        if updated_id is None:
+            continue
+        try:
+            pointer = updated_id.as_pointer()
+        except (AttributeError, ReferenceError):
+            continue
+        if pointer in watched:
+            # Animated transforms do not affect fit eligibility or shape-key
+            # values and can generate depsgraph events every frame.
+            if (getattr(update, 'is_updated_transform', False)
+                    and not getattr(update, 'is_updated_geometry', False)):
+                continue
+            _schedule_sync()
+            return
+        # Catch newly added importer-tagged mesh objects without scanning the
+        # scene. Normal transform/deform events on unrelated objects are cheap
+        # to reject here and do not schedule a full fit reconciliation.
+        if (isinstance(updated_id, bpy.types.Object)
+                and updated_id.type == 'MESH'
+                and (updated_id.get('arc_model_type') == 'Body'
+                     or updated_id.get('arc_source_mesh')
+                     or updated_id.get('arc_psk_path'))):
+            _schedule_sync()
+            return
 
 
 def register():
-    # Registration can run under Blender's _RestrictData. Scene access belongs
-    # in the deferred callback, after the real context is restored.
-    for collection, handler in ((bpy.app.handlers.load_post, _load_fit),
-                                (bpy.app.handlers.depsgraph_update_post, _changed_fit)):
-        for previous in list(collection):
-            if previous.__module__ == __name__ and previous.__name__ == handler.__name__:
-                collection.remove(previous)
-        collection.append(handler)
-    _schedule_sync()
+    # Reconciliation is called directly by explicit import/property actions.
+    # Keep no idle depsgraph watcher or load-time scene scan.
+    unregister()
 
 
 def unregister():
@@ -378,3 +420,4 @@ def unregister():
                 collection.remove(handler)
     _CHECKED.clear()
     _SIGNATURES.clear()
+    _WATCHED_IDS.clear()

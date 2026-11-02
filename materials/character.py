@@ -14,6 +14,7 @@ import bpy
 
 from .. import utils
 from .. import textures
+from ..material_runtime.core import base_property_overrides
 from .. import palette_calibration
 from ..properties import BODY_ALBEDO, BODY_NORMAL
 
@@ -79,16 +80,6 @@ def setup_body_material(obj, psk_path: str, body_variant: str):
         albedo_node.label = albedo_name
         albedo_node.interpolation = "Cubic"
         albedo_node.location = (-600, 300)
-        albedo_sock = albedo_node.outputs["Color"]
-        if skin.get("color_multiply"):
-            albedo_sock = _mix_color_multiply(
-                nodes, links, albedo_sock, skin["color_multiply"], (-320, 260),
-            )
-        if skin.get("skin_desaturation") is not None:
-            albedo_sock = _apply_skin_desaturation(
-                nodes, links, albedo_sock, skin["skin_desaturation"], (-120, 220),
-            )
-        links.new(albedo_sock, principled.inputs["Base Color"])
 
         ramp_node = nodes.new("ShaderNodeValToRGB")
         ramp_node.label = "Body Alpha Ramp"
@@ -96,7 +87,9 @@ def setup_body_material(obj, psk_path: str, body_variant: str):
         ramp = ramp_node.color_ramp
         ramp.interpolation = "CONSTANT"
         ramp.elements[0].position = 0.0
-        ramp.elements[0].color = (0.0, 0.0, 0.0, 0.0)
+        # The body albedo paints underwear near-black; an alpha cut on colour hid the hips.
+        # Clothing coverage is handled by the outfit coverage mask, so skin stays opaque here.
+        ramp.elements[0].color = (0.0, 0.0, 0.0, 1.0)
         ramp.elements[1].position = 0.01
         ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
         links.new(albedo_node.outputs["Color"], ramp_node.inputs["Fac"])
@@ -111,62 +104,22 @@ def setup_body_material(obj, psk_path: str, body_variant: str):
     except Exception:
         pass
 
-    if normal_path or micro_path:
-        normal_flipper = None
-        if utils.ensure_node_group("NormalFlipper"):
-            normal_flipper = nodes.new("ShaderNodeGroup")
-            normal_flipper.node_tree = bpy.data.node_groups["NormalFlipper"]
-            normal_flipper.location = (-800, -200)
-
-        if normal_path and normal_flipper:
-            img_normal = bpy.data.images.load(normal_path, check_existing=True)
-            img_normal.colorspace_settings.name = "Non-Color"
-            normal_tex = nodes.new("ShaderNodeTexImage")
-            normal_tex.image = img_normal
-            normal_tex.label = normal_name
-            normal_tex.interpolation = "Cubic"
-            normal_tex.location = (-1100, -200)
-            links.new(normal_tex.outputs["Color"], normal_flipper.inputs[0])
-
-        if micro_path:
-            tex_coord = nodes.new("ShaderNodeTexCoord")
-            tex_coord.location = (-1500, -500)
-            mapping = nodes.new("ShaderNodeMapping")
-            mapping.location = (-1300, -500)
-            mapping.inputs["Scale"].default_value = (15.0, 15.0, 15.0)
-            links.new(tex_coord.outputs["UV"], mapping.inputs["Vector"])
-
-            img_micro = bpy.data.images.load(micro_path, check_existing=True)
-            img_micro.colorspace_settings.name = "Non-Color"
-            micro_node = nodes.new("ShaderNodeTexImage")
-            micro_node.image = img_micro
-            micro_node.label = "T_SkinMicroNormal_01"
-            micro_node.interpolation = "Cubic"
-            micro_node.location = (-1100, -500)
-            links.new(mapping.outputs["Vector"], micro_node.inputs["Vector"])
-
-        mix_node = nodes.new("ShaderNodeMix")
-        mix_node.data_type = 'RGBA'
-        mix_node.blend_type = 'OVERLAY'
-        mix_node.location = (-500, -300)
-        mix_node.inputs["Factor"].default_value = 1.0
-
-        if normal_flipper:
-            links.new(normal_flipper.outputs[0], mix_node.inputs[6])
-        if micro_path:
-            links.new(micro_node.outputs["Color"], mix_node.inputs[7])
-
-        normal_map_node = nodes.new("ShaderNodeNormalMap")
-        normal_map_node.location = (-100, -300)
-        try:
-            normal_map_node.convention = 'DIRECTX'
-        except Exception:
-            pass
-        links.new(mix_node.outputs[2], normal_map_node.inputs["Color"])
-        links.new(normal_map_node.outputs["Normal"], principled.inputs["Normal"])
-        if "Coat Normal" in principled.inputs:
-            links.new(normal_map_node.outputs["Normal"], principled.inputs["Coat Normal"])
-
+    from .character_body import read_body_parameters, image_for_role, build_body_response
+    parameters = read_body_parameters(skin_mi)
+    # Older full-MIC readers supply these even when no local parent can resolve.
+    for source, target in (("color_multiply", "ColorMultiply"), ("subsurface_color", "SubsurfaceColor")):
+        if skin.get(source) is not None:
+            parameters["colors"][target] = skin[source]
+    if skin.get("skin_desaturation") is not None:
+        parameters["scalars"]["SkinDesaturation"] = skin["skin_desaturation"]
+    albedo_node = albedo_node if albedo_path else None
+    uv_name = obj.data.uv_layers[0].name if obj.data.uv_layers else "UV0"
+    build_body_response(nodes, links, principled, albedo_node,
+                        image_for_role(normal_path, non_color=True),
+                        image_for_role(micro_path, non_color=True), parameters, uv_name)
+    mat["arc_body_surface_revision"] = "native-static-v1"
+    mat["arc_body_parameter_sources"] = json.dumps(parameters["sources"])
+    mat["arc_body_surface_note"] = "Recovered static M_Skin response; Blender SSS and engine lighting/weather remain approximations."
 
     # Apply exact outfit UV1 coverage without changing body geometry or the
     # existing skin alpha ramp. Assembly sync reapplies this after either order.
@@ -234,15 +187,8 @@ def _apply_default_skin_bsdf(principled, subsurface_color=None) -> None:
             ))
 
 
-def _align_face_shader_skin_defaults(subsurface_color=None) -> None:
-    """Push body skin BSDF defaults onto ArcTexturer Face Shader Principled."""
-    ng = utils.find_node_group("Face Shader") or bpy.data.node_groups.get("Face Shader")
-    if ng is None:
-        return
-    for node in ng.nodes:
-        if node.type == "BSDF_PRINCIPLED":
-            _apply_default_skin_bsdf(node, subsurface_color=subsurface_color)
-            break
+
+
 
 
 def _find_face_skin_color_mi(psk_or_folder: str) -> str:
@@ -417,12 +363,8 @@ def _apply_skin_desaturation(nodes, links, color_sock, amount, loc):
 # Face material setup
 # ---------------------------------------------------------------------------
 
-def _ensure_face_shader_node_group() -> bool:
-    ok = utils.ensure_node_group("Face Shader")
-    if ok:
-        ng = utils.find_node_group("Face Shader") or bpy.data.node_groups.get("Face Shader")
-        utils.strip_node_group_material_outputs(ng)
-    return ok
+
+
 
 
 def _strip_setup_suffixes(name: str) -> str:
@@ -536,6 +478,20 @@ def _ensure_head_material_slots(obj, psk_path: str) -> list:
     if not obj or obj.type != "MESH":
         return []
     sk_slots = _parse_sk_material_slots(psk_path) if psk_path else []
+    # UEFormat embeds original section material references even when extraction
+    # produced no sibling mesh JSON. Recover by index before legacy shared Wet
+    # or Eyes materials erase the original slot role on a rebuild.
+    if not sk_slots and str(psk_path).lower().endswith(".uemodel") and os.path.isfile(psk_path):
+        from ..uemodel_import import parse_uemodel
+        _, _, source_lods = parse_uemodel(psk_path)
+        if source_lods:
+            for source_slot, source_ref, _, _ in source_lods[0].materials:
+                source_stem = str(source_ref or "").replace("\\", "/").rsplit("/", 1)[-1].split(".", 1)[0]
+                if not source_stem:
+                    source_stem = str(source_slot or "")
+                source_json = _hair_source_asset(psk_path, source_ref, ".json") if source_ref else ""
+                source_json = source_json or _find_head_mi_json(psk_path, source_stem)
+                sk_slots.append((source_slot, source_stem, source_json))
     meta: list[tuple[str, str, str]] = []
     if sk_slots:
         used = 0
@@ -660,6 +616,8 @@ def _ensure_head_material_slots(obj, psk_path: str) -> list:
 
 def _setup_head_principled_from_mi(slot, psk_path: str, mi_path: str) -> None:
     """Principled fallback when ArcTexturer Face Shader is unavailable."""
+    from .character_fallback import surface_controls, apply_controls, finish
+    preserved = surface_controls(slot.material if slot else None, "head")
     src_name = slot.material.name if slot and slot.material else "Head"
     mat = _reuse_or_new_material(slot, src_name)
     nodes = mat.node_tree.nodes
@@ -674,6 +632,7 @@ def _setup_head_principled_from_mi(slot, psk_path: str, mi_path: str) -> None:
     skin_mi = _find_face_skin_color_mi(psk_path or mi_path or "")
     skin = _parse_skin_color_mi(skin_mi) if skin_mi else {}
     _apply_default_skin_bsdf(principled, subsurface_color=skin.get("subsurface_color"))
+    apply_controls(principled, preserved)
 
     albedo = normal = ""
     if mi_path:
@@ -755,6 +714,9 @@ def _setup_head_principled_from_mi(slot, psk_path: str, mi_path: str) -> None:
             mat["arc_skin_color_mi"] = os.path.abspath(skin_mi)
     except Exception:
         pass
+    finish(mat, "head", ["Native face MI/complete required maps unavailable; original Principled approximation with resolved local color/normal maps; native cavity/fresnel/weather transport not claimed"])
+
+
 
 
 def _resolve_head_mi_path(psk_path: str, slot, mi_stem: str = "", mi_json: str = "") -> str:
@@ -844,20 +806,30 @@ def _load_head_face_textures_from_namemap(
 
 
 def _setup_head_slot_head(slot, psk_path: str, mi_path: str = ""):
+    from ..material_runtime.native_families import is_user_override
+    if slot.material is not None and is_user_override(slot.material):
+        return
     mi_path = mi_path or _resolve_head_mi_path(psk_path, slot)
     src_name = slot.material.name if slot.material else "Head"
     skin_mi = _find_face_skin_color_mi(psk_path or mi_path or "")
     skin = _parse_skin_color_mi(skin_mi) if skin_mi else {}
-    if utils.ensure_node_group("Face Shader"):
-        utils.repair_face_shader_normal_flipper()
+    native_face_source = bool(mi_path and os.path.isfile(mi_path))
+    if not native_face_source:
+        _setup_head_principled_from_mi(slot, psk_path, mi_path)
+        return
+    if native_face_source:
         mat = _reuse_or_new_material(slot, src_name)
         nodes = mat.node_tree.nodes
         links = mat.node_tree.links
         previous_face = next((n.node_tree for n in nodes if n.type == "GROUP" and n.node_tree
                               and (n.node_tree.get("arc_face_shader") or n.node_tree.name == "Face Shader")), None)
+        if previous_face is None and mat.get('dr_character_fallback') == 'head':
+            # Existing fallback contributes numeric SSS controls only. The native
+            # builder still allocates a fresh tree and never copies these nodes.
+            previous_face = mat.node_tree
         from .character_fidelity import prepare_face_shader
-        base_face = utils.find_node_group("Face Shader") or bpy.data.node_groups.get("Face Shader")
-        face_tree = prepare_face_shader(mat, base_face, previous_face)
+        base_face = None  # Standalone native builder has no template dependency.
+        face_tree = prepare_face_shader(mat, base_face, previous_face, mi_path=mi_path)
         if previous_face is None:
             for bsdf in face_tree.nodes:
                 if bsdf.type == "BSDF_PRINCIPLED":
@@ -867,14 +839,28 @@ def _setup_head_slot_head(slot, psk_path: str, mi_path: str = ""):
         group_node.node_tree = face_tree
         parsed_face = _parse_flat_mi_json(mi_path) if mi_path else {}
         scalars = parsed_face.get("scalars") or {}
-        for parameter, default in (("NormalFlatness",0.0),("Hair Mask Amount",1.0),("FacialHair Mask Amount",0.0)):
-            group_node.inputs[parameter].default_value = float(scalars.get(parameter, default))
+        if not face_tree.get("arc_face_native_revision"):
+            for parameter, default in (("NormalFlatness",0.0),("Hair Mask Amount",1.0),("FacialHair Mask Amount",0.0)):
+                group_node.inputs[parameter].default_value = float(scalars.get(parameter, default))
+        else:
+            from .character_face import parameters, wire_face_textures
+            native_face = parameters(mi_path)
+            missing = wire_face_textures(nodes, links, group_node, native_face, obj=slot.id_data, source_path=psk_path)
+            mat["arc_face_surface_revision"] = "native-static-v1"
+            if "arc_face_surface_failure" in mat:
+                del mat["arc_face_surface_failure"]
+            mat["arc_face_missing_textures"] = json.dumps(missing)
+            mat["arc_face_surface_note"] = "Recovered static face color/surface/radial fresnel/NXA/neck fade; paint/weather and UE SSS lighting remain unverified."
+            for native_bsdf in (n for n in face_tree.nodes if n.type == "BSDF_PRINCIPLED"):
+                native_bsdf.inputs["IOR"].default_value = 1.5
+                native_bsdf.inputs["Specular Tint"].default_value = (1, 1, 1, 1)
+                native_bsdf.inputs["Coat Weight"].default_value = 0
         group_node.location = (200, 0)
         out_node = nodes.new("ShaderNodeOutputMaterial")
         out_node.location = (480, 0)
         if group_node.outputs:
             links.new(group_node.outputs[0], out_node.inputs["Surface"])
-        if mi_path:
+        if mi_path and not face_tree.get("arc_face_native_revision"):
             _load_mi_textures(mi_path, nodes, links, group_node, connected={
                 "BaseColor": "Face Albedo",
                 "PM_Diffuse": "Face Albedo",
@@ -907,7 +893,15 @@ def _setup_head_slot_head(slot, psk_path: str, mi_path: str = ""):
                     mat["arc_skin_color_mi"] = os.path.abspath(skin_mi)
             except Exception:
                 pass
+            if face_tree.get('arc_face_native_revision'):
+                from ..material_runtime.native_families import clear_character_fallback_provenance
+                clear_character_fallback_provenance(mat)
             return
+        # A native attempt that falls back must never retain a successful
+        # reconstruction stamp on the generic Principled material.
+        if mat.get("arc_face_surface_revision"):
+            del mat["arc_face_surface_revision"]
+            mat["arc_face_surface_failure"] = "Required native Face Albedo did not resolve; legacy fallback used."
         # Face Shader present but textures missed — fall through to Principled.
     _setup_head_principled_from_mi(slot, psk_path, mi_path)
     if slot.material:
@@ -950,210 +944,60 @@ def _load_teeth_bundled_image(rel_under_addon: str, *, non_color: bool = False):
     return img
 
 
-def _build_shared_teeth_material(teeth_ng) -> bpy.types.Material | None:
-    """One shared Teeth material: bundled color/normal → Teeth group → Output."""
-    if teeth_ng is None:
-        return None
-    mat = bpy.data.materials.get("Teeth")
-    if mat is None:
-        mat = bpy.data.materials.new(name="Teeth")
-    mat.use_nodes = True
-    nodes = mat.node_tree.nodes
-    links = mat.node_tree.links
-    nodes.clear()
+def _build_shared_teeth_material(teeth_ng=None, previous=None):
+    """Original static coated fallback; the deprecated template argument is ignored."""
+    from .character_fallback import static_teeth
+    return static_teeth(_load_teeth_bundled_image(_TEETH_COLOR_ASSET, non_color=False),
+                        _load_teeth_bundled_image(_TEETH_NORMAL_ASSET, non_color=True), previous)
 
-    color_img = _load_teeth_bundled_image(_TEETH_COLOR_ASSET, non_color=False)
-    normal_img = _load_teeth_bundled_image(_TEETH_NORMAL_ASSET, non_color=True)
 
-    color_tex = nodes.new("ShaderNodeTexImage")
-    color_tex.name = "Teeth_Color"
-    color_tex.label = "teeth_color_map"
-    color_tex.location = (-520.0, 120.0)
-    if color_img is not None:
-        color_tex.image = color_img
-
-    normal_tex = nodes.new("ShaderNodeTexImage")
-    normal_tex.name = "Teeth_Normal"
-    normal_tex.label = "teeth_normal_map"
-    normal_tex.location = (-520.0, -160.0)
-    if normal_img is not None:
-        normal_tex.image = normal_img
-        try:
-            normal_tex.image.colorspace_settings.name = "Non-Color"
-        except Exception:
-            pass
-
-    group_node = nodes.new("ShaderNodeGroup")
-    group_node.node_tree = teeth_ng
-    group_node.name = "Teeth"
-    group_node.label = "Teeth"
-    group_node.location = (0.0, 0.0)
-
-    out_node = nodes.new("ShaderNodeOutputMaterial")
-    out_node.location = (280.0, 0.0)
-
-    base_in = group_node.inputs.get("Base Color")
-    normal_in = group_node.inputs.get("Normal")
-    if base_in is not None and color_tex.outputs:
-        links.new(color_tex.outputs["Color"], base_in)
-    if normal_in is not None and normal_tex.outputs:
-        links.new(normal_tex.outputs["Color"], normal_in)
-    if group_node.outputs:
-        links.new(group_node.outputs[0], out_node.inputs["Surface"])
-
-    _set_material_alpha_mode(mat, mode="OPAQUE", two_sided=False)
-    try:
-        mat["arc_head_role"] = "teeth"
-    except Exception:
-        pass
-    return mat
 
 
 def _setup_head_slot_teeth(slot, psk_path: str, mi_path: str = ""):
-    """Shared Teeth material (bundled color+normal) on every teeth slot."""
-    if not utils.ensure_node_group("Teeth"):
+    """Native exact teeth first; retain an existing attributed fallback on refusal."""
+    from ..material_runtime.native_families import is_user_override,setup_entrypoint
+    current = slot.material if slot is not None else None
+    if current is not None and is_user_override(current):
         return
     mi_path = mi_path or _resolve_head_mi_path(psk_path, slot)
-    teeth_ng = utils.find_node_group("Teeth") or bpy.data.node_groups.get("Teeth")
-    mat = _build_shared_teeth_material(teeth_ng)
-    if mat is None:
-        return
+    # Prepare privately; do not replace shared teeth/material assignments until
+    # exact source identity, images and preserved pre-skin normals are complete.
+    if mi_path:
+        reuse = current is not None and current.get('dr_native_family') == 'teeth' and current.users <= 1
+        candidate = current if reuse else bpy.data.materials.new('DR.Teeth.' + os.path.basename(mi_path).split('.')[0])
+        handled = setup_entrypoint(candidate, mi_path, psk_path, obj=getattr(slot, 'id_data', None), expected_family='teeth', cache_family='teeth')
+        if handled and candidate.get('dr_native_family') == 'teeth':
+            slot.material = candidate
+            candidate['arc_head_role'] = 'teeth'
+            return
+        diagnostic = candidate.get('dr_native_route_diagnostic', 'Exact native teeth dependencies unavailable')
+        if not reuse:
+            bpy.data.materials.remove(candidate)
+        if current is not None:
+            current['dr_native_route_diagnostic'] = diagnostic
+    mat = _build_shared_teeth_material(previous=current)
     slot.material = mat
-    try:
-        mat["arc_head_role"] = "teeth"
-        if mi_path:
-            mat["arc_mi_path"] = os.path.abspath(mi_path)
-    except Exception:
-        pass
+    if mi_path:
+        mat['arc_mi_path'] = os.path.abspath(mi_path)
 
 
-# ArcTexturer.blend ships Eyes → group ``EYE Colour `` which historically nests
-# ``Rust.003`` as its specular backend. That is a generic metal/dielectric stack
-# (wraps Specular Cycles), not environment trim rust — but the name confuses
-# users. We retarget the nest to a dedicated ``Eye Specular`` copy.
-_EYE_COLOUR_GROUP = "EYE Colour "
-_EYE_SPECULAR_GROUP = "Eye Specular"
-_SPECULAR_CYCLES_GROUP = "Specular Cycles.002"
-
-
-def _ensure_eye_specular_backend():
-    """Copy ArcTexturer ``Rust.*`` specular stack to ``Eye Specular`` (same sockets)."""
-    existing = utils.find_node_group(_EYE_SPECULAR_GROUP)
-    if existing is not None:
-        return True
-    # Pull Eyes (brings EYE Colour + nested Rust.*) from ArcTexturer.blend.
-    utils.ensure_material("Eyes")
-    rust = None
-    for name in ("Rust.003", "Rust.002", "Rust.001", "Rust"):
-        rust = utils.find_node_group(name)
-        if rust is not None:
-            break
-    if rust is None:
-        for ng in bpy.data.node_groups:
-            if (ng.name or "").startswith("Rust"):
-                rust = ng
-                break
-    if rust is None:
-        return False
-    copy = rust.copy()
-    try:
-        copy.name = _EYE_SPECULAR_GROUP
-    except Exception:
-        pass
-    return utils.find_node_group(_EYE_SPECULAR_GROUP) is not None
-
-
-def _patch_eye_colour_backend() -> bool:
-    """Point every ``EYE Colour*`` nested Rust group at ``Eye Specular``."""
-    utils.ensure_material("Eyes")
-    if not _ensure_eye_specular_backend():
-        return False
-    eye_spec = utils.find_node_group(_EYE_SPECULAR_GROUP)
-    if eye_spec is None:
-        return False
-    patched_any = False
-    for ng in list(bpy.data.node_groups):
-        if not (ng.name or "").startswith("EYE Colour"):
-            continue
-        for node in ng.nodes:
-            if node.type != "GROUP" or node.node_tree is None:
-                continue
-            tree_name = node.node_tree.name or ""
-            if tree_name.startswith("Rust") or tree_name == _EYE_SPECULAR_GROUP:
-                if node.node_tree != eye_spec:
-                    node.node_tree = eye_spec
-                    patched_any = True
-                try:
-                    node.label = _EYE_SPECULAR_GROUP
-                except Exception:
-                    pass
-    return patched_any or utils.find_node_group(_EYE_COLOUR_GROUP) is not None
-
-
-def _restore_eye_colour_default_output() -> None:
-    """Undo Principled-Metal preference: EYE Colour → Eye Specular Specular Cycles path."""
-    eye_colour = utils.find_node_group(_EYE_COLOUR_GROUP) or utils.find_node_group(
-        "EYE Colour"
-    )
-    eye_spec = utils.find_node_group(_EYE_SPECULAR_GROUP)
-    if eye_colour is None or eye_spec is None:
-        return
-    nest = next(
-        (
-            n
-            for n in eye_colour.nodes
-            if n.type == "GROUP" and n.node_tree == eye_spec
-        ),
-        None,
-    )
-    gout = next((n for n in eye_colour.nodes if n.type == "GROUP_OUTPUT"), None)
-    if nest is None or gout is None:
-        return
-    # Prefer Specular Cycles / Specular socket; fall back to first non-Metal output.
-    shader_out = nest.outputs.get("Specular")
-    if shader_out is None:
-        for out in nest.outputs:
-            if (out.name or "").casefold() == "metal":
-                continue
-            if out.type in ("SHADER",):
-                shader_out = out
-                break
-    if shader_out is None and nest.outputs:
-        shader_out = nest.outputs[0]
-    out_sock = gout.inputs.get("Specular")
-    if out_sock is None and gout.inputs:
-        out_sock = gout.inputs[0]
-    if shader_out is None or out_sock is None:
-        return
-    for link in list(eye_colour.links):
-        if link.to_socket == out_sock:
-            eye_colour.links.remove(link)
-    eye_colour.links.new(shader_out, out_sock)
 
 
 def _setup_head_slot_eyes(slot, psk_path: str, mi_path: str = ""):
-    """Assign ArcTexturer Eyes (EYE Colour → Eye Specular, not Rust).
-
-    Reverts the EyeShell-merge / Principled-Metal experiment — shared Eyes mat only.
-    """
+    """Native eye when complete, otherwise original resource-aware approximation."""
+    from ..material_runtime.native_families import is_user_override
+    if slot.material is not None and is_user_override(slot.material):
+        return
     from .character_fidelity import _authored_eye_material
     layers = getattr(getattr(slot.id_data, "data", None), "uv_layers", ())
     uv_name = "UV0" if layers and "UV0" in layers else layers[0].name if layers else ""
     authored = _authored_eye_material(mi_path, uv_name)
+    if authored is None:
+        authored = _authored_eye_material(mi_path, uv_name, allow_missing=True, previous=slot.material)
     if authored is not None:
         slot.material = authored
-        return
-    if not utils.ensure_material("Eyes"):
-        return
-    _patch_eye_colour_backend()
-    _restore_eye_colour_default_output()
-    slot.material = bpy.data.materials["Eyes"]
-    try:
-        slot.material["arc_head_role"] = "eyes"
-        if mi_path:
-            slot.material["arc_mi_path"] = os.path.abspath(mi_path)
-    except Exception:
-        pass
+
+
 
 
 _EYELASH_MASK_OBJECT = (
@@ -1161,9 +1005,8 @@ _EYELASH_MASK_OBJECT = (
 )
 
 
-def _ensure_specular_cycles_group() -> bool:
-    """Load ArcTexturer Specular Cycles (Alpha + Transparent mix) when present."""
-    return utils.ensure_node_group(_SPECULAR_CYCLES_GROUP)
+
+
 
 
 def _find_tex_path(obj_path: str) -> str:
@@ -1382,10 +1225,21 @@ def _apply_hair_color_to_eyelash_material(
     mat, colour_json: str = "", *, use_hair_color: bool | None = None,
 ) -> bool:
     """Tint an eyelash Principled Base Color from Hair ColorA (live Update Hair Color)."""
+    from ..material_runtime.native_families import is_user_override
+    if mat and is_user_override(mat):
+        return True
     if mat is None or not getattr(mat, "use_nodes", False):
         return False
     if use_hair_color is None:
         use_hair_color = _eyelash_copy_hair_color_enabled()
+    if mat.get('dr_character_fallback') == 'eyelashes':
+        from .character_fallback import update_lash_color
+        rgba = _resolve_scene_hair_color_rgba(colour_json) if use_hair_color else None
+        return update_lash_color(mat, rgba, bool(use_hair_color))
+    if mat.get('dr_native_family') == 'eyelashes':
+        from ..material_runtime.native_families import set_eyelash_hair_color
+        rgba = _resolve_scene_hair_color_rgba(colour_json) if use_hair_color else None
+        return set_eyelash_hair_color(mat, rgba, enabled=bool(use_hair_color))
     if use_hair_color:
         rgba = _resolve_scene_hair_color_rgba(colour_json)
     else:
@@ -1438,73 +1292,47 @@ def _setup_head_slot_eyelashes(slot, psk_path: str, mi_path: str = "", colour_js
     HASHED alpha from mask Alpha (not soft-expand). Cooked face eyelash MIs inherit
     ``M_Eyelashes`` (DitherOpacityMask).
     """
+    from ..material_runtime.native_families import is_user_override
+    if slot is not None and slot.material is not None and is_user_override(slot.material):
+        return
     mi_path = mi_path or _resolve_head_mi_path(psk_path, slot)
     src_name = slot.material.name if slot.material else "Eyelashes"
     mat = _reuse_or_new_material(slot, src_name)
-    nodes = mat.node_tree.nodes
-    links = mat.node_tree.links
-    nodes.clear()
-
+    from ..material_runtime.native_families import setup_entrypoint
+    native_copy = _eyelash_copy_hair_color_enabled()
+    native_color = _resolve_scene_hair_color_rgba(colour_json) if native_copy else None
+    if setup_entrypoint(mat, mi_path, psk_path, obj=getattr(slot, 'id_data', None), expected_family='eyelashes', cache_family='eyelashes', hair_copy=native_copy, hair_color=native_color):
+        return
+    from .character_fallback import lash_material
+    from .character_body import image_for_role
     mask_path = _resolve_eyelash_mask_path(mi_path)
     mi = _parse_flat_mi_json(mi_path) if mi_path else {}
-    two_sided = bool(mi.get("two_sided", True))
-    alpha_thresh = 0.05
-
-    principled = nodes.new("ShaderNodeBsdfPrincipled")
-    principled.location = (200, 0)
-    principled.inputs["Roughness"].default_value = 1.0
-    coat = principled.inputs.get("Coat Weight")
-    if coat is not None:
-        coat.default_value = 0.15
-    _wire_shader_surface(nodes, links, principled.outputs["BSDF"], (480, 0))
-    _apply_hair_color_to_eyelash_material(
-        mat,
-        colour_json=colour_json,
-        use_hair_color=_eyelash_copy_hair_color_enabled(),
-    )
-
-    if mask_path and os.path.isfile(mask_path):
-        img = bpy.data.images.load(mask_path, check_existing=True)
-        try:
-            img.colorspace_settings.name = "Non-Color"
-        except Exception:
-            pass
-        tex = nodes.new("ShaderNodeTexImage")
-        tex.image = img
-        tex.label = "T_Eyelashes_M"
-        tex.interpolation = "Cubic"
-        tex.location = (-488, -73)
-        # Live setup: Alpha channel → Principled Alpha.
-        links.new(tex.outputs["Alpha"], principled.inputs["Alpha"])
-        _set_material_alpha_mode(
-            mat, mode="HASHED", threshold=alpha_thresh, two_sided=two_sided or True,
-        )
-    else:
-        print(
-            f"Arc Raiders PSK Importer: Eyelash mask not found for '{src_name}' "
-            f"(mi={mi_path or 'NONE'})"
-        )
-        _set_material_alpha_mode(mat, mode="OPAQUE", two_sided=True)
-
-    try:
-        mat["arc_head_role"] = "eyelashes"
-        if mi_path:
-            mat["arc_mi_path"] = os.path.abspath(mi_path)
-        if mask_path:
-            mat["arc_eyelash_mask"] = os.path.abspath(mask_path)
-    except Exception:
-        pass
+    fallback = lash_material(image_for_role(mask_path, non_color=True), mi.get('scalars') or {},
+                             dict(mi.get('colours') or []), mat, native_copy, native_color)
+    slot.material = fallback
+    if mi_path:
+        fallback['arc_mi_path'] = os.path.abspath(mi_path)
+    if mask_path:
+        fallback['arc_eyelash_mask'] = os.path.abspath(mask_path)
 
 
-def _setup_head_slot_wet(slot):
-    """EyeShell / EyeEdge → ArcTexturer Wet material (no face merge)."""
-    if not utils.ensure_material("Wet"):
+
+
+def _setup_head_slot_wet(slot, psk_path="", mi_path="", role=""):
+    """Distinct original eye occlusion/tear-line construction, with explicit defaults."""
+    from ..material_runtime.native_families import is_user_override
+    if slot.material is not None and is_user_override(slot.material):
         return
-    slot.material = bpy.data.materials["Wet"]
-    try:
-        slot.material["arc_head_role"] = "eyeshell"
-    except Exception:
-        pass
+    from .character_eye_aux import authored_eye_aux_material
+    obj = slot.id_data
+    uv_name = obj.data.uv_layers[0].name if getattr(obj, "type", "") == "MESH" and obj.data.uv_layers else "UV0"
+    authored = authored_eye_aux_material(mi_path, role, uv_name)
+    if authored is None:
+        authored = authored_eye_aux_material(mi_path, role or 'eyeshell', uv_name, allow_missing=True)
+    if authored is not None:
+        slot.material = authored
+
+
 
 
 def _retint_paired_body_from_head(head_obj, skin_mi: str) -> None:
@@ -1587,7 +1415,7 @@ def setup_face_material(obj, psk_path: str):
                 slot, psk_path, mi_path, colour_json=hair_color_json,
             )
         elif role in ("eyeshell", "eyeedge"):
-            _setup_head_slot_wet(slot)
+            _setup_head_slot_wet(slot, psk_path, mi_path, role)
         elif len(obj.material_slots) == 1:
             _setup_head_slot_head(slot, psk_path, mi_path)
     # Body may have been imported first — retint with this face's SkinColor.
@@ -1674,6 +1502,46 @@ def _hair_card_files(folder: str) -> dict:
     return found
 
 
+def _complete_hair_mi(result: dict, json_path: str) -> dict:
+    """Keep source-local inherited vectors/scalars/textures and static switches.
+
+    Colour options retain MI-only scalar overrides separately, so choosing a
+    palette does not reset a style's coverage using unrelated master defaults.
+    """
+    from .character_body import read_character_parameters
+    inherited = read_character_parameters(json_path)
+    result["instance_scalars"] = dict(inherited["instance_scalars"])
+    result["parameter_sources"] = inherited["sources"]
+    from .fur_cards import is_native_colormap_source
+    result["native_colormap_master"] = is_native_colormap_source(inherited["sources"], inherited["unresolved_parent"])
+    from .hair_tangent import is_native_hair_tangent_source
+    result["native_tangent_master"] = is_native_hair_tangent_source(inherited["sources"], inherited["unresolved_parent"])
+    result["switches"] = dict(inherited["switches"])
+    authoritative = bool(inherited.get("leaf_authoritative"))
+    result["parameter_authority"] = {
+        "policy": "source-local-native-companions" if authoritative else "legacy-json-child-overrides",
+        "sources": list(inherited.get("authoritative_sources") or []),
+        "dependencies": list(inherited.get("dependencies") or []),
+    }
+    # Native converted JSON flattens old inherited defaults: it cannot override
+    # the verified current raw chain. Ordinary explicit JSON without a verified
+    # companion keeps its existing child override behavior, including zeros.
+    result["scalars"] = (dict(inherited["scalars"]) if authoritative else
+                         dict(inherited["scalars"], **result.get("scalars", {})))
+    colors = dict(inherited["colors"])
+    if not authoritative:
+        colors.update(dict(result.get("colours") or []))
+    result["colours"] = list(colors.items())
+    if "UseSecondaryColor" not in result["scalars"] and "UseSecondaryColor" in result["switches"]:
+        result["scalars"]["UseSecondaryColor"] = float(result["switches"]["UseSecondaryColor"])
+    textures_by_parameter = {name: (stem, ref) for name, stem, ref in result.get("textures") or []}
+    for name, ref in inherited["textures"].items():
+        if ref and (authoritative or name not in textures_by_parameter):
+            textures_by_parameter[name] = (ref.replace("\\", "/").rsplit("/", 1)[-1], ref)
+    result["textures"] = [(name, stem, ref) for name, (stem, ref) in textures_by_parameter.items()]
+    return result
+
+
 def _parse_hair_mi(json_path: str) -> dict:
     result = {
         'textures': [], 'colours': [], 'scalars': {},
@@ -1733,7 +1601,7 @@ def _parse_hair_mi(json_path: str) -> dict:
                     result['scalars'][str(name)] = float(val)
                 except (TypeError, ValueError):
                     pass
-            bpo = (params.get("Properties") or {}).get("BasePropertyOverrides") or {}
+            bpo = base_property_overrides((params.get("Properties") or {}).get("BasePropertyOverrides"), snapshot=True)
             if bpo.get('TwoSided') is not None:
                 result['two_sided'] = bool(bpo.get('TwoSided'))
             if bpo.get('OpacityMaskClipValue') is not None:
@@ -1742,7 +1610,7 @@ def _parse_hair_mi(json_path: str) -> dict:
                 except (TypeError, ValueError):
                     pass
             if result['textures']:
-                return result
+                return _complete_hair_mi(result, json_path)
         entry = utils.first_ue_export(data, "MaterialInstanceConstant") or utils.first_ue_export(data)
         props = (entry or {}).get('Properties') or {}
         for tp in props.get('TextureParameterValues') or []:
@@ -1811,7 +1679,7 @@ def _parse_hair_mi(json_path: str) -> dict:
                 result['scalars'][name] = float(sp.get('ParameterValue'))
             except (TypeError, ValueError):
                 pass
-        bpo = props.get('BasePropertyOverrides') or {}
+        bpo = base_property_overrides(props.get('BasePropertyOverrides'), snapshot=True)
         if bpo.get('TwoSided') is not None:
             result['two_sided'] = bool(bpo.get('TwoSided'))
         if bpo.get('OpacityMaskClipValue') is not None:
@@ -1821,7 +1689,7 @@ def _parse_hair_mi(json_path: str) -> dict:
                 pass
     except Exception as e:
         print(f"Arc Raiders PSK Importer: Failed to parse hair MI '{json_path}': {e}")
-    return result
+    return _complete_hair_mi(result, json_path)
 
 
 
@@ -1936,7 +1804,7 @@ def _merge_hair_colour_mi(mi: dict, colour_json: str) -> None:
         by_name["ColorB"] = (0.01, 0.008, 0.006, 1.0)
     mi["colours"] = list(by_name.items())
     scalars = mi.setdefault("scalars", {})
-    for k, v in (overlay.get("scalars") or {}).items():
+    for k, v in (overlay.get("instance_scalars", overlay.get("scalars")) or {}).items():
         scalars[k] = v
 
 
@@ -2207,7 +2075,8 @@ def _overlay_nxa_before_normal_flipper(mat, nxa_path: str, label: str = "Hair NX
             n
             for n in nodes
             if n.type == "GROUP"
-            and getattr(getattr(n, "node_tree", None), "name", "") == "NormalFlipper"
+            and (getattr(getattr(n, "node_tree", None), "name", "") == "NormalFlipper"
+                 or getattr(n, "node_tree", None) == utils.find_node_group("NormalFlipper"))
         ),
         None,
     )
@@ -2266,59 +2135,36 @@ def _overlay_nxa_before_normal_flipper(mat, nxa_path: str, label: str = "Hair NX
     return True
 
 
-def sync_face_shader_hair(nxa_path: str = "", rgba=None) -> bool:
-    """Set the Face Shader's Hair NXA image and the hair-color RGB beside it.
-
-    In the working blend those live inside the Face Shader group:
-    ``Hair NXA`` (image) Alpha → Mix factor, and the RGB node feeds Mix B
-    against Face Albedo. That RGB is the hair color.
-    """
-    ng = bpy.data.node_groups.get("Face Shader")
-    if ng is None:
-        return False
+def sync_face_shader_hair(nxa_path: str = "", rgba=None, *, head_obj=None) -> bool:
+    """Explicit UI/style binding to owned native face inputs, without global templates."""
+    from ..material_runtime.native_families import is_user_override
+    from .character_body import image_for_role
+    materials = [slot.material for slot in head_obj.material_slots if slot.material] if head_obj is not None else list(bpy.data.materials)
+    color = tuple(float(v) for v in rgba[:3]) + (float(rgba[3]) if len(rgba)>3 else 1.,) if rgba is not None else None
+    image = image_for_role(nxa_path, non_color=True) if nxa_path and os.path.isfile(nxa_path) else None
     changed = False
-    nxa = next(
-        (
-            n for n in ng.nodes
-            if n.type == "TEX_IMAGE"
-            and (
-                (n.label or "") == "Hair NXA"
-                or (getattr(n, "image", None) is not None and "NXA" in n.image.name.upper())
-            )
-        ),
-        None,
-    )
-    if nxa is not None and nxa_path and os.path.isfile(nxa_path):
-        try:
-            nxa.image = bpy.data.images.load(nxa_path, check_existing=True)
-            try:
-                nxa.image.colorspace_settings.name = "Non-Color"
-            except Exception:
-                pass
-            nxa.label = "Hair NXA"
-            changed = True
-        except Exception:
-            pass
-    if rgba is None:
-        return changed
-    color = (float(rgba[0]), float(rgba[1]), float(rgba[2]), float(rgba[3]) if len(rgba) > 3 else 1.0)
-    for node in ng.nodes:
-        if node.type != "RGB":
+    for material in materials:
+        if not material.use_nodes or is_user_override(material):
             continue
-        out = node.outputs[0] if node.outputs else None
-        if out is None:
+        groups = [node for node in material.node_tree.nodes if node.type == 'GROUP' and node.node_tree and node.node_tree.get('arc_face_shader')]
+        if not groups:
             continue
-        for link in out.links:
-            mix = link.to_node
-            if getattr(mix, "type", "") != "MIX":
-                continue
-            for sock in mix.inputs:
-                for src in sock.links:
-                    if "Albedo" in (src.from_socket.name or ""):
-                        out.default_value = color
-                        node.label = node.label or "Hair Color"
-                        return True
+        if image is not None:
+            for node in material.node_tree.nodes:
+                if node.type == 'TEX_IMAGE' and (node.label or '') in ('Hair NXA', 'Scalp Hair NXA'):
+                    node.image = image
+                    changed = True
+        if color is not None:
+            for group in groups:
+                for key in ('HairCap Root Color','HairCap Tip Color','FacialHair Root Color','FacialHair Tip Color'):
+                    socket = group.inputs.get(key)
+                    if socket is not None and not socket.is_linked:
+                        socket.default_value = color
+                        changed = True
+            material['dr_explicit_head_hair_color'] = color
     return changed
+
+
 
 
 def apply_nxa_to_head_object(head_obj, hair_nxa: str = "", facial_nxa: str = "") -> int:
@@ -2331,7 +2177,7 @@ def apply_nxa_to_head_object(head_obj, hair_nxa: str = "", facial_nxa: str = "")
     if not hair_nxa and not facial_nxa:
         return 0
     try:
-        sync_face_shader_hair(hair_nxa, _resolve_scene_hair_color_rgba())
+        sync_face_shader_hair(hair_nxa, _resolve_scene_hair_color_rgba(), head_obj=head_obj)
     except Exception:
         pass
     wired = 0
@@ -2518,6 +2364,12 @@ def setup_hair_material(obj, json_path: str, colour_json: str = ""):
         except (OSError, ValueError, uemodel_import.UeModelError):
             pass
     bindings = textures.authored_visual_part_materials(source) if source else []
+    if sections:
+        from ..native_material_slots import load_native_material_layout, translate_visual_part_bindings
+        layout = load_native_material_layout(native, lods[0].name, sections)
+        if layout is not None:
+            bindings, unused = translate_visual_part_bindings(bindings, layout)
+            obj["arc_unused_visual_part_material_bindings"] = json.dumps(unused, sort_keys=True)
     cards = textures.scan_hair_mis(source) if source else []
     if not textures.is_hair_cards_mi(json_path) and cards:
         json_path = cards[0][1]
@@ -2532,7 +2384,8 @@ def setup_hair_material(obj, json_path: str, colour_json: str = ""):
                 obj.data.materials.append(bpy.data.materials.new(str(slot)[:63]))
             mi_path = ""
             for binding in bindings:
-                if binding["slot"].casefold() == str(slot).casefold():
+                if (binding["render_index"] == index if "render_index" in binding
+                        else binding["slot"].casefold() == str(slot).casefold()):
                     mi_path = _hair_source_asset(source, binding["material_path"], ".json") or binding["path"]
                     break
             if not mi_path:
@@ -2595,7 +2448,7 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
     nodes.clear()
-    for stamp in ("arc_fur_card_profile", "arc_fur_card_uv"):
+    for stamp in ("arc_fur_card_profile", "arc_fur_card_uv", "arc_hair_specular_profile"):
         if stamp in mat:
             del mat[stamp]
 
@@ -2617,8 +2470,10 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
             fpath = _resolve_hair_texture(tex_stem, obj_path, source=json_path)
         if not fpath:
             continue
-        img = bpy.data.images.load(fpath, check_existing=True)
-        loaded[param_name] = (fpath, img)
+        from .character_body import image_for_role
+        img = image_for_role(fpath, non_color=(param_name != "GlobalHairColor"))
+        if img is not None:
+            loaded[param_name] = (fpath, img)
 
     uv_channels = dict(mi.get("uv_channels") or {})
     color_map_profile = any(k in (mi.get("scalars") or {}) for k in ("ColorMap_Tiling", "ColorMapBlend", "ColorMapStrandUVOffset"))
@@ -2685,6 +2540,7 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
     global_map_node = None
     attr_ao_sock = None
     attr_rough_sock = None
+    attr_strand_sock = attr_palette_sock = None
 
     if "GlobalHairColor" in loaded:
         _, img = loaded["GlobalHairColor"]
@@ -2692,7 +2548,7 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         node.image = img
         node.label = "GlobalHairColor"
         global_map_node = node
-        node.interpolation = "Cubic"
+        node.interpolation = "Linear"
         node.location = (x, row)
         uv = _uv_for("GlobalHairColor", (x - 280, row))
         links.new(uv.outputs["UV"], node.inputs["Vector"])
@@ -2726,7 +2582,7 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         node = nodes.new("ShaderNodeTexImage")
         node.image = img
         node.label = "AttributeMap"
-        node.interpolation = "Cubic"
+        node.interpolation = "Linear"
         node.location = (x, row)
         uv = _uv_for("AttributeMap", (x - 280, row))
         links.new(uv.outputs["UV"], node.inputs["Vector"])
@@ -2735,6 +2591,13 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         links.new(node.outputs["Color"], sep.inputs["Color"])
         # Palette factor = Attribute.A (image Alpha), not R.
         attr_a = node.outputs.get("Alpha") or sep.outputs["Red"]
+        attr_strand_sock, attr_palette_sock = sep.outputs["Red"], attr_a
+        if mi.get("native_colormap_master"):
+            from .fur_cards import wire_dry_specular
+            specular = wire_dry_specular(nodes, links, sep.outputs["Red"], attr_a, scalar_params)
+            links.new(specular, principled.inputs["Specular IOR Level"])
+            mat["arc_hair_specular_profile"] = "native-colormap-dry-v1"
+            mat["arc_hair_scattering_note"] = "Native ColorMap dry material specular control; Blender Principled approximates MSM_Hair BRDF. Scatter/RootScatter transport, PDO and temporal dithering remain unported."
         mix_col = nodes.new("ShaderNodeMixRGB")
         mix_col.blend_type = "MIX"
         mix_col.use_clamp = True
@@ -2852,7 +2715,7 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         node = nodes.new("ShaderNodeTexImage")
         node.image = img
         node.label = "Coverage (Alpha)"
-        node.interpolation = "Cubic"
+        node.interpolation = "Linear"
         node.location = (x, row)
         uv = _uv_for("Coverage", (x - 280, row))
         links.new(uv.outputs["UV"], node.inputs["Vector"])
@@ -2898,7 +2761,7 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         node = nodes.new("ShaderNodeTexImage")
         node.image = img
         node.label = "Tangent"
-        node.interpolation = "Cubic"
+        node.interpolation = "Linear"
         node.location = (x, row)
         uv = _uv_for("Tangent", (x - 280, row))
         links.new(uv.outputs["UV"], node.inputs["Vector"])
@@ -2906,10 +2769,46 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         if tan_in is not None:
             sep_t=nodes.new("ShaderNodeSeparateColor");links.new(node.outputs["Color"],sep_t.inputs["Color"])
             from .environment import _packed_rg_normal_color
-            encoded=_packed_rg_normal_color(nodes,links,sep_t.outputs["Red"],sep_t.outputs["Green"])
+            native_tangent = None
+            missing_tangent = []
+            if mi.get("native_tangent_master", mi.get("native_colormap_master")):
+                from .hair_tangent import RANDOM_ANGLES, wire_native_colormap_tangent
+                from .character_body import ResponseGraph, image_for_role
+                noise_path = textures.find_asset_from_object_path(RANDOM_ANGLES, ".png")
+                noise_image = image_for_role(noise_path, non_color=True) if noise_path else None
+                if attr_strand_sock is None or attr_palette_sock is None:
+                    missing_tangent.append("AttributeMap R/A sockets")
+                if noise_image is None:
+                    missing_tangent.append(RANDOM_ANGLES)
+                missing_tangent.extend(name for name in ("Scraggle", "FlattenNormal") if name not in scalar_params)
+                if not missing_tangent:
+                    graph = ResponseGraph(nodes, links, "NativeHairTangent_")
+                    native_tangent = wire_native_colormap_tangent(graph, sep_t.outputs["Red"], sep_t.outputs["Green"],
+                                        attr_strand_sock, attr_palette_sock, noise_image, scalar_params)
+            encoded = native_tangent["encoded"] if native_tangent is not None else _packed_rg_normal_color(
+                                      nodes, links, sep_t.outputs["Red"], sep_t.outputs["Green"])
+            mat["arc_hair_tangent_setup"] = "native-colormap-scraggle-v1" if native_tangent is not None else "packed-rg-only"
+            mat["arc_hair_tangent_missing"] = json.dumps(missing_tangent)
+            mat["arc_hair_tangent_scope"] = "Current packaged SM5/SM6 strand tangent response; native scattering remains separate"
+            # Blender's anisotropic Principled projects Tangent onto the surface; a strand vector
+            # near the normal (weak RG, reconstructed Z) degenerates to black. Keep the in-plane
+            # RG direction (Z encoded 0.5 = 0) and fade anisotropy where that direction vanishes.
+            enc_sep=nodes.new("ShaderNodeSeparateXYZ");links.new(encoded,enc_sep.inputs[0])
+            in_plane=nodes.new("ShaderNodeCombineXYZ");in_plane.label="In-plane strand direction"
+            links.new(enc_sep.outputs[0],in_plane.inputs[0]);links.new(enc_sep.outputs[1],in_plane.inputs[1]);in_plane.inputs[2].default_value=0.5
+            centred=nodes.new("ShaderNodeVectorMath");centred.operation="SUBTRACT";centred.inputs[1].default_value=(0.5,0.5,0.5)
+            links.new(in_plane.outputs[0],centred.inputs[0])
+            length=nodes.new("ShaderNodeVectorMath");length.operation="LENGTH";links.new(centred.outputs[0],length.inputs[0])
+            strength=nodes.new("ShaderNodeMath");strength.operation="MULTIPLY";strength.use_clamp=True;strength.inputs[1].default_value=4.0
+            links.new(length.outputs["Value"],strength.inputs[0])
+            aniso_amount=nodes.new("ShaderNodeMath");aniso_amount.operation="MULTIPLY";aniso_amount.inputs[1].default_value=0.75
+            aniso_amount.label="Anisotropy faded by in-plane strand length"
+            links.new(strength.outputs[0],aniso_amount.inputs[0])
             tangent=nodes.new("ShaderNodeNormalMap");tangent.uv_map=uv.uv_map;tangent.convention="DIRECTX"
             tangent.label="Signed strand direction in mesh UV basis"
-            links.new(encoded,tangent.inputs["Color"]);links.new(tangent.outputs["Normal"],tan_in)
+            links.new(in_plane.outputs[0],tangent.inputs["Color"]);links.new(tangent.outputs["Normal"],tan_in)
+            if principled.inputs.get("Anisotropic") is not None:
+                links.new(aniso_amount.outputs[0],principled.inputs["Anisotropic"])
             mat["arc_hair_tangent_note"]="Signed RG + UV basis; RG-only unpack independently verified for BC5, sampled approximation for other atlas formats."
         aniso = principled.inputs.get("Anisotropic")
         if aniso is not None:
@@ -2923,7 +2822,7 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         node = nodes.new("ShaderNodeTexImage")
         node.image = img
         node.label = param_name
-        node.interpolation = "Cubic"
+        node.interpolation = "Linear"
         node.location = (x - 400, row)
         row -= 260
 
@@ -2934,6 +2833,8 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
             if stamp in mat:
                 del mat[stamp]
         mat["arc_hair_cards"] = 1
+        mat["arc_hair_surface_revision"] = "native-parameters-v2"
+        mat["arc_hair_parameter_sources"] = json.dumps(mi.get("parameter_sources") or [])
         mat["arc_hair_shader"] = "Principled"
         if colour_json and colour_json != "NONE":
             mat["arc_hair_color_mi"] = os.path.abspath(colour_json)

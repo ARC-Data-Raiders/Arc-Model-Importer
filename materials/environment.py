@@ -549,6 +549,9 @@ def _is_packed_prop_preset(mi: dict) -> bool:
     and parameters therefore do not establish that those stages are enabled.
     """
     parent = str(mi.get("parent") or "").strip().lower()
+    if parent.replace("\\", "/").rsplit("/", 1)[-1].startswith("mi_") and mi.get("root_master"):
+        # Colourway chains (Green -> Blue -> master): the root master owns the permutation defaults.
+        parent = str(mi["root_master"]).strip().lower()
     if parent:
         # Only these masters explicitly default both optional stages off.
         # Parallax and Cinematics/..._Color are distinct shader families;
@@ -567,6 +570,138 @@ def _is_packed_prop_preset(mi: dict) -> bool:
         and "Roughness Power" in scalars and bool({"Metallic Strength", "Metalness Value"} & set(scalars))
         and "Overlay_BaseColor_Strength" in scalars
     )
+
+
+_XEM_PROP_PRESET = "m_proppreset_cr+nox+xem"
+_SKINNED_PROP_PRESET = "m_proppreset_cr+nom+skinned"
+_PROP_SWATCH_ATLAS = "/Game/Pioneer/MaterialLibrary/Curves/CA_Prop_Colors"
+
+
+def _prop_dust_unit_scale(mat) -> float:
+    """World Position units per UE centimetre for the prop-preset dust projection.
+
+    Map placements stamp ``arc_map_unit_scale``; every other import follows the UE-to-Blender units toggle (0.01 by
+    default). A mesh-size guess read metre props, built before their slot is assigned, as centimetres.
+    """
+    from .env_props.world_paint import _material_owner, import_route_unit_scale
+
+    owner = _material_owner(mat)
+    try:
+        stamped = float(owner.get("arc_map_unit_scale") or 0.0) if owner is not None else 0.0
+    except (TypeError, ValueError):
+        stamped = 0.0
+    return stamped if stamped > 0.0 else import_route_unit_scale()
+
+
+def _is_xem_prop_preset(mi: dict) -> bool:
+    """M_PropPreset_CR+NOX+XEM: the resolved preset key, the Parent path (MI_Gvt_Sofa_03_A_Yellow names
+    ".../M_PropPreset_CR+NOX+XEM.0" without a merged preset key) or a colourway's root master, or a parentless
+    export carrying its "Use Masks" switch (no other prop preset has one)."""
+    parent = str(mi.get("parent") or "").strip().lower()
+    if parent.replace("\\", "/").rsplit("/", 1)[-1].startswith("mi_") and mi.get("root_master"):
+        parent = str(mi["root_master"]).strip().lower()
+    for name in (mi.get("preset_key"), parent):
+        if str(name or "").replace("\\", "/").rsplit("/", 1)[-1].split(".", 1)[0].lower() == _XEM_PROP_PRESET:
+            return True
+    return not parent and any(str(name).lower() == "use masks" for name in (mi.get("switches") or {}))
+
+
+def _is_skinned_prop_preset(mi: dict) -> bool:
+    """M_PropPreset_CR+NOM+Skinned (MI_Barricade_01_A, MI_Backpack_Alpha) by preset key, Parent or root master.
+
+    Its dust stage references T_Propdust_01_X and T_Propdust_01_Breakup_01_X, not the TA_Weathering_Props_01
+    slice and T_ConcreteBuildingWorld_01_GRM breakup the CR+NOM and CR+NOX+XEM base passes sample."""
+    parent = str(mi.get("parent") or "").strip().lower()
+    if parent.replace("\\", "/").rsplit("/", 1)[-1].startswith("mi_") and mi.get("root_master"):
+        parent = str(mi["root_master"]).strip().lower()
+    return any(str(name or "").replace("\\", "/").rsplit("/", 1)[-1].split(".", 1)[0].lower() == _SKINNED_PROP_PRESET
+               for name in (mi.get("preset_key"), parent))
+
+
+def _xem_prop_mask_plan(switches: dict) -> dict:
+    """Mask channels the M_PropPreset_CR+NOX+XEM base pass reads (decoded SM5, build 26159202).
+
+    Use Masks off: metallic 0 and Tint unused (MI_SupplyStationColony_01_BagsStraps_A, MI_SeismometerGraph_01).
+    Packed Mask: metallic = saturate(B x Metalness Value) and the tint weight is R whatever Use Slice Mask says
+    (MI_WeatherMonitor_WindDirection_01_A PS DA6078FD, MI_ExodusTrain_Platform_01_A, MI_Res_Pots).
+    Use single Mask Texture: Mask.R is the tint weight with metallic 0 while Use Tinting is on
+    (MI_DisplayFridge_01_A), otherwise metallic (MI_Vent_03_Details_01_A, MI_Truck_01_A).
+    Use Metalness as tint mask weights the tint by 1 - metallic instead (MI_Truck_01_A, MI_DiscoBall_01_A).
+    """
+    if not _mi_switch(switches, "Use Masks", default=False):
+        return {"texture": None, "metal": None, "tint": None}
+    tinting = bool(_mi_switch(switches, "Use Tinting", default=False))
+    by_metal = bool(_mi_switch(switches, "Use Metalness as tint mask", default=False))
+    if _mi_switch(switches, "Use single Mask Texture", default=False):
+        if tinting and not by_metal:
+            return {"texture": "Mask", "metal": None, "tint": "Red"}
+        return {"texture": "Mask", "metal": "Red", "tint": "1-metal" if by_metal else None}
+    return {"texture": "Packed Mask", "metal": "Blue", "tint": "1-metal" if by_metal else "Red"}
+
+
+def _swatch_atlas_uv(swatch: float, row: float, width: int, height: int) -> tuple:
+    """CA_Prop_Colors texel the Use Swatch Colors preshader addresses (MI_Gvt_Sofa_03_A_Yellow, field 40):
+    u = ((Swatch Color - 0.45) * 0.1 * (W - 1) + 0.5) / W and v = (Swatch Curve + 0.5) / H, v from the top row."""
+    u = ((float(swatch) - 0.45) * 0.1 * (width - 1) + 0.5) / width
+    v = (float(row) + 0.5) / height
+    return u, v
+
+
+def _xem_prop_tint_colour(nodes, links, mi: dict, local_folders, loc):
+    """Tint of M_PropPreset_CR+NOX+XEM: the swatch atlas texel with Use Swatch Colors, else the raw Tint vector.
+
+    CA_Prop_Colors row 0 bands 1..5 are tan, red, green, blue and off-white, matching the _Yellow sofa (band 1)
+    and the _Blue divider curtain (band 4). Returns a colour socket, an RGB tuple, or None when unknown.
+    """
+    switches = mi.get("switches") or {}
+    if _mi_switch(switches, "Use Swatch Colors", default=False):
+        atlas = env_props.load_library_image(_PROP_SWATCH_ATLAS, local_folders)
+        if atlas is None or not atlas.size[0] or not atlas.size[1]:
+            return None
+        scalars = mi.get("scalars") or {}
+        swatch = _mi_scalar(scalars, "Swatch Color", default=0.0)
+        row = _mi_scalar(scalars, "Swatch Curve", default=0.0)
+        u, v = _swatch_atlas_uv(swatch, row, atlas.size[0], atlas.size[1])
+        node = _new_tex_image(nodes, atlas, f"CA_Prop_Colors row {row:g} swatch {swatch:g}", loc, non_color=True)
+        node.extension = "EXTEND"
+        coord = nodes.new("ShaderNodeCombineXYZ")
+        coord.label = "Swatch texel"
+        coord.location = (loc[0] - 220, loc[1])
+        coord.inputs["X"].default_value = u
+        coord.inputs["Y"].default_value = 1.0 - v  # Blender images start at the bottom row
+        links.new(coord.outputs["Vector"], node.inputs["Vector"])
+        return node.outputs["Color"]
+    tint = _mi_colour(mi.get("colours") or [], "Tint", default=None)
+    return tuple(float(c) for c in tint[:3]) if tint is not None else None
+
+
+def _apply_xem_prop_tint(nodes, links, mi: dict, albedo_sock, weight, local_folders, loc):
+    """saturate(lerp(CR, CR x Tint x 2, weight)), the CR+NOX+XEM tint (MI_ExodusTrain_Platform_01_A, MI_Truck_01_A).
+
+    The raw Tint applies with its doubling: the generic preset-default normalisation and peak cap would turn the
+    blue (0, 0, 1) master default into a tint and halve authored ones. Returns (albedo, applied)."""
+    if albedo_sock is None or weight is None:
+        return albedo_sock, False
+    colour = _xem_prop_tint_colour(nodes, links, mi, local_folders, (loc[0] - 300, loc[1] + 220))
+    if colour is None:
+        return albedo_sock, False
+    if not isinstance(colour, bpy.types.NodeSocket):
+        rgb = nodes.new("ShaderNodeRGB")
+        rgb.label = "Tint (raw)"
+        rgb.location = (loc[0] - 300, loc[1] + 220)
+        rgb.outputs[0].default_value = (*colour, 1.0)
+        colour = rgb.outputs[0]
+    tinted = _mix_rgba(nodes, links, albedo_sock, colour, 1.0, loc, "CR × Tint", blend="MULTIPLY")
+    doubled = nodes.new("ShaderNodeVectorMath")
+    doubled.operation = "SCALE"
+    doubled.label = "CR × Tint × 2"
+    doubled.location = (loc[0] + 200, loc[1])
+    doubled.inputs["Scale"].default_value = 2.0
+    links.new(tinted, doubled.inputs[0])
+    out = _mix_rgba(nodes, links, albedo_sock, doubled.outputs["Vector"], weight, (loc[0] + 400, loc[1]),
+                    "Tint weight (prop mask)")
+    out.node.clamp_result = True
+    return out, True
 
 
 def _packed_rg_normal_color(nodes, links, red, green):
@@ -593,6 +728,22 @@ def _packed_rg_normal_color(nodes, links, red, green):
     return xy.outputs["Color"]
 
 
+def _base_normal_image(tex_lookup: dict, noh_keys, packed_keys):
+    """Layer-1 normal: exact MI parameter names before any filename-suffix guess.
+
+    MI_EnemyTrim_Insides binds only "NXX/NMX Texture"; the "_NOH" suffix hunt took
+    the master's default "NOH Blend" concrete (layer 2, switched off) instead.
+    """
+    lower = {param.lower(): img for param, (_fp, img) in tex_lookup.items()}
+    for key in (*noh_keys, *packed_keys):
+        if lower.get(key.lower()) is not None:
+            return lower[key.lower()]
+    _, img = _find_env_tex(tex_lookup, *noh_keys)
+    if img is None:
+        _, img = _find_env_tex(tex_lookup, *packed_keys)
+    return img
+
+
 def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: str = FAMILY_ENVIRONMENT):
     """Principled setup for Arc environment MIs (concrete, buildings, roads, metal trims).
 
@@ -602,6 +753,9 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     Road / tarmac families sample **world Position** so differently scaled plane
     meshes keep a consistent texel density (see ``_PLANE_ROAD_METERS_PER_TILE``).
     """
+    from ..material_runtime.native_families import setup_entrypoint
+    if setup_entrypoint(mat, mi_path, psk_path, expected_family='prop', cache_family=family or FAMILY_ENVIRONMENT):
+        return
     mi = _parse_flat_mi_json(mi_path)
     # Fill in the parent preset's authored defaults (compact dumps only carry
     # overrides, and even full dumps omit everything the artist left alone).
@@ -612,8 +766,9 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     nodes.clear()
     fam = family or FAMILY_ENVIRONMENT
     _stamp_mi_family(mat, fam)
-    mat["arc_env_surface_setup"] = "packed-prop-v1"
+    mat["arc_env_surface_setup"] = "packed-prop-v2"
     packed_prop = _is_packed_prop_preset(mi)
+    xem_prop = packed_prop and _is_xem_prop_preset(mi)
     scalars = mi.get("scalars") or {}
     switches = mi.get("switches") or {}
     colours = mi.get("colours") or []
@@ -702,9 +857,7 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
                 cr2_img = img
                 break
 
-    _, noh1_img = _find_env_tex(tex_lookup, *noh1_keys)
-    if not noh1_img:
-        _, noh1_img = _find_env_tex(tex_lookup, *packed_n_keys)
+    noh1_img = _base_normal_image(tex_lookup, noh1_keys, packed_n_keys)
     _, noh2_img = _find_env_tex(tex_lookup, *noh2_keys)
     if noh2_img is not None and noh1_img is not None and noh2_img == noh1_img:
         noh2_img = None
@@ -856,7 +1009,7 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             noh1_img,
             "NAO / Trim Normal" if is_nao_pack else "NOH / Normal L1",
             (COL_TEX, y_n),
-            non_color=True,
+            non_color=True, normal=True,
         )
         _bind_tex_vec(noh1_node, y_n)
         n_str = _mi_scalar(
@@ -976,7 +1129,7 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
 
     if has_layer2 and noh2_img and normal_sock is not None and blend_fac is not None:
         noh2_node = _new_tex_image(
-            nodes, noh2_img, "NOH / Normal L2", (COL_TEX - 500, y_n - 320), non_color=True,
+            nodes, noh2_img, "NOH / Normal L2", (COL_TEX - 500, y_n - 320), non_color=True, normal=True,
         )
         _bind_tex_vec(noh2_node, y_n - 320)
         blend_n_str = _mi_scalar(scalars, "Blend Normal Strength", default=1.0)
@@ -1210,7 +1363,7 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     )
     if detail_img and use_detail is not False and det_str > 0.001 and normal_sock is not None:
         det_node = _new_tex_image(
-            nodes, detail_img, "Detail Normal", (COL_TEX, y_det), non_color=True,
+            nodes, detail_img, "Detail Normal", (COL_TEX, y_det), non_color=True, normal=True,
         )
         det_tile = _mi_scalar(
             scalars,
@@ -1237,7 +1390,7 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         )
         ao_sock = _mask_channel_value(nodes, links, ao_node, (COL_UTIL, y_extra))
 
-    if albedo_sock is not None and ao_sock is not None:
+    if albedo_sock is not None and ao_sock is not None and not packed_prop:
         ao_mul = nodes.new("ShaderNodeMix")
         ao_mul.data_type = "RGBA"
         ao_mul.blend_type = "MULTIPLY"
@@ -1255,6 +1408,39 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         links.new(albedo_sock, ao_mul.inputs[6])
         links.new(ao_rgb.outputs["Color"], ao_mul.inputs[7])
         albedo_sock = ao_mul.outputs[2]
+
+    # ── M_PropPreset_CR+NOX+XEM material masks (decoded plan, see _xem_prop_mask_plan) ──
+    xem_plan = _xem_prop_mask_plan(switches) if xem_prop else None
+    # Use Packed Tint Mask / RGB Tint Mask permutations are not decoded; they keep the generic tint path.
+    xem_tint = xem_plan is not None and not (_mi_switch(switches, "Use Packed Tint Mask", default=False)
+                                             or _mi_switch(switches, "RGB Tint Mask", default=False))
+    xem_img = xem_channels = xem_metal = xem_tint_weight = None
+    if xem_plan and xem_plan["texture"]:
+        xem_img = next((img for param, (_fp, img) in tex_lookup.items()
+                        if str(param).lower() == xem_plan["texture"].lower()), None)
+    if xem_img is not None:
+        xem_img.alpha_mode = "CHANNEL_PACKED"
+        xem_loc = (COL_TEX, y_mask)
+        xem_node = _new_tex_image(nodes, xem_img, f"{xem_plan['texture']} (prop material masks)", xem_loc, non_color=True)
+        _bind_tex_vec(xem_node, xem_loc[1])
+        xem_channels = nodes.new("ShaderNodeSeparateColor")
+        xem_channels.label = f"{xem_plan['texture']} channels"
+        xem_channels.location = (xem_loc[0] + 300, xem_loc[1])
+        links.new(xem_node.outputs["Color"], xem_channels.inputs["Color"])
+        if xem_plan["metal"]:
+            xem_metal = xem_channels.outputs[xem_plan["metal"]]
+        if xem_plan["tint"] == "1-metal" and xem_metal is not None:
+            inverse = nodes.new("ShaderNodeMath")
+            inverse.operation = "SUBTRACT"
+            inverse.label = "1 - metallic (Use Metalness as tint mask)"
+            inverse.location = (xem_loc[0] + 520, xem_loc[1] - 140)
+            inverse.inputs[0].default_value = 1.0
+            links.new(xem_metal, inverse.inputs[1])
+            xem_tint_weight = inverse.outputs[0]
+        elif xem_plan["tint"]:
+            xem_tint_weight = xem_channels.outputs[xem_plan["tint"]]
+    if xem_plan is not None:
+        mat["arc_prop_mask_plan"] = ",".join(f"{k}={v or '-'}" for k, v in xem_plan.items())
 
     # ── PropTrim sheet extras (slice mask, AO dirt, detail array) ──────────
     from .env_props import prop_trim as _prop_trim
@@ -1276,6 +1462,19 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             local_folders=local_folders, loc=(COL_TEX, y_extra - 1300),
         )
         proptrim_extras = bool(tint_mask_sock is not None or dirt_on or detail_on)
+    elif not xem_tint and _mi_switch(mi.get("switches") or {}, "Use Slice Mask", default=False):
+        # Prop presets (e.g. M_PropPreset_CR+NOX+XEM, MI_VendingMachine_01): the cooked SM5
+        # shader binds only Normal/CR/Packed Mask and reads Tint raw, so the slice that
+        # accepts the tint is the Packed Mask red channel, not the unbound "Mask" texture.
+        _, slice_img = _find_env_tex(tex_lookup, "Packed Mask")
+        if slice_img is not None:
+            slice_loc = (COL_TEX, y_extra - 500)
+            slice_node = _prop_trim._new_tex_image(nodes, slice_img, "Slice Mask (Packed Mask R)", slice_loc, non_color=True)
+            _bind_tex_vec(slice_node, slice_loc[1])
+            slice_sep = nodes.new("ShaderNodeSeparateColor")
+            slice_sep.location = (slice_loc[0] + 300, slice_loc[1])
+            links.new(slice_node.outputs["Color"], slice_sep.inputs["Color"])
+            tint_mask_sock = slice_sep.outputs["Red"]
 
     # ── Global Tint / Color Multiply ───────────────────────────────────────
     # ``RT Base Color`` is the ray-tracing proxy colour (it pairs with
@@ -1290,7 +1489,19 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     tint = _mi_colour(colours, *_TINT_PARAMS, default=None)
     tint_rgb = env_props.tint_multiplier(mi, preset_key, *_TINT_PARAMS)
     tint_on = _mi_switch(switches, "Use Tinting", "Use Tint", "Enable Tinting", default=not packed_prop)
+    # With "Use Random Color" the colour comes from a per-instance swatch curve: the cooked
+    # SM5 uniform set of MI_Barrel_01_A (M_PropPreset_CR+NOM) has no Tint parameter at all,
+    # so the authored Tint vector is dead data and must not be multiplied in.
+    if _mi_switch(switches, "Use Random Color", default=False):
+        tint_on = False
+    if xem_tint:
+        albedo_sock, tint_on = _apply_xem_prop_tint(
+            nodes, links, mi, albedo_sock, xem_tint_weight if tint_on else None, local_folders,
+            (COL_MIX + 280, y_cr + 220),
+        )
     mat["arc_env_tint_enabled"] = bool(tint_on)
+    if xem_tint:
+        tint_on = False  # already applied with the decoded formula
     # Concrete_01 tints around mid-grey: albedo * Tint * 2 (Revamped profile).
     if concrete_profile and albedo_sock is not None and tint is not None:
         rgb = nodes.new("ShaderNodeRGB")
@@ -1392,27 +1603,44 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         nodes, links, mi=mi, albedo_sock=albedo_sock, rough_sock=rough_sock,
         local_folders=local_folders, loc=(COL_TEX - 700, y_extra - 1800),
     )
-    albedo_sock, rough_sock, dust_applied = env_props.apply_top_down_dust(
-        nodes, links, mi=mi, albedo_sock=albedo_sock, rough_sock=rough_sock,
-        local_folders=local_folders, loc=(COL_TEX - 700, y_extra - 2600),
-    )
+    prop_dust = None
+    if packed_prop and not _is_skinned_prop_preset(mi):
+        # The CR+NOM and CR+NOX+XEM dust (a TA_Weathering_Props_01 slice under a world breakup) lightens toward tan;
+        # neither samples T_Propdust, whose grey multiply darkened them. The Skinned preset's own dust (MF_PropDust,
+        # T_Propdust) sits behind "Use PropDust", which its barricade and backpack instances switch off: their
+        # compiled base passes sample only CR, Normal and a detail array.
+        dust_ao = None
+        if noh1_node is not None:
+            dust_ao_sep = nodes.new("ShaderNodeSeparateColor")
+            dust_ao_sep.label = "Dust AO (normal B)"
+            dust_ao_sep.location = (COL_TEX - 2400, y_extra - 2900)
+            links.new(noh1_node.outputs["Color"], dust_ao_sep.inputs["Color"])
+            dust_ao = dust_ao_sep.outputs["Blue"]
+        dust_unit = _prop_dust_unit_scale(mat)
+        albedo_sock, prop_dust, dust_applied = env_props.apply_prop_preset_dust(
+            nodes, links, mi=mi, albedo_sock=albedo_sock, ao_sock=dust_ao,
+            local_folders=local_folders, unit_scale=dust_unit, loc=(COL_TEX - 700, y_extra - 2600),
+        )
+        if dust_applied:
+            mat["arc_prop_dust_unit_scale"] = float(dust_unit)
+    else:
+        albedo_sock, rough_sock, dust_applied = env_props.apply_top_down_dust(
+            nodes, links, mi=mi, albedo_sock=albedo_sock, rough_sock=rough_sock,
+            local_folders=local_folders, loc=(COL_TEX - 700, y_extra - 2600),
+        )
 
-    # CR+NOX+XEM props use the separate mask's B channel for metalness;
-    # NOX.A is unused and must not stand in for the metallic input.
-    if packed_prop and _mi_switch(switches, "Use Masks", default=False):
-        _mask_param, packed_mask = _find_env_tex(tex_lookup, "Packed Mask")
-        mask_path = bpy.path.abspath(packed_mask.filepath) if packed_mask else ""
-        if packed_mask is not None and os.path.splitext(mask_path)[0].lower().endswith("_xem"):
-            packed_mask.alpha_mode = "CHANNEL_PACKED"
-            node = _new_tex_image(nodes, packed_mask, "XEM packed material channels", (COL_TEX, y_mask), non_color=True)
-            channels = nodes.new("ShaderNodeSeparateColor")
-            channels.label = "XEM.B → Metallic"
-            links.new(node.outputs["Color"], channels.inputs["Color"])
-            links.new(channels.outputs["Blue"], principled.inputs["Metallic"])
+    # CR+NOX+XEM metallic follows the decoded mask plan whatever the mask's file suffix (the _XAM packed mask of
+    # MI_WeatherMonitor_WindDirection_01_A is metallic in B); NOX.A is unused and must not stand in for it.
+    if xem_metal is not None:
+        links.new(xem_metal, principled.inputs["Metallic"])
+    if xem_channels is not None and xem_plan["texture"] == "Packed Mask":
+        # Emission stays on the _xem packing until its permutations are decoded.
+        mask_path = bpy.path.abspath(xem_img.filepath)
+        if os.path.splitext(mask_path)[0].lower().endswith("_xem"):
             if _mi_switch(switches, "Use Emissive", default=False):
                 from .emission import packed_emission
                 color = albedo_sock if _mi_switch(switches, "Use CR as Emissive", default=False) else _mi_colour(colours, "EmissiveColor", default=(1, 1, 1, 1))
-                color, energy = packed_emission(nodes, links, channels.outputs["Green"], mi, color)
+                color, energy = packed_emission(nodes, links, xem_channels.outputs["Green"], mi, color)
                 if isinstance(color, bpy.types.NodeSocket):
                     links.new(color, principled.inputs["Emission Color"])
                 else:
@@ -1437,6 +1665,9 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             node.label = "Authored prop roughness power"
             node.inputs[1].default_value = max(0.0,power)
             links.new(rough_sock,node.inputs[0]);rough_sock=node.outputs[0]
+        if prop_dust is not None:
+            rough_sock = _mix_float(nodes, links, rough_sock, prop_dust["rough"], prop_dust["fac"],
+                                    (COL_MIX + 640, y_extra - 2400), "Prop dust → W.b roughness")
         links.new(rough_sock, principled.inputs["Roughness"])
     else:
         principled.inputs["Roughness"].default_value = 0.55
@@ -1448,6 +1679,17 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             node = nodes.new("ShaderNodeMath");node.operation = "MULTIPLY"
             node.label = "Authored prop metallic strength";node.inputs[1].default_value = strength
             links.new(source,node.inputs[0]);links.new(node.outputs[0],principled.inputs["Metallic"])
+    if prop_dust is not None:
+        if principled.inputs["Metallic"].links:
+            node = nodes.new("ShaderNodeMath");node.operation = "MULTIPLY";node.label = "Prop dust: metallic × (1 - dust)"
+            links.new(principled.inputs["Metallic"].links[0].from_socket,node.inputs[0])
+            links.new(prop_dust["clean"],node.inputs[1]);links.new(node.outputs[0],principled.inputs["Metallic"])
+        dusty = _wire_normal_map(nodes, links, _packed_rg_normal_color(nodes, links, *prop_dust["normal_rg"]),
+                                 (COL_MIX + 640, y_extra - 2700), label="Prop dust normal (W.rg)")
+        if normal_sock is None:
+            normal_sock = nodes.new("ShaderNodeNewGeometry").outputs["Normal"]
+        normal_sock = _mix_normals_vec(nodes, links, normal_sock, dusty, prop_dust["fac"],
+                                       (COL_MIX + 840, y_extra - 2600), "Prop dust normal")
     if normal_sock is not None:
         links.new(normal_sock, principled.inputs["Normal"])
 
@@ -1466,7 +1708,7 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             elif nao_img is not None:
                 nao_clip = _new_tex_image(
                     nodes, nao_img, "NAO Opacity", (COL_TEX - 500, y_extra - 100),
-                    non_color=True,
+                    non_color=True, normal=True,
                 )
                 _bind_tex_vec(nao_clip, y_extra - 100)
                 nao_alpha_sock = nao_clip.outputs["Alpha"]
@@ -1913,7 +2155,7 @@ def _setup_foliage_material(mat, mi_path: str, psk_path: str = ""):
         if "normal" in fb_meta:
             label = "Foliage Normal/NTR (fallback)"
         n_node = _new_tex_image(
-            nodes, normal_img, label, (COL_TEX, 50), non_color=True,
+            nodes, normal_img, label, (COL_TEX, 50), non_color=True, normal=True,
         )
         n_str = _mi_scalar(
             scalars, "4. Normal Strength", "Normal Strength", default=1.0,
@@ -1939,7 +2181,7 @@ def _setup_foliage_material(mat, mi_path: str, psk_path: str = ""):
     elif trunk_c_img:
         _new_tex_image(nodes, trunk_c_img, "Trunk BaseColor", (COL_TEX - 400, -350))
     if trunk_n_img:
-        _new_tex_image(nodes, trunk_n_img, "Trunk Normal", (COL_TEX - 400, -650), non_color=True)
+        _new_tex_image(nodes, trunk_n_img, "Trunk Normal", (COL_TEX - 400, -650), non_color=True, normal=True)
 
     # Subsurface stub (StonePine: Subsurface Color; also 1. SS / SS Color)
     ss = _mi_colour(
@@ -2561,7 +2803,7 @@ def _wire_dual_scale_sand(
     fine_n_node = None
     if fine_n is not None:
         fine_n_node = _new_tex_image(
-            nodes, fine_n, "Sand Fine Normal (NR/NOH)", (COL_TEX, -200), non_color=True,
+            nodes, fine_n, "Sand Fine Normal (NR/NOH)", (COL_TEX, -200), non_color=True, normal=True,
         )
         links.new(micro_vec, fine_n_node.inputs["Vector"])
         normal_sock = _wire_normal_map(
@@ -2574,7 +2816,7 @@ def _wire_dual_scale_sand(
 
     if macro_n is not None:
         macro_n_node = _new_tex_image(
-            nodes, macro_n, "Sand Macro Normal (N/NH)", (COL_TEX, -480), non_color=True,
+            nodes, macro_n, "Sand Macro Normal (N/NH)", (COL_TEX, -480), non_color=True, normal=True,
         )
         links.new(macro_vec, macro_n_node.inputs["Vector"])
         macro_n_sock = _wire_normal_map(
@@ -4187,7 +4429,7 @@ def _setup_glass_env_material(mat, mi_path: str, psk_path: str = ""):
 
     if normal_img:
         n_node = _new_tex_image(
-            nodes, normal_img, "Glass Normal", (COL_TEX, 0), non_color=True,
+            nodes, normal_img, "Glass Normal", (COL_TEX, 0), non_color=True, normal=True,
         )
         n_sock = _wire_normal_map(
             nodes, links, n_node.outputs["Color"], (COL_MIX, 0), strength=0.5,
@@ -4240,6 +4482,18 @@ def _setup_glass_env_material(mat, mi_path: str, psk_path: str = ""):
     }
     _dump_unconnected_tex(nodes, tex_lookup, handled, COL_TEX - 500, -700)
 
+
+
+def _simple_uses_color_scheme(mi: dict) -> bool:
+    """True when the authored static switch makes BaseColor RGB a ColorMask.
+
+    M_SimplePBR_ColorScheme defaults bUseColorScheme off and the PonchoFringe MIs
+    turn it on. ColorA alone proves nothing: M_Character_Default_2 inherits white
+    ColorA/B/C that tint Color through TintMask, and reading the Avatar's Color
+    texture as a ColorMask rendered it flat white.
+    """
+    switches = mi.get("switches") or {}
+    return bool(switches.get("bUseColorScheme") or switches.get("UseColorScheme"))
 
 
 def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
@@ -4326,11 +4580,7 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
                 _stamp_tex_fallback(mat, "normal", path, reason)
 
     switches = mi.get("switches") or {}
-    use_color_scheme = bool(
-        switches.get("bUseColorScheme")
-        or switches.get("UseColorScheme")
-        or _mi_colour(colours, "ColorA", default=None)
-    )
+    use_color_scheme = _simple_uses_color_scheme(mi)
     color_a = _mi_colour(colours, "ColorA", default=None)
     color_b = _mi_colour(colours, "ColorB", default=None)
     color_c = _mi_colour(colours, "ColorC", default=None)
@@ -4502,7 +4752,7 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
             )
             if normal_img is not None and packed_code in {"nxm", "nmx", "nom"} and item_preset:
                 normal_img.alpha_mode = "CHANNEL_PACKED"
-                tint_node = _new_tex_image(nodes, normal_img, "Authored packed normal tint mask (B)", (COL_TEX, -600), non_color=True)
+                tint_node = _new_tex_image(nodes, normal_img, "Authored packed normal tint mask (B)", (COL_TEX, -600), non_color=True, normal=True)
                 channels = nodes.new("ShaderNodeSeparateColor")
                 links.new(tint_node.outputs["Color"], channels.inputs["Color"])
                 tint_mask = channels.outputs["Blue"]
@@ -4524,7 +4774,7 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
         normal_img.alpha_mode = "CHANNEL_PACKED"
         n_param = next((p for p, (_fp, im) in tex_lookup.items() if im == normal_img), "")
         n_node = _new_tex_image(
-            nodes, normal_img, f"Normal ({n_param})", (COL_TEX, -50), non_color=True,
+            nodes, normal_img, f"Normal ({n_param})", (COL_TEX, -50), non_color=True, normal=True,
         )
         n_str = min(max(_mi_scalar(scalars, "Normal Strength", default=1.0), 0.0), 2.5)
         normal_color = n_node.outputs["Color"]
@@ -4597,8 +4847,12 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
             k.lower() == "roughnessmetallicspecular"
             for k in _mi_tex_params(mi)
         ) else "RoughnessMetal"
+        # Hero RM maps are usually authored SRGB=False; T_Bilguun_CloakOrange_Tassels_Roughnessmetal
+        # left the default, so the game samples it sRGB-decoded.
+        rm_path = textures._fs_abspath(rm_img.filepath) if rm_img.filepath else ""
         rm_node = _new_tex_image(
-            nodes, rm_img, rm_label, (COL_TEX, -350), non_color=True,
+            nodes, rm_img, rm_label, (COL_TEX, -350),
+            non_color=not (rm_path and textures.authored_srgb_sidecar(rm_path)),
         )
         sep = nodes.new("ShaderNodeSeparateColor")
         sep.label = "Rough / Metal"
@@ -4863,7 +5117,7 @@ def _setup_graphic_atlas_material(mat, mi_path: str, psk_path: str = "", mesh=No
 
     if normal_img and normal_img != atlas_img:
         n_str = min(max(_mi_scalar(scalars, "Normal Strength", "Blend Texture Normal Strength", default=1.0), 0.0), 2.5)
-        n_node = _new_tex_image(nodes, normal_img, "Poster NX", (COL_TEX, -100), non_color=True)
+        n_node = _new_tex_image(nodes, normal_img, "Poster NX", (COL_TEX, -100), non_color=True, normal=True)
         n_vec = _graphic_atlas_uv_vector(
             nodes, links, mi, (COL_TEX - 280, -100), use_uv1=use_uv1, mesh=mesh,
         )
@@ -4990,7 +5244,7 @@ def _setup_map_decal_material(mat, mi_path: str, psk_path: str = "", mesh=None):
 
     if normal_img and normal_img != mask_img and normal_img != color_img:
         n_str = min(max(_mi_scalar(scalars, "Normal Strength", default=1.0), 0.0), 2.5)
-        n_node = _new_tex_image(nodes, normal_img, "Decal Normal", (COL_TEX, -100), non_color=True)
+        n_node = _new_tex_image(nodes, normal_img, "Decal Normal", (COL_TEX, -100), non_color=True, normal=True)
         _apply_tile(n_node, -100)
         n_sock = _wire_normal_map(
             nodes, links, n_node.outputs["Color"], (-100, -100), strength=n_str,
@@ -5085,7 +5339,7 @@ def _setup_tarp_material(mat, mi_path: str, psk_path: str = ""):
         links.new(v_node.outputs["Alpha"], principled.inputs["Alpha"])
 
     if n_img:
-        n_node = _new_tex_image(nodes, n_img, "Tarp Normal", (COL_TEX, -120), non_color=True)
+        n_node = _new_tex_image(nodes, n_img, "Tarp Normal", (COL_TEX, -120), non_color=True, normal=True)
         if abs(tile - 1.0) > 0.01:
             vec = _mapping_tiled(nodes, links, tile, (COL_TEX - 280, -120))
             links.new(vec, n_node.inputs["Vector"])

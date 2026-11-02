@@ -1,4 +1,4 @@
-"""Hot-swap ArcTexturer / CurvatureID / ColorMask group nodes from ArcTexturer.blend.
+"""Rebuild compatibility group nodes from the original procedural registry.
 
 Orthogonal to Mask Debug — kept in its own module so mask_debug.py stays lean.
 """
@@ -40,57 +40,9 @@ def _canonical_group_name(name: str) -> str | None:
 
 
 def force_reload_group_from_blend(name: str):
-    """Load a fresh copy of *name* from ArcTexturer.blend, replacing in-memory tree."""
-    if not os.path.isfile(utils._BLEND_PATH):
-        return None
-    existing = utils.find_node_group(name)
-    stale_name = f"{name}_hotswap_old"
-    if existing is not None:
-        old_stale = utils.find_node_group(stale_name)
-        if old_stale is not None and old_stale.users == 0:
-            try:
-                bpy.data.node_groups.remove(old_stale)
-            except Exception:
-                pass
-        try:
-            existing.name = stale_name
-        except Exception:
-            pass
-
-    with bpy.data.libraries.load(utils._BLEND_PATH, link=False) as (data_from, data_to):
-        if name not in data_from.node_groups:
-            stale = utils.find_node_group(stale_name)
-            if stale is not None:
-                try:
-                    stale.name = name
-                except Exception:
-                    pass
-            return utils.find_node_group(name)
-        data_to.node_groups = [name]
-
-    loaded = utils.find_node_group(name)
-    if loaded is None:
-        for ng in bpy.data.node_groups:
-            if ng.name.startswith(name + "."):
-                try:
-                    ng.name = name
-                    loaded = ng
-                    break
-                except Exception:
-                    pass
-
-    stale = utils.find_node_group(stale_name)
-    if stale is not None and stale.users == 0:
-        try:
-            bpy.data.node_groups.remove(stale)
-        except Exception:
-            pass
-    if loaded is not None:
-        try:
-            loaded.use_fake_user = True
-        except Exception:
-            pass
-    return loaded
+    """Legacy public API: rebuild an original registry definition, never append."""
+    from .material_runtime.shared_helpers import ensure_group
+    return ensure_group(name,bpy,force=True)
 
 
 def snapshot_group_links(node):
@@ -165,12 +117,12 @@ def restore_group_links(node, tree_links, in_links, out_links, in_defaults) -> t
 
 
 def update_group_node(node, force_reload: bool = True) -> tuple[bool, str]:
-    """Hot-swap one ShaderNodeGroup to the blend's current tree; remap by name."""
+    """Rebuild one original group definition; preserve links/defaults by contract."""
     if getattr(node, "type", "") != "GROUP":
         return False, "not a group"
     tree = getattr(node, "node_tree", None)
     old_name = getattr(tree, "name", "") if tree else ""
-    canon = _canonical_group_name(old_name)
+    canon = (tree.get('dr.legacy_group_key') if tree else None) or _canonical_group_name(old_name)
     if not canon:
         return False, f"unsupported group {old_name!r}"
 
@@ -184,22 +136,8 @@ def update_group_node(node, force_reload: bool = True) -> tuple[bool, str]:
     if force_reload:
         new_tree = force_reload_group_from_blend(canon)
     else:
-        ensure = {
-            "ArcTexturer": utils.ensure_arc_texturer_node_group,
-            "CurvatureID_Override": utils.ensure_curvature_id_override_node_group,
-            "Visor": utils.ensure_visor_node_group,
-            "ColorMask_XYZ": utils.ensure_colormask_node_group,
-            "NormalFlipper": lambda: utils.ensure_node_group("NormalFlipper"),
-            "Decal Data": utils.ensure_decal_data_node_group,
-            "Decal LayerMask Gate": utils.ensure_decal_layermask_gate_node_group,
-            "WeaponTexturer": (lambda: (
-                __import__("importlib").import_module(".materials.weapon", __package__)
-                .ensure_weapon_texturer_node_group()
-            )),
-        }.get(canon)
-        if ensure:
-            ensure()
-        new_tree = utils.find_node_group(canon)
+        from .material_runtime.shared_helpers import ensure_group
+        new_tree=ensure_group(canon,bpy)
 
     if new_tree is None:
         return False, f"could not load {canon}"
@@ -228,9 +166,7 @@ def collect_group_nodes_to_update(context) -> list:
             if mat is None or not mat.use_nodes or mat.node_tree is None:
                 continue
             for n in mat.node_tree.nodes:
-                if getattr(n, "type", "") == "GROUP" and _canonical_group_name(
-                    getattr(getattr(n, "node_tree", None), "name", "") or ""
-                ):
+                if getattr(n, "type", "") == "GROUP" and (getattr(n, 'node_tree', None) is not None and n.node_tree.get('dr.legacy_group_key') or _canonical_group_name(getattr(getattr(n,'node_tree',None),'name','') or '')):
                     nodes.append(n)
     return nodes
 

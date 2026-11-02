@@ -5,7 +5,6 @@ import re
 import os
 import json
 
-_BUNDLED_TEXTURES = None
 
 
 class ResolutionError(ValueError):
@@ -90,6 +89,7 @@ class AssetIndex:
         self.arrays = defaultdict(dict)
         self.content = defaultdict(list)
         self.resolution_notes = {}
+        self.compatibility_mode=not any((self.root/rel).is_dir() for rel in ('PioneerGame/Content','RemappedPlugins/Content','Content/Pioneer'))
         self._build()
 
     def _build(self):
@@ -104,8 +104,15 @@ class AssetIndex:
                 if ext not in {'.json', '.png', '.psk', '.pskx', '.hdr'}: continue
                 p = Path(directory) / name
                 key = package((relative / name).as_posix()).casefold()
-                self.paths[(key, ext)] = p
+                previous = self.paths.get((key, ext))
+                self.paths[(key, ext)] = _prefer_duplicate_export([previous, p]) if previous else p
                 self.names[(stem.casefold(), ext)].append(p)
+                if name.casefold().endswith('.arc-material.json'):
+                    # Native named sidecars and converted material JSON share a
+                    # logical package. Keep the native form discoverable by the
+                    # original material stem as well as its explicit filename.
+                    native_stem = name[:-len('.arc-material.json')]
+                    self.names[(native_stem.casefold(), ext)].append(p)
                 if '/content/' in key:
                     self.content[(key.split('/content/', 1)[1], ext)].append(p)
                 if ext == '.png':
@@ -129,17 +136,22 @@ class AssetIndex:
         # Mount layout differs in some FModel exports; match the full Content suffix.
         if '/content/' in key:
             suffix = key.split('/content/', 1)[1]
-            matches = self.content.get((suffix, ext), [])
+            requested_mount=_logical_mount(key)
+            matches = [p for p in self.content.get((suffix, ext), []) if _logical_mount(package(p.relative_to(self.root).as_posix()).casefold())==requested_mount]
             if len(matches) == 1:
                 return matches[0]
             if len(matches) > 1:
                 return _prefer_duplicate_export(matches)
-            return None
+            if not self.compatibility_mode:return None
         stem = key.rsplit('/', 1)[-1]
         stem = re.sub(r'\.\d{3}$', '', stem)
         candidates = self.names.get((stem, ext), [])
+        requested_mount=_logical_mount(key)
+        if requested_mount is not None:candidates=[p for p in candidates if _logical_mount(package(p.relative_to(self.root).as_posix()).casefold()) in (requested_mount,None)]
         if len(candidates) == 1:
             return candidates[0]
+        mounts={_logical_mount(package(p.relative_to(self.root).as_posix()).casefold()) for p in candidates}
+        if len(candidates)>1 and len(mounts)>1:raise ResolutionError('Ambiguous basename crosses declared namespaces: '+str(reference))
         if context and candidates:
             try:
                 context_parts = relative_package(context, self.root).rsplit('/', 1)[0].casefold().split('/')
@@ -160,13 +172,26 @@ class AssetIndex:
                 tied=[v for v in ranked if v[:2]==ranked[0][:2]]
                 chosen=ranked[0][3]
                 if len(tied)>1:
-                    self.resolution_notes[(str(reference),str(context))]=('Equally close material paths; selected '+str(chosen))
+                    # A converted JSON and its native .arc-material.json sidecar are one logical package.
+                    def logical(path):
+                        text=path.as_posix().casefold()
+                        return text[:-len('.arc-material.json')]+'.json' if text.endswith('.arc-material.json') else text
+                    if len({logical(v[3]) for v in tied})!=1:raise ResolutionError('Equally close material identities require an explicit package: '+str(reference))
+                    chosen=_prefer_duplicate_export([v[3] for v in tied])
+                self.resolution_notes[(str(reference),str(context))]='Explicit nearest-folder FModel compatibility binding; namespace association unverified'
                 return chosen
         if candidates:
+            from ..material_runtime.repository import digest
+            if len({digest(path) for path in candidates})>1:raise ResolutionError('Ambiguous basename requires exact reference: '+str(reference))
             return _prefer_duplicate_export(candidates)
         return None
 
     def texture(self, reference, layer=None):
+        if not reference:return None
+        info=self.texture_info(reference)
+        kind=info.get('NativeTextureKind') or info.get('Type')
+        if info.get('NativeResourceKind') or kind in ('VolumeTexture','TextureCube','TextureCubeArray','RuntimeVirtualTexture','Font'):
+            raise ResolutionError('Unsupported active native resource in FModel compatibility: '+str(reference)+' ('+str(kind)+')')
         if layer is not None:
             key = package(reference).casefold()
             idx = int(layer)
@@ -184,16 +209,40 @@ class AssetIndex:
                 if alt:
                     self.arrays[key][idx] = alt
                     return alt
-            global _BUNDLED_TEXTURES
-            if _BUNDLED_TEXTURES is None:
-                manifest=Path(__file__).parent/'data/bundled_textures_142.json'
-                _BUNDLED_TEXTURES=json.loads(manifest.read_text()) if manifest.is_file() else {}
-            relative=_BUNDLED_TEXTURES.get(key, {}).get(str(idx))
-            if relative:
-                bundled=Path(__file__).parent/'data'/relative
-                if bundled.is_file():return bundled
             return None
         return self.resolve(reference, '.png') or self.resolve(reference, '.hdr')
+
+
+    def texture_info(self,reference):
+        """Current local typed metadata, otherwise reviewed native facts with provenance."""
+        from ..material_runtime.assets import native_texture_kind,native_resource_kind
+        from ..material_runtime.repository import _exports,package_ref,object_name,digest
+        leaf=object_name(reference);candidates=self.names.get((leaf.casefold()+'.arc-texture','.json'),[])
+        requested=_logical_mount(package(reference).casefold())
+        candidates=[p for p in candidates if _logical_mount(package(p.relative_to(self.root).as_posix()).casefold()) in (requested,None)]
+        exact=[p for p in candidates if package(p.relative_to(self.root).as_posix()).casefold()==package(reference).casefold()]
+        if len(candidates)>1 and len(exact)==1:candidates=exact   # same leaf in the gun folder and a skin folder
+        if len(candidates)>1:raise ResolutionError('Ambiguous exact texture sidecars: '+str(reference))
+        ordinary=self.resolve(reference,'.json')
+        sources=candidates+([ordinary] if ordinary is not None and ordinary not in candidates else [])
+        for path in sources:
+            raw=json.loads(path.read_text(encoding='utf-8-sig'))
+            for entry in _exports(raw):
+                if not isinstance(entry,dict) or (native_texture_kind(entry) is None and native_resource_kind(entry) is None):continue
+                if str(entry.get('Name','')).casefold()!=leaf.casefold():raise ResolutionError('Texture metadata object mismatch: '+str(reference))
+                if entry.get('Package') and '/' in str(reference) and package_ref(entry['Package']).casefold()!=package_ref(reference).casefold():raise ResolutionError('Texture metadata namespace mismatch: '+str(reference))
+                return {**entry.get('Properties',{}),'Type':entry['Type'],'NativeTextureKind':native_texture_kind(entry),'NativeResourceKind':native_resource_kind(entry),'Mips':entry.get('Mips',[]),'source':{'path':str(path),'sha256':digest(path)},'association':'local FModel metadata observation; build association uncertain'}
+        from ..material_runtime.native_data import current_metadata
+        source=getattr(self,'_native_catalog_compat_source',None)
+        return dict(current_metadata(source).get('textures',{}).get(package(reference).casefold(),{}))
+
+
+def _logical_mount(key):
+    key=str(key).replace('\\','/').casefold().strip('/')
+    if key.startswith(('pioneergame/content/','remappedplugins/content/','content/')):return 'game'
+    if key.startswith('engine/content/'):return 'engine'
+    match=re.match(r'remappedplugins/([^/]+)/content/',key)
+    return match[1] if match else None
 
 
 _INDEX = {}
@@ -208,7 +257,10 @@ def _prefer_duplicate_export(candidates):
             penalty += 2
         if "blenderumap" in text:
             penalty += 4
-        return (penalty, len(text), text)
+        # ArcPak's raw sidecar retains Parent, named defaults and scopes that
+        # conversion JSON drops. Prefer it independently of os.walk file order.
+        converted = not text.endswith('.arc-material.json')
+        return (penalty, converted, len(text), text)
     return sorted(candidates, key=rank)[0]
 
 
@@ -217,3 +269,23 @@ def get_index(root, refresh=False):
     if refresh or key not in _INDEX:
         _INDEX[key] = AssetIndex(root)
     return _INDEX[key]
+
+
+def invalidate_index(root=None):
+    """Drop stale file inventories after extraction adds or replaces assets."""
+    if root is None:
+        _INDEX.clear()
+        return
+    target = Path(root).expanduser().resolve()
+    parts = list(target.parts)
+    lower = [part.casefold() for part in parts]
+    if 'pioneergame' in lower:
+        target = Path(*parts[:lower.index('pioneergame')])
+    elif 'content' in lower:
+        i = lower.index('content')
+        if i == len(parts)-1 or lower[i+1] == 'pioneer':
+            target = Path(*parts[:i])
+    identity = str(target).casefold()
+    for key, index in list(_INDEX.items()):
+        if key == identity or str(index.root).casefold() == identity:
+            del _INDEX[key]

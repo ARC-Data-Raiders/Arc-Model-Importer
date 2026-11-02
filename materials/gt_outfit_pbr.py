@@ -8,6 +8,13 @@ into Principled BSDF.
 from __future__ import annotations
 
 import os
+import hashlib
+import json
+
+# DR selection composition; native shader/decal math remains retained below.
+from .dr_primary_graph.public import candidate as _dr_primary_candidate
+from .dr_primary_graph.identity import assign as _assign
+from . import dr_primary_operations as _dr_ops
 
 from .. import textures
 from .common import (
@@ -217,7 +224,8 @@ def place(nd, x, y, *, hide=None, lock=False, parent=None):
         except Exception:
             pass
         _set_node_world_loc(nd, float(x), float(y))
-    else:
+    elif tuple(nd.location) != (float(x), float(y)):
+        # Skip unchanged writes: each one re-runs the whole node-tree update.
         nd.location = (float(x), float(y))
     _quiet_node(nd)
     if lock:
@@ -225,9 +233,10 @@ def place(nd, x, y, *, hide=None, lock=False, parent=None):
     return nd
 
 
+@_dr_ops.operation_build
 def _reroute(nodes, links, sock, name, x, y):
     """Layout-only bus hop (Shirt 003 cleanup). Returns the reroute Output socket."""
-    existing = nodes.get(name)
+    existing = _dr_primary_candidate.lookup(nodes).get(name)
     if existing is not None and existing.bl_idname == "NodeReroute":
         rr = existing
         place(rr, float(x), float(y), lock=True)
@@ -242,8 +251,8 @@ def _reroute(nodes, links, sock, name, x, y):
             except Exception:
                 pass
     else:
-        rr = nodes.new("NodeReroute")
-        rr.name = name
+        rr = _dr_ops.new_operation(nodes, 'NodeReroute', name, stage=None, role=None)
+        pass
         place(rr, float(x), float(y), lock=True)
     if sock is not None:
         try:
@@ -281,8 +290,8 @@ def _wire_array_uv_reroutes(nodes, links, uv_src, *, bus_x=13420.0, y_snap=25.0)
     targets = []
     for n in nodes:
         bid = getattr(n, "bl_idname", "") or ""
-        name = getattr(n, "name", "") or ""
-        lab = getattr(n, "label", "") or ""
+        name = _dr_ops.legacy_name(n) or ""
+        lab = _dr_ops.legacy_label(n) or ""
         if bid == "ShaderNodeTexImage":
             if name.startswith("GT_ColorTex"):
                 continue
@@ -307,6 +316,12 @@ def _wire_array_uv_reroutes(nodes, links, uv_src, *, bus_x=13420.0, y_snap=25.0)
         place(n, world_loc(n)[0], key, hide=getattr(n, "hide", None), lock=True)
         rows[key].append(n)
 
+    # NodeSocket.links filters the whole tree on each access. Snapshot the
+    # original first incoming edge once, before adding any layout reroutes.
+    incoming = {}
+    for link in links:
+        incoming.setdefault(link.to_socket, link)
+
     bus = {}
     for y_key in sorted(rows.keys(), reverse=True):
         group = rows[y_key]
@@ -321,44 +336,13 @@ def _wire_array_uv_reroutes(nodes, links, uv_src, *, bus_x=13420.0, y_snap=25.0)
                 vin = n.inputs[0] if n.inputs else None
             if vin is None:
                 continue
-            if n.bl_idname == "ShaderNodeTexImage" and vin.is_linked:
-                fr = vin.links[0].from_node
-                # Never rewire the root ArrayUv Mapping — that creates a feedback
-                # loop (Mapping → RR → Mapping.Vector) and blacks out the mesh.
-                if (
-                    fr is not None
-                    and fr.bl_idname == "ShaderNodeMapping"
-                    and (fr.name or "") != "GT_TA_ArrayUv"
-                    and not (fr.name or "").startswith("GT_TA_ArrayUv")
-                ):
-                    mv = None
-                    try:
-                        mv = fr.inputs.get("Vector")
-                    except Exception:
-                        mv = fr.inputs[0] if fr.inputs else None
-                    if mv is not None:
-                        while mv.is_linked:
-                            try:
-                                links.remove(mv.links[0])
-                            except Exception:
-                                break
-                        try:
-                            links.new(rr_out, mv)
-                        except Exception:
-                            pass
-                    continue
-                if fr is not None and (fr.name or "") == "GT_TA_ArrayUv":
-                    # Fall through: replace direct Mapping→TA with bus hop.
-                    pass
-            while vin.is_linked:
-                try:
-                    links.remove(vin.links[0])
-                except Exception:
-                    break
-            try:
-                links.new(rr_out, vin)
-            except Exception:
-                pass
+            # Layout only: preserve every authored scale/rotation/final PNG V flip.
+            # A linked semantic chain may only be rerouted at a direct bus edge.
+            original = incoming.get(vin)
+            if original is None or original.from_socket != uv_src:
+                continue
+            links.remove(original)
+            links.new(rr_out, vin)
     return bus
 
 
@@ -377,7 +361,7 @@ def _insert_reroute_before(links, to_socket, name, x, y, nodes):
 
 def _uturn_feed(nodes, links, mix_name, rr_right, rr_left, x_right, y_right, x_left, y_left):
     """Shirt 003 pattern: splice two reroutes on Mix color A (right → left → A)."""
-    mix = nodes.get(mix_name)
+    mix = _dr_primary_candidate.lookup(nodes).get(mix_name)
     if mix is None:
         return
     a_in = None
@@ -518,20 +502,16 @@ def declutter_nodes(nodes, pad: float = _GT_PAD) -> int:
     return resolve_node_overlaps(nodes, pad_top=top, pad_x=_GT_PAD_X, pad_bottom=_GT_PAD_BOTTOM)
 
 
+@_dr_ops.operation_build
 def make_tex(nodes, fpath, name, loc, *, non_color=False, hide=True):
-    img = _load_image_cached(fpath)
+    img = _load_image_cached(fpath, non_color=non_color, alpha_mode="CHANNEL_PACKED")
     if img is None:
         return None
-    if non_color:
-        try:
-            img.colorspace_settings.name = "Non-Color"
-        except Exception:
-            pass
-    nd = nodes.new("ShaderNodeTexImage")
-    nd.name = name
-    nd.label = os.path.basename(fpath)
+    nd = _dr_ops.new_operation(nodes, 'ShaderNodeTexImage', name, stage='LayerInputs', role=None)
+    pass
+    _dr_ops.set_label(nd, os.path.basename(fpath))
     nd.image = img
-    nd.interpolation = "Cubic"
+    _assign(nd, "interpolation", "Linear")
     nd.hide = bool(hide)
     nd.location = loc
     _quiet_node(nd)
@@ -539,13 +519,12 @@ def make_tex(nodes, fpath, name, loc, *, non_color=False, hide=True):
 
 
 def _math(nodes, op, name, x, y, *, value=None, hide=True):
-    nd = nodes.new("ShaderNodeMath")
-    nd.operation = op
-    nd.name = name
+    nd = _dr_ops.new_operation(nodes, "ShaderNodeMath", name)
+    _assign(nd, "operation", op)
     nd.hide = hide
     if value is not None:
         try:
-            nd.inputs[1].default_value = float(value)
+            _assign(nd.inputs[1], "default_value", float(value))
         except Exception:
             pass
     place(nd, x, y, hide=hide)
@@ -553,15 +532,14 @@ def _math(nodes, op, name, x, y, *, value=None, hide=True):
 
 
 def _new_mix(nodes, name, label, x, y, dtype="RGBA", *, hide=False):
-    mix = nodes.new("ShaderNodeMix")
-    mix.data_type = dtype
-    mix.blend_type = "MIX"
+    mix = _dr_ops.new_operation(nodes, "ShaderNodeMix", name)
+    _assign(mix, "data_type", dtype)
+    _assign(mix, "blend_type", "MIX")
     try:
-        mix.clamp_factor = True
+        _assign(mix, "clamp_factor", True)
     except Exception:
         pass
-    mix.name = name
-    mix.label = label
+    _dr_ops.set_label(mix, label)
     mix.hide = hide
     place(mix, x, y, hide=hide)
     return mix
@@ -697,11 +675,11 @@ def _gt_ng_fresh(name, ver):
     """Reuse a group in place. Never leave ``*_stale`` copies in bpy.data."""
     import bpy
 
-    ng = bpy.data.node_groups.get(name)
+    ng = _dr_ops.find_group(bpy.data.node_groups, name)
     if ng is not None and ng.get("arc_gt_ver") == ver:
         return ng, False
     if ng is None:
-        ng = bpy.data.node_groups.new(name, "ShaderNodeTree")
+        ng = _dr_ops.new_group(bpy.data.node_groups, name, "ShaderNodeTree")
     else:
         _reset_ng(ng)
     ng["arc_gt_ver"] = ver
@@ -715,7 +693,7 @@ def _purge_unused_gt_datablocks():
         n = getattr(ng, "name", "") or ""
         if getattr(ng, "users", 1):
             continue
-        if n.startswith("GT_") or "_stale" in n or n.startswith("GT_ZonePick"):
+        if ng.get("dr.group.recipe") or n.startswith("GT_") or "_stale" in n or n.startswith("GT_ZonePick"):
             try:
                 bpy.data.node_groups.remove(ng)
             except Exception:
@@ -739,6 +717,7 @@ def _collapse_broadcast(sock):
         pass
 
 
+@_dr_ops.operation_build
 def ensure_gt_zone_eq1_group():
     """Single-zone COMPARE: Eq = (ZoneIndex == Match).
 
@@ -748,18 +727,18 @@ def ensure_gt_zone_eq1_group():
     name = "GT_ZoneEq1"
     ng, created = _gt_ng_fresh(name, 2)
     if not created:
-        return ng
+        return _dr_ops.finish_definition(ng)
     _gt_ng_sock(ng, "ZoneIndex", "INPUT", "NodeSocketFloat", 0.0)
     _gt_ng_sock(ng, "Match", "INPUT", "NodeSocketFloat", 0.0)
     _gt_ng_sock(ng, "Eq", "OUTPUT", "NodeSocketFloat")
-    gi = ng.nodes.new("NodeGroupInput")
+    gi = _dr_ops.new_operation(ng.nodes, 'NodeGroupInput', None, stage='Source', role='Layer.ZoneEquality.Input')
     gi.location = (-280.0, 0.0)
-    go = ng.nodes.new("NodeGroupOutput")
+    go = _dr_ops.new_operation(ng.nodes, 'NodeGroupOutput', None, stage='Output', role='Layer.ZoneEquality.Output')
     go.location = (280.0, 0.0)
-    cmp = ng.nodes.new("ShaderNodeMath")
+    cmp = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', 'eq', stage='LayerInputs', role='Layer.ZoneEquality.CompareZoneToMatch')
     cmp.operation = "COMPARE"
-    cmp.name = "eq"
-    cmp.label = "ZoneIndex == Match"
+    pass
+    _dr_ops.set_label(cmp, 'ZoneIndex == Match')
     cmp.location = (0.0, 0.0)
     try:
         cmp.inputs[2].default_value = 0.45
@@ -773,22 +752,23 @@ def ensure_gt_zone_eq1_group():
     except Exception:
         pass
     _quiet_node(cmp)
-    return ng
+    return _dr_ops.finish_definition(ng)
 
 
+@_dr_ops.operation_build
 def ensure_gt_zone_eq_group():
     """Legacy 8-way Eq0..Eq7 hub. Prefer :func:`ensure_gt_zone_eq1_group` per column."""
     name = "GT_ZoneEq"
     ng, created = _gt_ng_fresh(name, 2)
     if not created:
-        return ng
+        return _dr_ops.finish_definition(ng)
     _gt_ng_sock(ng, "ZoneIndex", "INPUT", "NodeSocketFloat", 0.0)
     _gt_ng_sock(ng, "Index", "OUTPUT", "NodeSocketFloat")
     for z0 in range(8):
         _gt_ng_sock(ng, f"Eq{z0}", "OUTPUT", "NodeSocketFloat")
-    gi = ng.nodes.new("NodeGroupInput")
+    gi = _dr_ops.new_operation(ng.nodes, 'NodeGroupInput', None, stage='Source', role='Layer.ZoneEquality.Input')
     gi.location = (-280.0, 0.0)
-    go = ng.nodes.new("NodeGroupOutput")
+    go = _dr_ops.new_operation(ng.nodes, 'NodeGroupOutput', None, stage='Output', role='Layer.ZoneEquality.Output')
     go.location = (280.0, 0.0)
     links = ng.links
     try:
@@ -796,10 +776,10 @@ def ensure_gt_zone_eq_group():
     except Exception:
         pass
     for z0 in range(8):
-        cmp = ng.nodes.new("ShaderNodeMath")
+        cmp = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', f'eq_z{z0}', stage='LayerInputs', role='Layer.ZoneEquality.CompareZone')
         cmp.operation = "COMPARE"
-        cmp.name = f"eq_z{z0}"
-        cmp.label = f"== {z0}"
+        pass
+        _dr_ops.set_label(cmp, f'== {z0}')
         cmp.location = (0.0, 280.0 - z0 * 80.0)
         try:
             cmp.inputs[1].default_value = float(z0)
@@ -812,9 +792,10 @@ def ensure_gt_zone_eq_group():
         except Exception:
             pass
         _quiet_node(cmp)
-    return ng
+    return _dr_ops.finish_definition(ng)
 
 
+@_dr_ops.operation_build
 def _wire_zone_eq(nodes, links, zone_idx, x, y):
     """One GT_ZoneEq1 at the top of each Colour column. Returns zone→Eq socket."""
     eqs = {}
@@ -823,10 +804,10 @@ def _wire_zone_eq(nodes, links, zone_idx, x, y):
     ng = ensure_gt_zone_eq1_group()
     first = None
     for zone in range(1, 9):
-        nd = nodes.new("ShaderNodeGroup")
+        nd = _dr_ops.new_operation(nodes, 'ShaderNodeGroup', f'GT_ZoneEq_z{zone}', stage='LayerInputs', role='Layer.ZoneEquality.nd')
         nd.node_tree = ng
-        nd.name = f"GT_ZoneEq_z{zone}"
-        nd.label = f"zone == {zone}"
+        pass
+        _dr_ops.set_label(nd, f'zone == {zone}')
         place(nd, colour_col_x(zone), shared_row_y("zone_eq"), lock=True)
         try:
             links.new(zone_idx, nd.inputs["ZoneIndex"])
@@ -849,61 +830,25 @@ def _wire_zone_eq(nodes, links, zone_idx, x, y):
     return first, eqs
 
 
+@_dr_ops.operation_build
 def ensure_gt_albedo_occ_group():
-    """Engine ``albedo *= OCM.R``. Mix Color B is RGB, so R is broadcast inside this group."""
-    import bpy
-
-    name = "GT_AlbedoXOcc"
-    ng, created = _gt_ng_fresh(name, 1)
-    if not created:
-        return ng
-    _gt_ng_sock(ng, "Albedo", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
-    _gt_ng_sock(ng, "Occ", "INPUT", "NodeSocketFloat", 1.0)
-    _gt_ng_sock(ng, "Result", "OUTPUT", "NodeSocketColor")
-    gi = ng.nodes.new("NodeGroupInput")
-    gi.location = (-360.0, 0.0)
-    go = ng.nodes.new("NodeGroupOutput")
-    go.location = (280.0, 0.0)
-    comb = ng.nodes.new("ShaderNodeCombineColor")
-    comb.label = "Occ as RGB"
-    comb.location = (-160.0, -80.0)
-    links = ng.links
-    links.new(gi.outputs["Occ"], comb.inputs[0])
-    links.new(gi.outputs["Occ"], comb.inputs[1])
-    links.new(gi.outputs["Occ"], comb.inputs[2])
-    mix = ng.nodes.new("ShaderNodeMix")
-    mix.data_type = "RGBA"
-    mix.blend_type = "MULTIPLY"
-    mix.location = (40.0, 40.0)
-    try:
-        mix.clamp_factor = True
-    except Exception:
-        pass
-    try:
-        mix_io(mix)[0].default_value = 1.0
-    except Exception:
-        pass
-    outc = _link_mix(links, mix, None, gi.outputs["Albedo"], comb.outputs[0])
-    try:
-        links.new(outc, go.inputs["Result"])
-    except Exception:
-        links.new(outc, go.inputs[0])
-    return ng
+    return _dr_stage_composer('occlusion')
 
 
+@_dr_ops.operation_build
 def ensure_gt_decal_layer_group(mask_int: int):
     """Legacy baked-bit tree. Prefer :func:`ensure_gt_decal_layer_edit_group`."""
     bits = int(mask_int) & 0xFF
     name = f"GT_DecalLayer_{bits}"
     ng, created = _gt_ng_fresh(name, 2)
     if not created:
-        return ng
+        return _dr_ops.finish_definition(ng)
     _gt_ng_sock(ng, "ZoneIndex", "INPUT", "NodeSocketFloat", 0.0)
     _gt_ng_sock(ng, "Alpha", "INPUT", "NodeSocketFloat", 1.0)
     _gt_ng_sock(ng, "Masked", "OUTPUT", "NodeSocketFloat")
-    gi = ng.nodes.new("NodeGroupInput")
+    gi = _dr_ops.new_operation(ng.nodes, 'NodeGroupInput', None, stage='Source', role='Decal.Coverage.Input')
     gi.location = (-640.0, 0.0)
-    go = ng.nodes.new("NodeGroupOutput")
+    go = _dr_ops.new_operation(ng.nodes, 'NodeGroupOutput', None, stage='Output', role='Decal.Coverage.Output')
     go.location = (520.0, 0.0)
     links = ng.links
     gate = None
@@ -912,9 +857,9 @@ def ensure_gt_decal_layer_group(mask_int: int):
         if (bits & (1 << z0)) == 0:
             continue
         z1 = z0 + 1
-        cmp = ng.nodes.new("ShaderNodeMath")
+        cmp = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', None, stage='Coverage', role='Decal.Coverage.Compare')
         cmp.operation = "COMPARE"
-        cmp.label = f"Colour {z1}"
+        _dr_ops.set_label(cmp, f'Colour {z1}')
         cmp.location = (x, 80.0)
         links.new(gi.outputs["ZoneIndex"], cmp.inputs[0])
         try:
@@ -925,14 +870,14 @@ def ensure_gt_decal_layer_group(mask_int: int):
         if gate is None:
             gate = cmp.outputs[0]
         else:
-            mx = ng.nodes.new("ShaderNodeMath")
+            mx = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', None, stage='Coverage', role='Decal.Coverage.Maximum')
             mx.operation = "MAXIMUM"
             mx.location = (x, -40.0)
             links.new(gate, mx.inputs[0])
             links.new(cmp.outputs[0], mx.inputs[1])
             gate = mx.outputs[0]
         x += 160.0
-    mul = ng.nodes.new("ShaderNodeMath")
+    mul = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', None, stage='Coverage', role='Decal.Coverage.Multiply')
     mul.operation = "MULTIPLY"
     mul.location = (x, 0.0)
     links.new(gi.outputs["Alpha"], mul.inputs[0])
@@ -947,9 +892,10 @@ def ensure_gt_decal_layer_group(mask_int: int):
         links.new(mul.outputs[0], go.inputs["Masked"])
     except Exception:
         links.new(mul.outputs[0], go.inputs[0])
-    return ng
+    return _dr_ops.finish_definition(ng)
 
 
+@_dr_ops.operation_build
 def ensure_gt_decal_layer_edit_group():
     """Editable LayerMask gate: cooked Allow1..8 × optional Excl1..8 checkboxes.
 
@@ -959,7 +905,7 @@ def ensure_gt_decal_layer_edit_group():
     name = "GT_DecalLayerEdit"
     ng, created = _gt_ng_fresh(name, 2)
     if not created:
-        return ng
+        return _dr_ops.finish_definition(ng)
     _gt_ng_sock(ng, "ZoneIndex", "INPUT", "NodeSocketFloat", 0.0)
     _gt_ng_sock(ng, "Alpha", "INPUT", "NodeSocketFloat", 1.0)
     for z in range(1, 9):
@@ -974,9 +920,9 @@ def ensure_gt_decal_layer_edit_group():
         except Exception:
             pass
     _gt_ng_sock(ng, "Masked", "OUTPUT", "NodeSocketFloat")
-    gi = ng.nodes.new("NodeGroupInput")
+    gi = _dr_ops.new_operation(ng.nodes, 'NodeGroupInput', None, stage='Source', role='Decal.Coverage.Edit.Input')
     gi.location = (-900.0, 0.0)
-    go = ng.nodes.new("NodeGroupOutput")
+    go = _dr_ops.new_operation(ng.nodes, 'NodeGroupOutput', None, stage='Output', role='Decal.Coverage.Edit.Output')
     go.location = (720.0, 0.0)
     links = ng.links
     gate = None
@@ -984,9 +930,9 @@ def ensure_gt_decal_layer_edit_group():
     for z0 in range(8):
         z1 = z0 + 1
         y = 280.0 - z0 * 70.0
-        cmp = ng.nodes.new("ShaderNodeMath")
+        cmp = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', None, stage='Coverage', role='Decal.Coverage.Edit.Compare')
         cmp.operation = "COMPARE"
-        cmp.label = f"Colour {z1}"
+        _dr_ops.set_label(cmp, f'Colour {z1}')
         cmp.location = (x, y)
         links.new(gi.outputs["ZoneIndex"], cmp.inputs[0])
         try:
@@ -994,39 +940,39 @@ def ensure_gt_decal_layer_edit_group():
             cmp.inputs[2].default_value = 0.45
         except Exception:
             pass
-        inv = ng.nodes.new("ShaderNodeMath")
+        inv = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', None, stage='Coverage', role='Decal.Coverage.Edit.InvertExclusion')
         inv.operation = "SUBTRACT"
-        inv.label = f"1−Excl{z1}"
+        _dr_ops.set_label(inv, f'1−Excl{z1}')
         inv.location = (x + 160.0, y - 20.0)
         try:
             inv.inputs[0].default_value = 1.0
         except Exception:
             pass
         links.new(gi.outputs[f"Excl{z1}"], inv.inputs[1])
-        mul_a = ng.nodes.new("ShaderNodeMath")
+        mul_a = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', None, stage='Coverage', role='Decal.Coverage.Edit.AllowGate')
         mul_a.operation = "MULTIPLY"
-        mul_a.label = f"×Allow{z1}"
+        _dr_ops.set_label(mul_a, f'×Allow{z1}')
         mul_a.location = (x + 320.0, y)
         links.new(cmp.outputs[0], mul_a.inputs[0])
         links.new(gi.outputs[f"Allow{z1}"], mul_a.inputs[1])
-        mul_e = ng.nodes.new("ShaderNodeMath")
+        mul_e = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', None, stage='Coverage', role='Decal.Coverage.Edit.ExcludeGate')
         mul_e.operation = "MULTIPLY"
-        mul_e.label = f"gate{z1}"
+        _dr_ops.set_label(mul_e, f'gate{z1}')
         mul_e.location = (x + 480.0, y)
         links.new(mul_a.outputs[0], mul_e.inputs[0])
         links.new(inv.outputs[0], mul_e.inputs[1])
         if gate is None:
             gate = mul_e.outputs[0]
         else:
-            mx = ng.nodes.new("ShaderNodeMath")
+            mx = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', None, stage='Coverage', role='Decal.Coverage.Edit.Maximum')
             mx.operation = "MAXIMUM"
             mx.location = (x + 640.0, y)
             links.new(gate, mx.inputs[0])
             links.new(mul_e.outputs[0], mx.inputs[1])
             gate = mx.outputs[0]
-    mul = ng.nodes.new("ShaderNodeMath")
+    mul = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', None, stage='Coverage', role='Decal.Coverage.Edit.Multiply')
     mul.operation = "MULTIPLY"
-    mul.label = "× Alpha"
+    _dr_ops.set_label(mul, '× Alpha')
     mul.location = (560.0, 0.0)
     links.new(gi.outputs["Alpha"], mul.inputs[0])
     if gate is not None:
@@ -1040,7 +986,7 @@ def ensure_gt_decal_layer_edit_group():
         links.new(mul.outputs[0], go.inputs["Masked"])
     except Exception:
         links.new(mul.outputs[0], go.inputs[0])
-    return ng
+    return _dr_ops.finish_definition(ng)
 
 
 def _decal_layer_sock(gate_n, name: str):
@@ -1127,8 +1073,8 @@ def apply_decal_exclude_mask_to_material(mat, exclude_mask: int, *, slot: int = 
         edit = None
     updated = 0
     for n in mat.node_tree.nodes:
-        name = getattr(n, "name", "") or ""
-        lab = getattr(n, "label", "") or ""
+        name = _dr_ops.legacy_name(n) or ""
+        lab = _dr_ops.legacy_label(n) or ""
         if n.bl_idname != "ShaderNodeGroup":
             continue
         is_gate = (
@@ -1161,7 +1107,7 @@ def apply_decal_exclude_mask_to_material(mat, exclude_mask: int, *, slot: int = 
         if edit is not None:
             try:
                 # Keep cooked Allow on the editable group; Excl* is the override.
-                if getattr(n.node_tree, "name", "") != "GT_DecalLayerEdit":
+                if _dr_ops.group_key(n.node_tree) != "GT_DecalLayerEdit":
                     n.node_tree = edit
             except Exception:
                 pass
@@ -1183,6 +1129,7 @@ def apply_decal_exclude_mask_to_material(mat, exclude_mask: int, *, slot: int = 
     return updated
 
 
+@_dr_ops.operation_build
 def ensure_gt_colour_n_group():
     """Colour-N assemble with PackedR A/A2 lerp. Prefer per-zone baked groups."""
     import bpy
@@ -1190,7 +1137,7 @@ def ensure_gt_colour_n_group():
     name = "GT_ColourN"
     ng, created = _gt_ng_fresh(name, 4)
     if not created:
-        return ng
+        return _dr_ops.finish_definition(ng)
     _gt_ng_sock(ng, "ColorMask", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     _gt_ng_sock(ng, "PackedR", "INPUT", "NodeSocketFloat", 0.0)
     _gt_ng_sock(ng, "Amt", "INPUT", "NodeSocketFloat", 1.0)
@@ -1203,14 +1150,14 @@ def ensure_gt_colour_n_group():
     _gt_ng_sock(ng, "ColorC2", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     _gt_ng_sock(ng, "Overlay", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     _gt_ng_sock(ng, "Colour", "OUTPUT", "NodeSocketColor")
-    gi = ng.nodes.new("NodeGroupInput")
+    gi = _dr_ops.new_operation(ng.nodes, 'NodeGroupInput', None, stage='Source', role='Palette.Input')
     gi.location = (-1100.0, 0.0)
-    go = ng.nodes.new("NodeGroupOutput")
+    go = _dr_ops.new_operation(ng.nodes, 'NodeGroupOutput', None, stage='Output', role='Palette.Output')
     go.location = (1100.0, 0.0)
     links = ng.links
 
     def gmix(blend, loc, dtype="RGBA"):
-        m = ng.nodes.new("ShaderNodeMix")
+        m = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMix', None, stage='LayerInputs', role='Palette.Blend')
         m.data_type = dtype
         m.blend_type = blend
         try:
@@ -1226,7 +1173,7 @@ def ensure_gt_colour_n_group():
         mix_io(mul_sw)[0].default_value = 1.0
     except Exception:
         pass
-    amt3 = ng.nodes.new("ShaderNodeCombineColor")
+    amt3 = _dr_ops.new_operation(ng.nodes, 'ShaderNodeCombineColor', None, stage='LayerInputs', role='Palette.StrengthVector')
     amt3.location = (-820.0, -180.0)
     links.new(gi.outputs["Amt"], amt3.inputs[0])
     links.new(gi.outputs["Amt"], amt3.inputs[1])
@@ -1237,10 +1184,10 @@ def ensure_gt_colour_n_group():
         mix_io(mul_amt)[0].default_value = 1.0
     except Exception:
         pass
-    sep = ng.nodes.new("ShaderNodeSeparateColor")
+    sep = _dr_ops.new_operation(ng.nodes, 'ShaderNodeSeparateColor', None, stage='LayerInputs', role='Palette.SeparateChannels')
     sep.location = (-340.0, 40.0)
     links.new(w, sep.inputs[0])
-    white = ng.nodes.new("ShaderNodeRGB")
+    white = _dr_ops.new_operation(ng.nodes, 'ShaderNodeRGB', None, stage='LayerInputs', role='Palette.Canvas')
     white.outputs[0].default_value = (1.0, 1.0, 1.0, 1.0)
     white.location = (-580.0, 260.0)
     out_a = gmix("MIX", (-340.0, 220.0))
@@ -1262,7 +1209,7 @@ def ensure_gt_colour_n_group():
     except Exception:
         pass
     links.new(outc, go.inputs["Colour"])
-    return ng
+    return _dr_ops.finish_definition(ng)
 
 
 def _as_rgba(val, fallback=(1.0, 1.0, 1.0, 1.0)):
@@ -1298,22 +1245,24 @@ def _as_rgba(val, fallback=(1.0, 1.0, 1.0, 1.0)):
     return fallback
 
 
+@_dr_ops.operation_build
 def add_gt_note(nodes, name: str, title: str, body: str, x: float, y: float):
     """Frame label only. Do not assign Frame.text — Shader Editor rasterizes it every redraw."""
 
-    fr = nodes.new("NodeFrame")
-    fr.name = name
-    fr.label = title
+    fr = _dr_ops.new_operation(nodes, 'NodeFrame', name, stage='LayerInputs', role='Annotation.'+_dr_ops.role_for(name))
+    pass
+    _dr_ops.set_label(fr, title)
     try:
         fr.label_size = 16
     except Exception:
         pass
     fr.location = (float(x), float(y))
     extra = (body or "").replace("\n", " — ")
-    fr.label = f"{title} — {extra[:140]}" if extra else title
+    _dr_ops.set_label(fr, f'{title} — {extra[:140]}' if extra else title)
     return fr
 
 
+@_dr_ops.operation_build
 def build_gt_colour_n_zone_group(
     *,
     zone: int,
@@ -1329,130 +1278,13 @@ def build_gt_colour_n_zone_group(
     color_b2=None,
     color_c2=None,
 ):
-    """Per-zone Colour N: lerp(A,A2,PackedR) then ColorMask x Swatch x Amt fold."""
-    import bpy
-
-    key = "".join(ch for ch in str(tree_key or "mat") if ch.isalnum() or ch in "_-")[:28] or "mat"
-    name = f"GT_Colour{int(zone)}_{key}"
-    ng = bpy.data.node_groups.get(name)
-    if ng is None:
-        ng = bpy.data.node_groups.new(name, "ShaderNodeTree")
-    else:
-        _reset_ng(ng)
-    ng["arc_gt_ver"] = 4
-    ng["arc_gt_zone"] = int(zone)
-    _gt_ng_sock(ng, "ColorMask", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
-    _gt_ng_sock(ng, "PackedR", "INPUT", "NodeSocketFloat", 0.0)
-    _gt_ng_sock(ng, "Amt", "INPUT", "NodeSocketFloat", float(amt))
-    _gt_ng_sock(ng, "Colour", "OUTPUT", "NodeSocketColor")
-    gi = ng.nodes.new("NodeGroupInput")
-    gi.location = (-1200.0, 40.0)
-    go = ng.nodes.new("NodeGroupOutput")
-    go.location = (1180.0, 40.0)
-    links = ng.links
-    add_gt_note(
-        ng.nodes,
-        "NOTE_weights",
-        f"Colour {zone} - palette",
-        "lerp(ColorX, ColorX2, packed BaseColor.R) then ColorMask.rgb x Swatch x Amt "
-        "fold from white. Amt is wear-modulated Base/Edge/Crease ColorMaskStrength.",
-        -1200.0,
-        420.0,
-    )
-
-    def gmix(blend, loc, dtype="RGBA"):
-        m = ng.nodes.new("ShaderNodeMix")
-        m.data_type = dtype
-        m.blend_type = blend
-        try:
-            m.clamp_factor = True
-        except Exception:
-            pass
-        m.location = loc
-        m.hide = False
-        return m
-
-    sw = ng.nodes.new("ShaderNodeRGB")
-    sw.label = f"{zone}_ColorMaskSwatch"
-    sw.outputs[0].default_value = _as_rgba(swatch)
-    sw.location = (-920.0, -40.0)
-    mul_sw = gmix("MULTIPLY", (-680.0, 80.0))
-    _link_mix(links, mul_sw, None, gi.outputs["ColorMask"], sw.outputs[0])
-    try:
-        mix_io(mul_sw)[0].default_value = 1.0
-    except Exception:
-        pass
-    amt3 = ng.nodes.new("ShaderNodeCombineColor")
-    amt3.location = (-680.0, -200.0)
-    links.new(gi.outputs["Amt"], amt3.inputs[0])
-    links.new(gi.outputs["Amt"], amt3.inputs[1])
-    links.new(gi.outputs["Amt"], amt3.inputs[2])
-    mul_amt = gmix("MULTIPLY", (-440.0, 40.0))
-    w = _link_mix(links, mul_amt, None, mix_io(mul_sw)[3], amt3.outputs[0])
-    try:
-        mix_io(mul_amt)[0].default_value = 1.0
-    except Exception:
-        pass
-    sep = ng.nodes.new("ShaderNodeSeparateColor")
-    sep.label = "wA wB wC"
-    sep.location = (-200.0, 40.0)
-    links.new(w, sep.inputs[0])
-    white = ng.nodes.new("ShaderNodeRGB")
-    white.label = "white canvas"
-    white.outputs[0].default_value = (1.0, 1.0, 1.0, 1.0)
-    white.location = (-440.0, 280.0)
-    na = ng.nodes.new("ShaderNodeRGB")
-    na.label = "ColorA"
-    na.outputs[0].default_value = _as_rgba(color_a)
-    na.location = (-200.0, 320.0)
-    na2 = ng.nodes.new("ShaderNodeRGB")
-    na2.label = "ColorA2"
-    na2.outputs[0].default_value = _as_rgba(color_a2 if color_a2 is not None else color_a)
-    na2.location = (-200.0, 180.0)
-    nb = ng.nodes.new("ShaderNodeRGB")
-    nb.label = "ColorB"
-    nb.outputs[0].default_value = _as_rgba(color_b)
-    nb.location = (80.0, 320.0)
-    nb2 = ng.nodes.new("ShaderNodeRGB")
-    nb2.label = "ColorB2"
-    nb2.outputs[0].default_value = _as_rgba(color_b2 if color_b2 is not None else color_b)
-    nb2.location = (80.0, 180.0)
-    nc = ng.nodes.new("ShaderNodeRGB")
-    nc.label = "ColorC"
-    nc.outputs[0].default_value = _as_rgba(color_c)
-    nc.location = (360.0, 320.0)
-    nc2 = ng.nodes.new("ShaderNodeRGB")
-    nc2.label = "ColorC2"
-    nc2.outputs[0].default_value = _as_rgba(color_c2 if color_c2 is not None else color_c)
-    nc2.location = (360.0, 180.0)
-    out_a = gmix("MIX", (-200.0, 40.0))
-    _link_mix(links, out_a, gi.outputs["PackedR"], na.outputs[0], na2.outputs[0])
-    out_b = gmix("MIX", (80.0, 40.0))
-    _link_mix(links, out_b, gi.outputs["PackedR"], nb.outputs[0], nb2.outputs[0])
-    out_c = gmix("MIX", (360.0, 40.0))
-    _link_mix(links, out_c, gi.outputs["PackedR"], nc.outputs[0], nc2.outputs[0])
-    mix_a = gmix("MIX", (80.0, -120.0))
-    _link_mix(links, mix_a, sep.outputs[0], white.outputs[0], mix_io(out_a)[3])
-    mix_b = gmix("MIX", (360.0, -120.0))
-    _link_mix(links, mix_b, sep.outputs[1], mix_io(mix_a)[3], mix_io(out_b)[3])
-    mix_c = gmix("MIX", (640.0, -120.0))
-    folded = _link_mix(links, mix_c, sep.outputs[2], mix_io(mix_b)[3], mix_io(out_c)[3])
-    ov = ng.nodes.new("ShaderNodeRGB")
-    ov.label = f"{zone}_BaseColorOverlay"
-    ov.outputs[0].default_value = _as_rgba(overlay)
-    ov.location = (880.0, 200.0)
-    mul_ov = gmix("MULTIPLY", (880.0, 0.0))
-    outc = _link_mix(links, mul_ov, None, folded, ov.outputs[0])
-    try:
-        mix_io(mul_ov)[0].default_value = 1.0
-    except Exception:
-        pass
-    links.new(outc, go.inputs["Colour"])
-    for n in ng.nodes:
-        _quiet_node(n)
-    return ng
+    """Original contribution-DAG palette composer, retaining public controls."""
+    from . import dr_layered_composer
+    import sys
+    return dr_layered_composer.build_palette(sys.modules[__name__],zone=zone,amt=amt,swatch=swatch,color_a=color_a,color_b=color_b,color_c=color_c,overlay=overlay,tree_key=tree_key,secondary=secondary,color_a2=color_a2,color_b2=color_b2,color_c2=color_c2)
 
 
+@_dr_ops.operation_build
 def ensure_gt_decal_tint_group():
     """ArcDecal colour: CONSTANT 0.075 A/B + ColorOverride lerp (default.frag ApplyArcDecals)."""
     import bpy
@@ -1460,46 +1292,46 @@ def ensure_gt_decal_tint_group():
     name = "GT_DecalTint"
     ng, created = _gt_ng_fresh(name, 2)
     if not created:
-        return ng
+        return _dr_ops.finish_definition(ng)
     _gt_ng_sock(ng, "DecalColor", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     _gt_ng_sock(ng, "ColorA", "INPUT", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     _gt_ng_sock(ng, "ColorB", "INPUT", "NodeSocketColor", (0.0, 0.0, 0.0, 1.0))
     _gt_ng_sock(ng, "ColorOverride", "INPUT", "NodeSocketFloat", 0.0)
     _gt_ng_sock(ng, "Color", "OUTPUT", "NodeSocketColor")
-    gi = ng.nodes.new("NodeGroupInput")
+    gi = _dr_ops.new_operation(ng.nodes, 'NodeGroupInput', None, stage='Source', role='Decal.Tint.Input')
     gi.location = (-700.0, 0.0)
-    go = ng.nodes.new("NodeGroupOutput")
+    go = _dr_ops.new_operation(ng.nodes, 'NodeGroupOutput', None, stage='Output', role='Decal.Tint.Output')
     go.location = (520.0, 0.0)
     links = ng.links
-    sep = ng.nodes.new("ShaderNodeSeparateColor")
+    sep = _dr_ops.new_operation(ng.nodes, 'ShaderNodeSeparateColor', None, stage='LayerInputs', role='Decal.Tint.SeparateChannels')
     sep.location = (-480.0, 80.0)
     links.new(gi.outputs["DecalColor"], sep.inputs[0])
-    add = ng.nodes.new("ShaderNodeMath")
+    add = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', None, stage='LayerInputs', role='Decal.Tint.RedGreenSum')
     add.operation = "ADD"
     add.location = (-280.0, 120.0)
     links.new(sep.outputs[0], add.inputs[0])
     links.new(sep.outputs[1], add.inputs[1])
-    add2 = ng.nodes.new("ShaderNodeMath")
+    add2 = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', None, stage='LayerInputs', role='Decal.Tint.RGBSum')
     add2.operation = "ADD"
     add2.location = (-100.0, 80.0)
     links.new(add.outputs[0], add2.inputs[0])
     links.new(sep.outputs[2], add2.inputs[1])
-    div = ng.nodes.new("ShaderNodeMath")
+    div = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', None, stage='LayerInputs', role='Decal.Tint.MeanRGB')
     div.operation = "DIVIDE"
     div.location = (80.0, 80.0)
     links.new(add2.outputs[0], div.inputs[0])
     div.inputs[1].default_value = 3.0
-    cmp = ng.nodes.new("ShaderNodeMath")
+    cmp = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMath', None, stage='LayerInputs', role='Decal.Tint.DarkPixelThreshold')
     cmp.operation = "LESS_THAN"
     cmp.location = (260.0, 80.0)
     links.new(div.outputs[0], cmp.inputs[0])
     cmp.inputs[1].default_value = 0.075
-    pick = ng.nodes.new("ShaderNodeMix")
+    pick = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMix', None, stage='LayerInputs', role='Decal.Tint.SelectAB')
     pick.data_type = "RGBA"
     pick.blend_type = "MIX"
     pick.location = (260.0, -80.0)
     _link_mix(links, pick, cmp.outputs[0], gi.outputs["ColorA"], gi.outputs["ColorB"])
-    ov = ng.nodes.new("ShaderNodeMix")
+    ov = _dr_ops.new_operation(ng.nodes, 'ShaderNodeMix', None, stage='LayerInputs', role='Decal.Tint.ColorOverride')
     ov.data_type = "RGBA"
     ov.blend_type = "MIX"
     ov.location = (480.0, 0.0)
@@ -1514,7 +1346,7 @@ def ensure_gt_decal_tint_group():
         -700.0,
         280.0,
     )
-    return ng
+    return _dr_ops.finish_definition(ng)
 
 
 def _decal_rgb3(val):
@@ -1542,12 +1374,13 @@ def _sock_color(nd):
         return nd.outputs[0] if nd.outputs else None
 
 
+@_dr_ops.operation_build
 def _clamp01(nodes, links, sock, name, x, y):
-    cl = nodes.new("ShaderNodeClamp")
-    cl.name = name
+    cl = _dr_ops.new_operation(nodes, 'ShaderNodeClamp', name, stage=None, role=None)
+    pass
     try:
-        cl.inputs["Min"].default_value = 0.0
-        cl.inputs["Max"].default_value = 1.0
+        _assign(cl.inputs["Min"], "default_value", 0.0)
+        _assign(cl.inputs["Max"], "default_value", 1.0)
     except Exception:
         cl.inputs[1].default_value = 0.0
         cl.inputs[2].default_value = 1.0
@@ -1563,18 +1396,36 @@ def _clamp01(nodes, links, sock, name, x, y):
 
 
 def _value(nodes, name, label, val, x, y):
-    nd = nodes.new("ShaderNodeValue")
-    nd.name = name
-    nd.label = label
-    nd.outputs[0].default_value = float(val)
+    nd = _dr_ops.new_operation(nodes, "ShaderNodeValue", name)
+    _dr_ops.set_label(nd, label)
+    _assign(nd.outputs[0], "default_value", float(val))
     place(nd, x, y)
     return nd.outputs[0]
 
 
+def _param(nodes, key, val, x, y):
+    """The one Value node carrying MI scalar ``key`` (param_bind rewrites it on a colourway swap)."""
+    name = f"P:{key}"
+    nd = _dr_primary_candidate.lookup(nodes).get(name) or nodes.get(name)
+    if nd is not None:
+        return nd.outputs[0]
+    return _value(nodes, name, key, val, x, y)
+
+
+def _param_product(nodes, links, socks, name, x, y):
+    """Product of scalar sockets with Math nodes (bound tilings stay live, no baked scale)."""
+    out = socks[0]
+    for i, s in enumerate(socks[1:]):
+        nd = _math(nodes, "MULTIPLY", f"{name}_x{i}", x, y, hide=True)
+        links.new(out, nd.inputs[0])
+        links.new(s, nd.inputs[1])
+        out = nd.outputs[0]
+    return out
+
+
 def _rgb(nodes, name, label, rgba, x, y):
-    nd = nodes.new("ShaderNodeRGB")
-    nd.name = name
-    nd.label = label
+    nd = _dr_ops.new_operation(nodes, "ShaderNodeRGB", name)
+    _dr_ops.set_label(nd, label)
     nd.outputs[0].default_value = (
         float(rgba[0]),
         float(rgba[1]),
@@ -1585,84 +1436,55 @@ def _rgb(nodes, name, label, rgba, x, y):
     return nd
 
 
+
+
 def mux_by_zone(nodes, links, zone_idx, zone_socks: dict, *, dtype, start, prefix, x_fn=None, y=None, col0=None, y_fn=None, hide_mix=True, zone_eq=None):
-    """One mix per Colour column on a shared row. Missing zones leave a blank cell.
-
-    Prefer ``zone_eq`` (shared GT_ZoneEq outputs) so the OCM Maximum node does not
-    grow a noodle to every COMPARE.
-    """
-    acc = start
-    first = None
-    for zone in range(1, 9):
-        src = zone_socks.get(zone)
-        if src is None:
-            continue
-        if first is None:
-            first = zone
-        x = float(x_fn(zone)) if x_fn is not None else float(col0)
-        yy = float(y) if y is not None else float(y_fn(zone))
-        fac = None
-        if zone_eq:
-            fac = zone_eq.get(zone)
-        elif zone_idx is not None:
-            cmp = _math(
-                nodes,
-                "COMPARE",
-                f"{prefix}_eq_z{zone}",
-                x,
-                yy,
-                value=float(zone),
-                hide=True,
-            )
-            try:
-                cmp.inputs[2].default_value = 0.45
-            except Exception:
-                pass
-            links.new(zone_idx, cmp.inputs[0])
-            fac = cmp.outputs[0]
-        mix = _new_mix(
-            nodes,
-            f"{prefix}_z{zone}",
-            f"{prefix} {zone}",
-            x,
-            yy,
-            dtype=dtype,
-            hide=hide_mix,
-        )
-        if fac is None:
-            try:
-                mix.inputs[0].default_value = 1.0 if zone == first else 0.0
-            except Exception:
-                pass
-        acc = _link_mix(links, mix, fac, acc, src)
-        if zone_eq:
-            factor, _a, _b, _r = mix_io(mix)
-            _collapse_broadcast(factor)
-        lock_layout(mix)
-    return acc
+    """Stable public API: balanced one-hot or general contribution selectors."""
+    return _dr_primary_candidate.mux(
+        None, nodes, links, zone_idx, zone_socks,
+        dtype=dtype, start=start, prefix=prefix, x_fn=x_fn, y=y,
+        col0=col0, y_fn=y_fn, hide_mix=hide_mix, zone_eq=zone_eq,
+    )
 
 
-def _slice_sample(nodes, links, cache, png_list, slice_idx, uv, tile, *, non_color, name, x, y):
-    if slice_idx is None or png_list is None:
+@_dr_ops.operation_build
+def _slice_sample(nodes, links, cache, png_list, slice_idx, uv, tile, *, non_color, name, x, y, param=None, group=None):
+    if not png_list and not param:
         return None
+    png_list = png_list or []
     try:
-        idx = int(round(float(slice_idx)))
+        idx = int(round(float(slice_idx))) if slice_idx is not None else -1
     except (TypeError, ValueError):
-        return None
-    if idx < 0:
-        return None
-    key = (id(png_list), idx, id(uv) if uv is not None else 0, bool(non_color))
+        idx = -1
+    # A bound sample is its own node: two zones sharing one would swap to a single slice.
+    key = (id(png_list), idx, id(uv) if uv is not None else 0, float(tile), bool(non_color), param)
     if key in cache:
         return cache[key]
-    path = textures.find_slice_png(png_list, idx)
+    path = textures.find_slice_png(png_list, idx) if idx >= 0 else ""
     if not path:
-        return None
+        # Unused here but swappable: bound sample with a neutral 1x1 image (param_bind.neutral_image).
+        if not param or group not in ("masks", "normals"):
+            return None
+        from . import param_bind as _pb
+        nd = _dr_ops.new_operation(nodes, "ShaderNodeTexImage", name)
+        nd.image = _pb.neutral_image(group)
+        place(nd, x, y, hide=True)
+        nd.hide = True
+        if uv is not None:   # same UV path as a real slice, so a swapped-in slice samples correctly
+            try:
+                links.new(orient_uv(nodes, links, uv, f"{name}_ImageUV", x - 300.0, y), nd.inputs["Vector"])
+            except Exception:
+                pass
+        nd["dr.texture_index_param"] = param
+        nd["dr.texture_group"] = group
+        cache[key] = nd
+        return nd
     mapped = uv
     if abs(float(tile) - 1.0) > 1e-3 and uv is not None:
-        mp = nodes.new("ShaderNodeMapping")
-        mp.vector_type = "POINT"
-        mp.name = f"{name}_map"
-        mp.label = f"{name} tile {tile:g}"
+        mp = _dr_ops.new_operation(nodes, 'ShaderNodeMapping', f'{name}_map', stage='Coordinates', role=None)
+        _assign(mp, "vector_type", "POINT")
+        pass
+        _dr_ops.set_label(mp, f'{name} tile {tile:g}')
         mp.inputs["Scale"].default_value = (float(tile), float(tile), 1.0)
         place(mp, x - _GT_DX * 0.55, y)
         try:
@@ -1677,13 +1499,19 @@ def _slice_sample(nodes, links, cache, png_list, slice_idx, uv, tile, *, non_col
     nd.hide = True
     if mapped is not None:
         try:
-            links.new(mapped, nd.inputs["Vector"])
+            image_uv = orient_uv(nodes, links, mapped, f"{name}_ImageUV", x - 300.0, y)
+            links.new(image_uv, nd.inputs["Vector"])
         except Exception:
             pass
+    if param:
+        # param_bind swaps the layer image when a colourway changes the ID (or the whole array).
+        nd["dr.texture_index_param"] = param
+        nd["dr.texture_group"] = group or ""
     cache[key] = nd
     return nd
 
 
+@_dr_ops.operation_build
 def _uv_scaled(nodes, links, uv, scale_sock, name, x, y, *, z_one=False, hide=True):
     """UV × uniform scale via Mapping.
 
@@ -1691,10 +1519,10 @@ def _uv_scaled(nodes, links, uv, scale_sock, name, x, y, *, z_one=False, hide=Tr
     Mapping Scale (Blender broadcasts float→vector). Only ``z_one`` (tile with
     Z locked to 1) still needs CombineXYZ.
     """
-    mp = nodes.new("ShaderNodeMapping")
-    mp.vector_type = "POINT"
-    mp.name = name
-    mp.label = name.replace("_", " ")
+    mp = _dr_ops.new_operation(nodes, 'ShaderNodeMapping', name, stage='Coordinates', role=None)
+    _assign(mp, "vector_type", "POINT")
+    pass
+    _dr_ops.set_label(mp, name.replace('_', ' '))
     mp.hide = hide
     place(mp, x, y, hide=hide)
     try:
@@ -1702,9 +1530,9 @@ def _uv_scaled(nodes, links, uv, scale_sock, name, x, y, *, z_one=False, hide=Tr
     except Exception:
         pass
     if z_one:
-        comb = nodes.new("ShaderNodeCombineXYZ")
-        comb.name = f"{name}_xyz"
-        comb.label = f"{name} scale"
+        comb = _dr_ops.new_operation(nodes, 'ShaderNodeCombineXYZ', f'{name}_xyz', stage='Coordinates', role=None)
+        pass
+        _dr_ops.set_label(comb, f'{name} scale')
         comb.hide = hide
         try:
             links.new(scale_sock, comb.inputs[0])
@@ -1728,23 +1556,34 @@ def _uv_scaled(nodes, links, uv, scale_sock, name, x, y, *, z_one=False, hide=Tr
     return mp.outputs["Vector"]
 
 
+@_dr_ops.operation_build
 def _mask_float(color_sock):
-    """TA Masks roughness as FLOAT without Separate Color.
+    """Sample the authored mask R channel, independent of G/B and alpha."""
+    source = color_sock.node
+    tree = source.id_data
+    name = f"{_dr_ops.legacy_name(source)}_MaskRed"
+    sep = _dr_primary_candidate.lookup(tree.nodes).get(name)
+    if sep is None:
+        sep = _dr_ops.new_operation(tree.nodes, 'ShaderNodeSeparateColor', name, stage=None, role=None)
+        pass
+        _dr_ops.set_label(sep, 'TextureArray mask R')
+        place(sep, source.location.x + 180.0, source.location.y, hide=True)
+        tree.links.new(color_sock, sep.inputs["Color"])
+    return sep.outputs["Red"]
 
-    Snooper samples ``Masks.r`` (default.frag ArcRoughness / crease|edge rough).
-    Cooked TA_*_Masks slices are grayscale Non-Color, so R=G=B and Blender's
-    Color→Float (luminance) matches ``.r``. Skip one Separate per zone sample.
-    """
-    return color_sock
 
-
+@_dr_ops.operation_build
 def orient_uv(nodes, links, uv_sock, name, x, y, *, hide=True):
-    """Revamped ``UV orientation``: sample ``(u, 1-v, w)`` (Unreal V from PSK)."""
+    """Convert between imported Blender UV and native Unreal UV: (u, 1-v, w).
+
+    Transform/tile in native space, then call again before PNG sampling.
+    The final flip must follow tiling: 1-T*v, never T*(1-v).
+    """
     if uv_sock is None:
         return None
-    sep = nodes.new("ShaderNodeSeparateXYZ")
-    sep.name = f"{name}_sep"
-    sep.label = "UV → XYZ"
+    sep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateXYZ', f'{name}_sep', stage='Coordinates', role=None)
+    pass
+    _dr_ops.set_label(sep, 'UV → XYZ')
     place(sep, x - 180.0, y, hide=hide)
     try:
         links.new(uv_sock, sep.inputs[0])
@@ -1759,9 +1598,9 @@ def orient_uv(nodes, links, uv_sock, name, x, y, *, hide=True):
         links.new(sep.outputs[1], inv.inputs[1])
     except Exception:
         return uv_sock
-    comb = nodes.new("ShaderNodeCombineXYZ")
-    comb.name = name
-    comb.label = "UV (Unreal V)"
+    comb = _dr_ops.new_operation(nodes, 'ShaderNodeCombineXYZ', name, stage='Coordinates', role=None)
+    pass
+    _dr_ops.set_label(comb, 'UV (Unreal V)')
     place(comb, x + 180.0, y, hide=hide)
     try:
         links.new(sep.outputs[0], comb.inputs[0])
@@ -1772,14 +1611,15 @@ def orient_uv(nodes, links, uv_sock, name, x, y, *, hide=True):
     return comb.outputs[0]
 
 
+@_dr_ops.operation_build
 def uv_map_socket(nodes, layer_name, name, x, y, *, hide=False, links=None, orient=True):
     """Named UV Map socket (PSK layers are renamed to UV0 / UV1).
 
     When ``orient`` and ``links`` are set, apply Revamped V-flip (1-v).
     """
-    n = nodes.new("ShaderNodeUVMap")
-    n.name = name
-    n.label = layer_name
+    n = _dr_ops.new_operation(nodes, 'ShaderNodeUVMap', name, stage='Source', role=None)
+    pass
+    _dr_ops.set_label(n, layer_name)
     try:
         n.uv_map = str(layer_name or "UV0")
     except Exception:
@@ -1791,139 +1631,24 @@ def uv_map_socket(nodes, layer_name, name, x, y, *, hide=False, links=None, orie
     return sock
 
 
+@_dr_ops.operation_build
 def ensure_gt_dx_decode_group():
-    """DX RG normal: n.xy = tex.rg*2-1, n.z = sqrt(max(1-dot(xy,xy),0))."""
-    ng, created = _gt_ng_fresh("GT_DxNormalDecode", 1)
-    if not created:
-        return ng
-    _gt_ng_sock(ng, "Color", "INPUT", "NodeSocketColor", (0.5, 0.5, 1.0, 1.0))
-    _gt_ng_sock(ng, "Normal", "OUTPUT", "NodeSocketVector", (0.0, 0.0, 1.0))
-    gi = ng.nodes.new("NodeGroupInput")
-    gi.location = (-720.0, 0.0)
-    go = ng.nodes.new("NodeGroupOutput")
-    go.location = (1060.0, 0.0)
-    links = ng.links
-    sep = ng.nodes.new("ShaderNodeSeparateColor")
-    sep.location = (-500.0, 0.0)
-    links.new(gi.outputs["Color"], sep.inputs[0])
-
-    def twice_minus_one(src, loc):
-        mul = ng.nodes.new("ShaderNodeMath")
-        mul.operation = "MULTIPLY"
-        mul.location = loc
-        mul.inputs[1].default_value = 2.0
-        links.new(src, mul.inputs[0])
-        sub = ng.nodes.new("ShaderNodeMath")
-        sub.operation = "SUBTRACT"
-        sub.location = (loc[0] + 180.0, loc[1])
-        links.new(mul.outputs[0], sub.inputs[0])
-        sub.inputs[1].default_value = 1.0
-        return sub.outputs[0]
-
-    x = twice_minus_one(sep.outputs[0], (-280.0, 80.0))
-    y = twice_minus_one(sep.outputs[1], (-280.0, -80.0))
-    xx = ng.nodes.new("ShaderNodeMath")
-    xx.operation = "MULTIPLY"
-    xx.location = (140.0, 80.0)
-    links.new(x, xx.inputs[0])
-    links.new(x, xx.inputs[1])
-    yy = ng.nodes.new("ShaderNodeMath")
-    yy.operation = "MULTIPLY"
-    yy.location = (140.0, -80.0)
-    links.new(y, yy.inputs[0])
-    links.new(y, yy.inputs[1])
-    add = ng.nodes.new("ShaderNodeMath")
-    add.operation = "ADD"
-    add.location = (320.0, 0.0)
-    links.new(xx.outputs[0], add.inputs[0])
-    links.new(yy.outputs[0], add.inputs[1])
-    one_m = ng.nodes.new("ShaderNodeMath")
-    one_m.operation = "SUBTRACT"
-    one_m.location = (500.0, 40.0)
-    one_m.inputs[0].default_value = 1.0
-    links.new(add.outputs[0], one_m.inputs[1])
-    mx = ng.nodes.new("ShaderNodeMath")
-    mx.operation = "MAXIMUM"
-    mx.location = (500.0, -80.0)
-    links.new(one_m.outputs[0], mx.inputs[0])
-    mx.inputs[1].default_value = 0.0
-    sq = ng.nodes.new("ShaderNodeMath")
-    sq.operation = "SQRT"
-    sq.location = (680.0, 0.0)
-    links.new(mx.outputs[0], sq.inputs[0])
-    comb = ng.nodes.new("ShaderNodeCombineXYZ")
-    comb.location = (860.0, 0.0)
-    links.new(x, comb.inputs[0])
-    links.new(y, comb.inputs[1])
-    links.new(sq.outputs[0], comb.inputs[2])
-    links.new(comb.outputs[0], go.inputs["Normal"])
-    return ng
+    return _dr_stage_composer('decode')
 
 
+@_dr_ops.operation_build
 def ensure_gt_rnm_group():
-    """Reoriented normal mapping: t=base+(0,0,1), u=detail*(-1,-1,1)."""
-    ng, created = _gt_ng_fresh("GT_RnmNormals", 1)
-    if not created:
-        return ng
-    _gt_ng_sock(ng, "Base", "INPUT", "NodeSocketVector", (0.0, 0.0, 1.0))
-    _gt_ng_sock(ng, "Detail", "INPUT", "NodeSocketVector", (0.0, 0.0, 1.0))
-    _gt_ng_sock(ng, "Normal", "OUTPUT", "NodeSocketVector", (0.0, 0.0, 1.0))
-    gi = ng.nodes.new("NodeGroupInput")
-    gi.location = (-640.0, 0.0)
-    go = ng.nodes.new("NodeGroupOutput")
-    go.location = (880.0, 0.0)
-    links = ng.links
-    t = ng.nodes.new("ShaderNodeVectorMath")
-    t.operation = "ADD"
-    t.location = (-360.0, 80.0)
-    links.new(gi.outputs["Base"], t.inputs[0])
-    t.inputs[1].default_value = (0.0, 0.0, 1.0)
-    u = ng.nodes.new("ShaderNodeVectorMath")
-    u.operation = "MULTIPLY"
-    u.location = (-360.0, -80.0)
-    links.new(gi.outputs["Detail"], u.inputs[0])
-    u.inputs[1].default_value = (-1.0, -1.0, 1.0)
-    dot = ng.nodes.new("ShaderNodeVectorMath")
-    dot.operation = "DOT_PRODUCT"
-    dot.location = (-80.0, 80.0)
-    links.new(t.outputs[0], dot.inputs[0])
-    links.new(u.outputs[0], dot.inputs[1])
-    split = ng.nodes.new("ShaderNodeSeparateXYZ")
-    split.location = (-80.0, -80.0)
-    links.new(t.outputs[0], split.inputs[0])
-    div = ng.nodes.new("ShaderNodeMath")
-    div.operation = "DIVIDE"
-    div.location = (140.0, 40.0)
-    links.new(dot.outputs["Value"], div.inputs[0])
-    links.new(split.outputs[2], div.inputs[1])
-    scaled = ng.nodes.new("ShaderNodeVectorMath")
-    scaled.operation = "SCALE"
-    scaled.location = (340.0, 80.0)
-    links.new(t.outputs[0], scaled.inputs[0])
-    try:
-        links.new(div.outputs[0], scaled.inputs[3])
-    except Exception:
-        links.new(div.outputs[0], scaled.inputs[1])
-    sub = ng.nodes.new("ShaderNodeVectorMath")
-    sub.operation = "SUBTRACT"
-    sub.location = (520.0, 20.0)
-    links.new(scaled.outputs[0], sub.inputs[0])
-    links.new(u.outputs[0], sub.inputs[1])
-    nrm = ng.nodes.new("ShaderNodeVectorMath")
-    nrm.operation = "NORMALIZE"
-    nrm.location = (700.0, 20.0)
-    links.new(sub.outputs[0], nrm.inputs[0])
-    links.new(nrm.outputs[0], go.inputs["Normal"])
-    return ng
+    return _dr_stage_composer('rnm')
 
 
+@_dr_ops.operation_build
 def _decode_dx_color(nodes, links, color_sock, name, x, y):
     if color_sock is None:
         return None
-    g = nodes.new("ShaderNodeGroup")
+    g = _dr_ops.new_operation(nodes, 'ShaderNodeGroup', name, stage=None, role=None)
     g.node_tree = ensure_gt_dx_decode_group()
-    g.name = name
-    g.label = "DX RG decode"
+    pass
+    _dr_ops.set_label(g, 'DX RG decode')
     place(g, x, y, hide=True)
     try:
         links.new(color_sock, g.inputs["Color"])
@@ -1935,13 +1660,14 @@ def _decode_dx_color(nodes, links, color_sock, name, x, y):
         return g.outputs[0]
 
 
+@_dr_ops.operation_build
 def _tangent_up(nodes, name, x, y):
-    c = nodes.new("ShaderNodeCombineXYZ")
-    c.name = name
-    c.label = "tangent +Z"
-    c.inputs[0].default_value = 0.0
-    c.inputs[1].default_value = 0.0
-    c.inputs[2].default_value = 1.0
+    c = _dr_ops.new_operation(nodes, 'ShaderNodeCombineXYZ', name, stage=None, role=None)
+    pass
+    _dr_ops.set_label(c, 'tangent +Z')
+    _assign(c.inputs[0], "default_value", 0.0)
+    _assign(c.inputs[1], "default_value", 0.0)
+    _assign(c.inputs[2], "default_value", 1.0)
     place(c, x, y, hide=True)
     return c.outputs[0]
 
@@ -1954,40 +1680,17 @@ def _clamp_signed(nodes, links, sock, name, x, y):
     return mx.outputs[0]
 
 
-def _wear_mask(nodes, links, raw, amount, softness, name, x, y):
-    """threshold = amount*(1+softness)-softness; then 1 - (raw-threshold)/softness."""
-    kind = "Crease" if "crease" in (name or "").casefold() else "Edge"
-    amt = _value(nodes, f"{name}_amt", f"{kind} amount", float(amount), x - 720.0, y)
-    sof = _value(nodes, f"{name}_soft", f"{kind} softness", float(softness), x - 720.0, y - 40.0)
-    one_s = _math(nodes, "ADD", f"{name}_1s", x - 520.0, y, value=1.0, hide=True)
-    links.new(sof, one_s.inputs[0])
-    mul = _math(nodes, "MULTIPLY", f"{name}_mul", x - 360.0, y, hide=True)
-    links.new(amt, mul.inputs[0])
-    links.new(one_s.outputs[0], mul.inputs[1])
-    thr = _math(nodes, "SUBTRACT", f"{name}_thr", x - 200.0, y, hide=True)
-    links.new(mul.outputs[0], thr.inputs[0])
-    links.new(sof, thr.inputs[1])
-    if float(softness) <= 1e-6:
-        lt = _math(nodes, "LESS_THAN", name, x, y, hide=True)
-        links.new(raw, lt.inputs[0])
-        links.new(thr.outputs[0], lt.inputs[1])
-        return lt.outputs[0]
-    sub = _math(nodes, "SUBTRACT", f"{name}_d", x - 40.0, y, hide=True)
-    links.new(raw, sub.inputs[0])
-    links.new(thr.outputs[0], sub.inputs[1])
-    div = _math(nodes, "DIVIDE", f"{name}_div", x + 120.0, y, hide=True)
-    links.new(sub.outputs[0], div.inputs[0])
-    links.new(sof, div.inputs[1])
-    inv = _math(nodes, "SUBTRACT", f"{name}_inv", x + 280.0, y, hide=True)
-    inv.inputs[0].default_value = 1.0
-    links.new(div.outputs[0], inv.inputs[1])
-    return _clamp01(nodes, links, inv.outputs[0], name, x + 440.0, y)
+def _wear_mask(nodes, links, raw, amount, softness, name, x, y, *, decal_wear=None):
+    from . import dr_layered_composer
+    import sys
+    return dr_layered_composer.build_wear(sys.modules[__name__],nodes,links,raw,amount,softness,name,x,y,decal_wear=decal_wear)
 
 
+@_dr_ops.operation_build
 def _quarter_turn_normal(nodes, links, vec, uv0, name, x, y):
     """Rotate tangent XY by floor(UV0.u) * pi/2 (M_Character_Layered)."""
-    sep = nodes.new("ShaderNodeSeparateXYZ")
-    sep.name = f"{name}_uv"
+    sep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateXYZ', f'{name}_uv', stage=None, role=None)
+    pass
     place(sep, x - 520.0, y, hide=True)
     links.new(uv0, sep.inputs[0])
     flr = _math(nodes, "FLOOR", f"{name}_floor", x - 360.0, y, hide=True)
@@ -1998,8 +1701,8 @@ def _quarter_turn_normal(nodes, links, vec, uv0, name, x, y):
     links.new(ang.outputs[0], sn.inputs[0])
     co = _math(nodes, "COSINE", f"{name}_cos", x - 40.0, y - 40.0, hide=True)
     links.new(ang.outputs[0], co.inputs[0])
-    nsep = nodes.new("ShaderNodeSeparateXYZ")
-    nsep.name = f"{name}_n"
+    nsep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateXYZ', f'{name}_n', stage=None, role=None)
+    pass
     place(nsep, x - 200.0, y + 160.0, hide=True)
     links.new(vec, nsep.inputs[0])
     nx_co = _math(nodes, "MULTIPLY", f"{name}_nxco", x + 120.0, y + 80.0, hide=True)
@@ -2020,8 +1723,8 @@ def _quarter_turn_normal(nodes, links, vec, uv0, name, x, y):
     ny = _math(nodes, "ADD", f"{name}_ny", x + 280.0, y - 40.0, hide=True)
     links.new(nx_sn.outputs[0], ny.inputs[0])
     links.new(ny_co.outputs[0], ny.inputs[1])
-    comb = nodes.new("ShaderNodeCombineXYZ")
-    comb.name = name
+    comb = _dr_ops.new_operation(nodes, 'ShaderNodeCombineXYZ', name, stage=None, role=None)
+    pass
     place(comb, x + 440.0, y, hide=True)
     links.new(nx.outputs[0], comb.inputs[0])
     links.new(ny.outputs[0], comb.inputs[1])
@@ -2029,10 +1732,11 @@ def _quarter_turn_normal(nodes, links, vec, uv0, name, x, y):
     return comb.outputs[0]
 
 
+@_dr_ops.operation_build
 def _encode_dx_for_nmap(nodes, links, vec, name, x, y):
     """Encode DX tangent vector to Blender Normal Map color (Y inverted)."""
-    sep = nodes.new("ShaderNodeSeparateXYZ")
-    sep.name = f"{name}_sep"
+    sep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateXYZ', f'{name}_sep', stage=None, role=None)
+    pass
     place(sep, x - 280.0, y, hide=True)
     links.new(vec, sep.inputs[0])
     hx = _math(nodes, "MULTIPLY", f"{name}_hx", x - 80.0, y + 80.0, value=0.5, hide=True)
@@ -2048,8 +1752,8 @@ def _encode_dx_for_nmap(nodes, links, vec, name, x, y):
     links.new(sep.outputs[2], hz.inputs[0])
     pz = _math(nodes, "ADD", f"{name}_pz", x + 80.0, y - 80.0, value=0.5, hide=True)
     links.new(hz.outputs[0], pz.inputs[0])
-    comb = nodes.new("ShaderNodeCombineColor")
-    comb.name = name
+    comb = _dr_ops.new_operation(nodes, 'ShaderNodeCombineColor', name, stage=None, role=None)
+    pass
     place(comb, x + 260.0, y, hide=True)
     links.new(px.outputs[0], comb.inputs[0])
     links.new(py.outputs[0], comb.inputs[1])
@@ -2107,6 +1811,7 @@ def _link_zone_picks(nodes, links, zone_idx, zone_outputs, rough_socks, metal_so
     return albedo, roughness, metallic, detail
 
 
+@_dr_ops.operation_build
 def _frame_gt_nodes(nodes) -> None:
     """Colour/decal grids are the layout. Only group the Principled output cluster."""
 
@@ -2117,7 +1822,7 @@ def _frame_gt_nodes(nodes) -> None:
                 continue
             if getattr(n, "parent", None) is not None:
                 continue
-            name = getattr(n, "name", "") or ""
+            name = _dr_ops.legacy_name(n) or ""
             if pred(name):
                 out.append(n)
         return out
@@ -2125,9 +1830,9 @@ def _frame_gt_nodes(nodes) -> None:
     def _mk(fname, label, members):
         if not members:
             return
-        fr = nodes.new("NodeFrame")
-        fr.name = fname
-        fr.label = label
+        fr = _dr_ops.new_operation(nodes, 'NodeFrame', fname, stage='Output', role='Layout.OutputLegacy')
+        pass
+        _dr_ops.set_label(fr, label)
         fr.label_size = 18
         for n in members:
             wx, wy = world_loc(n)
@@ -2145,6 +1850,57 @@ def _frame_gt_nodes(nodes) -> None:
     )
 
 
+
+def _layered_scalar_response(nodes, links, mi_data, zone_eq, crease, edge,
+                             suffix, default, *, x, y):
+    from . import dr_layered_composer
+    import sys
+    return dr_layered_composer.build_scalar_response(sys.modules[__name__],nodes,links,mi_data,zone_eq,crease,edge,suffix,default,x=x,y=y)
+
+
+@_dr_ops.operation_build
+def _dry_cloth_specular(nodes, links, specular, mi_data, zone_eq, world_normal):
+    from . import dr_layered_composer
+    import sys
+    return dr_layered_composer.build_cloth(sys.modules[__name__],nodes,links,specular,mi_data,zone_eq,world_normal)
+
+
+def _hue_variation(nodes, links, albedo, zone_scalars, zone_eq, uv1, tiling, path):
+    """One native HueVariation RGB sample after wear; no palette-mask gate."""
+    from . import clothing as C
+    strengths, scales = {}, {}
+    if not path or not any(C._mi_layer_float(zone_scalars, z, "HueVariationStrength", 0) != 0
+                           for z in range(1, 9)):
+        return albedo
+    for zone in range(1, 9):
+        strengths[zone] = _value(
+            nodes, f"GT_z{zone}_HueStrength", "HueVariationStrength",
+            C._mi_layer_float(zone_scalars, zone, "HueVariationStrength", 0) * .1,
+            colour_col_x(zone), colour_row_y("ov_edge") - 200,
+        )
+        scale = tiling * C._mi_layer_float(zone_scalars, zone, "DetailTiling", 1) * C._mi_layer_float(
+            zone_scalars, zone, "HueVariationTiling", 1)
+        scales[zone] = _value(nodes, f"GT_z{zone}_HueTile", "Native Hue UV1 scale", scale,
+                             colour_col_x(zone), colour_row_y("ov_edge") - 400)
+    zero = _value(nodes, "GT_Hue_Zero", "Hue off", 0, wear_x(), 0)
+    one = _value(nodes, "GT_Hue_One", "Hue default scale", 1, wear_x(), 0)
+    amount = mux_by_zone(nodes, links, None, strengths, dtype="FLOAT", start=zero,
+                         prefix="GT_mux_HueStrength", zone_eq=zone_eq, x_fn=colour_col_x,
+                         y=colour_row_y("ov_edge") - 200)
+    scale = mux_by_zone(nodes, links, None, scales, dtype="FLOAT", start=one,
+                        prefix="GT_mux_HueTile", zone_eq=zone_eq, x_fn=colour_col_x,
+                        y=colour_row_y("ov_edge") - 400)
+    native_uv = _uv_scaled(nodes, links, uv1, scale, "GT_Hue_NativeUV", wear_x(), 0, z_one=True)
+    # UV1 is already restored to native UE coordinates by uv_map_socket.
+    image_uv = orient_uv(nodes, links, native_uv, "GT_Hue_ImageUV", wear_x(), 0)
+    image = make_tex(nodes, path, "GT_HueVariation", (wear_x(), 0), non_color=False)
+    links.new(image_uv, image.inputs["Vector"])
+    mix = _new_mix(nodes, "GT_HueVariationMix", "Native wear + 0.1*S*(HueNoise-wear)",
+                   wear_x(), 0)
+    mix.clamp_factor = False
+    return _link_mix(links, mix, amount, albedo, image.outputs["Color"])
+
+@_dr_ops.operation_build
 def finish_gt_outfit_graph(
     *,
     nodes,
@@ -2167,6 +1923,7 @@ def finish_gt_outfit_graph(
     breakup_node=None,
     colortex_outputs: dict | None = None,
     pattern_png_lists=None,
+    hue_variation_path: str = "",
 ):
     """Mux cooked colour + PBR into Principled. Returns the BSDF node."""
     from . import clothing as C
@@ -2194,8 +1951,6 @@ def finish_gt_outfit_graph(
         nodes, "UV1", "GT_UV1", mx_uv, shared_row_y("c_rough"), links=links, orient=True,
     )
     tiling = C._mi_global_float(zone_scalars, "Tiling", 1.0, mi_data=mi_data)
-    if tiling <= 1e-6:
-        tiling = 1.0
     uv_bus = {
         "e_rough": uv1,
         "c_rough": uv1,
@@ -2213,9 +1968,9 @@ def finish_gt_outfit_graph(
     ocm_r = ocm_g = None
     ocm_sep = None
     if ocm_node is not None and getattr(ocm_node, "outputs", None):
-        ocm_sep = nodes.new("ShaderNodeSeparateColor")
-        ocm_sep.name = "GT_OCM_Separate"
-        ocm_sep.label = "OCM R=occ G=curv B=mid"
+        ocm_sep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateColor', 'GT_OCM_Separate', stage=None, role=None)
+        pass
+        _dr_ops.set_label(ocm_sep, 'OCM R=occ G=curv B=mid')
         place(ocm_sep, mx_ocm, shared_row_y("zone_eq"), lock=True)
         try:
             links.new(ocm_node.outputs["Color"], ocm_sep.inputs[0])
@@ -2240,11 +1995,11 @@ def finish_gt_outfit_graph(
         links.new(mid_sock, mul.inputs[0])
         add = _math(nodes, "ADD", "GT_mid_x8_half", zx - 600.0, shared_row_y("zone_eq"), value=0.5, hide=True)
         links.new(mul.outputs[0], add.inputs[0])
-        flr = nodes.new("ShaderNodeMath")
+        flr = _dr_ops.new_operation(nodes, 'ShaderNodeMath', 'GT_zone_floor', stage=None, role=None)
         flr.operation = "FLOOR"
-        flr.name = "GT_zone_floor"
+        pass
         # Revamped: raw floor(mid×8+0.5); COMPARE to Layer N (1–8), no 0-based shift.
-        flr.label = "zone 1–8 (floor)"
+        _dr_ops.set_label(flr, 'zone 1–8 (floor)')
         flr.hide = False
         place(flr, zx, shared_row_y("zone_eq"), hide=False)
         links.new(add.outputs[0], flr.inputs[0])
@@ -2253,6 +2008,12 @@ def finish_gt_outfit_graph(
         zone_broadcast = zone_idx
         _ = zeq_node
 
+    # Native decal inputs are shared across colour, surface and normal stages.
+    from . import dr_layered_decals as decal_comp
+    import sys
+    decal_slots = _build_gt_decals(C, nodes, links, zone_broadcast, decals or [],
+        decal_folder, search_dirs or [], decal_x, decal_y, ocm_node=ocm_node)
+    decal_wear = decal_comp.wear_multiplier(sys.modules[__name__], nodes, links, decal_slots)
     crease_fac = None
     edge_fac = None
     body = None
@@ -2265,9 +2026,9 @@ def finish_gt_outfit_graph(
     packed_sep = None
     packed_r = packed_g = packed_b = None
     if base_tex is not None and getattr(base_tex, "outputs", None):
-        packed_sep = nodes.new("ShaderNodeSeparateColor")
-        packed_sep.name = "GT_Packed_Separate"
-        packed_sep.label = "packed R=A/A2 G=crease B=edge"
+        packed_sep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateColor', 'GT_Packed_Separate', stage=None, role=None)
+        pass
+        _dr_ops.set_label(packed_sep, 'packed R=A/A2 G=crease B=edge')
         place(packed_sep, mx_cm, colour_row_y("tex"), hide=True)
         try:
             links.new(base_tex.outputs["Color"], packed_sep.inputs[0])
@@ -2291,11 +2052,12 @@ def finish_gt_outfit_graph(
                 z_one=True, hide=True,
             )
         try:
-            links.new(br_uv, breakup_node.inputs["Vector"])
+            image_uv = orient_uv(nodes, links, br_uv, "GT_Breakup_ImageUV", mx_uv + 500.0, shared_row_y("ocm_wear"))
+            links.new(image_uv, breakup_node.inputs["Vector"])
         except Exception:
             pass
-        bsep = nodes.new("ShaderNodeSeparateColor")
-        bsep.name = "GT_Breakup_sep"
+        bsep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateColor', 'GT_Breakup_sep', stage=None, role=None)
+        pass
         place(bsep, gx - 900.0, shared_row_y("ocm_wear"), hide=True)
         try:
             links.new(breakup_node.outputs["Color"], bsep.inputs[0])
@@ -2321,6 +2083,7 @@ def finish_gt_outfit_graph(
         "base": uv1,
         "mask": uv1,
     }
+    tiling_sock = _param(nodes, "Tiling", tiling, mx_uv, shared_row_y("ta_rough"))
     for zone in range(1, 9):
         tx = colour_col_x(zone)
         bid = C._gt_ta_id(ta_ids, zone, "BaseRoughnessID")
@@ -2331,138 +2094,126 @@ def finish_gt_outfit_graph(
         bn = C._gt_ta_id(ta_ids, zone, "BaseNormalID")
         cn = C._gt_ta_id(ta_ids, zone, "CreaseNormalID")
         en = C._gt_ta_id(ta_ids, zone, "EdgeNormalID")
-        detail_t = C._mi_layer_float(zone_scalars, zone, "DetailTiling", 1.0) or 1.0
-        if detail_t <= 1e-6:
-            detail_t = 1.0
-        base_scale = tiling * detail_t
+        # Tiling × DetailTiling × stage tiling stay live parameter nodes: a colourway swap rewrites them.
+        base_scale = _param_product(nodes, links, [
+            tiling_sock,
+            _param(nodes, f"{zone}_DetailTiling", C._mi_layer_float(zone_scalars, zone, "DetailTiling", 1.0),
+                   mx_uv, shared_row_y("ta_rough")),
+        ], f"GT_z{zone}_DetailScale", mx_uv, shared_row_y("ta_rough"))
 
-        def _stage_uv(stage_tile, row, tag):
-            scale = base_scale * max(float(stage_tile) or 1.0, 1e-6)
-            key = (tag, round(scale, 4))
-            if key in uv_layer:
-                return uv_layer[key]
-            if abs(scale - 1.0) <= 1e-3:
-                uv_layer[key] = uv1
-                return uv1
-            sv = _value(
-                nodes, f"GT_z{zone}_{tag}Tile", tag, scale,
-                mx_uv, colour_row_y(row) if row in ("n_crease", "n_edge", "n_med", "c_rough", "e_rough") else shared_row_y("ta_rough"),
-            )
-            uv_layer[key] = _uv_scaled(
-                nodes, links, uv1, sv, f"GT_z{zone}_{tag}_uv", mx_uv,
-                colour_row_y(row) if row in ("n_crease", "n_edge", "n_med", "c_rough", "e_rough") else shared_row_y("ta_rough"),
-                z_one=True, hide=False,
-            )
-            return uv_layer[key]
+        def _stage_uv(suffix, row, tag):
+            if (zone, tag) in uv_layer:   # per zone: each zone has its own DetailTiling × stage tiling
+                return uv_layer[(zone, tag)]
+            y = colour_row_y(row) if row in ("n_crease", "n_edge", "n_med", "c_rough", "e_rough") else shared_row_y("ta_rough")
+            scale = base_scale
+            if suffix:
+                scale = _param_product(nodes, links, [
+                    base_scale,
+                    _param(nodes, f"{zone}_{suffix}", C._mi_layer_float(zone_scalars, zone, suffix, 1.0), mx_uv, y),
+                ], f"GT_z{zone}_{tag}Tile", mx_uv, y)
+            uv_layer[(zone, tag)] = _uv_scaled(nodes, links, uv1, scale, f"GT_z{zone}_{tag}_uv", mx_uv, y, z_one=True, hide=False)
+            return uv_layer[(zone, tag)]
 
-        uv_base = _stage_uv(C._mi_layer_float(zone_scalars, zone, "BaseRoughnessTiling", 1.0) or 1.0, "rough", "Base")
-        uv_crough = _stage_uv(
-            C._mi_layer_float(zone_scalars, zone, "CreaseRougnessTiling", 1.0) or 1.0, "c_rough", "CRough",
-        )
-        uv_erough = _stage_uv(
-            C._mi_layer_float(zone_scalars, zone, "EdgeRougnessTiling", 1.0) or 1.0, "e_rough", "ERough",
-        )
-        uv_cmask = _stage_uv(
-            C._mi_layer_float(zone_scalars, zone, "CreaseMaskTiling", 1.0) or 1.0, "c_rough", "CMask",
-        )
-        uv_emask = _stage_uv(
-            C._mi_layer_float(zone_scalars, zone, "EdgeMaskTiling", 1.0) or 1.0, "e_rough", "EMask",
-        )
-        uv_bn = _stage_uv(1.0, "n_base", "BaseN")
-        uv_cn = _stage_uv(C._mi_layer_float(zone_scalars, zone, "CreaseNormalTiling", 1.0) or 1.0, "n_crease", "CreaseN")
-        uv_en = _stage_uv(C._mi_layer_float(zone_scalars, zone, "EdgeNormalTiling", 1.0) or 1.0, "n_edge", "EdgeN")
+        uv_base = _stage_uv("BaseRoughnessTiling", "rough", "Base")
+        uv_crough = _stage_uv("CreaseRougnessTiling", "c_rough", "CRough")
+        uv_erough = _stage_uv("EdgeRougnessTiling", "e_rough", "ERough")
+        uv_cmask = _stage_uv("CreaseMaskTiling", "c_rough", "CMask")
+        uv_emask = _stage_uv("EdgeMaskTiling", "e_rough", "EMask")
+        uv_bn = _stage_uv(None, "n_base", "BaseN")
+        uv_cn = _stage_uv("CreaseNormalTiling", "n_crease", "CreaseN")
+        uv_en = _stage_uv("EdgeNormalTiling", "n_edge", "EdgeN")
         # Revamped: clamp(Masks.r + Base/Crease/EdgeRoughness offset).
         nd = _slice_sample(
             nodes, links, ta_cache, base_masks, bid, uv_base, 1.0,
-            non_color=True, name=f"GT_z{zone}_BaseRough", x=tx, y=shared_row_y("ta_rough"),
+            non_color=True, name=f"GT_z{zone}_BaseRough", x=tx, y=shared_row_y("ta_rough"), param=f"{zone}_BaseRoughnessID", group="masks",
         )
         base_off = C._gt_param_float(mi_data, f"{zone}_BaseRoughness", 0.5)
         if nd is not None:
             add_r = _math(
                 nodes, "ADD", f"GT_z{zone}_BaseRough_add", tx, shared_row_y("ta_rough"),
-                value=float(base_off), hide=True,
+                hide=True,
             )
             links.new(_mask_float(_sock_color(nd)), add_r.inputs[0])
+            links.new(_param(nodes, f"{zone}_BaseRoughness", base_off, subcol_x(tx), shared_row_y("ta_rough")), add_r.inputs[1])
             rough_socks[zone] = _clamp01(
                 nodes, links, add_r.outputs[0], f"GT_z{zone}_BaseRough_c", tx, shared_row_y("ta_rough"),
             )
         else:
-            rough_socks[zone] = _value(
-                nodes, f"GT_z{zone}_BaseRough_v", f"{zone}_BaseRoughness",
-                base_off, subcol_x(tx), colour_row_y("rough"),
-            )
+            rough_socks[zone] = _param(nodes, f"{zone}_BaseRoughness", base_off, subcol_x(tx), colour_row_y("rough"))
         nd = _slice_sample(
             nodes, links, ta_cache, base_masks, cid, uv_crough, 1.0,
-            non_color=True, name=f"GT_z{zone}_CreaseRough", x=tx, y=colour_row_y("c_rough"),
+            non_color=True, name=f"GT_z{zone}_CreaseRough", x=tx, y=colour_row_y("c_rough"), param=f"{zone}_CreaseRoughnessID", group="masks",
         )
+        c_off = C._gt_param_float(mi_data, f"{zone}_CreaseRoughness", 0.5)
         if nd is not None:
-            c_off = C._gt_param_float(mi_data, f"{zone}_CreaseRoughness", 0.5)
             add_c = _math(
                 nodes, "ADD", f"GT_z{zone}_CreaseRough_add", tx, colour_row_y("c_rough"),
-                value=float(c_off), hide=True,
+                hide=True,
             )
             links.new(_mask_float(_sock_color(nd)), add_c.inputs[0])
+            links.new(_param(nodes, f"{zone}_CreaseRoughness", c_off, subcol_x(tx), colour_row_y("c_rough")), add_c.inputs[1])
             crease_r_socks[zone] = _clamp01(
                 nodes, links, add_c.outputs[0], f"GT_z{zone}_CreaseRough_c", tx, colour_row_y("c_rough"),
             )
+        else:
+            crease_r_socks[zone] = _param(nodes, f"{zone}_CreaseRoughness", c_off, subcol_x(tx), colour_row_y("c_rough"))
         nd = _slice_sample(
             nodes, links, ta_cache, base_masks, eid, uv_erough, 1.0,
-            non_color=True, name=f"GT_z{zone}_EdgeRough", x=tx, y=colour_row_y("e_rough"),
+            non_color=True, name=f"GT_z{zone}_EdgeRough", x=tx, y=colour_row_y("e_rough"), param=f"{zone}_EdgeRoughnessID", group="masks",
         )
+        e_off = C._gt_param_float(mi_data, f"{zone}_EdgeRoughness", 0.5)
         if nd is not None:
-            e_off = C._gt_param_float(mi_data, f"{zone}_EdgeRoughness", 0.5)
             add_e = _math(
                 nodes, "ADD", f"GT_z{zone}_EdgeRough_add", tx, colour_row_y("e_rough"),
-                value=float(e_off), hide=True,
+                hide=True,
             )
             links.new(_mask_float(_sock_color(nd)), add_e.inputs[0])
+            links.new(_param(nodes, f"{zone}_EdgeRoughness", e_off, subcol_x(tx), colour_row_y("e_rough")), add_e.inputs[1])
             edge_r_socks[zone] = _clamp01(
                 nodes, links, add_e.outputs[0], f"GT_z{zone}_EdgeRough_c", tx, colour_row_y("e_rough"),
             )
+        else:
+            edge_r_socks[zone] = _param(nodes, f"{zone}_EdgeRoughness", e_off, subcol_x(tx), colour_row_y("e_rough"))
         nd = _slice_sample(
             nodes, links, ta_cache, base_masks, cmid, uv_cmask, 1.0,
-            non_color=True, name=f"GT_z{zone}_CreaseMask", x=tx, y=colour_row_y("c_rough"),
+            non_color=True, name=f"GT_z{zone}_CreaseMask", x=tx, y=colour_row_y("c_rough"), param=f"{zone}_CreaseMaskID", group="masks",
         )
         if nd is not None:
             crease_mask_socks[zone] = _mask_float(_sock_color(nd))
         nd = _slice_sample(
             nodes, links, ta_cache, base_masks, emid, uv_emask, 1.0,
-            non_color=True, name=f"GT_z{zone}_EdgeMask", x=tx, y=colour_row_y("e_rough"),
+            non_color=True, name=f"GT_z{zone}_EdgeMask", x=tx, y=colour_row_y("e_rough"), param=f"{zone}_EdgeMaskID", group="masks",
         )
         if nd is not None:
             edge_mask_socks[zone] = _mask_float(_sock_color(nd))
         metal_v = C._gt_param_float(mi_data, f"{zone}_BaseMetallicity", 0.0)
-        if abs(float(metal_v)) > 1e-6:
-            metal_socks[zone] = _value(
-                nodes, f"GT_z{zone}_Metal_v", f"{zone}_BaseMetallicity",
-                metal_v, subcol_x(tx), colour_row_y("metal"),
-            )
+        # Always bound (0 is a valid value): a colourway may turn metal on or off.
+        metal_socks[zone] = _param(nodes, f"{zone}_BaseMetallicity", metal_v, subcol_x(tx), colour_row_y("metal"))
         nd = _slice_sample(
             nodes, links, ta_cache, base_normals, bn, uv_bn, 1.0,
-            non_color=True, name=f"GT_z{zone}_BaseN", x=tx, y=shared_row_y("ta_n_base"),
+            non_color=True, name=f"GT_z{zone}_BaseN", x=tx, y=shared_row_y("ta_n_base"), param=f"{zone}_BaseNormalID", group="normals",
         )
         if nd is not None:
             n_base[zone] = _decode_dx_color(nodes, links, _sock_color(nd), f"GT_z{zone}_BaseN_dx", tx, shared_row_y("ta_n_base"))
         nd = _slice_sample(
             nodes, links, ta_cache, base_normals, cn, uv_cn, 1.0,
-            non_color=True, name=f"GT_z{zone}_CreaseN", x=tx, y=colour_row_y("n_crease"),
+            non_color=True, name=f"GT_z{zone}_CreaseN", x=tx, y=colour_row_y("n_crease"), param=f"{zone}_CreaseNormalID", group="normals",
         )
         if nd is not None:
             n_crease[zone] = _decode_dx_color(nodes, links, _sock_color(nd), f"GT_z{zone}_CreaseN_dx", tx, colour_row_y("n_crease"))
         nd = _slice_sample(
             nodes, links, ta_cache, base_normals, en, uv_en, 1.0,
-            non_color=True, name=f"GT_z{zone}_EdgeN", x=tx, y=colour_row_y("n_edge"),
+            non_color=True, name=f"GT_z{zone}_EdgeN", x=tx, y=colour_row_y("n_edge"), param=f"{zone}_EdgeNormalID", group="normals",
         )
         if nd is not None:
             n_edge[zone] = _decode_dx_color(nodes, links, _sock_color(nd), f"GT_z{zone}_EdgeN_dx", tx, colour_row_y("n_edge"))
-        medium_strength = C._mi_layer_float(zone_scalars, zone, "MediumNormalStrength", 0.0)
-        if abs(medium_strength) > 1e-8:
-            medium_uv = _stage_uv(C._mi_layer_float(zone_scalars, zone, "MediumNormalTiling", 1.0), "n_med", "MediumN")
-            medium_id = C._gt_ta_id(ta_ids, zone, "MediumNormalID")
-            sample = _slice_sample(nodes, links, ta_cache, base_normals, medium_id, medium_uv, 1.0,
-                non_color=True, name=f"GT_z{zone}_MediumN", x=tx, y=colour_row_y("n_med"))
-            if sample is not None:
-                n_medium[zone] = _decode_dx_color(nodes, links, _sock_color(sample), f"GT_z{zone}_MediumN_dx", tx, colour_row_y("n_med"))
+        # Always built: strength is a bound parameter (layered_medium), so 0 is just "off".
+        medium_uv = _stage_uv("MediumNormalTiling", "n_med", "MediumN")
+        medium_id = C._gt_ta_id(ta_ids, zone, "MediumNormalID")
+        sample = _slice_sample(nodes, links, ta_cache, base_normals, medium_id, medium_uv, 1.0,
+            non_color=True, name=f"GT_z{zone}_MediumN", x=tx, y=colour_row_y("n_med"), param=f"{zone}_MediumNormalID", group="normals")
+        if sample is not None:
+            n_medium[zone] = _decode_dx_color(nodes, links, _sock_color(sample), f"GT_z{zone}_MediumN_dx", tx, colour_row_y("n_med"))
 
     # Wear: packed G/B + curvature + TA crease/edge masks + BreakupMask (Revamped character.py).
     if ocm_g is not None:
@@ -2535,6 +2286,7 @@ def finish_gt_outfit_graph(
             crease_z[zone] = _wear_mask(
                 nodes, links, craw.outputs[0], amount_c, soft_c,
                 f"GT_z{zone}_crease", colour_col_x(zone), shared_row_y("ocm_wear"),
+                decal_wear=decal_wear,
             )
             e1 = _math(nodes, "ADD", f"GT_z{zone}_e1", colour_col_x(zone), shared_row_y("ocm_wear") + 200.0, value=1.0, hide=True)
             e1.inputs[0].default_value = 1.0
@@ -2553,6 +2305,7 @@ def finish_gt_outfit_graph(
             edge_z[zone] = _wear_mask(
                 nodes, links, eraw.outputs[0], amount_e, soft_e,
                 f"GT_z{zone}_edge", colour_col_x(zone), shared_row_y("ocm_wear") + 200.0,
+                decal_wear=decal_wear,
             )
         z0c = _value(nodes, "GT_crease0", "crease 0", 0.0, colour_col_x(1) - _GT_GRID_DX, shared_row_y("ocm_wear"))
         z0e = _value(nodes, "GT_edge0", "edge 0", 0.0, colour_col_x(1) - _GT_GRID_DX, shared_row_y("ocm_wear") + 200.0)
@@ -2576,7 +2329,7 @@ def finish_gt_outfit_graph(
             str_x, shared_row_y("ocm_wear") + 240.0,
         )
         for _nm in ("GT_CreaseStrength", "GT_EdgeStrength"):
-            nd = nodes.get(_nm)
+            nd = _dr_primary_candidate.lookup(nodes).get(_nm)
             if nd is not None:
                 nd.hide = False
                 try:
@@ -2603,18 +2356,21 @@ def finish_gt_outfit_graph(
         links.new(one_ce.outputs[0], body2.inputs[0])
         body = _clamp01(nodes, links, body2.outputs[0], "GT_body", gx + 500.0, shared_row_y("ocm_wear"))
         for zone in range(1, 9):
-            gnode = nodes.get(f"GT_ColourN_z{zone}")
+            gnode = _dr_primary_candidate.lookup(nodes).get(f"GT_ColourN_z{zone}")
             if gnode is None or "Amt" not in getattr(gnode, "inputs", {}):
                 continue
             bs = C._mi_layer_float(zone_scalars, zone, "BaseColorMaskStrength", 1.0)
             es = C._mi_layer_float(zone_scalars, zone, "EdgeColorMaskStrength", 0.0)
             cs = C._mi_layer_float(zone_scalars, zone, "CreaseColorMaskStrength", 0.0)
-            mb = _math(nodes, "MULTIPLY", f"GT_z{zone}_amtB", colour_col_x(zone), shared_row_y("ocm_wear") - 120.0, value=bs, hide=True)
+            mb = _math(nodes, "MULTIPLY", f"GT_z{zone}_amtB", colour_col_x(zone), shared_row_y("ocm_wear") - 120.0, hide=True)
             links.new(body, mb.inputs[0])
-            me = _math(nodes, "MULTIPLY", f"GT_z{zone}_amtE", colour_col_x(zone), shared_row_y("ocm_wear") - 120.0, value=es, hide=True)
+            links.new(_param(nodes, f"{zone}_BaseColorMaskStrength", bs, subcol_x(colour_col_x(zone)), shared_row_y("ocm_wear") - 120.0), mb.inputs[1])
+            me = _math(nodes, "MULTIPLY", f"GT_z{zone}_amtE", colour_col_x(zone), shared_row_y("ocm_wear") - 120.0, hide=True)
             links.new(edge_fac, me.inputs[0])
-            mc = _math(nodes, "MULTIPLY", f"GT_z{zone}_amtC", colour_col_x(zone), shared_row_y("ocm_wear") - 120.0, value=cs, hide=True)
+            links.new(_param(nodes, f"{zone}_EdgeColorMaskStrength", es, subcol_x(colour_col_x(zone)), shared_row_y("ocm_wear") - 120.0), me.inputs[1])
+            mc = _math(nodes, "MULTIPLY", f"GT_z{zone}_amtC", colour_col_x(zone), shared_row_y("ocm_wear") - 120.0, hide=True)
             links.new(crease_fac, mc.inputs[0])
+            links.new(_param(nodes, f"{zone}_CreaseColorMaskStrength", cs, subcol_x(colour_col_x(zone)), shared_row_y("ocm_wear") - 120.0), mc.inputs[1])
             s1 = _math(nodes, "ADD", f"GT_z{zone}_amt1", colour_col_x(zone), shared_row_y("ocm_wear") - 120.0, hide=True)
             links.new(mb.outputs[0], s1.inputs[0])
             links.new(me.outputs[0], s1.inputs[1])
@@ -2630,7 +2386,7 @@ def finish_gt_outfit_graph(
                 pass
         if packed_r is not None:
             for zone in range(1, 9):
-                gnode = nodes.get(f"GT_ColourN_z{zone}")
+                gnode = _dr_primary_candidate.lookup(nodes).get(f"GT_ColourN_z{zone}")
                 if gnode is None:
                     continue
                 try:
@@ -2644,9 +2400,12 @@ def finish_gt_outfit_graph(
         zone_eq=zone_eq,
     )
 
-    # Revamped order: overlay×ColorTex×palette, then crease/edge color overlays.
+    roughness, metallic = decal_comp.surface(sys.modules[__name__], nodes, links,
+        roughness, metallic, decal_slots)
+
+    # Native order: palette/ColorTex/pattern, then decals, then garment wear.
     if colortex_outputs:
-        white = nodes.get("GT_canvas_white")
+        white = _dr_primary_candidate.lookup(nodes).get("GT_canvas_white")
         white_s = white.outputs[0] if white is not None else _rgb(
             nodes, "GT_canvas_white", "GT canvas white", (1.0, 1.0, 1.0, 1.0),
             gx, colour_row_y("tex"),
@@ -2730,9 +2489,9 @@ def finish_gt_outfit_graph(
             )
 
     if sparse_colormask and cm_src is not None and base_tex is not None:
-        cm_sep = nodes.new("ShaderNodeSeparateColor")
-        cm_sep.name = "GT_ColorMask_cov"
-        cm_sep.label = "ColorMask coverage (RadioBag)"
+        cm_sep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateColor', 'GT_ColorMask_cov', stage=None, role=None)
+        pass
+        _dr_ops.set_label(cm_sep, 'ColorMask coverage (RadioBag)')
         place(cm_sep, mx_cm, colour_row_y("pattern"), hide=True)
         try:
             links.new(cm_src.outputs["Color"], cm_sep.inputs[0])
@@ -2754,6 +2513,7 @@ def finish_gt_outfit_graph(
         mix = _new_mix(nodes, "GT_basecolor_fallback", "sparse ColorMask → BaseColor", gx, colour_row_y("mux_col"))
         albedo = _link_mix(links, mix, cov, _sock_color(base_tex), albedo)
 
+    albedo = decal_comp.color(sys.modules[__name__], nodes, links, albedo, decal_slots)
     crease_ov = {}
     edge_ov = {}
     crease_ov_a = {}
@@ -2764,24 +2524,22 @@ def finish_gt_outfit_graph(
             ek = f"{zone}_EdgeColorOverlay"
             cr = (colours or {}).get(ck)
             er = (colours or {}).get(ek)
-            if cr is not None and not textures.skip_colour(cr):
-                nd = nodes.get(ck) or _rgb(nodes, ck, ck, cr, 0.0, 0.0)
-                crease_ov[zone] = nd.outputs[0]
-                # Separate Color has no Alpha — bake MI A into a float (Revamped
-                # uses overlay[3]; falling back to 1.0 was over-applying wear colour).
-                a = float(cr[3]) if len(cr) > 3 else 0.0
-                crease_ov_a[zone] = _value(
-                    nodes, f"GT_z{zone}_creaseOvA", "Crease overlay α", a,
-                    subcol_x(colour_col_x(zone)), colour_row_y("ov_crease"),
-                )
-            if er is not None and not textures.skip_colour(er):
-                nd = nodes.get(ek) or _rgb(nodes, ek, ek, er, 0.0, 0.0)
-                edge_ov[zone] = nd.outputs[0]
-                a = float(er[3]) if len(er) > 3 else 0.0
-                edge_ov_a[zone] = _value(
-                    nodes, f"GT_z{zone}_edgeOvA", "Edge overlay α", a,
-                    subcol_x(colour_col_x(zone)), colour_row_y("ov_edge"),
-                )
+            # Always built from the authored value (unset = transparent black): alpha is the blend
+            # weight, so black at alpha 0.7 is real crease darkening, not a placeholder to skip.
+            if cr is None:
+                cr = (0.0, 0.0, 0.0, 0.0)
+            nd = _dr_primary_candidate.lookup(nodes).get(ck) or _rgb(nodes, ck, ck, cr, 0.0, 0.0)
+            crease_ov[zone] = nd.outputs[0]
+            # Separate Color has no Alpha: MI A is its own bound float (Revamped
+            # uses overlay[3]; falling back to 1.0 was over-applying wear colour).
+            a = float(cr[3]) if len(cr) > 3 else 0.0
+            crease_ov_a[zone] = _param(nodes, f"{ck}.A", a, subcol_x(colour_col_x(zone)), colour_row_y("ov_crease"))
+            if er is None:
+                er = (0.0, 0.0, 0.0, 0.0)
+            nd = _dr_primary_candidate.lookup(nodes).get(ek) or _rgb(nodes, ek, ek, er, 0.0, 0.0)
+            edge_ov[zone] = nd.outputs[0]
+            a = float(er[3]) if len(er) > 3 else 0.0
+            edge_ov_a[zone] = _param(nodes, f"{ek}.A", a, subcol_x(colour_col_x(zone)), colour_row_y("ov_edge"))
         zero = None
         if crease_ov or edge_ov:
             zero = _rgb(
@@ -2843,6 +2601,11 @@ def finish_gt_outfit_graph(
                     nd.hide = True
                     place(nd, colour_col_x(zone), colour_row_y("ov_edge"), hide=True)
 
+    # Emission is authored from the pre-Hue wear colour in the native shader.
+    emission_albedo = albedo
+    albedo = _hue_variation(nodes, links, albedo, zone_scalars, zone_eq,
+                           uv_bus["uv1"], tiling, hue_variation_path)
+
     if crease_r_socks and crease_fac is not None:
         rc = mux_by_zone(
             nodes, links, zone_idx, crease_r_socks, dtype="FLOAT", start=roughness,
@@ -2861,9 +2624,7 @@ def finish_gt_outfit_graph(
     if crease_fac is not None:
         cm_vals = {}
         for zone in range(1, 9):
-            v = C._gt_param_float(mi_data, f"{zone}_CreaseMetallicity", None)
-            if v is None or abs(float(v)) <= 1e-6:
-                continue
+            v = C._gt_param_float(mi_data, f"{zone}_CreaseMetallicity", 0.0)
             cm_vals[zone] = _value(
                 nodes, f"GT_z{zone}_cMetal", f"{zone}_CreaseMetallicity", v,
                 subcol_x(colour_col_x(zone)), colour_row_y("c_metal"),
@@ -2880,9 +2641,7 @@ def finish_gt_outfit_graph(
     if edge_fac is not None:
         em_vals = {}
         for zone in range(1, 9):
-            v = C._gt_param_float(mi_data, f"{zone}_EdgeMetallicity", None)
-            if v is None or abs(float(v)) <= 1e-6:
-                continue
+            v = C._gt_param_float(mi_data, f"{zone}_EdgeMetallicity", 0.0)
             em_vals[zone] = _value(
                 nodes, f"GT_z{zone}_eMetal", f"{zone}_EdgeMetallicity", v,
                 subcol_x(colour_col_x(zone)), colour_row_y("e_metal"),
@@ -2896,6 +2655,11 @@ def finish_gt_outfit_graph(
             )
             mix = _new_mix(nodes, "GT_wear_eMetal", "metal ← edge", gx + 280.0, shared_row_y("wear_metal"), dtype="FLOAT")
             metallic = _link_mix(links, mix, edge_fac, metallic, emux)
+
+    specular = _layered_scalar_response(
+        nodes, links, mi_data, zone_eq, crease_fac, edge_fac, "Specular", 0.5,
+        x=gx, y=colour_row_y("metal") - 250.0,
+    )
 
     # Extra normals: mux already chose Base N. Wear mixes Crease → Edge → Medium.
     # Shirt 003 U-turn reroutes on first mux A of each wear stage.
@@ -2940,10 +2704,12 @@ def finish_gt_outfit_graph(
     detail = _quarter_turn_normal(
         nodes, links, detail, uv_bus["uv0"], "GT_n_qturn", gx, colour_row_y("mux_n"),
     )
-    rnm = nodes.new("ShaderNodeGroup")
+    mesh_n, detail = decal_comp.normals(sys.modules[__name__], nodes, links,
+        mesh_n, detail, decal_slots)
+    rnm = _dr_ops.new_operation(nodes, 'ShaderNodeGroup', 'GT_n_rnm', stage=None, role=None)
     rnm.node_tree = ensure_gt_rnm_group()
-    rnm.name = "GT_n_rnm"
-    rnm.label = "RNM mesh + detail"
+    pass
+    _dr_ops.set_label(rnm, 'RNM mesh + detail')
     place(rnm, gx, colour_row_y("mux_n"), lock=True)
     try:
         links.new(mesh_n, rnm.inputs["Base"])
@@ -2957,15 +2723,12 @@ def finish_gt_outfit_graph(
     _wire_array_uv_reroutes(nodes, links, uv_bus["uv1"], bus_x=maps_ocm_x() + 560.0)
 
     # Emission uses the authored layer colors before surface decals.
-    from .emission import layered_emission
-    emission = layered_emission(nodes, links, mi_data, colours, zone_eq, albedo, crease_fac, edge_fac)
+    from . import dr_layered_composer
+    import sys
+    emission = dr_layered_composer.build_emission(sys.modules[__name__],nodes,links,mi_data,colours,zone_eq,emission_albedo,crease_fac,edge_fac)
 
-    # Decals (FMODEL / ArcDecalUv), mixed here — not Arc sockets.
-    albedo, n_color, roughness, metallic = _apply_gt_decals(
-        C, nodes, links, albedo, n_color, roughness, metallic,
-        zone_broadcast, decals or [], decal_folder, search_dirs or [],
-        decal_x, decal_y,
-    )
+    # Decals have already been composed at the native colour/surface/normal stages.
+    nodes.id_data["dr.layered_decal_contract"] = 1
     for sock in (zone_eq or {}).values():
         _collapse_broadcast(sock)
     if zone_broadcast is not None:
@@ -2977,40 +2740,10 @@ def finish_gt_outfit_graph(
     mix_n_y = shared_row_y("n_med")
     if normal_node is not None:
         place(normal_node, bsdf_x - 2.0 * _GT_GRID_DX, mix_n_y, lock=True, hide=True)
-    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
-    bsdf.name = "GT_Principled"
-    bsdf.label = "GT Principled (full outfit PBR)"
-    if emission is not None:
-        links.new(emission, bsdf.inputs["Emission Color"])
-        bsdf.inputs["Emission Strength"].default_value = 1.0
-    place(bsdf, bsdf_x, bsdf_y, lock=True)
-    try:
-        links.new(albedo, bsdf.inputs["Base Color"])
-    except Exception:
-        links.new(albedo, bsdf.inputs[0])
-    try:
-        links.new(roughness, bsdf.inputs["Roughness"])
-    except Exception:
-        pass
-    try:
-        links.new(metallic, bsdf.inputs["Metallic"])
-    except Exception:
-        pass
-    nmap = nodes.new("ShaderNodeNormalMap")
-    nmap.name = "GT_NormalMap"
-    place(nmap, bsdf_x - _GT_GRID_DX, mix_n_y, lock=True)
-    try:
-        links.new(n_color, nmap.inputs["Color"])
-        links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
-    except Exception:
-        pass
-    out = nodes.new("ShaderNodeOutputMaterial")
-    out.name = "GT_MaterialOutput"
-    place(out, bsdf_x + _GT_OUTPUT_GAP, bsdf_y, lock=True)
-    try:
-        links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
-    except Exception:
-        links.new(bsdf.outputs[0], out.inputs[0])
+    bsdf,nmap,out = dr_layered_composer.build_terminal(sys.modules[__name__],nodes,links,albedo=albedo,roughness=roughness,metallic=metallic,specular=specular,n_color=n_color,emission=emission,mi_data=mi_data,zone_eq=zone_eq)
+    place(bsdf,bsdf_x,bsdf_y,lock=True)
+    place(nmap,bsdf_x-_GT_GRID_DX,mix_n_y,lock=True)
+    place(out,bsdf_x+_GT_OUTPUT_GAP,bsdf_y,lock=True)
     note_y = shared_row_y("decal_rot") + _GT_GRID_DY
     add_gt_note(
         nodes, "NOTE_UV", "UV / ArrayUvScale",
@@ -3057,12 +2790,14 @@ def finish_gt_outfit_graph(
         _quiet_node(n)
     _purge_unused_gt_datablocks()
     _frame_gt_nodes(nodes)
+    _dr_ops.organize(nodes, links)
     return bsdf
 
 
-def _apply_gt_decals(
-    C, nodes, links, albedo, n_color, roughness, metallic,
-    zone_idx, decals, decal_folder, search_dirs, origin_x, origin_y,
+@_dr_ops.operation_build
+def _build_gt_decals(
+    C, nodes, links, zone_idx, decals, decal_folder, search_dirs,
+    origin_x, origin_y, *, ocm_node=None,
 ):
     from .. import utils as _utils
 
@@ -3076,234 +2811,100 @@ def _apply_gt_decals(
     if df and df not in dirs:
         dirs.insert(0, df)
 
-    decal_uv_node = None
-    tex_cache = {}
-    data_cache = {}
+    # Every slot is a fixed shell (same nodes for any colourway); write_decal_slot fills in the
+    # MI's values and textures, so a colourway swap rewrites the slots and never adds nodes.
+    from . import param_bind as _pb
     method = C.active_decal_method()
+    by_idx = {}
+    for decal in decals or []:
+        try:
+            by_idx.setdefault(int(decal.get("index")), decal)
+        except (TypeError, ValueError):
+            continue
+    nodes.id_data["dr.decal_dirs"] = list(dirs)
+    excl_mask = 0
+    try:
+        _tree = nodes.id_data
+        _owner = getattr(_tree, "id_data", None) or _tree
+        if hasattr(_owner, "get"):
+            excl_mask = int(_owner.get("arc_decal_exclude_mask", 0) or 0) & 0xFF
+    except Exception:
+        excl_mask = 0
+    from . import dr_layered_decals as decal_comp
+    import sys
+    decal_uv_node = _dr_ops.new_operation(nodes, 'ShaderNodeUVMap', 'GT_DecalUV', stage='Source', role='Decal.UV')
+    decal_uv_node.uv_map = 'UV0' 
+    _dr_ops.set_label(decal_uv_node, 'Decal UV')
+    place(decal_uv_node, origin_x - _GT_GRID_DX, _decal_row_y(origin_y, "rot"), lock=True)
+    aspect = 1.0
+    if ocm_node is not None and ocm_node.image is not None:
+        width, height = ocm_node.image.size
+        if width: aspect = height / width
+    decal_uv = decal_comp.native_uv(sys.modules[__name__], nodes, links,
+        decal_uv_node.outputs['UV'], aspect)
     used = 0
-    skipped = []
-    parsed = len(decals or [])
-    for decal in decals:
-        if not C._decal_slot_is_used(decal):
-            skipped.append(f"unused:{decal.get('index')}")
-            continue
-        tex_stem = (decal.get("texture") or "").strip()
-        tex_fpath = C.resolve_decal_texture(
-            tex_stem, decal.get("texture_path", ""), df, search_dirs=dirs,
-        )
-        if not tex_fpath and tex_stem not in tex_cache:
-            skipped.append(f"missing:{tex_stem or decal.get('index')}")
-            continue
-        if tex_stem in tex_cache and tex_cache[tex_stem] is None and not tex_fpath:
-            skipped.append(f"missing:{tex_stem}")
-            continue
-        idx = decal["index"]
+    slots = []
+    for idx in range(1, DECAL_SLOTS + 1):
         sat_x, main_x = _decal_slot_xs(origin_x, idx)
-        used += 1
 
         def _at(stage, nd=None):
             y = _decal_row_y(origin_y, stage)
             if nd is not None:
                 place(nd, main_x, y, lock=True)
+                nd["dr.decal_slot"] = idx
+                nd["dr.decal_role"] = stage
             return y
 
-        extension = C.decal_image_extension(decal)
-        if decal_uv_node is None:
-            decal_uv_node = nodes.new("ShaderNodeTexCoord")
-            decal_uv_node.name = "GT_DecalUV"
-            decal_uv_node.label = "Decal UV"
-            uv_x = origin_x - _GT_GRID_DX
-            place(decal_uv_node, uv_x, _decal_row_y(origin_y, "rot"), lock=True)
-
-        uv_u = decal["uv_u"]
-        uv_v = decal["uv_v"]
-        scale = decal["scale"]
-        rotation = decal["rotation"]
-        width_ratio = decal.get("width_ratio")
-        try:
-            width_ratio = float(width_ratio)
-        except (TypeError, ValueError):
-            width_ratio = 0.0
-        if width_ratio <= 0.0:
-            probe_path = tex_fpath or C.resolve_decal_texture(
-                tex_stem, decal.get("texture_path", ""), df, search_dirs=dirs,
-            )
-            if probe_path:
-                ratio = C._width_ratio_from_path(probe_path)
-                if ratio <= 0.0:
-                    probe_image = _load_image_cached(probe_path)
-                    if probe_image is not None and probe_image.size[1] > 0:
-                        ratio = float(probe_image.size[0]) / float(probe_image.size[1])
-                        _WIDTH_RATIO_BY_PATH[_norm_path_key(probe_path)] = ratio
-                if ratio > 0.0:
-                    width_ratio = ratio
-        if width_ratio <= 0.0:
-            width_ratio = 1.0
-        layer_mask_int = C._decal_layer_mask_int(decal.get("layer_mask", 255.0))
-        color_override = max(0.0, min(1.0, float(decal.get("color_override", 0.0))))
-        slot_method = method
-        if slot_method == "FMODEL" and "ducttape" in tex_stem.lower():
-            slot_method = "WIDTH_2X"
-        params = C._decal_mapping_params(uv_u, uv_v, scale, rotation, width_ratio, method=slot_method)
-
-        mapping_node = nodes.new("ShaderNodeMapping")
+        mapping_node = _dr_ops.new_operation(nodes, 'ShaderNodeMapping', None, stage='Coordinates', role=f'Decal.Slot{idx}.Rotation')
         mapping_node.vector_type = "POINT"
-        mapping_node.label = f"Decal {idx} rot [{slot_method}]"
-        mapping_node["arc_decal_layer_mask"] = C._decal_visibility_layer_mask(layer_mask_int)
-        mapping_node["arc_decal_layer_mask_raw"] = layer_mask_int
+        _dr_ops.set_label(mapping_node, f'Decal {idx} rot')
         _at("rot", mapping_node)
-        mapping_node.inputs["Location"].default_value = params["rot_location"]
-        mapping_node.inputs["Rotation"].default_value = (0.0, 0.0, params["rot_rotation"])
-        mapping_node.inputs["Scale"].default_value = params["rot_scale"]
-        links.new(decal_uv_node.outputs["UV"], mapping_node.inputs["Vector"])
-
-        place_node = nodes.new("ShaderNodeMapping")
+        links.new(decal_uv, mapping_node.inputs["Vector"])
+        place_node = _dr_ops.new_operation(nodes, 'ShaderNodeMapping', None, stage='Coordinates', role=f'Decal.Slot{idx}.ScalePlacement')
         place_node.vector_type = "POINT"
-        place_node.label = f"Decal {idx} Scale/Loc"
+        _dr_ops.set_label(place_node, f'Decal {idx} Scale/Loc')
         _at("place", place_node)
-        place_node.inputs["Location"].default_value = params["place_location"]
-        place_node.inputs["Rotation"].default_value = (0.0, 0.0, params["place_rotation"])
-        place_node.inputs["Scale"].default_value = params["place_scale"]
         links.new(mapping_node.outputs["Vector"], place_node.inputs["Vector"])
-        placed_uv = place_node.outputs["Vector"]
-        if params["flip_v"]:
-            flip_node = nodes.new("ShaderNodeMapping")
-            flip_node.vector_type = "POINT"
-            flip_node.label = f"Decal {idx} V Flip"
-            _at("flip", flip_node)
-            flip_node.inputs["Location"].default_value = (0.0, 1.0, 0.0)
-            flip_node.inputs["Scale"].default_value = (1.0, -1.0, 1.0)
-            links.new(placed_uv, flip_node.inputs["Vector"])
-            placed_uv = flip_node.outputs["Vector"]
+        # Identity unless the slot's mapping flips V (write_decal_slot sets it).
+        flip_node = _dr_ops.new_operation(nodes, 'ShaderNodeMapping', None, stage='Coordinates', role=f'Decal.Slot{idx}.ImageVFlip')
+        flip_node.vector_type = "POINT"
+        _dr_ops.set_label(flip_node, f'Decal {idx} V Flip')
+        _at("flip", flip_node)
+        links.new(place_node.outputs["Vector"], flip_node.inputs["Vector"])
+        placed_uv = flip_node.outputs["Vector"]
 
-        color_tex = None
-        if tex_stem not in tex_cache:
-            if tex_fpath:
-                img = _load_image_cached(tex_fpath)
-                if img is not None:
-                    tex_node = nodes.new("ShaderNodeTexImage")
-                    tex_node.image = img
-                    tex_node.label = f"Decal {idx}: {tex_stem}"
-                    tex_node.interpolation = "Cubic"
-                    tex_node.extension = extension
-                    _at("color", tex_node)
-                    links.new(placed_uv, tex_node.inputs["Vector"])
-                    tex_cache[tex_stem] = tex_node
-                    color_tex = tex_node
-                else:
-                    tex_cache[tex_stem] = None
-            else:
-                tex_cache[tex_stem] = None
-        else:
-            prev = tex_cache[tex_stem]
-            if prev is not None:
-                dup = nodes.new("ShaderNodeTexImage")
-                dup.image = prev.image
-                dup.label = f"Decal {idx}: {tex_stem}"
-                dup.interpolation = "Cubic"
-                dup.extension = extension
-                _at("color", dup)
-                links.new(placed_uv, dup.inputs["Vector"])
-                color_tex = dup
+        color_tex = _dr_ops.new_operation(nodes, 'ShaderNodeTexImage', None, stage='LayerInputs', role=f'Decal.Slot{idx}.ColorTexture')
+        color_tex.interpolation = "Cubic"
+        _at("color", color_tex)
+        links.new(placed_uv, color_tex.inputs["Vector"])
+        data_tex = _dr_ops.new_operation(nodes, 'ShaderNodeTexImage', None, stage='LayerInputs', role=f'Decal.Slot{idx}.PackedSurfaceTexture')
+        data_tex.interpolation = "Cubic"
+        _at("data", data_tex)
+        links.new(placed_uv, data_tex.inputs["Vector"])
 
-        data_tex = None
-        data_stem = decal.get("data_texture", "")
-        if data_stem:
-            if data_stem not in data_cache:
-                data_fpath = C.resolve_decal_texture(
-                    data_stem, decal.get("data_texture_path", ""), df, search_dirs=dirs,
-                )
-                if data_fpath:
-                    data_img = _load_image_cached(data_fpath)
-                    if data_img is not None:
-                        try:
-                            data_img.colorspace_settings.name = "Non-Color"
-                        except Exception:
-                            pass
-                        data_node = nodes.new("ShaderNodeTexImage")
-                        data_node.image = data_img
-                        data_node.label = f"Decal {idx} Data"
-                        data_node.interpolation = "Cubic"
-                        data_node.extension = extension
-                        _at("data", data_node)
-                        links.new(placed_uv, data_node.inputs["Vector"])
-                        data_cache[data_stem] = data_node
-                        data_tex = data_node
-                    else:
-                        data_cache[data_stem] = None
-                else:
-                    data_cache[data_stem] = None
-            else:
-                prev = data_cache[data_stem]
-                if prev is not None:
-                    dup = nodes.new("ShaderNodeTexImage")
-                    dup.image = prev.image
-                    dup.label = f"Decal {idx} Data"
-                    dup.interpolation = "Cubic"
-                    dup.extension = extension
-                    _at("data", dup)
-                    links.new(placed_uv, dup.inputs["Vector"])
-                    data_tex = dup
-
-        if color_tex is None:
-            skipped.append(f"noload:{tex_stem}")
-            continue
-        alpha = None
-        if "Alpha" in color_tex.outputs:
-            alpha = color_tex.outputs["Alpha"]
-        if alpha is None and len(color_tex.outputs) > 1:
-            alpha = color_tex.outputs[1]
-        if alpha is None:
-            alpha = _value(
-                nodes, f"GT_decal{idx}_opaque", "opaque alpha", 1.0,
-                sat_x, _decal_row_y(origin_y, "layer"),
-            )
-        # Cooked ArcDecalLayerOk (Allow bits) first. Optional material
-        # ``arc_decal_exclude_mask`` is a manual override on top (Excl1..8) —
-        # it never replaces the cooked Allow map.
-        vis_mask = C._decal_visibility_layer_mask(layer_mask_int)
-        excl_mask = 0
-        try:
-            _tree = nodes.id_data
-            _owner = getattr(_tree, "id_data", None) or _tree
-            if hasattr(_owner, "get"):
-                excl_mask = int(_owner.get("arc_decal_exclude_mask", 0) or 0) & 0xFF
-        except Exception:
-            excl_mask = 0
-        need_gate = zone_idx is not None and (
-            C._should_emit_decal_layer_mask_node(layer_mask_int) or excl_mask != 0
-        )
-        if need_gate:
+        # Bound on/off: UseDecal 0 zeroes the slot's alpha.
+        use_m = _math(nodes, "MULTIPLY", f"GT_decal{idx}_use", sat_x, _decal_row_y(origin_y, "layer"), hide=True)
+        use = _pb.bind(nodes, f"{idx}_UseDecal", 0.0)
+        tiling = _pb.bind(nodes, f"{idx}_Tiling", 0.0)
+        domain = decal_comp.domain_mask(sys.modules[__name__], nodes, links, placed_uv, tiling, idx)
+        coverage = decal_comp._math(sys.modules[__name__], nodes, links,
+            f'Slot{idx}.ArtworkCoverage', 'MULTIPLY', color_tex.outputs['Alpha'], domain)
+        links.new(coverage, use_m.inputs[0])
+        links.new(use, use_m.inputs[1])
+        _at("use", use_m)
+        alpha = use_m.outputs[0]
+        if zone_idx is not None:
             lg = None
             try:
-                # Editable group keeps cooked Allow* and optional Excl* override.
-                lg = ensure_gt_decal_layer_edit_group()
+                lg = ensure_gt_decal_layer_edit_group()   # Allow1..8 / Excl1..8: rewritable per colourway
             except Exception:
                 lg = None
-            if lg is None:
-                try:
-                    lg = ensure_gt_decal_layer_group(vis_mask)
-                except Exception:
-                    lg = None
             if lg is not None:
-                gate_n = nodes.new("ShaderNodeGroup")
+                gate_n = _dr_ops.new_operation(nodes, 'ShaderNodeGroup', f'GT_decal{idx}_layer', stage='LayerInputs', role=f'Decal.Slot{idx}.LayerGate')
                 gate_n.node_tree = lg
-                gate_n.name = f"GT_decal{idx}_layer"
-                gate_n["arc_decal_layer_mask"] = vis_mask
-                gate_n["arc_decal_layer_mask_raw"] = int(layer_mask_int)
                 gate_n["arc_decal_idx"] = int(idx)
-                if getattr(lg, "name", "") == "GT_DecalLayerEdit":
-                    configure_gt_decal_layer_edit(gate_n, vis_mask, excl_mask)
-                else:
-                    try:
-                        gate_n["arc_decal_exclude_mask"] = excl_mask
-                    except Exception:
-                        pass
-                excl_txt = ""
-                if excl_mask:
-                    parts = [str(z + 1) for z in range(8) if excl_mask & (1 << z)]
-                    excl_txt = f"; excl {','.join(parts)}"
-                gate_n.label = f"decal {idx} LayerMask ({vis_mask}{excl_txt})"
+                gate_n["arc_decal_exclude_mask"] = excl_mask
+                _dr_ops.set_label(gate_n, f'decal {idx} LayerMask')
                 _at("layer", gate_n)
                 try:
                     links.new(zone_idx, gate_n.inputs["ZoneIndex"])
@@ -3312,128 +2913,203 @@ def _apply_gt_decals(
                     _collapse_broadcast(gate_n.inputs["ZoneIndex"])
                 except Exception:
                     pass
-                if getattr(alpha, "node", None) is not None and getattr(alpha.node, "bl_idname", "") == "ShaderNodeValue":
-                    place_inputs_left_of(gate_n, alpha.node)
 
+        normal_domain = decal_comp._math(sys.modules[__name__], nodes, links,
+            f'Slot{idx}.NormalCoverage', 'MULTIPLY', domain, use)
+        if zone_idx is not None and lg is not None:
+            domain_gate = _dr_ops.new_operation(nodes, 'ShaderNodeGroup', stage='Coverage', role=f'Decal.Slot{idx}.NormalLayerGate')
+            domain_gate.node_tree = lg
+            domain_gate['arc_decal_idx'] = idx
+            domain_gate['arc_decal_exclude_mask'] = excl_mask
+            _at('normal_layer', domain_gate)
+            links.new(zone_idx, domain_gate.inputs['ZoneIndex'])
+            links.new(normal_domain, domain_gate.inputs['Alpha'])
+            normal_domain = domain_gate.outputs['Masked']
+
+        # M_Character_Layered lerps the sampled artwork to the A/B pick by ColorOverride; 0 (the master default)
+        # keeps the artwork (Driftcoat's T_Patch_02_Color_C chest patch).
         decal_rgb = _sock_color(color_tex)
-        ca = _decal_rgb3(decal.get("color_a"))
-        cb = _decal_rgb3(decal.get("color_b"))
-        tint_fac = float(color_override)
-        if ca is not None and cb is not None and tint_fac < 0.01:
-            tint_fac = 1.0
-        if ca is not None and cb is not None:
+        tint_tree = None
+        try:
+            tint_tree = ensure_gt_decal_tint_group()
+        except Exception:
             tint_tree = None
+        if tint_tree is not None:
+            tint = _dr_ops.new_operation(nodes, 'ShaderNodeGroup', f'GT_decal{idx}_tint', stage='LayerInputs', role=f'Decal.Slot{idx}.ColorTint')
+            tint.node_tree = tint_tree
+            _dr_ops.set_label(tint, f'decal {idx} A/B + ColorOverride')
+            _at("tint", tint)
+            links.new(decal_rgb, tint.inputs["DecalColor"])
+            links.new(_pb.bind(nodes, f"{idx}_ColorA", (1.0, 1.0, 1.0, 1.0)), tint.inputs["ColorA"])
+            links.new(_pb.bind(nodes, f"{idx}_ColorB", (1.0, 1.0, 1.0, 1.0)), tint.inputs["ColorB"])
+            links.new(_pb.bind(nodes, f"{idx}_ColorOverride", 0.0), tint.inputs["ColorOverride"])
+            decal_rgb = tint.outputs["Color"] if "Color" in tint.outputs else tint.outputs[0]
+
+        d_rough = d_metal = d_n = None
+        # Native packed data: RG tangent XY, B roughness, A metallic.
+        from . import dr_packed_decal as _packed_decal
+        import bpy
+        dd_tree = _packed_decal.build_group(bpy)
+        if dd_tree is not None:
+            dd = _dr_ops.new_operation(nodes, 'ShaderNodeGroup', f'GT_decal{idx}_dataG', stage='LayerInputs', role=f'Decal.Slot{idx}.PackedSurface')
+            dd.node_tree = dd_tree
+            _dr_ops.set_label(dd, f'decal {idx} Decal Data')
+            _at("unpack", dd)
+            for iname in ("Color", "DecalData", "Decal Data"):
+                if iname in dd.inputs:
+                    links.new(_sock_color(data_tex), dd.inputs[iname])
+                    break
+            links.new(data_tex.outputs['Alpha'], dd.inputs['Alpha'])
+            if "Mask" in dd.inputs:
+                links.new(alpha, dd.inputs["Mask"])
+            d_n = dd.outputs["Normal"] if "Normal" in dd.outputs else None
+            d_rough = dd.outputs["Roughness"] if "Roughness" in dd.outputs else None
+            d_metal = dd.outputs["Metallic"] if "Metallic" in dd.outputs else None
+        if d_n is None:
+            dsep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateColor', f'GT_decal{idx}_data', stage='LayerInputs', role=f'Decal.Slot{idx}.PackedChannels')
+            _at("unpack", dsep)
+            links.new(_sock_color(data_tex), dsep.inputs[0])
+            comb_n = _dr_ops.new_operation(nodes, 'ShaderNodeCombineColor', f'GT_decal{idx}_nxy', stage='LayerInputs', role=f'Decal.Slot{idx}.NormalXY')
+            _w, h = node_footprint(dsep)
+            place(comb_n, main_x, _decal_row_y(origin_y, "unpack") - h - _INPUT_STACK_GAP, lock=True)
+            links.new(dsep.outputs[0], comb_n.inputs[0])
+            links.new(dsep.outputs[1], comb_n.inputs[1])
+            comb_n.inputs[2].default_value = 1.0
+            d_n = comb_n.outputs[0]
+            d_rough = dsep.outputs[2]
+            d_metal = data_tex.outputs["Alpha"]
+        controls = {key: _pb.bind(nodes, f"{idx}_{native}", 0.0) for key, native in (
+            ('surface', 'SurfaceOverride'), ('wear', 'WearOverride'),
+            ('base_normal', 'BaseNormalOverride'), ('detail_normal', 'DetailNormalOverride'))}
+        rotation = _pb.bind(nodes, f"{idx}_DecalPlacement.A", 0.0)
+        normal_rotation = decal_comp._math(sys.modules[__name__], nodes, links,
+            f'Slot{idx}.NormalPlacementInverse', 'MULTIPLY', rotation, -6.283185307179586)
+        slots.append(dict(index=idx, use=use, alpha=alpha, domain=normal_domain,
+            color=decal_rgb, decoder=dd, roughness=d_rough, metallic=d_metal,
+            normal_rotation=normal_rotation, **controls))
+
+        if write_decal_slot(C, nodes, idx, by_idx.get(idx), df, dirs, method):
+            used += 1
+
+    print(f"Arc Raiders: GT decals parsed={len(by_idx)} on={used} slots={DECAL_SLOTS}")
+    return slots
+
+
+DECAL_SLOTS = 8
+
+
+def decal_slot_values(C, decal, df, dirs, method):
+    """Everything one decal slot takes from an MI (None or an unused slot: off)."""
+    off = {"enabled": False}
+    if not decal or not C._decal_slot_is_used(decal):
+        return off
+    tex_stem = (decal.get("texture") or "").strip()
+    tex_fpath = C.resolve_decal_texture(tex_stem, decal.get("texture_path", ""), df, search_dirs=dirs)
+    if not tex_fpath:
+        return off
+    data_stem = (decal.get("data_texture") or "").strip()
+    data_fpath = C.resolve_decal_texture(data_stem, decal.get("data_texture_path", ""), df, search_dirs=dirs) if data_stem else ""
+    try:
+        width_ratio = float(decal.get("width_ratio"))
+    except (TypeError, ValueError):
+        width_ratio = 0.0
+    if width_ratio <= 0.0:
+        width_ratio = C._width_ratio_from_path(tex_fpath)
+        if width_ratio <= 0.0:
+            probe = _load_image_cached(tex_fpath)
+            if probe is not None and probe.size[1] > 0:
+                width_ratio = float(probe.size[0]) / float(probe.size[1])
+                _WIDTH_RATIO_BY_PATH[_norm_path_key(tex_fpath)] = width_ratio
+    if width_ratio <= 0.0:
+        width_ratio = 1.0
+    slot_method = "WIDTH_2X" if method == "FMODEL" and "ducttape" in tex_stem.lower() else method
+    layer_mask_int = C._decal_layer_mask_int(decal.get("layer_mask", 255.0))
+    ca = _decal_rgb3(decal.get("color_a"))
+    cb = _decal_rgb3(decal.get("color_b"))
+    override = max(0.0, min(1.0, float(decal.get("color_override", 0.0))))
+    if ca is None or cb is None:   # one authored colour: tint toward it alone (or keep the artwork)
+        ca = cb = ca or cb or (1.0, 1.0, 1.0)
+        if ca == (1.0, 1.0, 1.0):
+            override = 0.0
+    return {
+        "enabled": True,
+        "texture": tex_fpath,
+        "data": data_fpath,
+        # Native sampler wraps; explicit domain/tiling controls coverage.
+        "extension": "REPEAT",
+        **{key: float(decal.get(key, 0.0)) for key in (
+            "surface_override", "wear_override", "base_normal_override",
+            "detail_normal_override", "tiling")},
+        "rotation": float(decal.get("rotation", 0.0)),
+        "params": C._decal_mapping_params(decal["uv_u"], decal["uv_v"], decal["scale"], decal["rotation"],
+                                          width_ratio, method=slot_method),
+        "allow": C._decal_visibility_layer_mask(layer_mask_int),
+        "color_a": (*ca, 1.0),
+        "color_b": (*cb, 1.0),
+        "override": override,
+        "label": tex_stem,
+    }
+
+
+def write_decal_slot(C, nodes, idx, decal, df, dirs, method) -> bool:
+    """Write one shell slot's values and textures from an MI decal entry; returns whether it is on."""
+    from . import param_bind as _pb
+    vals = decal_slot_values(C, decal, df, dirs, method)
+    role = {}
+    for nd in nodes:
+        if nd.get("dr.decal_slot") == idx:
+            role[nd.get("dr.decal_role")] = nd
+    on = bool(vals.get("enabled"))
+    _pb.bind(nodes, f"{idx}_UseDecal", 1.0 if on else 0.0)
+    if not on:   # keep placement and images: an off slot only needs alpha 0
+        for stage, group in (("color", "decal"), ("data", "decal_data")):
+            nd = role.get(stage)
+            if nd is not None and nd.image is None:
+                nd.image = _pb.neutral_image(group)
+        return False
+    p = vals["params"]
+    for stage, loc, rot, scale in (("rot", p["rot_location"], p["rot_rotation"], p["rot_scale"]),
+                                   ("place", p["place_location"], p["place_rotation"], p["place_scale"])):
+        nd = role.get(stage)
+        if nd is not None:
+            nd.inputs["Location"].default_value = loc
+            nd.inputs["Rotation"].default_value = (0.0, 0.0, rot)
+            nd.inputs["Scale"].default_value = scale
+    flip = role.get("flip")
+    if flip is not None:
+        flip.inputs["Location"].default_value = (0.0, 1.0, 0.0) if p["flip_v"] else (0.0, 0.0, 0.0)
+        flip.inputs["Scale"].default_value = (1.0, -1.0, 1.0) if p["flip_v"] else (1.0, 1.0, 1.0)
+    for stage, path, non_color, group in (("color", vals["texture"], False, "decal"), ("data", vals["data"], True, "decal_data")):
+        nd = role.get(stage)
+        if nd is None:
+            continue
+        img = _load_image_cached(path, non_color=non_color, alpha_mode="CHANNEL_PACKED") if path else None
+        if img is not None and non_color:
             try:
-                tint_tree = ensure_gt_decal_tint_group()
-            except Exception:
-                tint_tree = None
-            if tint_tree is not None:
-                tint = nodes.new("ShaderNodeGroup")
-                tint.node_tree = tint_tree
-                tint.name = f"GT_decal{idx}_tint"
-                tint.label = f"decal {idx} A/B + ColorOverride"
-                _at("tint", tint)
-                na = _rgb(nodes, f"GT_decal{idx}_A", f"{idx}_ColorA", (*ca, 1.0), 0.0, 0.0)
-                nb = _rgb(nodes, f"GT_decal{idx}_B", f"{idx}_ColorB", (*cb, 1.0), 0.0, 0.0)
-                place_colors_left_of(tint, na, nb)
-                links.new(decal_rgb, tint.inputs["DecalColor"])
-                links.new(na.outputs[0], tint.inputs["ColorA"])
-                links.new(nb.outputs[0], tint.inputs["ColorB"])
-                try:
-                    tint.inputs["ColorOverride"].default_value = float(tint_fac)
-                except Exception:
-                    pass
-                try:
-                    decal_rgb = tint.outputs["Color"]
-                except Exception:
-                    decal_rgb = tint.outputs[0]
-        elif ca is not None and tint_fac > 0.01:
-            mix_a = _new_mix(nodes, f"GT_decal{idx}_Aonly", f"decal {idx} ColorA", 0.0, 0.0)
-            _at("tint", mix_a)
-            na = _rgb(nodes, f"GT_decal{idx}_A", f"{idx}_ColorA", (*ca, 1.0), 0.0, 0.0)
-            place_colors_left_of(mix_a, na)
-            try:
-                mix_a.inputs[0].default_value = float(tint_fac)
+                img.colorspace_settings.name = "Non-Color"
             except Exception:
                 pass
-            decal_rgb = _link_mix(links, mix_a, None, decal_rgb, na.outputs[0])
+        nd.image = img if img is not None else _pb.neutral_image(group)
+        nd.extension = vals["extension"]
+    color = role.get("color")
+    if color is not None:
+        _dr_ops.set_label(color, f'Decal {idx}: {vals["label"]}')
+    for stage in ('layer', 'normal_layer'):
+        gate = role.get(stage)
+        if gate is not None:
+            configure_gt_decal_layer_edit(gate, vals["allow"], int(gate.get("arc_decal_exclude_mask", 0) or 0))
+    for key, native in (
+        ('surface_override', 'SurfaceOverride'), ('wear_override', 'WearOverride'),
+        ('base_normal_override', 'BaseNormalOverride'), ('detail_normal_override', 'DetailNormalOverride'),
+        ('tiling', 'Tiling'), ('rotation', 'DecalPlacement.A')):
+        _pb.bind(nodes, f"{idx}_{native}", vals[key])
+    _pb.bind(nodes, f"{idx}_ColorA", vals["color_a"])
+    _pb.bind(nodes, f"{idx}_ColorB", vals["color_b"])
+    _pb.bind(nodes, f"{idx}_ColorOverride", vals["override"])
+    return True
 
-        mix_c = _new_mix(nodes, f"GT_decal{idx}_albedo", f"decal {idx} albedo", 0.0, 0.0)
-        _at("albedo", mix_c)
-        albedo = _link_mix(links, mix_c, alpha, albedo, decal_rgb)
 
-        if data_tex is not None:
-            d_rough = None
-            d_metal = None
-            d_n = None
-            dd_tree = None
-            try:
-                from .. import utils as _u
-                if _u.ensure_decal_data_node_group():
-                    dd_tree = _u.find_node_group(_u._DECAL_DATA_GROUP)
-            except Exception:
-                dd_tree = None
-            if dd_tree is not None:
-                dd = nodes.new("ShaderNodeGroup")
-                dd.node_tree = dd_tree
-                dd.name = f"GT_decal{idx}_dataG"
-                dd.label = f"decal {idx} Decal Data"
-                _at("unpack", dd)
-                for iname in ("Color", "DecalData", "Decal Data"):
-                    if iname in dd.inputs:
-                        links.new(_sock_color(data_tex), dd.inputs[iname])
-                        break
-                if "Mask" in dd.inputs:
-                    links.new(alpha, dd.inputs["Mask"])
-                if "Normal" in dd.outputs:
-                    d_n = dd.outputs["Normal"]
-                if "Roughness" in dd.outputs:
-                    d_rough = dd.outputs["Roughness"]
-                if "Metallic" in dd.outputs:
-                    d_metal = dd.outputs["Metallic"]
-            if d_n is None:
-                dsep = nodes.new("ShaderNodeSeparateColor")
-                dsep.name = f"GT_decal{idx}_data"
-                _at("unpack", dsep)
-                links.new(_sock_color(data_tex), dsep.inputs[0])
-                d_r, d_g = dsep.outputs[0], dsep.outputs[1]
-                d_b = dsep.outputs[2] if len(dsep.outputs) > 2 else d_r
-                comb_n = nodes.new("ShaderNodeCombineColor")
-                comb_n.name = f"GT_decal{idx}_nxy"
-                _w, h = node_footprint(dsep)
-                place(
-                    comb_n, main_x,
-                    _decal_row_y(origin_y, "unpack") - h - _INPUT_STACK_GAP,
-                    lock=True,
-                )
-                links.new(d_r, comb_n.inputs[0])
-                links.new(d_g, comb_n.inputs[1])
-                try:
-                    comb_n.inputs[2].default_value = 1.0
-                except Exception:
-                    pass
-                d_n = comb_n.outputs[0]
-                d_rough = d_b
-                if "Alpha" in data_tex.outputs:
-                    d_metal = data_tex.outputs["Alpha"]
-            mix_n = _new_mix(nodes, f"GT_decal{idx}_n", f"decal {idx} normal", 0.0, 0.0)
-            _at("mix_n", mix_n)
-            n_color = _link_mix(links, mix_n, alpha, n_color, d_n)
-            if d_rough is not None:
-                mix_r = _new_mix(
-                    nodes, f"GT_decal{idx}_r", f"decal {idx} rough", 0.0, 0.0, dtype="FLOAT",
-                )
-                _at("mix_r", mix_r)
-                roughness = _link_mix(links, mix_r, alpha, roughness, d_rough)
-            if d_metal is not None:
-                mix_m = _new_mix(
-                    nodes, f"GT_decal{idx}_m", f"decal {idx} metal", 0.0, 0.0, dtype="FLOAT",
-                )
-                _at("mix_m", mix_m)
-                metallic = _link_mix(links, mix_m, alpha, metallic, d_metal)
-
-    print(
-        f"Arc Raiders: GT decals parsed={parsed} built={used}"
-        + (f" skipped={skipped}" if skipped else "")
-    )
-    return albedo, n_color, roughness, metallic
+def _dr_stage_composer(kind):
+    from . import dr_layered_composer
+    import sys
+    return dr_layered_composer.build_stage_group(sys.modules[__name__],kind)

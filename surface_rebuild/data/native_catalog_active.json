@@ -1,0 +1,114 @@
+{
+  "schema": "native-catalog-activation-v2",
+  "reviewed_source_complete": true,
+  "review_status": "Coordinator reviewed current-native source facts with exact11 rendering limitations; flat FModel and namespace/cache compatibility verified in Blender086; native renderer completeness is not claimed.",
+  "catalog": "native-material-catalog-2.2.0.v2.json.gz",
+  "sha256": "40ebeb10ddb8aaa697e104b0815b7ce0cdafd248bae2148c39b07d6094aea0de",
+  "build": "2.2.0",
+  "mapping": "raw-json-corpus-2.2.0",
+  "expected_material_records": 13343,
+  "expected_texture_metadata": 17706,
+  "expected_render_limitations": 11,
+  "expected_binding_sources": 6,
+  "reviewed_limitations": [
+    {
+      "reference": "/Game/Pioneer/Effects/Materials/Enemies/Frigate/M_FX_Frigate_JetCone",
+      "error_type": "DeferredRenderingAmbiguity",
+      "error_sha256": "eccd232f1a7b0b514464a007440632d48775f8ca48facc09249e18b8151cde33"
+    },
+    {
+      "reference": "/Game/Pioneer/Effects/Materials/Generic/Smoke/M_Coffee_Steam",
+      "error_type": "DeferredRenderingAmbiguity",
+      "error_sha256": "914d967bc64c44d895238bd17a5eab3133ecbb6c7568487130a5ff3296afc65b"
+    },
+    {
+      "reference": "/Game/Pioneer/Environment/Ambience/Insects/Butterfly_01/M_Butterfly_01",
+      "error_type": "DeferredRenderingAmbiguity",
+      "error_sha256": "3533bfc95fa3e0289f9a0939be53889a78b7b36ae62020afd6d990b5a03c1df5"
+    },
+    {
+      "reference": "/Game/Pioneer/Environment/North/VolcanicBlack/Scatter/Moss_02/M_LavaMoss_01_Mesh",
+      "error_type": "DeferredRenderingAmbiguity",
+      "error_sha256": "c70f46db5951015136933e1101e725a9ffec2b70a1570ba66aa55db81122a97e"
+    },
+    {
+      "reference": "/Game/Pioneer/Environment/North/VolcanicBlack/Shaders/M_VolcanicBlack_LavaMoss_01_Temp",
+      "error_type": "DeferredRenderingAmbiguity",
+      "error_sha256": "3eaee73d3b9ebf9c3baba38b38fe1e4fbb6b7915e248ad631e6889a65784fee6"
+    },
+    {
+      "reference": "/Game/Pioneer/Environment/POI/FrozenTrail/Village/MI_FZT_Highway_01_A_01",
+      "error_type": "DeferredRenderingAmbiguity",
+      "error_sha256": "1ed4c0844f7843decc0ac2cf65e4b13e8edb33e673630a4c6fb128dee3747c96"
+    },
+    {
+      "reference": "/Game/Pioneer/Environment/POI/FrozenTrail/Village/MI_FZT_Road_01_A",
+      "error_type": "DeferredRenderingAmbiguity",
+      "error_sha256": "ce87f28b9f800dd04f8fa0814dadc3b003a3c47c3fc9fcc2d215eb2cb97d60f4"
+    },
+    {
+      "reference": "/Game/Pioneer/Environment/POI/FrozenTrail/Village/MI_FZT_SideWalk_01_A",
+      "error_type": "DeferredRenderingAmbiguity",
+      "error_sha256": "d290d0c83a89dd992968b6fc946c1614817d89fa1005c958cc41e649f4d741d0"
+    },
+    {
+      "reference": "/Game/Pioneer/Environment/POI/FrozenTrail/Village/MI_FZT_Street_01_A",
+      "error_type": "DeferredRenderingAmbiguity",
+      "error_sha256": "9586c70c20894204f6d58febc9da9de4aa445b7c4ed9b76c6cdbb69d41d640a9"
+    },
+    {
+      "reference": "/Game/Pioneer/Lighting/VolumeClouds/Materials/Volumetric_Aurora",
+      "error_type": "DeferredRenderingAmbiguity",
+      "error_sha256": "01893774e270c944c9b20682f2009b589f12c3c63b973be7a3dd56856aa08bde"
+    },
+    {
+      "reference": "/Game/Pioneer/MaterialLibrary/M_Presets/M_Road_Snow_01",
+      "error_type": "DeferredRenderingAmbiguity",
+      "error_sha256": "322c25636466795bc137bcd9757b02bbfb5d9aade1ebe01a841bd4ca39520294"
+    }
+  ],
+  "reviewed_binding_sources": [
+    {
+      "package": "/Game/Pioneer/Effects/Materials/Enemies/Frigate/M_FX_Frigate_JetCone",
+      "bindings_sha256": "d28460bbd3cc81a8925d4ada010a24e0dacfb8bfdb2ec16c5fadaed80c89c8d4",
+      "source_sha256": "68bd472f9d2b14be5e349494c81e8f8d35b5ea448cad85384e7478d3ec4b5da4",
+      "facts_sha256": "6b698739fdbcab283e1b53b6d2bb5c1ed4dff0f0a29870ef53456ea1999f7578",
+      "semantic_sha256": "70bb6d62483f4704acb9c6498ae6cdd208cc790307a58c8342ebdb761c7e3420"
+    },
+    {
+      "package": "/Game/Pioneer/Effects/Materials/Generic/Smoke/M_Coffee_Steam",
+      "bindings_sha256": "a6e1955ae19279027caddeb109cf01902333a67f947106deca6da7816dd44115",
+      "source_sha256": "fcdf27d0253b7b0f1278c84ea8f08a4567c38cce3b94bb18c9d5a37ac4685035",
+      "facts_sha256": "a5bf3b1fe331f783dd0d599a1770ec4db3fd88eae64c4ca724d7f68d20dfc8f8",
+      "semantic_sha256": "841d3c4916ddaa4b55178d07077c93cb9a5e6f14e9daaa2371a412df47d50f03"
+    },
+    {
+      "package": "/Game/Pioneer/Environment/Ambience/Insects/Butterfly_01/M_Butterfly_01",
+      "bindings_sha256": "10cd2c795042d54f303acea7aea6620ea01448896ba21a06c910c8910368b05e",
+      "source_sha256": "0c1a6dacbf7609218ca2630c0106b7df0a3f993eca728e4b4e29fb3d30db23c3",
+      "facts_sha256": "7699fd51c8d57ccfeb88b39dbcd6254b4de2a94cffd4fa6c99324c2845762a57",
+      "semantic_sha256": "32019a2bc9a15d3b1f3a54a6642dacfbb34ce768c6f609bad3b958c41298e6fd"
+    },
+    {
+      "package": "/Game/Pioneer/Environment/North/VolcanicBlack/Shaders/M_VolcanicBlack_LavaMoss_01_Temp",
+      "bindings_sha256": "d1f83bdafdd2d3544adebe4261c6a2bf4a6666baa5217468359a228a5956d95d",
+      "source_sha256": "1e7300436049f4b91d41f0ee00b21b4d930171289d8c642b5c3cb23fdcac4b7f",
+      "facts_sha256": "abf2922b53a999f9051594939cde4696f061775e9fab62ae81fac686a92afad8",
+      "semantic_sha256": "295b675c696e56af28c77a0755e275e928c12f6a46941414bc89f5adc37bbb46"
+    },
+    {
+      "package": "/Game/Pioneer/Lighting/VolumeClouds/Materials/Volumetric_Aurora",
+      "bindings_sha256": "d63c09ece6ac36b6928f23286b05aa1a1e263aee1599c908b5bc603b54f32bf1",
+      "source_sha256": "6d10f5edd592d604a9c2f2263fa288707c02efe69ced8eff20f6d95f9996a5c6",
+      "facts_sha256": "2899576ae18dd57d451647ab1f6334b015734af2c1142103938bbda51ada1eb7",
+      "semantic_sha256": "2c52104453c60e6a02838f21aa71ba5f6972b8549df44baff9bdb640b11fddd6"
+    },
+    {
+      "package": "/Game/Pioneer/MaterialLibrary/M_Presets/M_Road_Snow_01",
+      "bindings_sha256": "cd7e3294bf8806e25ad459090892a05f129b707912191031e1af0cf5d0cd6654",
+      "source_sha256": "ee114275e2e100d5cb083c2ca0e8a3803fa0cc3adf31a7f3783eae0396fcdb68",
+      "facts_sha256": "f7d344de6863599cbad935f84ea359872587df708b77d4db8e7e8dfac58c7199",
+      "semantic_sha256": "927b44df335be47de04064bcf56bd2efe6e3d3d2b296a18921e0cfdc4d2ae16c"
+    }
+  ]
+}

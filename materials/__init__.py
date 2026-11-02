@@ -13,7 +13,7 @@ from .map_stage2 import *  # noqa: F403
 from .dispatch import *  # noqa: F403
 # Star-imports skip names starting with `_`. Operators / map_placement still
 # call these on the package (former materials.py monolith API).
-from .common import _parse_sk_material_slots  # noqa: F401
+from .common import _parse_sk_material_slots, _uemodel_section_materials  # noqa: F401
 from .map_stage2 import _preferred_mi_is_single_slot_override  # noqa: F401
 from .benchmark_graph import (  # noqa: F401
     COLOR_BENCHMARKS,

@@ -155,7 +155,7 @@ def apply_detail_array(nodes, links, *, mi, normal_sock, local_folders, loc):
     mapping.inputs["Scale"].default_value = (scale, scale, scale)
     links.new(uv.outputs["UV"], mapping.inputs["Vector"])
 
-    node = _new_tex_image(nodes, img, "Detail Array", (ox, oy), non_color=True)
+    node = _new_tex_image(nodes, img, "Detail Array", (ox, oy), non_color=True, normal=True)
     links.new(mapping.outputs["Vector"], node.inputs["Vector"])
     det_n = _wire_normal_map(
         nodes, links, node.outputs["Color"], (ox + 320, oy),

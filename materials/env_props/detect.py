@@ -8,7 +8,9 @@ import os
 # v5: world-space paint rebased onto the mesh origin for unplaced single props.
 # v6: tint washout clamp + dust contrast=0 no longer forces solid coverage.
 # v7: weathering coverage probe-calibrated (ENV_TRIMMAP_PROTOCOL).
-ENV_PROPS_SETUP_V = "v8"
+# v9: prop presets use their decoded TA_Weathering_Props_01 dust, not T_Propdust.
+# v10: M_PropPreset_CR+NOM+Skinned takes no TA_Weathering_Props_01 dust (its instances switch Use PropDust off).
+ENV_PROPS_SETUP_V = "v10"
 
 KIND_GENERIC = "generic"
 KIND_ARCH_TRIM = "arch_trim"

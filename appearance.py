@@ -1,7 +1,7 @@
 """Body / head / hair discovery and import for the Outfit sidebar.
 
-Scans Pioneer ``Characters/{Shared/Bodies,Heads,Hairs,FacialHairs}`` under the
-configured PioneerGame root. UI enums live on the scene; import can stand alone
+Browses packaged appearance metadata. Asset paths resolve only during actions.
+UI enums live on the scene; import can stand alone
 or merge onto an existing outfit armature.
 """
 
@@ -19,6 +19,7 @@ import bpy
 from . import importing
 from . import rig
 from . import utils
+from .outfit_preview import crop_outfit_preview_rgba, _resize_rgba
 
 _CACHE: dict = {}
 _PATH_BY_ID: dict[str, str] = {}
@@ -26,6 +27,11 @@ _CHOICE_BY_ID: dict[str, dict] = {}
 _APPEARANCE_CSV_CACHE: dict = {}
 _PREVIEW_COLLECTION = None
 _PREVIEW_FAILED: set[str] = set()
+_ICON_SCAN_CACHE: dict = {}
+_OUTFIT_PREVIEW_JOBS: dict = {}
+_OUTFIT_PREVIEW_READY: dict = {}
+_OUTFIT_PREVIEW_ATTEMPTED: set = set()
+_OUTFIT_PREVIEW_EXECUTOR = None
 
 # ActorX preferred; UEModel is what most hair folders actually ship today.
 _MESH_EXTS = (".psk", ".pskx", ".uemodel")
@@ -93,8 +99,6 @@ _FLAVOUR_PREFIXES = (
     "ID_RAIDERTOOLCOSMETIC_",
     "ID_CUSTOMIZATION_BACKPACK_",
 )
-_FLAVOUR_TABLES: dict = {}
-_ICON_SCAN_CACHE: dict = {}
 
 
 def invalidate_cache() -> None:
@@ -102,7 +106,6 @@ def invalidate_cache() -> None:
     _PATH_BY_ID.clear()
     _CHOICE_BY_ID.clear()
     _APPEARANCE_CSV_CACHE.clear()
-    _FLAVOUR_TABLES.clear()
     _ICON_SCAN_CACHE.clear()
 
 
@@ -126,7 +129,7 @@ def get_appearance_csv_path(context=None) -> str:
 
 
 def load_appearance_csv(csv_path: str = "") -> list[dict]:
-    path = csv_path or get_appearance_csv_path()
+    path = csv_path or default_appearance_csv_path()
     if not path or not os.path.isfile(path):
         return []
     try:
@@ -225,19 +228,17 @@ def _strip_trailing_digits(token: str) -> str:
     return re.sub(r"\d+$", "", token or "")
 
 
-def _flavour_stamp() -> str:
-    bits = []
-    for rel in _FLAVOUR_REL.values():
-        path = _resolve_csv_rel_path(rel)
-        if not path:
-            bits.append(rel)
-            continue
+def _appearance_browse_manifest() -> dict:
+    key = "appearance_browse_manifest"
+    if key not in _CACHE:
+        path = os.path.join(os.path.dirname(__file__), "assets", "appearance_browse.json")
         try:
-            bits.append(f"{path}:{os.path.getmtime(path):.0f}")
-        except OSError:
-            bits.append(path)
-    return "|".join(bits)
-
+            with open(path, encoding="utf-8") as stream:
+                data = json.load(stream)
+            _CACHE[key] = data if data.get("schema") == 1 else {}
+        except (OSError, ValueError, AttributeError):
+            _CACHE[key] = {}
+    return _CACHE[key]
 
 def _flavour_entries(json_path: str) -> dict:
     try:
@@ -271,15 +272,7 @@ def _flavour_entries(json_path: str) -> dict:
 
 
 def _flavour_table(kind: str) -> dict:
-    kind = (kind or "").casefold()
-    if kind in _FLAVOUR_TABLES:
-        return _FLAVOUR_TABLES[kind]
-    rel = _FLAVOUR_REL.get(kind) or ""
-    path = _resolve_csv_rel_path(rel) if rel else ""
-    table = _flavour_entries(path) if path else {}
-    _FLAVOUR_TABLES[kind] = table
-    return table
-
+    return _appearance_browse_manifest().get("flavour_tables", {}).get((kind or "").casefold(), {})
 
 def _flavour_name(kind: str, folder: str, icon_stem: str) -> str:
     table = _flavour_table(kind)
@@ -353,11 +346,9 @@ def _apply_gear_display_names(kind: str, choices: list[dict]) -> None:
             _register_choice(choice)
 
 
-def _choices_from_csv(kind: str) -> list[dict] | None:
-    """Return CSV-backed choices for *kind*, or None to fall back to filesystem scan."""
+def _choices_from_csv(kind: str) -> list[dict]:
+    """Return packaged choices without resolving action-time asset paths."""
     rows = load_appearance_csv()
-    if not rows:
-        return None
     result = []
     for row in rows:
         if (row.get("kind") or "").strip().casefold() != kind.casefold():
@@ -365,13 +356,8 @@ def _choices_from_csv(kind: str) -> list[dict] | None:
         key = (row.get("key") or "").strip()
         cid = (row.get("id") or "").strip() or _choice_id(f"{kind}|{key}")
         rel = (row.get("rel_path") or "").strip()
-        path = _resolve_csv_rel_path(rel)
+        path = ""
         has_mesh = str(row.get("has_mesh") or "0").strip() in ("1", "true", "True", "yes")
-        if path:
-            has_mesh = True
-        elif rel and _pioneer_content_root():
-            # Pioneer root is set but this mesh is not on disk.
-            has_mesh = False
         label = (row.get("label") or key or cid).strip()
         choice = _register_choice({
             "id": cid,
@@ -409,7 +395,18 @@ def register_previews() -> None:
 
 
 def unregister_previews() -> None:
-    global _PREVIEW_COLLECTION
+    global _PREVIEW_COLLECTION, _OUTFIT_PREVIEW_EXECUTOR
+    for timer, future in _OUTFIT_PREVIEW_JOBS.values():
+        if bpy.app.timers.is_registered(timer):
+            bpy.app.timers.unregister(timer)
+        if future is not None:
+            future.cancel()
+    _OUTFIT_PREVIEW_JOBS.clear()
+    _OUTFIT_PREVIEW_READY.clear()
+    _OUTFIT_PREVIEW_ATTEMPTED.clear()
+    if _OUTFIT_PREVIEW_EXECUTOR is not None:
+        _OUTFIT_PREVIEW_EXECUTOR.shutdown(wait=False, cancel_futures=True)
+        _OUTFIT_PREVIEW_EXECUTOR = None
     if _PREVIEW_COLLECTION is None:
         return
     try:
@@ -441,6 +438,18 @@ def _gear_icon_spec(choice: dict) -> tuple[str, str]:
     if kind == "raider_tool" or segment == "raidertool":
         return "RaiderTool", "RaiderTool"
     return "", ""
+
+
+def _packaged_appearance_preview(filename: str) -> str:
+    if not filename or os.path.basename(filename) != filename or "/" in filename or "\\" in filename:
+        return ""
+    path = os.path.join(os.path.dirname(__file__), "assets", "appearance_previews", filename)
+    return path if os.path.isfile(path) else ""
+
+
+def _browse_icon_file_for_choice(choice: dict) -> str:
+    filename = _appearance_browse_manifest().get("icons", {}).get((choice or {}).get("id"), "")
+    return _packaged_appearance_preview(filename)
 
 
 def _icon_skin_dirs(segment: str) -> list[str]:
@@ -479,7 +488,7 @@ def _scan_gear_icon(segment: str, prefix: str, stems: list[str]) -> str:
             want.append(bare)
     if not want:
         return ""
-    key = (segment, prefix, tuple(want), _flavour_stamp())
+    key = (segment, prefix, tuple(want), utils.get_pioneer_root() or "")
     cached = _ICON_SCAN_CACHE.get(key)
     if cached is not None:
         return cached
@@ -527,6 +536,7 @@ def _scan_gear_icon(segment: str, prefix: str, stems: list[str]) -> str:
 
 
 def _icon_file_for_choice(choice: dict) -> str:
+    """Resolve source art during explicit reference-image actions only."""
     if not choice:
         return ""
     segment, prefix = _gear_icon_spec(choice)
@@ -551,7 +561,7 @@ def _icon_file_for_choice(choice: dict) -> str:
             found = _resolve_csv_rel_path(rel)
             if found:
                 return found
-    return _scan_gear_icon(segment, prefix, stems)
+    return _scan_gear_icon(segment, prefix, stems) or _browse_icon_file_for_choice(choice)
 
 
 def _crop_sidebar_preview(preview):
@@ -607,17 +617,8 @@ def _preview_icon_id_for_path(path: str) -> int:
 
 def bald_preview_icon_id() -> int:
     """Default Hair preview when None / bald is selected."""
-    bundled = os.path.join(
-        os.path.dirname(__file__), "assets", "hair_previews", "Bald.png",
-    )
-    if os.path.isfile(bundled):
-        return _preview_icon_id_for_path(bundled)
-    return _preview_icon_id_for_path(
-        _resolve_csv_rel_path(
-            "Items/Characters/Skins/Hair/Bald/T_UI_Icon_Hair_Bald.png"
-        )
-    )
-
+    bundled = os.path.join(os.path.dirname(__file__), "assets", "hair_previews", "Bald.png")
+    return _preview_icon_id_for_path(bundled)
 
 def preview_icon_id(choice_id: str) -> int:
     """Custom icon id for the selected head/hair, or 0 if missing."""
@@ -626,15 +627,11 @@ def preview_icon_id(choice_id: str) -> int:
     choice = resolve_choice(choice_id)
     if not choice:
         return 0
-    return _preview_icon_id_for_path(_icon_file_for_choice(choice))
+    return _preview_icon_id_for_path(_browse_icon_file_for_choice(choice))
 
 
 # Shipped assets/outfit_previews are this crop of the 512px T_UI_Icon_Outfit icon:
 # a 326px square from the top, centered on the opaque pixels, resized to 256.
-_OUTFIT_CROP_SRC = 512
-_OUTFIT_CROP_SIDE = 326
-_OUTFIT_CROP_OUT = 256
-_OUTFIT_CROP_ALPHA = 8.0 / 255.0
 _CROP_PENDING: set[str] = set()
 
 
@@ -646,57 +643,6 @@ def _shipped_outfit_preview_path(stem: str) -> str:
     return path if os.path.isfile(path) else ""
 
 
-def crop_outfit_preview_rgba(arr):
-    """Top-center square of a top-down float RGBA icon, resized to 256.
-
-    Matches the shipped outfit portraits. ``arr`` is height, width, 4.
-    """
-    import numpy as np
-
-    src = np.asarray(arr, dtype=np.float32)
-    if src.ndim != 3 or src.shape[2] < 4:
-        return src
-    height, width = src.shape[:2]
-    side = int(round(min(height, width) * _OUTFIT_CROP_SIDE / _OUTFIT_CROP_SRC))
-    side = max(1, min(side, height, width))
-    alpha = src[:, :, 3]
-    _ys, xs = np.nonzero(alpha > _OUTFIT_CROP_ALPHA)
-    if len(xs) == 0:
-        left = (width - side) // 2
-    else:
-        center = (float(xs.min()) + float(xs.max()) + 1.0) / 2.0
-        left = int(round(center - side / 2.0))
-        left = max(0, min(width - side, left))
-    top = 0
-    if top + side > height:
-        top = height - side
-    cropped = src[top : top + side, left : left + side]
-    if cropped.shape[0] == _OUTFIT_CROP_OUT and cropped.shape[1] == _OUTFIT_CROP_OUT:
-        return np.clip(cropped, 0.0, 1.0)
-    return _resize_rgba(cropped, _OUTFIT_CROP_OUT, _OUTFIT_CROP_OUT)
-
-
-def _resize_rgba(arr, out_w: int, out_h: int):
-    """Bilinear resize. ``arr`` is top-down float RGBA."""
-    import numpy as np
-
-    src = np.asarray(arr, dtype=np.float32)
-    in_h, in_w = src.shape[:2]
-    if in_w == out_w and in_h == out_h:
-        return np.clip(src, 0.0, 1.0)
-    ys = (np.arange(out_h, dtype=np.float32) + 0.5) * (in_h / out_h) - 0.5
-    xs = (np.arange(out_w, dtype=np.float32) + 0.5) * (in_w / out_w) - 0.5
-    y0 = np.floor(ys).astype(np.int32)
-    x0 = np.floor(xs).astype(np.int32)
-    y1 = np.clip(y0 + 1, 0, in_h - 1)
-    x1 = np.clip(x0 + 1, 0, in_w - 1)
-    y0 = np.clip(y0, 0, in_h - 1)
-    x0 = np.clip(x0, 0, in_w - 1)
-    wy = (ys - y0.astype(np.float32)).reshape(out_h, 1, 1)
-    wx = (xs - x0.astype(np.float32)).reshape(1, out_w, 1)
-    top = src[y0][:, x0] * (1.0 - wx) + src[y0][:, x1] * wx
-    bot = src[y1][:, x0] * (1.0 - wx) + src[y1][:, x1] * wx
-    return np.clip(top * (1.0 - wy) + bot * wy, 0.0, 1.0)
 
 
 def _cropped_outfit_preview_path(src: str, stem: str) -> str:
@@ -787,6 +733,73 @@ def _outfit_preview_stems(row: dict) -> list[str]:
     return stems
 
 
+def _queue_missing_outfit_preview(context, row, *, allow_extract=False):
+    """Resolve retained selected artwork; extraction requires an explicit import."""
+    scene = context.scene
+    stems = tuple(stem for stem in _outfit_preview_stems(row) if re.fullmatch(r"[A-Za-z0-9_]+", stem))
+    identity = row.get("ST") or ""
+    if not stems or not identity:
+        return ""
+    settings = tuple(bpy.path.abspath(getattr(scene, name, "") or "") for name in ("arc_pioneer_root", "arc_pak_dir", "arc_usmap_path"))
+    ready_key = (identity, stems, settings)
+    key = (ready_key, bool(allow_extract))
+    ready = _OUTFIT_PREVIEW_READY.get(ready_key, "")
+    if ready or key in _OUTFIT_PREVIEW_ATTEMPTED:
+        return ready
+    _OUTFIT_PREVIEW_ATTEMPTED.add(key)
+
+    def finish():
+        global _OUTFIT_PREVIEW_EXECUTOR
+        try:
+            future = _OUTFIT_PREVIEW_JOBS[key][1]
+            if future is None:
+                from concurrent.futures import ThreadPoolExecutor
+                from . import pak_extract
+                from .outfit_preview import selected_game_icon
+                cache = os.path.join(os.path.dirname(__file__), "ArcPak", "cache")
+                pioneer_cache = os.path.join(cache, "PioneerGame", "Content", "Pioneer")
+                source, game, mapping = settings
+                roots = []
+                if source:
+                    roots.extend(os.path.join(source, suffix) for suffix in ("", "Pioneer", "Content/Pioneer", "PioneerGame/Content/Pioneer"))
+                roots = tuple(dict.fromkeys(roots + [pioneer_cache]))
+                command = ()
+                if allow_extract and game:
+                    mapping = mapping or pak_extract.bundled_usmap()
+                    if mapping:
+                        try:
+                            command = tuple(pak_extract.extraction_command(game, mapping, [], out_dir=cache))
+                        except FileNotFoundError:
+                            command = ()
+                if _OUTFIT_PREVIEW_EXECUTOR is None:
+                    _OUTFIT_PREVIEW_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="outfit-preview")
+                future = _OUTFIT_PREVIEW_EXECUTOR.submit(selected_game_icon, stems, identity, roots, pioneer_cache, command)
+                _OUTFIT_PREVIEW_JOBS[key] = (finish, future)
+                return 0.1
+            if not future.done():
+                return 0.1
+            source = future.result()
+            if source:
+                destination = os.path.join(os.path.dirname(__file__), "ArcPak", "cache", "outfit_previews", stems[0] + ".png")
+                os.makedirs(os.path.dirname(destination), exist_ok=True)
+                if _write_cropped_outfit_preview(source, destination):
+                    _OUTFIT_PREVIEW_READY[ready_key] = destination
+                    for window in bpy.context.window_manager.windows:
+                        for area in window.screen.areas:
+                            area.tag_redraw()
+        except Exception as exc:
+            print(f"Arc Raiders: selected outfit preview unavailable: {exc}")
+        _OUTFIT_PREVIEW_JOBS.pop(key, None)
+        return None
+
+    _OUTFIT_PREVIEW_JOBS[key] = (finish, None)
+    try:
+        bpy.app.timers.register(finish, first_interval=0.01)
+    except Exception:
+        _OUTFIT_PREVIEW_JOBS.pop(key, None)
+    return ready
+
+
 def outfit_preview_icon_id(context) -> int:
     """Custom icon for the selected outfit row, or 0.
 
@@ -817,12 +830,7 @@ def outfit_preview_icon_id(context) -> int:
         bundled = _shipped_outfit_preview_path(stem)
         if bundled:
             return _preview_icon_id_for_path(bundled)
-    for stem in _outfit_preview_stems(row):
-        rel = f"Items/Characters/Skins/Outfit/{stem}/T_UI_Icon_Outfit_{stem}.png"
-        src = _resolve_csv_rel_path(rel)
-        if src:
-            return _preview_icon_id_for_path(_cropped_outfit_preview_path(src, stem))
-    return 0
+    return _preview_icon_id_for_path(_queue_missing_outfit_preview(context, row))
 
 
 def _characters_root(pioneer_root: str = "") -> str:
@@ -860,12 +868,12 @@ def resolve_choice_path(choice_id: str) -> str:
     path = _PATH_BY_ID.get(choice_id) or ""
     if path and os.path.isfile(path):
         return path
-    # Rebuild catalogs once if Blender reloaded enums without our map.
-    list_head_choices()
-    list_hair_choices()
-    path = _PATH_BY_ID.get(choice_id) or ""
-    return path if path and os.path.isfile(path) else ""
-
+    choice = resolve_choice(choice_id)
+    path = _resolve_csv_rel_path((choice or {}).get("rel_path") or "")
+    if path:
+        choice["path"] = path
+        _register_choice(choice)
+    return path
 
 def resolve_choice(choice_id: str) -> dict | None:
     if not choice_id or choice_id == "NONE":
@@ -1069,85 +1077,48 @@ def _dedupe_prefer_pio_heads(choices: list[dict]) -> list[dict]:
 
 
 def list_head_choices() -> list[dict]:
-    cache_key = ("heads", utils.get_pioneer_root() or "", get_appearance_csv_path())
-    if cache_key in _CACHE:
-        return _CACHE[cache_key]
-    csv_choices = _choices_from_csv("head")
-    if csv_choices is not None:
-        # Prefer shipped CSV; still allow filesystem extras when pioneer root is set.
-        by_key = {
-            (c.get("key") or c.get("folder") or c["id"]).casefold(): c
-            for c in csv_choices
-        }
-        chars = _characters_root()
-        heads_dir = os.path.join(chars, "Heads") if chars else ""
-        if heads_dir and os.path.isdir(heads_dir):
-            groups: dict[str, list[str]] = {}
-            for mesh in _iter_meshes(heads_dir):
-                rel = os.path.relpath(mesh, heads_dir)
-                folder = rel.split(os.sep)[0]
-                if folder.casefold() == "shared":
-                    continue
-                groups.setdefault(folder, []).append(mesh)
-            for folder, meshes in groups.items():
-                ck = folder.casefold()
-                primary = _pick_primary_mesh(meshes)
-                if not primary:
-                    continue
-                if ck in by_key:
-                    if not by_key[ck].get("path"):
-                        by_key[ck]["path"] = primary
-                        by_key[ck]["has_mesh"] = True
-                        _register_choice(by_key[ck])
-                    continue
-                by_key[ck] = _register_choice({
-                    "id": _choice_id("head|" + folder),
-                    "label": _head_label(folder),
-                    "path": primary,
-                    "folder": folder,
-                    "has_mesh": True,
-                    "kind": "head",
-                    "icon_stem": folder,
-                    "key": folder,
-                })
-        result = sorted(
-            _dedupe_prefer_pio_heads(list(by_key.values())),
-            key=lambda c: c["label"].casefold(),
+    cache_key = "heads"
+    if cache_key not in _CACHE:
+        _CACHE[cache_key] = sorted(
+            _dedupe_prefer_pio_heads(_choices_from_csv("head")),
+            key=lambda choice: choice["label"].casefold(),
         )
-        _CACHE[cache_key] = result
-        return result
-
-    chars = _characters_root()
-    heads_dir = os.path.join(chars, "Heads") if chars else ""
-    groups = {}
-    for mesh in _iter_meshes(heads_dir):
-        rel = os.path.relpath(mesh, heads_dir)
-        folder = rel.split(os.sep)[0]
-        if folder.casefold() == "shared":
-            continue
-        groups.setdefault(folder, []).append(mesh)
-    result = []
-    for folder, meshes in sorted(groups.items(), key=lambda kv: kv[0].casefold()):
-        primary = _pick_primary_mesh(meshes)
-        if not primary:
-            continue
-        label = _head_label(folder)
-        result.append(_register_choice({
-            "id": _choice_id("head|" + folder),
-            "label": label,
-            "path": primary,
-            "folder": folder,
-            "has_mesh": True,
-            "kind": "head",
-            "icon_stem": folder,
-            "key": folder,
-        }))
-    result = _dedupe_prefer_pio_heads(result)
-    _CACHE[cache_key] = result
-    return result
-
+    return _CACHE[cache_key]
 
 _HAIR_COLOR_PAK_READY = set()
+
+
+def hair_color_choice(scene, role="Hair") -> str:
+    property_name = "arc_appearance_facial_hair_color" if role == "FacialHair" else "arc_appearance_hair_color"
+    return getattr(scene, property_name, "NONE") or "NONE"
+
+
+def hair_object_role(obj) -> str:
+    if obj.type != "MESH":
+        return ""
+    role = str(obj.get("arc_assembly_role") or "")
+    if role:
+        return role if role in ("Hair", "FacialHair") else ""
+    source = str(obj.get("arc_source_mesh") or obj.get("arc_psk_path") or "").replace(chr(92), "/").casefold()
+    if "/facialhairs/" in source or "/facialhair/" in source:
+        return "FacialHair"
+    name = (obj.name or "").casefold()
+    if "facial" in name or "beard" in name or "moustache" in name or "mustache" in name:
+        return "FacialHair"
+    if str(obj.get("arc_model_type") or "").casefold() == "hair" or "hair" in name:
+        return "Hair"
+    return ""
+
+
+def isolate_appearance_materials(obj) -> None:
+    if obj.data.users > 1:
+        obj.data = obj.data.copy()
+    for index, material in enumerate(obj.data.materials):
+        if material is not None and material.users > 1:
+            obj.data.materials[index] = material.copy()
+    for slot in getattr(obj, "material_slots", ()):
+        if slot.link == 'OBJECT' and slot.material is not None and slot.material.users > 1:
+            slot.material = slot.material.copy()
 
 
 def resolve_hair_color_path(choice_id=None, scene=None) -> str:
@@ -1163,7 +1134,7 @@ def resolve_hair_color_path(choice_id=None, scene=None) -> str:
     choice = resolve_choice(choice_id)
     if not choice or choice.get("kind") != "hair_color":
         return ""
-    path = choice.get("path") or ""
+    path = choice.get("path") or _resolve_csv_rel_path(choice.get("rel_path") or "")
     from . import pak_extract
     game = pak_extract.configured_dir(scene)
     rel = choice.get("rel_path") or ""
@@ -1188,56 +1159,10 @@ def resolve_hair_color_path(choice_id=None, scene=None) -> str:
 
 
 def list_hair_color_choices() -> list[dict]:
-    """Shared HairColors palette (MI_Hair_01_*) plus base Brunette."""
-    cache_key = ("hair_colors", utils.get_pioneer_root() or "", get_appearance_csv_path())
-    if cache_key in _CACHE:
-        return _CACHE[cache_key]
-    csv_choices = _choices_from_csv("hair_color")
-    if csv_choices is not None:
-        result = sorted(csv_choices, key=lambda c: c["label"].casefold())
-        _CACHE[cache_key] = result
-        return result
-    chars = _characters_root()
-    result = []
-    seen = set()
-    roots = []
-    if chars:
-        roots.append(os.path.join(chars, "Hairs", "Materials", "HairColors"))
-        roots.append(os.path.join(chars, "Hairs", "Materials", "BaseMaterials"))
-        roots.append(os.path.join(chars, "FacialHairs", "Materials", "HairColors"))
-    for root in roots:
-        if not root or not os.path.isdir(root):
-            continue
-        for dirpath, _dns, filenames in os.walk(root):
-            for fname in filenames:
-                low = fname.lower()
-                if not low.startswith("mi_hair") or not low.endswith(".json"):
-                    continue
-                stem = os.path.splitext(fname)[0]
-                key = stem.casefold()
-                if key in seen:
-                    continue
-                seen.add(key)
-                # MI_Hair_01_AshBlonde → Ash Blonde
-                label = stem
-                for prefix in ("MI_Hair_01_", "MI_Hair_", "MI_"):
-                    if label.startswith(prefix):
-                        label = label[len(prefix):]
-                        break
-                label = _humanize(label.replace("_", " "))
-                path = os.path.join(dirpath, fname)
-                result.append(_register_choice({
-                    "id": _choice_id("haircolor|" + key),
-                    "label": label,
-                    "path": path,
-                    "folder": stem,
-                    "has_mesh": True,
-                    "kind": "hair_color",
-                }))
-    result.sort(key=lambda c: c["label"].casefold())
-    _CACHE[cache_key] = result
-    return result
-
+    cache_key = "hair_colors"
+    if cache_key not in _CACHE:
+        _CACHE[cache_key] = sorted(_choices_from_csv("hair_color"), key=lambda choice: choice["label"].casefold())
+    return _CACHE[cache_key]
 
 def make_hair_color_enum_items(self, context):
     choices = list_hair_color_choices()
@@ -1248,142 +1173,17 @@ def make_hair_color_enum_items(self, context):
 
 
 def _list_all_hair_choices() -> list[dict]:
-    """Catalog hairstyles from shipped CSV, else DA_VP_* + loose mesh folders.
-
-    Most styles ship JSON/textures only; geometry is often ``.uemodel`` (or
-    missing until ActorX re-export). List every authored style; mark those
-    without a mesh so the dropdown matches FModel's Hairs tree.
-    """
-    cache_key = ("hairs", utils.get_pioneer_root() or "", get_appearance_csv_path())
-    if cache_key in _CACHE:
-        return _CACHE[cache_key]
-    by_key: dict[str, dict] = {}
-
-    csv_choices = _choices_from_csv("hair")
-    if csv_choices is not None:
-        for choice in csv_choices:
-            key = (choice.get("key") or choice["id"]).casefold()
-            label = choice.get("label") or key
+    """Return packaged styles while preserving legacy mixed-catalog identities."""
+    cache_key = "hairs"
+    if cache_key not in _CACHE:
+        by_key = {}
+        for choice in _choices_from_csv("hair"):
+            label = choice.get("label") or choice["key"]
             if not choice.get("has_mesh") and not label.endswith("(no mesh)"):
-                choice = dict(choice)
                 choice["label"] = f"{label} (no mesh)"
-                choice = _register_choice(choice)
-            by_key[key] = choice
-
-    chars = _characters_root()
-    # Filesystem scan fills gaps / refreshes paths when pioneer root is set.
-    for segment in ("Hairs", "FacialHairs"):
-        hair_dir = os.path.join(chars, segment) if chars else ""
-        if not hair_dir or not os.path.isdir(hair_dir):
-            continue
-        # 1) Authored visual parts (DA_VP_*) — full style list.
-        for dirpath, _dns, filenames in os.walk(hair_dir):
-            norm = dirpath.replace("\\", "/").casefold()
-            if "/materials/" in norm or norm.endswith("/materials"):
-                continue
-            for name in filenames:
-                if not name.casefold().startswith("da_vp_") or not name.casefold().endswith(".json"):
-                    continue
-                da_path = os.path.join(dirpath, name)
-                try:
-                    with open(da_path, "r", encoding="utf-8-sig") as fh:
-                        data = json.loads(fh.read())
-                except (OSError, json.JSONDecodeError, UnicodeError):
-                    continue
-                mesh_stem = ""
-                for export in _exports_list(data):
-                    if export.get("Type") != "CustomizationVisualPartDataAsset":
-                        continue
-                    props = export.get("Properties") or {}
-                    mesh_stem = _mesh_package_stem(props.get("Mesh") or props.get("StaticMesh"))
-                    if mesh_stem:
-                        break
-                # Style folder is first segment under Hairs/ or nested Buzzcut/Skins/X
-                rel = os.path.relpath(dirpath, hair_dir)
-                parts = rel.split(os.sep)
-                if parts[0].casefold() in ("shared", "textures", "materials"):
-                    continue
-                folder = parts[0]
-                style_key = rel if len(parts) > 1 else folder
-                label = _humanize(folder)
-                if len(parts) > 1:
-                    label = f"{label} · {_humanize(parts[-1])}"
-                if segment == "FacialHairs":
-                    label = f"Facial · {label}"
-                mesh_path = _resolve_mesh_file(dirpath, mesh_stem) if mesh_stem else ""
-                if not mesh_path:
-                    # Fall back to any mesh sitting next to the DA.
-                    mesh_path = _pick_primary_mesh(list(_iter_meshes(dirpath)))
-                key = f"{segment}|{style_key}".casefold()
-                if key in by_key:
-                    existing = by_key[key]
-                    if mesh_path and not existing.get("path"):
-                        existing["path"] = mesh_path
-                        existing["has_mesh"] = True
-                        if existing["label"].endswith(" (no mesh)"):
-                            existing["label"] = existing["label"][: -len(" (no mesh)")]
-                        _register_choice(existing)
-                    continue
-                by_key[key] = {
-                    "id": _choice_id("hair|" + key),
-                    "label": label if mesh_path else f"{label} (no mesh)",
-                    "path": mesh_path or "",
-                    "folder": folder,
-                    "has_mesh": bool(mesh_path),
-                    "segment": segment,
-                    "da_path": da_path,
-                    "kind": "hair",
-                    "icon_stem": folder,
-                    "key": f"{segment}|{style_key}",
-                }
-
-        # 2) Folders with meshes but no DA_VP (e.g. Celeste).
-        groups: dict[str, list[str]] = {}
-        for mesh in _iter_meshes(hair_dir):
-            rel = os.path.relpath(mesh, hair_dir)
-            folder = rel.split(os.sep)[0]
-            if folder.casefold() in ("shared", "materials", "textures"):
-                continue
-            groups.setdefault(folder, []).append(mesh)
-        for folder, meshes in groups.items():
-            key = f"{segment}|{folder}".casefold()
-            if key in by_key and by_key[key].get("has_mesh"):
-                continue
-            primary = _pick_primary_mesh(meshes)
-            if not primary:
-                continue
-            label = _humanize(folder)
-            if segment == "FacialHairs":
-                label = f"Facial · {label}"
-            if key in by_key:
-                by_key[key]["path"] = primary
-                by_key[key]["has_mesh"] = True
-                _register_choice(by_key[key])
-                continue
-            by_key[key] = {
-                "id": _choice_id("hair|" + key),
-                "label": label,
-                "path": primary,
-                "folder": folder,
-                "has_mesh": True,
-                "segment": segment,
-                "da_path": "",
-                "kind": "hair",
-                "icon_stem": folder,
-                "key": f"{segment}|{folder}",
-            }
-
-    # Importable first, then alphabetical within each band.
-    result = []
-    ordered = sorted(
-        by_key.values(),
-        key=lambda c: (0 if c.get("has_mesh") else 1, c["label"].casefold()),
-    )
-    for choice in ordered:
-        result.append(_register_choice(choice))
-    _CACHE[cache_key] = result
-    return result
-
+            by_key[(choice.get("key") or choice["id"]).casefold()] = choice
+        _CACHE[cache_key] = sorted(by_key.values(), key=lambda choice: (0 if choice.get("has_mesh") else 1, choice["label"].casefold()))
+    return _CACHE[cache_key]
 
 def hair_choice_role(choice_or_id) -> str:
     """Classify legacy mixed-catalog IDs without changing their saved identity."""
@@ -1450,12 +1250,7 @@ def list_gear_choices(kind: str) -> list[dict]:
     kind = (kind or "").strip().casefold()
     if kind not in _GEAR_KINDS:
         return []
-    cache_key = (
-        f"gear:{kind}",
-        utils.get_pioneer_root() or "",
-        get_appearance_csv_path(),
-        _flavour_stamp(),
-    )
+    cache_key = f"gear:{kind}"
     if cache_key in _CACHE:
         return _CACHE[cache_key]
     choices = _choices_from_csv(kind) or []
@@ -1753,7 +1548,7 @@ def locate_appearance_mesh(rel: str) -> str:
     if not rel:
         return ""
     from . import pak_extract
-    if pak_extract.configured_dir(bpy.context.scene):
+    if str(getattr(bpy.context.scene, "arc_import_source", "PAK")) == "PAK" and pak_extract.configured_dir(bpy.context.scene):
         return _mesh_from_pak(rel)
     for variant in _mesh_rel_variants(rel):
         found = _resolve_csv_rel_path(variant)
@@ -1762,7 +1557,7 @@ def locate_appearance_mesh(rel: str) -> str:
         cached = _cached_mesh_from_rel(variant)
         if _mesh_file_usable(cached):
             return cached
-    return _mesh_from_pak(rel)
+    return _mesh_from_pak(rel) if str(getattr(bpy.context.scene, "arc_import_source", "PAK")) == "PAK" else ""
 
 
 def _mesh_from_pak(rel: str) -> str:
@@ -1775,6 +1570,11 @@ def _mesh_from_pak(rel: str) -> str:
     cached = _cached_mesh_from_rel(rel)
     from . import pak_extract
     if _mesh_file_usable(cached) and pak_extract.mesh_cache_is_current(cached):
+        try:
+            pak_extract.ensure_cached_mesh_material_metadata(bpy.context.scene, [cached])
+        except Exception as exc:
+            _mesh_from_pak.last_reason = str(exc)
+            return ""
         return cached
     try:
         from . import pak_extract
@@ -2328,12 +2128,49 @@ def _import_uemodel_outfit(mesh_path: str) -> list:
     return uemodel_import.try_import_uemodel_v10(mesh_path, scale=scale) or []
 
 
+def _import_colored_hair(path, hair_mi, colour_json, import_slot):
+    from .materials.character import setup_hair_material
+    try:
+        objects = _import_uemodel_outfit(path) if path.casefold().endswith(".uemodel") else importing.import_psk(path)
+        if not objects and path.casefold().endswith(".uemodel"):
+            for extension in (".psk", ".pskx", ".PSK", ".PSKX"):
+                sibling = os.path.splitext(path)[0] + extension
+                if os.path.isfile(sibling):
+                    path = sibling
+                    objects = importing.import_psk(path)
+                    break
+    except Exception as exc:
+        return False, f"Hair import failed: {exc}", []
+    if not objects:
+        return False, f"Hair import produced no objects: {path}", []
+    if import_slot is not None:
+        from . import import_layout
+        import_layout.stamp_objects(objects, slot=import_slot)
+    mi = hair_mi if hair_mi and hair_mi != "NONE" else ""
+    for obj in objects:
+        if obj.type != "MESH":
+            continue
+        obj["arc_psk_path"] = path
+        obj["arc_source_mesh"] = path
+        obj["arc_model_type"] = "hair"
+        obj["arc_hair_mi"] = mi
+        obj["arc_bridge_source"] = "fmodel"
+        if mi:
+            obj["arc_skin_json"] = os.path.abspath(mi)
+        isolate_appearance_materials(obj)
+        setup_hair_material(obj, mi, colour_json=colour_json)
+        obj["arc_material_status"] = "hair"
+    return True, f"Imported hair: {os.path.basename(path)}", objects
+
+
 def import_appearance_mesh(path: str, *, body_variant: str = "NONE", hair_mi: str = "NONE",
-                           skin_json: str = "", manual_skins_folder: str = "", skin_choice: str = "NONE", import_slot=None):
+                           skin_json: str = "", manual_skins_folder: str = "", skin_choice: str = "NONE", import_slot=None, material_bindings=None, hair_colour_json=None):
     """Import .psk/.pskx/.uemodel and apply Arc materials. Returns (ok, msg, objs)."""
     path = bpy.path.abspath(path)
     if not os.path.isfile(path):
         return False, f"Mesh not found: {path}", []
+    if hair_colour_json is not None:
+        return _import_colored_hair(path, hair_mi, hair_colour_json, import_slot)
     low = path.casefold()
     if low.endswith(".uemodel"):
         try:
@@ -2384,7 +2221,15 @@ def import_appearance_mesh(path: str, *, body_variant: str = "NONE", hair_mi: st
             status = apply_materials_to_object(
                 obj, path, body_variant=body_variant, hair_mi=hair_mi,
                 skin_json=skin_json, manual_skins_folder=manual_skins_folder, skin_choice=skin_choice,
+                material_bindings=material_bindings,
             )
+            try:
+                from .material_runtime import shader_parity
+                parity = shader_parity.apply_uemodel_slots(obj, path)
+                if parity:
+                    status = f"{status}; shader-parity ({parity})"
+            except Exception as exc:
+                print(f"Arc Raiders shader parity: slot pass failed for {obj.name}: {exc}")
             obj["arc_material_status"] = str(status or "")[:900]
         return True, f"Imported UEModel: {os.path.basename(path)}", objs
 
@@ -2438,12 +2283,13 @@ def repair_hair_object(obj, scene=None, *, place_static=True):
         return False, "Not a hair or facial-hair mesh"
     choices = textures.scan_hair_mis(source)
     mi = choices[0][1] if choices else str(obj.get("arc_hair_mi") or "")
-    colour_id = getattr(scene, "arc_appearance_hair_color", "NONE") or "NONE"
+    role = hair_object_role(obj)
+    colour_id = hair_color_choice(scene, role)
     colour = resolve_hair_color_path(colour_id, scene) if colour_id != "NONE" else ""
+    isolate_appearance_materials(obj)
     setup_hair_material(obj, mi, colour_json=colour)
     obj["arc_model_type"] = "hair"
-    role = "FacialHair" if "/facialhairs/" in source.replace("\\", "/").casefold() else "Hair"
-    _stamp_role(obj, role, source)
+    _stamp_role(obj, role or "Hair", source)
     if place_static:
         from mathutils import Vector
         from . import import_layout, reference_planes
@@ -2532,10 +2378,16 @@ def import_appearance_parts(
     head_id = getattr(scene, "arc_appearance_head", "NONE") or "NONE"
     hair_id = getattr(scene, "arc_appearance_hair", "NONE") or "NONE"
     facial_hair_id = getattr(scene, "arc_appearance_facial_hair", "NONE") or "NONE"
-    hair_colour_id = getattr(scene, "arc_appearance_hair_color", "NONE") or "NONE"
-    if want.intersection({"Hair", "FacialHair"}) and hair_colour_id != "NONE" and not resolve_hair_color_path(hair_colour_id, scene):
-        msgs.append("Selected Hair Color MI could not be loaded from the Pioneer folder or Paks")
-        want.difference_update({"Hair", "FacialHair"})
+    hair_colours = {}
+    for hair_role in ("Hair", "FacialHair"):
+        if hair_role not in want:
+            continue
+        colour_id = hair_color_choice(scene, hair_role)
+        colour_path = resolve_hair_color_path(colour_id, scene) if colour_id != "NONE" else ""
+        if colour_id != "NONE" and not colour_path:
+            msgs.append(f"{hair_role}: Selected Hair Color MI could not be loaded from the Pioneer folder or Paks")
+            want.discard(hair_role)
+        hair_colours[hair_role] = colour_path
     do_replace = (
         bool(replace_selected)
         if replace_selected is not None
@@ -2721,6 +2573,7 @@ def import_appearance_parts(
             path,
             body_variant=body_variant,
             hair_mi=hair_mi, import_slot=layout_slot,
+            hair_colour_json=hair_colours.get(role),
         )
         if not ok:
             msgs.append(f"{role}: {msg}")

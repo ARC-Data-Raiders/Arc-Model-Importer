@@ -23,7 +23,7 @@ from .parent_infer import (
     tint_multiplier,
 )
 from .trim_map import TRIMMAP_SETUP_V, setup_trim_map_material
-from .weathering import apply_top_down_dust, apply_weathering, load_library_image
+from .weathering import apply_prop_preset_dust, apply_top_down_dust, apply_weathering, load_library_image
 from .world_paint import (
     PAINT_BREAKUP_TEXTURE,
     apply_world_space_paint,
@@ -41,6 +41,7 @@ __all__ = (
     "PRESET_PROPTRIM",
     "PRESET_TRIMMAP",
     "TRIMMAP_SETUP_V",
+    "apply_prop_preset_dust",
     "apply_top_down_dust",
     "apply_weathering",
     "apply_world_space_paint",

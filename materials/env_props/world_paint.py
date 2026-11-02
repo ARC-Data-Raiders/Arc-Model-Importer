@@ -12,7 +12,8 @@ Two authoring modes share one set of parameters:
 UE authors those heights in centimetres. Mesh Position units depend on import:
 
 * Map Stage 1 scales by ``MAP_UNIT_SCALE`` (0.01) → Position in metres
-* Single-model PSK import usually leaves Unreal cm → Position in cm
+* UEModel imports bake the UE-to-Blender factor (0.01 by default) into the vertices
+* PSK imports put that factor on the root object, so object space stays in cm
 
 Always convert Paint* scalars with the same unit scale as the geometry.
 """
@@ -126,15 +127,28 @@ def infer_paint_unit_scale(mat=None, psk_path: str = "", local: bool = False) ->
                     return convert(obj)
         except Exception:
             pass
-        try:
-            from ...asset_domain import is_environment_domain
+    return import_route_unit_scale(psk_path, local=local)
 
-            # Single-model env props are almost always still in UE cm.
-            if is_environment_domain(psk_path):
-                return 1.0
-        except Exception:
-            pass
-    return _UE_CM_TO_M
+
+def import_route_unit_scale(mesh_path: str = "", local: bool = False) -> float:
+    """cm→Position scale before the mesh owns this material, from how the addon imports *mesh_path*.
+
+    Material builds run before slot assignment, so no owner exists yet. Guessing UE cm for every environment
+    mesh stamped metre-baked UEModel walls (MI_SperanzaSquare_Trim_01_A) with a band 100x too high. Shared MI
+    builds pass a ``<MI folder>/mesh.psk`` domain hint, not a file: only a real PSK keeps object space in cm.
+    """
+    import os
+
+    try:
+        from ...importing import ue_import_unit_scale
+
+        scale = ue_import_unit_scale()
+    except Exception:
+        scale = _UE_CM_TO_M
+    path = str(mesh_path or "")
+    if local and path.lower().endswith((".psk", ".pskx")) and os.path.isfile(path):
+        return 1.0
+    return scale
 
 
 def paint_is_world_anchored(obj) -> bool:

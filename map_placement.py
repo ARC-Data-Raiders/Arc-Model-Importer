@@ -3162,21 +3162,21 @@ def collect_map_mesh_targets(
     if not map_name or map_name == "NONE":
         map_name = (getattr(scene, "arc_placement_map_name", "") or "").strip()
 
+    if map_name == "NONE":
+        map_name = ""
+
     if only_selected:
         selected = [
             o for o in context.selected_objects
-            if o.type == "MESH" and o.get("arc_map") and not o.get("arc_placement_instancer")
+            if o.type == "MESH" and o.get("arc_map")
+            and not o.get("arc_placement_instancer") and not o.get("arc_heightmap_plane")
+            and (not map_name or o.get("arc_map") == map_name)
         ]
-        if selected:
-            if map_name:
-                filtered = [o for o in selected if o.get("arc_map") == map_name]
-                if filtered:
-                    selected = filtered
-            unique = {}
-            for obj in selected:
-                key = obj.data.as_pointer() if obj.data else obj.as_pointer()
-                unique.setdefault(key, obj)
-            return list(unique.values())
+        unique = {}
+        for obj in selected:
+            key = obj.data.as_pointer() if obj.data else obj.as_pointer()
+            unique.setdefault(key, obj)
+        return list(unique.values())
 
     meshes = []
     seen_data = set()
@@ -3193,7 +3193,9 @@ def collect_map_mesh_targets(
         tagged_map = obj.get("arc_map") or ""
         if map_name and tagged_map != map_name:
             continue
-        if not tagged_map and not obj.get("arc_psk_path") and not obj.get("arc_mesh_file"):
+        # Stage 2 owns only Stage-1-tagged map geometry. Source paths alone
+        # also exist on characters and accessories and do not establish ownership.
+        if not tagged_map:
             continue
         data_key = obj.data.as_pointer() if obj.data else obj.as_pointer()
         if data_key in seen_data:
@@ -9564,13 +9566,8 @@ def register_instancer_material_focus():
         )
         _selection_msgbus_handles.append(handle)
     except Exception:
-        try:
-            if not bpy.app.timers.is_registered(_instancer_focus_timer_poll):
-                bpy.app.timers.register(
-                    _instancer_focus_timer_poll, first_interval=0.5, persistent=True
-                )
-        except Exception:
-            pass
+        # No idle polling fallback; the explicit focus operator remains usable.
+        pass
 
 
 def unregister_instancer_material_focus():

@@ -25,27 +25,49 @@ from ..properties import BODY_ALBEDO, BODY_NORMAL
 # Misc item material setup
 # ---------------------------------------------------------------------------
 
-def _find_misc_textures(folder: str) -> dict:
+_MISC_GENERIC_TOKENS = {'sm', 'sk', 'fx', 'mesh', 'lod', 'cr', 'nom', 'nem', 'nxm', 'nam', 'basecolor', 'basecolour',
+                        'normal', 'normals'}
+
+
+def _misc_name_tokens(stem: str) -> set:
+    return {t for t in re.split(r'[^a-z0-9]+', stem.casefold())
+            if len(t) > 1 and not t.isdigit() and t not in _MISC_GENERIC_TOKENS}
+
+
+def _find_misc_textures(folder: str, mesh_name: str = '') -> dict:
+    """Folder textures named after the mesh. Shared content folders (Effects/Meshes holds the radial blur disc beside
+    T_MechanicalDebris_01_CR) carry other assets' maps, so a texture must share a distinctive name token with the
+    mesh; the best-matching texture wins each role."""
     result = {'cr': None, 'albedo': None, 'normal_type': None, 'normal': None}
+    mesh_tokens = _misc_name_tokens(os.path.splitext(os.path.basename(mesh_name))[0])
+    best = {}
+
+    def offer(role, fpath, score, ntype=None):
+        if score > best.get(role, (0,))[0]:
+            best[role] = (score, fpath, ntype)
+
     try:
-        for fname in os.listdir(folder):
+        for fname in sorted(os.listdir(folder)):
             fl = fname.lower()
             fpath = os.path.join(folder, fname)
+            score = len(mesh_tokens & _misc_name_tokens(fl[:-4])) if mesh_tokens else 1
+            if not score:
+                continue
             if fl.endswith('_cr.png'):
-                result['cr'] = fpath
+                offer('cr', fpath, score)
             elif fl.endswith('_basecolor.png') or fl.endswith('_basecolour.png'):
-                result['albedo'] = fpath
+                offer('albedo', fpath, score)
             for ntype in ('nom', 'nem', 'nxm', 'nam'):
                 if fl.endswith(f'_{ntype}.png'):
-                    result['normal_type'] = ntype
-                    result['normal'] = fpath
-            if result['normal'] is None and (
-                fl.endswith('_normal.png') or fl.endswith('_normals.png')
-            ):
-                result['normal_type'] = 'tangent'
-                result['normal'] = fpath
+                    offer('normal', fpath, score + .5, ntype)
+            if fl.endswith('_normal.png') or fl.endswith('_normals.png'):
+                offer('normal', fpath, score, 'tangent')
     except OSError:
         pass
+    for role, (_, fpath, ntype) in best.items():
+        result[role] = fpath
+        if role == 'normal':
+            result['normal_type'] = ntype
     return result
 
 
@@ -95,13 +117,16 @@ def setup_misc_material(obj, psk_path: str):
         obj.active_material_index = original_index
         apply_embedded_fur_slots(obj, psk_path)
         _fill_shell_slots(obj, os.path.dirname(psk_path))
+        # Opaque glass (the resin pickup) has a compiled-shader surface profile the shading-model family lacks.
+        from ..revamped_bridge import rebuild_surface_families
+        rebuild_surface_families(obj, psk_path, {"glass_opaque"})
         obj["arc_accessory_material_route"] = "authored-mi-slots"
         return
     folder = os.path.dirname(psk_path)
-    texs = _find_misc_textures(folder)
+    texs = _find_misc_textures(folder, psk_path)
 
     if not texs['cr'] and not texs['normal'] and not texs['albedo']:
-        print(f"Arc Raiders PSK Importer: No CR or N*M textures found for '{os.path.basename(psk_path)}'")
+        print(f"Arc Raiders PSK Importer: No CR or N*M textures named after '{os.path.basename(psk_path)}'")
         return
 
     mat = bpy.data.materials.new(name=obj.name + "_Misc_Mat")
@@ -140,7 +165,7 @@ def setup_misc_material(obj, psk_path: str):
 
         if utils.ensure_node_group("NormalFlipper"):
             flipper = nodes.new("ShaderNodeGroup")
-            flipper.node_tree = bpy.data.node_groups["NormalFlipper"]
+            flipper.node_tree = utils.find_node_group("NormalFlipper")
             flipper.location = (-400, -100)
             links.new(normal_node.outputs["Color"], flipper.inputs[0])
             nm_in = flipper.outputs[0]

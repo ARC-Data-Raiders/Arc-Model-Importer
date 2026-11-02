@@ -1,0 +1,67 @@
+{
+  "target": "PioneerGame/Content/Pioneer/Characters/Assets/Outlander/FurCape/SK_Outlander_FurCape",
+  "materialSlots": [
+    {
+      "index": 0,
+      "slot": "FurCape",
+      "imported": null,
+      "material": "/Game/Pioneer/Characters/Assets/Outlander/FurCape/MI__FurCape_FurCape.MI__FurCape_FurCape"
+    },
+    {
+      "index": 1,
+      "slot": "FurShells",
+      "imported": null,
+      "material": "/Game/Pioneer/Characters/Assets/Outlander/FurCape/MI_FurCape_FurShells.MI_FurCape_FurShells"
+    },
+    {
+      "index": 2,
+      "slot": "LODMaterial",
+      "imported": null,
+      "material": "/Game/Pioneer/Characters/Assets/Outlander/FurCape/MI__FurCape_FurCape_FurLOD.MI__FurCape_FurCape_FurLOD"
+    }
+  ],
+  "lods": [
+    {
+      "lod": 0,
+      "sections": [
+        {
+          "section": 0,
+          "materialIndex": 0,
+          "BaseIndex": 0,
+          "NumTriangles": 4788
+        },
+        {
+          "section": 1,
+          "materialIndex": 1,
+          "BaseIndex": 14364,
+          "NumTriangles": 798
+        }
+      ]
+    },
+    {
+      "lod": 1,
+      "sections": [
+        {
+          "section": 0,
+          "materialIndex": 0,
+          "BaseIndex": 0,
+          "NumTriangles": 2388
+        }
+      ]
+    },
+    {
+      "lod": 2,
+      "sections": [
+        {
+          "section": 0,
+          "materialIndex": 0,
+          "BaseIndex": 0,
+          "NumTriangles": 1188
+        }
+      ]
+    }
+  ],
+  "lodInfo": null,
+  "source": "Current installed native USkeletalMesh directly, no conversion or Blender",
+  "limits": "UEModel source drops MaterialIndex when serializing per-render-section MATERIALS; all native section indices captured separately here."
+}

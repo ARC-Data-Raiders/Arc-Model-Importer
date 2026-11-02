@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Build a clean Blender addon zip (runtime modules only) and optionally sync to AppData.
 
@@ -41,7 +41,9 @@ param(
     [ValidateSet("auto", "outfits", "map-importer")]
     [string]$Line = "auto",
     [switch]$SyncAppData,
-    [string]$AppDataAddon = ""
+    [string]$AppDataAddon = "",
+    [string]$BlenderExe = "",
+    [string]$InstallCheckRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,7 +69,9 @@ $RootFilesShared = @(
     "operators.py",
     "ui.py",
     "importing.py",
+    "native_material_slots.py",
     "appearance.py",
+    "outfit_preview.py",
     "appearance_queue.py",
     "asset_organization.py",
     "backpack_instances.py",
@@ -83,6 +87,7 @@ $RootFilesShared = @(
     "body_mask.py",
     "uemodel_import.py",
     "pak_extract.py",
+    "material_texture_metadata.py",
     "pak_catalog.py",
     "outfit_catalog.py",
     "textures.py",
@@ -93,19 +98,51 @@ $RootFilesShared = @(
     "outfit_reference.csv",
     "appearance_reference.csv",
     "asset_domain.py",
+    "arc_catalog_data.py",
+    "arc_ui.py",
     "group_hotswap.py",
     "mask_debug.py",
     "ocm_zone_cache.py",
     "prop_assemble.py",
+    "prop_fx.py",
+    "frigate_entrance.py",
     "weapon_catalog.py",
+    "weapon_assets.py",
+    "weapon_import.py",
+    "weapon_position.py",
+    "weapon_ui.py",
     "weapon_catalog_data.py",
     "animation_catalog.py",
     "animation_import.py",
     "lighting_looks.py",
+    "lighting_lut.py",
     "lighting_atmosphere.py",
+    "lighting_catalog.py",
+    "lighting_grade.py",
+    "lighting_post.py",
+    "lighting_sky.py",
     "niagara_curves.py",
+    "niagara_ir.py",
+    "niagara_vm.py",
+    "niagara_runtime.py",
+    "niagara_context.py",
     "niagara_fx.py",
     "niagara_catalog.py",
+    "niagara_di.py",
+    "niagara_vm_numpy.py",
+    "niagara_sched_model.py",
+    "niagara_scheduler.py",
+    "niagara_cache.py",
+    "niagara_render_ref.py",
+    "niagara_ribbons.py",
+    "niagara_rigs.py",
+    "niagara_playback.py",
+    "niagara_fx_materials.py",
+    "niagara_dump_params.py",
+    "niagara_gpu.py",
+    "niagara_d3d11.py",
+    "niagara_view_ub.py",
+    "niagara_view_ub_57.json",
     # Required for clothing/outfit ColorMask materials — without this, imports
     # succeed as bare Principled stubs ("Arc Texturer unavailable").
     "ArcTexturer.blend",
@@ -125,7 +162,8 @@ $RootDirs = @(
     "materials",
     "map_tools",
     "reference",
-    "surface_rebuild"
+    "surface_rebuild",
+    "material_runtime"
 )
 
 # Under map_tools: ship runtime helpers only (exclude analyze dumps / docs).
@@ -294,6 +332,35 @@ function New-StagingDir {
         }
     }
 
+    # Current material loaders require a reviewed native bank. Retired historical
+    # facts stay in the repository for provenance, but are not shipped again.
+    if (Test-Path -LiteralPath (Join-Path $addonStage "material_runtime\native_data.py")) {
+        $nativeDataRoot = [IO.Path]::GetFullPath((Join-Path $addonStage "surface_rebuild\data"))
+        $nativeManifestPath = Join-Path $nativeDataRoot "native_catalog_active.json"
+        if (-not (Test-Path -LiteralPath $nativeManifestPath)) { throw "Missing reviewed current-native material catalog manifest" }
+        $nativeManifest = Get-Content -LiteralPath $nativeManifestPath -Raw | ConvertFrom-Json
+        if ($nativeManifest.schema -ne "native-catalog-activation-v2" -or $nativeManifest.reviewed_source_complete -ne $true) {
+            throw "Current-native catalog requires an explicit reviewed source manifest"
+        }
+        $nativeBank = [IO.Path]::GetFullPath((Join-Path $nativeDataRoot ([string]$nativeManifest.catalog)))
+        $nativeDataPrefix = $nativeDataRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if (-not $nativeBank.StartsWith($nativeDataPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw "Native catalog path escaped data directory" }
+        $nativeBankHash = (Get-FileHash -LiteralPath $nativeBank -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($nativeBankHash -ne ([string]$nativeManifest.sha256).ToLowerInvariant()) { throw "Current-native catalog content hash mismatch" }
+        $stagePrefix = [IO.Path]::GetFullPath($addonStage).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        foreach ($retiredRelative in @(
+            "surface_rebuild\data\materials_142.json.gz",
+            "surface_rebuild\data\character_materials_142.json.gz",
+            "surface_rebuild\data\parameter_scopes_142.json.gz",
+            "surface_rebuild\data\bundled_textures_142.json",
+            "assets\preset_defaults.json"
+        )) {
+            $retiredPath = [IO.Path]::GetFullPath((Join-Path $addonStage $retiredRelative))
+            if (-not $retiredPath.StartsWith($stagePrefix, [StringComparison]::OrdinalIgnoreCase)) { throw "Retired stage path escaped addon" }
+            if (Test-Path -LiteralPath $retiredPath -PathType Leaf) { Remove-Item -LiteralPath $retiredPath -Force }
+        }
+    }
+
     # Belt-and-suspenders: scrub any cache that slipped in
     Get-ChildItem -LiteralPath $addonStage -Recurse -Force -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
         ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue }
@@ -421,50 +488,34 @@ function Sync-ToAppData([string]$AddonDir, [string]$ReleaseLine, [string]$GitBra
         Write-Warning "Target folder name '$leaf' != expected '$folder' for line=$ReleaseLine (explicit -AppDataAddon override)."
     }
 
-    # Mirror runtime tree; purge extras (.git, verify_*, docs, pycache, logs, …).
-    # /R:1 /W:1 tolerates Blender holding arc_raiders_debug.log open.
-    $runtimeCache = [IO.Path]::GetFullPath((Join-Path $TargetAppData "ArcPak\cache"))
-    $runtimeCachePrefix = $runtimeCache + [IO.Path]::DirectorySeparatorChar
+    # Update shipped runtime files without mirroring away user blends, caches,
+    # custom files, or historical compatibility resources in the addon directory.
+    $resolvedTarget = [IO.Path]::GetFullPath($TargetAppData)
+    $targetItem = Get-Item -LiteralPath $resolvedTarget -Force
+    if ($targetItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing runtime sync into a linked addon root" }
+    $targetPrefix = $resolvedTarget.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    $runtimeCache = [IO.Path]::GetFullPath((Join-Path $resolvedTarget "ArcPak\cache"))
     $stagedCache = Join-Path $AddonDir "ArcPak\cache"
-    robocopy $AddonDir $TargetAppData /MIR /NFL /NDL /NJH /NJS /nc /ns /np /R:1 /W:1 `
+    robocopy $AddonDir $resolvedTarget /E /IS /IT /XJ /NFL /NDL /NJH /NJS /nc /ns /np /R:1 /W:1 `
         /XD $runtimeCache $stagedCache /XF arc_raiders_debug.log outfit_toggles.txt | Out-Null
-    if ($LASTEXITCODE -ge 8) {
-        throw "robocopy sync failed (exit $LASTEXITCODE)"
-    }
+    if ($LASTEXITCODE -ge 8) { throw "robocopy sync failed (exit $LASTEXITCODE)" }
 
-    # Extra scrub for caches / leftovers robocopy may leave when locked
-    Get-ChildItem -LiteralPath $TargetAppData -Recurse -Force -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
-        Where-Object { -not $_.FullName.StartsWith($runtimeCachePrefix, [StringComparison]::OrdinalIgnoreCase) } |
-        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue }
-    Get-ChildItem -LiteralPath $TargetAppData -Recurse -Force -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Extension -in ".pyc", ".pyo", ".blend1" -and -not $_.FullName.StartsWith($runtimeCachePrefix, [StringComparison]::OrdinalIgnoreCase) } |
-        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -Confirm:$false -ErrorAction SilentlyContinue }
-    foreach ($junk in @(".git", ".cursor", "docs", "MapPlacement")) {
-        $p = Join-Path $TargetAppData $junk
-        if (Test-Path -LiteralPath $p) {
-            Remove-Item -LiteralPath $p -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
-        }
-    }
-
-    # Outfits: strip map-only tools if a prior polluted sync left them behind.
-    if ($ReleaseLine -ne "map-importer") {
-        $mt = Join-Path $TargetAppData "map_tools"
-        foreach ($extra in $MapToolsExcludeOutfits) {
-            $p = Join-Path $mt $extra
-            if (Test-Path -LiteralPath $p) {
-                Remove-Item -LiteralPath $p -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
+    # Only generated runtime bytecode is disposable. Never traverse the pak cache
+    # or data/asset folders, and never follow a junction for cleanup.
+    $skipRuntimeDirs = @("arcpak", "assets", "data", "cache", ".local", ".git", "dist", "docs", "tests")
+    $runtimeQueue = [Collections.Generic.Queue[string]]::new()
+    $runtimeQueue.Enqueue($resolvedTarget)
+    while ($runtimeQueue.Count -gt 0) {
+        $runtimeDirectory = $runtimeQueue.Dequeue()
+        foreach ($child in @(Get-ChildItem -LiteralPath $runtimeDirectory -Force -Directory -ErrorAction SilentlyContinue)) {
+            if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+            if ($skipRuntimeDirs -contains $child.Name.ToLowerInvariant()) { continue }
+            $childPath = [IO.Path]::GetFullPath($child.FullName)
+            if (-not $childPath.StartsWith($targetPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw "Runtime cleanup path escaped addon directory" }
+            if ($child.Name -eq "__pycache__") {
+                Remove-Item -LiteralPath $childPath -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
             }
-        }
-        if (Test-Path -LiteralPath $mt) {
-            Get-ChildItem -LiteralPath $mt -Force -Directory -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -like "_tmp*" } |
-                ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue }
-        }
-        foreach ($mapOnly in @("map_hybrid.py", "map_family.py")) {
-            $p = Join-Path $TargetAppData $mapOnly
-            if (Test-Path -LiteralPath $p) {
-                Remove-Item -LiteralPath $p -Force -Confirm:$false -ErrorAction SilentlyContinue
-            }
+            else { $runtimeQueue.Enqueue($childPath) }
         }
     }
 
@@ -488,6 +539,91 @@ function Sync-ToAppData([string]$AddonDir, [string]$ReleaseLine, [string]$GitBra
 
     # Mirror stamp into repo for agents (gitignored; keep portable)
     $syncLines | Set-Content -LiteralPath (Join-Path $RepoRoot "ADDON_SYNC.txt") -Encoding UTF8
+}
+
+function Resolve-BlenderExe([string]$Requested) {
+    $candidates = @(
+        $Requested,
+        $env:BLENDER_EXE,
+        "C:\Program Files (x86)\Steam\steamapps\common\Blender\blender.exe",
+        "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe"
+    )
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+    $onPath = Get-Command blender -ErrorAction SilentlyContinue
+    if ($onPath) { return $onPath.Source }
+    throw "Blender is required for the package install check. Pass -BlenderExe or set BLENDER_EXE."
+}
+
+function Test-PackagedAddon([string]$ZipPath, [string]$Folder, [string]$Version, [string]$StageRoot, [string]$Executable) {
+    # Keep the private profile path short: Blender's ZIP extractor still hits
+    # Windows MAX_PATH with deeply nested addon icon filenames.
+    $requestedCheckRoot = if ($InstallCheckRoot) { $InstallCheckRoot } elseif ($env:DATARAIDERS_INSTALL_CHECK_ROOT) { $env:DATARAIDERS_INSTALL_CHECK_ROOT } else { Split-Path $StageRoot -Parent }
+    $scratchBase = (Resolve-Path -LiteralPath $requestedCheckRoot).Path
+    $checkRoot = Join-Path $scratchBase ("ic-" + [guid]::NewGuid().ToString("n").Substring(0, 8))
+    $archive = [IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        $longestInstallPath = 0
+        foreach ($entry in $archive.Entries) {
+            $entryPath = [IO.Path]::GetFullPath((Join-Path (Join-Path $checkRoot "scripts\addons") $entry.FullName))
+            $longestInstallPath = [Math]::Max($longestInstallPath, $entryPath.Length)
+        }
+    }
+    finally { $archive.Dispose() }
+    if ($longestInstallPath -ge 260) {
+        throw "Private install profile would exceed Blender ZIP extraction path limits ($longestInstallPath chars). Pass -InstallCheckRoot with a shorter existing scratch directory."
+    }
+    foreach ($part in @("config", "scripts", "extensions", "local", "temp")) {
+        New-Item -ItemType Directory -Path (Join-Path $checkRoot $part) -Force | Out-Null
+    }
+    $privateEnv = @{
+        BLENDER_USER_CONFIG = (Join-Path $checkRoot "config")
+        BLENDER_USER_SCRIPTS = (Join-Path $checkRoot "scripts")
+        BLENDER_USER_EXTENSIONS = (Join-Path $checkRoot "extensions")
+        APPDATA = $checkRoot
+        LOCALAPPDATA = (Join-Path $checkRoot "local")
+        TEMP = (Join-Path $checkRoot "temp")
+        TMP = (Join-Path $checkRoot "temp")
+        PYTHONDONTWRITEBYTECODE = "1"
+        OMP_NUM_THREADS = "4"
+        OPENBLAS_NUM_THREADS = "1"
+        DOTNET_PROCESSOR_COUNT = "4"
+    }
+    $oldEnv = @{}
+    foreach ($key in $privateEnv.Keys) {
+        $oldEnv[$key] = [Environment]::GetEnvironmentVariable($key, "Process")
+        [Environment]::SetEnvironmentVariable($key, $privateEnv[$key], "Process")
+    }
+    try {
+        $checkScript = Join-Path $RepoRoot "scripts\addon_install_smoke.py"
+        Write-Host "Checking packaged ZIP through Blender install/enable/overwrite ..."
+        $oldErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $checkOutput = & $Executable --background --factory-startup -t 4 --python-exit-code 1 --python $checkScript -- (Resolve-Path -LiteralPath $ZipPath).Path $Folder $Version 2>&1
+            $checkExit = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $oldErrorAction
+        }
+        $checkText = ($checkOutput | Out-String)
+        Write-Host $checkText
+        if ($checkExit -ne 0 -or $checkText -notmatch "INSTALL_CHECK_OK" -or $checkText -match "Traceback|Error:") {
+            throw "Packaged addon install check failed (Blender exit code $checkExit); refusing AppData sync."
+        }
+    }
+    finally {
+        foreach ($key in $privateEnv.Keys) {
+            [Environment]::SetEnvironmentVariable($key, $oldEnv[$key], "Process")
+        }
+        $resolvedCheckRoot = (Resolve-Path -LiteralPath $checkRoot -ErrorAction SilentlyContinue).Path
+        if ($resolvedCheckRoot -and $resolvedCheckRoot.StartsWith($scratchBase + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $resolvedCheckRoot -Recurse -Force -Confirm:$false
+        }
+    }
 }
 
 # --- main ---
@@ -536,6 +672,9 @@ try {
     $zipSize = (Get-Item -LiteralPath $OutZip).Length
     Write-Host ("Wrote {0} ({1:N2} MB)" -f $OutZip, ($zipSize / 1MB))
 
+    $blenderPath = Resolve-BlenderExe $BlenderExe
+    Test-PackagedAddon -ZipPath $OutZip -Folder $folderName -Version $ver -StageRoot $staged.StageRoot -Executable $blenderPath
+
     if ($SyncAppData) {
         Write-Host "Syncing clean tree to AppData (line=$releaseLine, folder=$folderName) ..."
         Sync-ToAppData -AddonDir $staged.AddonDir -ReleaseLine $releaseLine -GitBranch $gitBranch -TargetAppData $AppDataAddon
@@ -544,8 +683,19 @@ try {
     }
 }
 finally {
-    Remove-Item -LiteralPath $staged.StageRoot -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
+    $resolvedStage = (Resolve-Path -LiteralPath $staged.StageRoot -ErrorAction SilentlyContinue).Path
+    $resolvedStageBase = (Resolve-Path -LiteralPath $env:TEMP).Path.TrimEnd([IO.Path]::DirectorySeparatorChar)
+    if ($resolvedStage) {
+        if (-not $resolvedStage.StartsWith($resolvedStageBase + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing staging cleanup outside the configured temporary root: $resolvedStage"
+        }
+        Remove-Item -LiteralPath $resolvedStage -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host "Done. Enable in Blender: Edit → Preferences → Add-ons → search '$blInfoName'"
 Write-Host "Bytecode at runtime -> %LOCALAPPDATA%\$folderName\pycache"
+
+# Robocopy success codes 0-7 must not become the package command exit status.
+$global:LASTEXITCODE = 0
+

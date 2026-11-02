@@ -9,16 +9,22 @@ import json
 import struct
 import math
 import difflib
+import hashlib
 
 import bpy
 from mathutils import Vector
 
 from .. import utils
 from .. import textures
+from ..material_runtime.core import base_property_overrides
 from .. import palette_calibration
 from ..properties import BODY_ALBEDO, BODY_NORMAL
 
 from . import gt_outfit_pbr as _gt_pbr
+from .dr_primary_graph.public import candidate as _dr_stage_candidate
+from .dr_primary_graph.identity import assign as _assign
+from .dr_primary_operations import operation_build as _dr_operation_build
+from . import dr_primary_operations as _dr_ops
 from .common import (
     _BASE_COLOR_OVERLAY_SLOT_LOCS,
     _BATCH_MATERIAL_MODE,
@@ -255,6 +261,17 @@ def compute_clothing_texture_fingerprint(
 
 
 
+def _resolved_material_signature(value) -> str:
+    def stable(item):
+        if isinstance(item, dict):
+            return sorted((repr(key), stable(val)) for key, val in item.items())
+        if isinstance(item, (tuple, list)):
+            return [stable(val) for val in item]
+        return item
+    encoded = json.dumps(stable(value or {}), separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def clothing_material_cache_key(
     mi_json_path: str,
     texture_fingerprint: str,
@@ -266,18 +283,190 @@ def clothing_material_cache_key(
     Pipeline is included so Ground Truth vs Legacy graphs never share a cache hit.
     """
     pipe = palette_calibration.parse_outfit_color_pipeline(outfit_color_pipeline)
-    # gt_pbr2: cooked Colour N plus roughness/metal/decals/normals/edge-crease (no Arc).
-    gen = "gt_pbr3" if pipe == palette_calibration.OUTFIT_COLOR_PIPELINE_GROUND_TRUTH else "legacy"
-    return (_norm_path_key(mi_json_path), texture_fingerprint or "", pipe, gen)
+    # New DR selector composition must not reuse a retained sequential graph.
+    gen = "dr_primary_packed_" + _gt_pbr._dr_ops.RECIPE if pipe == palette_calibration.OUTFIT_COLOR_PIPELINE_GROUND_TRUTH else "dr_legacy_native_" + _legacy_composition_recipe()
+    return (_norm_path_key(mi_json_path), texture_fingerprint or "", pipe, gen,
+            textures.material_lineage_signature(mi_json_path))
 
 
 
-def _assign_clothing_material(obj, mat, psk_path: str = "") -> None:
+_NATIVE_SECTION_TARGETS = {}
+_RESTORING_NATIVE_SECTIONS = set()
+
+
+def _native_clothing_sections(psk_path):
+    """Current ordered UEModel or sibling mesh-JSON section references."""
+    psk_path = textures._fs_abspath(psk_path)
+    if not os.path.isfile(psk_path):
+        return []
+    result = []
+    native_layout = None
+    if str(psk_path).lower().endswith(".uemodel"):
+        from ..uemodel_import import parse_uemodel
+        from .character import _hair_source_asset
+        _, _, lods = parse_uemodel(psk_path)
+        from ..native_material_slots import load_native_material_layout
+        native_layout = load_native_material_layout(psk_path, lods[0].name, lods[0].materials)
+        for index, (slot, reference, _, _) in enumerate(lods[0].materials):
+            path = _hair_source_asset(psk_path, reference, ".json") if reference else ""
+            if not path and reference:
+                path = textures.find_asset_from_object_path(reference, ".json")
+            result.append({"index": index, "slot": slot, "reference": reference, "path": path})
+    else:
+        for index, (slot, stem, path) in enumerate(_parse_sk_material_slots(psk_path)):
+            result.append({"index": index, "slot": slot, "reference": stem, "path": path})
+    # DA_VP slot names are authored identifiers, never presentation-name guesses.
+    bindings = textures.authored_visual_part_materials(psk_path)
+    if native_layout is not None:
+        from ..native_material_slots import translate_visual_part_bindings
+        bindings, unused = translate_visual_part_bindings(bindings, native_layout)
+        if unused:
+            utils.get_logger().info("Unused native DA_VP bindings for %s: %s", psk_path, unused)
+    for section in result:
+        matches = [binding for binding in bindings if (binding["render_index"] == section["index"] if "render_index" in binding
+                       else str(binding["slot"]).casefold() == str(section["slot"]).casefold())]
+        unique = {os.path.normcase(os.path.abspath(binding["path"])): binding for binding in matches}
+        if len(unique) == 1:
+            binding = next(iter(unique.values()))
+            section["path"] = binding["path"]
+            section["reference"] = binding.get("material_path", "")
+    return result
+
+
+def _native_clothing_section_paths(obj, sections):
+    result = {section["index"]: section["path"] for section in sections}
+    try:
+        overrides = json.loads(str(obj.get("arc_backpack_material_bindings") or "{}"))
+        overrides.update(json.loads(str(obj.get("arc_outfit_material_bindings") or "{}")))
+    except (ValueError, TypeError):
+        overrides = {}
+    from ..operators import _recover_saved_material_lookup
+    for index, path in overrides.items():
+        if str(index).isdigit() and int(index) in result and path:
+            # Saved blends can retain the previous addon cache location. Recover
+            # this exact game package through the same public migration gate.
+            result[int(index)] = _recover_saved_material_lookup(obj, str(path), stamp_mesh=False)
+    return result
+
+
+def _select_native_clothing_owner(sections, paths, requested, identity, is_layered):
+    """Pure selection: exact authored identity, then one native layered owner."""
+    if requested:
+        matches = [section["index"] for section in sections
+                   if paths.get(section["index"]) and identity(paths[section["index"]]) == identity(requested)]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            return tuple(matches)  # All slots have the exact selected authored MI.
+    layered = [section["index"] for section in sections if paths.get(section["index"]) and is_layered(paths[section["index"]])]
+    if len(layered) == 1:
+        return layered[0]
+    if len(layered) > 1:
+        raise ValueError("Multiple native layered sections have no exact selected MI binding")
+    return None
+
+
+def _native_clothing_owner_index(obj, psk_path, requested="", sections=None):
+    key = obj.as_pointer()
+    if key in _NATIVE_SECTION_TARGETS:
+        return _NATIVE_SECTION_TARGETS[key]
+    sections = sections if sections is not None else _native_clothing_sections(psk_path)
+    if not sections:
+        return None
+    from .dispatch import _material_identity_path, _mi_uses_layered_character_profile
+    paths = _native_clothing_section_paths(obj, sections)
+    return _select_native_clothing_owner(sections, paths,
+                requested or str(obj.get("arc_skin_json") or ""),
+                _material_identity_path, _mi_uses_layered_character_profile)
+
+
+def restore_native_clothing_sections(obj, psk_path, requested=""):
+    """Restore exact non-owner sections after building the selected layered MI."""
+    key = obj.as_pointer()
+    if key in _RESTORING_NATIVE_SECTIONS:
+        return 0
+    sections = _native_clothing_sections(psk_path)
+    if not sections:
+        return 0
+    owner = _native_clothing_owner_index(obj, psk_path, requested, sections)
+    if owner is None:
+        return 0
+    owners = owner if isinstance(owner, tuple) else (owner,)
+    from .dispatch import (_get_or_build_shared_mi_material, _mi_uses_layered_character_profile,
+                           _dedicated_outfit_material_current)
+    from ..backpack_catalog import _build_binding_material
+    paths = _native_clothing_section_paths(obj, sections)
+    restored, missing = 0, []
+    _RESTORING_NATIVE_SECTIONS.add(key)
+    try:
+        for section in sections:
+            index = section["index"]
+            if index in owners:
+                continue
+            path = paths.get(index, "")
+            if not path or not os.path.isfile(path):
+                missing.append({"slot": index, "reference": section["reference"]})
+                continue
+            while len(obj.data.materials) <= index:
+                obj.data.materials.append(None)
+            current = obj.material_slots[index].material
+            if current and _dedicated_outfit_material_current(current, path, obj=obj):
+                continue
+            if _mi_uses_layered_character_profile(path):
+                if current and _dedicated_outfit_material_current(current, path, obj=obj):
+                    continue
+                _NATIVE_SECTION_TARGETS[key] = index
+                try:
+                    material = _build_binding_material(obj, psk_path, path)
+                finally:
+                    _NATIVE_SECTION_TARGETS.pop(key, None)
+            elif textures.is_fur_mi(path):
+                material = bpy.data.materials.new(os.path.basename(path).rsplit(".", 1)[0])
+                material.use_nodes = True
+                _setup_fur_material(material, path, psk_path=psk_path, obj=obj)
+                material["arc_mi_path"] = os.path.abspath(path)
+            elif _is_visor_glass_mi(_parse_visor_mi(path)):
+                material = bpy.data.materials.new(os.path.basename(path).rsplit(".", 1)[0])
+                material.use_nodes = True
+                _setup_visor_material(material, mi_path=path, psk_path=psk_path)
+                material["arc_mi_path"] = os.path.abspath(path)
+            else:
+                # Native family dispatch includes lantern/emissive, CRT, glass,
+                # packed PBR and other supported non-layered profiles.
+                material = _get_or_build_shared_mi_material(os.path.basename(path).rsplit(".", 1)[0],
+                                      path, psk_path, str(section["slot"]).lower(), obj=obj)
+            if material is None:
+                missing.append({"slot": index, "reference": path})
+                continue
+            obj.material_slots[index].material = material
+            restored += 1
+    finally:
+        _RESTORING_NATIVE_SECTIONS.discard(key)
+    obj["arc_native_section_missing"] = json.dumps(missing, sort_keys=True)
+    obj["arc_native_section_owner"] = owner if isinstance(owner, int) else -1
+    obj["arc_native_section_owners"] = json.dumps(list(owners))
+    return restored
+
+
+def _assign_clothing_material(obj, mat, psk_path: str = "", requested_mi_path: str = "") -> None:
     """Assign ``mat`` to the clothing/visor shell slot (or active material)."""
     if obj is None or mat is None:
         return
     _ensure_clothing_sk_slot_count(obj, psk_path)
-    shell_idx = _find_clothing_shell_slot_index(obj, psk_path)
+    owner = _native_clothing_owner_index(obj, psk_path, requested_mi_path)
+    if owner is not None:
+        owners = owner if isinstance(owner, tuple) else (owner,)
+        slots = list(getattr(obj, "material_slots", []) or [])
+        if any(not isinstance(index, int) or not 0 <= index < len(slots) for index in owners):
+            raise ValueError("Exact native clothing owner is outside material slots")
+        from ..material_runtime.slots import assign_transaction
+        identity = requested_mi_path or mat.name
+        assign_transaction(obj, tuple((index, identity) for index in owners),
+                           lambda _identity: mat, object_override=True)
+        if len(owners) == 1:
+            obj.active_material_index = owners[0]
+        return
+    shell_idx = _find_clothing_shell_slot_index(obj, psk_path, requested_mi_path)
     if 0 <= shell_idx < len(getattr(obj, "material_slots", []) or []):
         obj.material_slots[shell_idx].material = mat
         try:
@@ -302,6 +491,8 @@ def _ensure_clothing_sk_slot_count(obj, psk_path: str = "") -> int:
         sk_slots = _parse_sk_material_slots(psk_path)
     except Exception:
         sk_slots = []
+    if not sk_slots:
+        sk_slots = _native_clothing_sections(psk_path)
     if not sk_slots:
         return 0
     n = len(sk_slots)
@@ -391,7 +582,7 @@ def _find_arc_texturer_group_node(nodes):
         if getattr(node, "type", "") != "GROUP":
             continue
         tree = getattr(node, "node_tree", None)
-        name = (getattr(tree, "name", "") or "") if tree else ""
+        name = (_group_contract_key(tree) or "") if tree else ""
         compact = name.replace(" ", "").lower()
         if compact == want or compact.startswith(want + "."):
             return node
@@ -407,7 +598,7 @@ def _has_mi_param_value_nodes(nodes) -> bool:
     for node in nodes or ():
         if getattr(node, "bl_idname", "") not in ("ShaderNodeValue", "ShaderNodeRGB"):
             continue
-        label = (getattr(node, "label", "") or "").strip()
+        label = (node.get("dr.parameter_key") or _dr_ops.legacy_label(node) or "").strip()
         if _MI_PARAM_NAME_RE.match(label):
             return True
     return False
@@ -422,7 +613,7 @@ def organize_clothing_material_nodes(mat, mi_params: dict = None) -> bool:
     links = mat.node_tree.links
     group_node = _find_arc_texturer_group_node(nodes)
     if group_node is None:
-        if any((getattr(n, "name", "") or "").startswith("GT_") for n in nodes):
+        if any((_dr_ops.legacy_name(n) or "").startswith("GT_") for n in nodes):
             for n in nodes:
                 _gt_pbr._quiet_node(n)
             try:
@@ -440,7 +631,7 @@ def organize_clothing_material_nodes(mat, mi_params: dict = None) -> bool:
                 known = set()
                 for node in nodes:
                     if getattr(node, "bl_idname", "") == "ShaderNodeRGB":
-                        lab = (getattr(node, "label", "") or getattr(node, "name", "") or "").strip()
+                        lab = (_dr_ops.legacy_label(node) or _dr_ops.legacy_name(node) or "").strip()
                         if lab:
                             known.add(lab)
                 params = textures.parse_all_mi_parameters(json_path, known_colour_names=known)
@@ -535,9 +726,9 @@ def _iter_crease_edge_color_sockets(group_node):
 def _node_mentions_edge_crease(node) -> bool:
     tree = getattr(node, "node_tree", None)
     tag = (
-        f"{getattr(node, 'name', '')}|"
-        f"{getattr(node, 'label', '')}|"
-        f"{getattr(tree, 'name', '') or ''}"
+        f"{_dr_ops.legacy_name(node)}|"
+        f"{_dr_ops.legacy_label(node)}|"
+        f"{_group_contract_key(tree) or ''}"
     )
     return "EdgeCrease" in tag.replace(" ", "")
 
@@ -644,7 +835,7 @@ def apply_crease_edge_color_wiring(group_node, links, nodes, colours, *, enabled
     }
     colour_keys = list(colours.keys()) if colours else []
     for node in nodes:
-        lab = (getattr(node, "label", "") or getattr(node, "name", "") or "").strip()
+        lab = (_dr_ops.legacy_label(node) or _dr_ops.legacy_name(node) or "").strip()
         if lab and lab not in colour_keys and (
             lab.endswith("_CreaseColorOverlay") or lab.endswith("_EdgeColorOverlay")
         ):
@@ -662,7 +853,7 @@ def apply_crease_edge_color_wiring(group_node, links, nodes, colours, *, enabled
                 continue
             arc_sock = f"{arc_prefix} {zone_str}"
             sock = group_node.inputs.get(arc_sock)
-            rgb_nd = nodes.get(key)
+            rgb_nd = _dr_stage_candidate.lookup(nodes).get(key)
             if sock is None or rgb_nd is None:
                 break
             _unlink_socket_inputs(links, sock)
@@ -719,7 +910,7 @@ def _find_basecolor_tex_for_arc(nodes, group_node):
     for node in nodes:
         if getattr(node, "bl_idname", "") != "ShaderNodeTexImage":
             continue
-        lab = (getattr(node, "label", "") or getattr(node, "name", "") or "").lower()
+        lab = (_dr_ops.legacy_label(node) or _dr_ops.legacy_name(node) or "").lower()
         if "basecolor" in lab or "base_color" in lab or lab.endswith("_bch"):
             return node
     return None
@@ -770,11 +961,11 @@ def _ensure_core_scheme_colour_nodes(nodes, colours: dict | None) -> dict:
         ("ColorB", (-1600.0, -20.0)),
         ("ColorC", (-1600.0, -320.0)),
     ):
-        nd = nodes.get(key)
+        nd = _dr_stage_candidate.lookup(nodes).get(key)
         if nd is None:
-            nd = nodes.new("ShaderNodeRGB")
-            nd.name = key
-            nd.label = key
+            nd = _dr_ops.new_if_primary(nodes, 'ShaderNodeRGB', key, stage=None, role=None)
+            pass
+            _dr_ops.set_label(nd, key)
             nd.outputs[0].default_value = pri[key]
             nd.location = loc
             created.append(key)
@@ -786,11 +977,11 @@ def _ensure_core_scheme_colour_nodes(nodes, colours: dict | None) -> dict:
         ("ColorC", "ColorC2", (-1280.0, -320.0)),
     ):
         rgba = _rgba_from_colours(colours, sec_key, fallback=pri[pri_key])
-        nd = nodes.get(sec_key)
+        nd = _dr_stage_candidate.lookup(nodes).get(sec_key)
         if nd is None:
-            nd = nodes.new("ShaderNodeRGB")
-            nd.name = sec_key
-            nd.label = sec_key
+            nd = _dr_ops.new_if_primary(nodes, 'ShaderNodeRGB', sec_key, stage=None, role=None)
+            pass
+            _dr_ops.set_label(nd, sec_key)
             nd.outputs[0].default_value = rgba
             nd.location = loc
             created.append(sec_key)
@@ -827,11 +1018,11 @@ _unlink_colour_from_colormask = _unlink_colour_socket
 
 def _new_mix_multiply(nodes, *, name: str, label: str, location, hide: bool = True):
     """RGBA Multiply Mix with Factor forced to 1 (full multiply)."""
-    mix = nodes.new("ShaderNodeMix")
+    mix = _dr_ops.new_if_primary(nodes, 'ShaderNodeMix', name, stage=None, role=None)
     mix.data_type = "RGBA"
     mix.blend_type = "MULTIPLY"
-    mix.name = name
-    mix.label = label
+    pass
+    _dr_ops.set_label(mix, label)
     mix.location = location
     mix.hide = hide
     factor, _, _, _ = _gt_pbr.mix_io(mix)
@@ -841,7 +1032,8 @@ def _new_mix_multiply(nodes, *, name: str, label: str, location, hide: bool = Tr
         except Exception:
             pass
     try:
-        mix.inputs[0].default_value = 1.0
+        # Usually the Factor just written: skip the repeat tree update.
+        _assign(mix.inputs[0], "default_value", 1.0)
     except Exception:
         pass
     return mix
@@ -871,11 +1063,11 @@ def _gt_mix_link(links, mix, a_sock, b_sock, *, fac_sock=None, fac_value=None):
 
 def _new_mix_lerp_white(nodes, *, name: str, label: str, location, hide: bool = True):
     """RGBA Mix: A=white, B=color, Factor=fac → lerp(1, color, fac) (D039 canvas)."""
-    mix = nodes.new("ShaderNodeMix")
+    mix = _dr_ops.new_if_primary(nodes, 'ShaderNodeMix', name, stage=None, role=None)
     mix.data_type = "RGBA"
-    mix.blend_type = "MIX"
-    mix.name = name
-    mix.label = label
+    _assign(mix, "blend_type", "MIX")
+    pass
+    _dr_ops.set_label(mix, label)
     mix.location = location
     mix.hide = hide
     return mix
@@ -1003,9 +1195,9 @@ def _gt_attach_local(nd, parent, xy, *, hide=None, lock=True):
 
 
 def _new_math(nodes, op, name, location, parent=None, value=None, hide=True):
-    nd = nodes.new("ShaderNodeMath")
-    nd.operation = op
-    nd.name = name
+    nd = _dr_ops.new_if_primary(nodes, 'ShaderNodeMath', name, stage=None, role=None)
+    _assign(nd, "operation", op)
+    pass
     nd.hide = hide
     if value is not None:
         try:
@@ -1018,96 +1210,12 @@ def _new_math(nodes, op, name, location, parent=None, value=None, hide=True):
 def _wire_gt_zone_wet(
     nodes, links, parent, colours, zone_scalars, zone, colour_src, y0, *, col_x=None, hide=True
 ):
-    """WetTint.x × ShadeAsCloth × view-Z _3712 → lerp toward SnowColor (Layered DXBC)."""
-    wet_rgba = _colour_rgba(colours, "WetTint", (0.0, 0.0, 0.0, 1.0))
-    snow_rgba = _colour_rgba(colours, "SnowColor", (1.0, 1.0, 1.0, 1.0))
-    wet_x = max(0.0, min(1.0, wet_rgba[0]))
-    cloth = max(0.0, min(1.0, _mi_layer_float(zone_scalars, zone, "ShadeAsCloth", 0.0)))
-    max_wet = 0.0
-    if isinstance(zone_scalars, dict):
-        try:
-            max_wet = float(zone_scalars.get("MaxWetAmount", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            max_wet = 0.0
-    max_wet = max(0.0, min(1.0, max_wet))
-    if cloth * wet_x <= 1e-6:
-        return colour_src
+    """Dry import: native wet/snow state is primitive data, never camera Z.
 
-    def _xy(legacy_x, dy=0.0, step=0):
-        if col_x is None:
-            return (legacy_x, y0 + dy)
-        pitch = 0.0 if hide else 100.0
-        return (col_x + step * pitch, y0 + dy)
-
-    snow_nd = nodes.new("ShaderNodeRGB")
-    snow_nd.name = f"GT_SnowColor_z{zone}"
-    snow_nd.label = f"SnowColor z{zone}"
-    snow_nd.outputs[0].default_value = snow_rgba
-    _gt_attach_local(snow_nd, parent, _xy(-220.0, 36.0, 12), hide=hide)
-
-    cam = nodes.new("ShaderNodeCameraData")
-    cam.name = f"GT_viewZ_cam_z{zone}"
-    cam.label = "view-Z (Layered _3712)"
-    _gt_attach_local(cam, parent, _xy(-620.0, 0.0, 0), hide=hide)
-    sep = nodes.new("ShaderNodeSeparateXYZ")
-    sep.name = f"GT_viewZ_sep_z{zone}"
-    _gt_attach_local(sep, parent, _xy(-500.0, 0.0, 1), hide=hide)
-    links.new(cam.outputs["View Vector"], sep.inputs[0])
-    absz = _new_math(nodes, "ABSOLUTE", f"GT_viewZ_abs_z{zone}", _xy(-420.0, 0.0, 2), parent)
-    links.new(sep.outputs[2], absz.inputs[0])
-    mul_mw = _new_math(nodes, "MULTIPLY", f"GT_viewZ_mw_z{zone}", _xy(-340.0, 0.0, 3), parent, max_wet)
-    links.new(absz.outputs[0], mul_mw.inputs[0])
-    wet_inv = _new_math(nodes, "SUBTRACT", f"GT_viewZ_inv_z{zone}", _xy(-260.0, 40.0, 4), parent)
-    wet_inv.inputs[0].default_value = 1.0
-    links.new(mul_mw.outputs[0], wet_inv.inputs[1])
-    sq = _new_math(nodes, "MULTIPLY", f"GT_viewZ_sq_z{zone}", _xy(-180.0, 40.0, 5), parent)
-    links.new(wet_inv.outputs[0], sq.inputs[0])
-    links.new(wet_inv.outputs[0], sq.inputs[1])
-    times = _new_math(nodes, "MULTIPLY", f"GT_viewZ_115_z{zone}", _xy(-100.0, 40.0, 6), parent, 1.15)
-    links.new(sq.outputs[0], times.inputs[0])
-    sub = _new_math(nodes, "SUBTRACT", f"GT_viewZ_occ2_z{zone}", _xy(-20.0, 40.0, 7), parent)
-    sub.inputs[0].default_value = 1.0
-    links.new(times.outputs[0], sub.inputs[1])
-    scale = _new_math(nodes, "MULTIPLY", f"GT_viewZ_333_z{zone}", _xy(60.0, 40.0, 8), parent, 10.0 / 3.0)
-    links.new(sub.outputs[0], scale.inputs[0])
-    nv = _new_math(nodes, "MINIMUM", f"GT_nvTerm_z{zone}", _xy(140.0, 40.0, 9), parent, 1.0)
-    links.new(scale.outputs[0], nv.inputs[0])
-    nv0 = _new_math(nodes, "MAXIMUM", f"GT_nvTerm0_z{zone}", _xy(220.0, 40.0, 10), parent, 0.0)
-    nv0.inputs[1].default_value = 0.0
-    links.new(nv.outputs[0], nv0.inputs[0])
-    wet_scale = _new_math(
-        nodes, "MULTIPLY", f"GT_wetScale_z{zone}", _xy(300.0, 40.0, 11), parent, cloth * wet_x
-    )
-    links.new(nv0.outputs[0], wet_scale.inputs[0])
-    wet_fac = _new_math(nodes, "SUBTRACT", f"GT_wetFac_z{zone}", _xy(-260.0, 0.0, 13), parent)
-    wet_fac.inputs[0].default_value = 1.0
-    links.new(wet_scale.outputs[0], wet_fac.inputs[1])
-
-    mul = _new_mix_multiply(
-        nodes,
-        name=f"GT_wet_mul_z{zone}",
-        label=f"GT rgb×wetFac viewZ z{zone}",
-        location=_xy(-200.0, 0.0, 14),
-        hide=hide,
-    )
-    _gt_attach_local(mul, parent, _xy(-200.0, 0.0, 14), hide=hide)
-    comb = nodes.new("ShaderNodeCombineColor")
-    comb.name = f"GT_wetFac_comb_z{zone}"
-    _gt_attach_local(comb, parent, _xy(-280.0, -10.0, 13), hide=hide)
-    links.new(wet_fac.outputs[0], comb.inputs[0])
-    links.new(wet_fac.outputs[0], comb.inputs[1])
-    links.new(wet_fac.outputs[0], comb.inputs[2])
-    colour_src = _gt_mix_link(links, mul, colour_src, comb.outputs[0], fac_value=1.0)
-
-    mix_snow = nodes.new("ShaderNodeMix")
-    mix_snow.data_type = "RGBA"
-    mix_snow.blend_type = "MIX"
-    mix_snow.name = f"GT_wet_snow_z{zone}"
-    mix_snow.label = f"GT lerp(SnowColor, viewZ×cloth×WetTint.x) z{zone}"
-    _gt_attach_local(mix_snow, parent, _xy(-80.0, 0.0, 15), hide=hide)
-    return _gt_mix_link(
-        links, mix_snow, colour_src, snow_nd.outputs[0], fac_sock=wet_scale.outputs[0]
-    )
+    The former camera-dependent weather approximation is intentionally bypassed.
+    Runtime primitive wetness and snow require their own supported input path.
+    """
+    return colour_src
 
 
 def _find_colortex_slice_png(png_lists, slice_idx: int) -> str:
@@ -1140,10 +1248,34 @@ def _find_colortex_slice_png(png_lists, slice_idx: int) -> str:
         return preferred[0]
     if fallback:
         return fallback[0]
+    # _LAYERN exports: only a Colors array is a colour texture. Masks/Normals/Patterns slices of the
+    # same index are data and were multiplied into albedo as tint (F12 skins without a Colors array).
     for png_list in png_lists or ():
-        hit = textures.find_slice_png(list(png_list or []), idx)
+        colour_arrays = [p for p in (png_list or []) if re.search(r"_colou?rs?_layer\d+$", os.path.splitext(os.path.basename(p))[0], re.I)]
+        hit = textures.find_slice_png(colour_arrays, idx)
         if hit:
             return hit
+    # An enabled sample of an authored one-layer array can only select layer0.
+    # Require native depth metadata; an isolated export is not proof of depth.
+    # This intentionally leaves multi-layer ID conventions unchanged.
+    for png_list in png_lists or ():
+        for path in png_list or ():
+            stem = os.path.splitext(os.path.basename(path))[0]
+            match = re.fullmatch(r"(.+_colou?rs?)_(?:LAYER_?)?0", stem, re.I)
+            if not match:
+                continue
+            sidecar = os.path.join(os.path.dirname(path), match.group(1) + ".arc-texture.json")
+            try:
+                with open(sidecar, encoding="utf-8") as handle:
+                    metadata = json.load(handle)
+                if (metadata.get("Type") != "Texture2DArray"
+                        or str(metadata.get("Name") or "").casefold() != match.group(1).casefold()
+                        or metadata["Mips"][0]["SizeZ"] != 1
+                        or not os.path.isfile(path)):
+                    continue
+            except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError):
+                continue
+            return path
     return ""
 
 
@@ -1207,6 +1339,7 @@ def _live_pattern_rgba(colours: dict | None, zone: int, suffix: str):
         return None
 
 
+@_dr_ops.operation_build
 def _wire_gt_zone_pattern_hue(
     nodes, links, parent, colours: dict, zone_scalars: dict, ta_ids: dict | None,
     zone: int, colour_src, y0: float, png_lists, pattern_images: dict,
@@ -1226,46 +1359,50 @@ def _wire_gt_zone_pattern_hue(
         return (col_x + step * pitch, y0 + dy)
 
     def mix(name, a, b, *, factor=None, value=None, dtype="RGBA"):
-        nd = nodes.new("ShaderNodeMix")
-        nd.name = f"GT_Pattern_{name}_z{zone}"
-        nd.label = f"Pattern {name} z{zone}"
-        nd.data_type = dtype
-        nd.blend_type = "MIX"
+        nd = _dr_ops.new_operation(nodes, 'ShaderNodeMix', f'GT_Pattern_{name}_z{zone}', stage='Details', role='Pattern.nd')
+        pass
+        _dr_ops.set_label(nd, f'Pattern {name} z{zone}')
+        # Skip writes of the defaults: each write re-runs the whole tree update.
+        _assign(nd, "data_type", dtype)
+        _assign(nd, "blend_type", "MIX")
         _gt_attach_local(nd, parent, _xy(160.0, 0.0, 4), hide=hide)
         return _gt_mix_link(links, nd, a, b, fac_sock=factor, fac_value=value)
 
     def value(name, val):
-        nd = nodes.new("ShaderNodeValue")
-        nd.name = f"GT_Pattern_{name}_z{zone}"
+        nd = _dr_ops.new_operation(nodes, 'ShaderNodeValue', f'GT_Pattern_{name}_z{zone}', stage='Details', role='Pattern.nd')
+        pass
         nd.outputs[0].default_value = float(val)
         _gt_attach_local(nd, parent, _xy(40.0, 40.0, 3), hide=hide)
         return nd.outputs[0]
 
+    from . import param_bind as _pb
+
+    def param(key, val):
+        # One live node per MI parameter: a colourway swap (param_bind) rewrites it, never rebuilds.
+        return _pb.bind(nodes, key, float(val))
+
     pattern_id = _mi_layer_float(ta_ids, zone, "PatternID", 0.0)
     pm = _colour_rgba(colours, f"{zone}_PatternMask", (0.0, 0.0, 0.0, 0.0))
-    live = []
-    for suffix, channel in (("PatternColorA", "Red"), ("PatternColorB", "Green"), ("PatternColorC", "Blue")):
-        rgba = _live_pattern_rgba(colours, zone, suffix)
-        if rgba is not None:
-            live.append((suffix, channel, rgba))
-    if pattern_id >= 0.0 and any(abs(v) > 1e-8 for v in pm[:3]) and (abs(pm[3]) > 1e-8 or live) and png_lists:
-        png_path = _find_pattern_slice_png(png_lists, pattern_id)
+    # Built for every zone of a skin that ships a pattern array: inactive colourways zero the mask and
+    # strengths instead of dropping the nodes, so the graph never depends on the colourway.
+    if True:   # also without a pattern array here: a swap may bind one (mask/strengths keep it inert)
+        png_path = _find_pattern_slice_png(png_lists, pattern_id) if pattern_id >= 0.0 and png_lists else ""
+        png_path = png_path or _find_pattern_slice_png(png_lists, 0)
         img = pattern_images.get(png_path) if png_path else None
         if img is None and png_path:
-            img = _load_image_cached(png_path)
+            img = _load_image_cached(png_path, non_color=True, alpha_mode="CHANNEL_PACKED")
             if img is not None:
                 pattern_images[png_path] = img
         if img is not None:
             # Patterns are RGB blend weights, not display colour.
             img.colorspace_settings.name = "Non-Color"
             img.alpha_mode = "CHANNEL_PACKED"
-            tiling = float(global_tiling) * _mi_layer_float(zone_scalars, zone, "PatternTiling", 1.0)
+        if True:
             uv = hue_cache.get("pattern_uv")
             uv_sock = hue_cache.get("pattern_uv_sock")
             if uv is None:
-                uv = nodes.new("ShaderNodeUVMap")
-                uv.name = "GT_Pattern_UV"
-                uv.label = "UV1 Pattern"
+                uv = _dr_ops.new_operation(nodes, 'ShaderNodeUVMap', 'GT_Pattern_UV', stage='Source', role='Pattern.uv')
+                _dr_ops.set_label(uv, 'UV1 Pattern')
                 uv.uv_map = "UV1"
                 uv.location = (-1080.0, 540.0) if col_x is None else (_gt_pbr.maps_uv_x(), y0)
                 uv.hide = hide
@@ -1275,47 +1412,46 @@ def _wire_gt_zone_pattern_hue(
                 hue_cache["pattern_uv_sock"] = uv_sock
             if uv_sock is None:
                 uv_sock = uv.outputs["UV"]
-            mapping = nodes.new("ShaderNodeMapping")
-            mapping.name = f"GT_Pattern_map_z{zone}"
-            mapping.label = f"GT Pattern tile={tiling:.3f} z{zone}"
+            tile = _new_math(nodes, "MULTIPLY", f"GT_Pattern_tile_z{zone}", _xy(-260.0, 120.0, 0), parent=parent)
+            links.new(param("Tiling", global_tiling), tile.inputs[0])
+            links.new(param(f"{zone}_PatternTiling", _mi_layer_float(zone_scalars, zone, "PatternTiling", 1.0)), tile.inputs[1])
+            mapping = _dr_ops.new_operation(nodes, 'ShaderNodeMapping', f'GT_Pattern_map_z{zone}', stage='Coordinates', role='Pattern.mapping')
+            _dr_ops.set_label(mapping, f'GT Pattern tile z{zone}')
             _gt_attach_local(mapping, parent, _xy(-260.0, 80.0, 0), hide=hide)
-            mapping.inputs["Scale"].default_value = (tiling, tiling, tiling)
+            links.new(tile.outputs[0], mapping.inputs["Scale"])
             links.new(uv_sock, mapping.inputs["Vector"])
-            tex_nd = nodes.new("ShaderNodeTexImage")
-            tex_nd.name = f"GT_Pattern_z{zone}"
-            tex_nd.label = os.path.basename(png_path)
+            tex_nd = _dr_ops.new_operation(nodes, 'ShaderNodeTexImage', f'GT_Pattern_z{zone}', stage='LayerInputs', role='Pattern.tex.nd')
+            _dr_ops.set_label(tex_nd, os.path.basename(png_path) if png_path else f'pattern z{zone}')
             tex_nd.image = img
-            tex_nd.interpolation = "Linear"
+            tex_nd["dr.texture_index_param"] = f"{zone}_PatternID"
+            tex_nd["dr.texture_group"] = "pattern"
+            _assign(tex_nd, "interpolation", "Linear")
             _gt_attach_local(tex_nd, parent, _xy(-160.0, 80.0, 1), hide=hide)
-            links.new(mapping.outputs["Vector"], tex_nd.inputs["Vector"])
-            sep = nodes.new("ShaderNodeSeparateColor")
-            sep.name = f"GT_Pattern_sep_z{zone}"
+            image_uv = _gt_pbr.orient_uv(nodes, links, mapping.outputs["Vector"], f"GT_Pattern_ImageUV_z{zone}", tex_nd.location.x - 200.0, tex_nd.location.y)
+            links.new(image_uv, tex_nd.inputs["Vector"])
+            sep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateColor', f'GT_Pattern_sep_z{zone}', stage='Details', role='Pattern.SeparateChannels')
             _gt_attach_local(sep, parent, _xy(-40.0, 80.0, 2), hide=hide)
             links.new(tex_nd.outputs["Color"], sep.inputs["Color"])
             hue_cache.setdefault("pattern_zones", []).append(zone)
             original = colour_src
-            patterned = mix("RawRGB", colour_src, tex_nd.outputs["Color"], value=float(pm[3]))
-            for suffix, channel, rgba in live:
-                rgb_nd = nodes.get(f"{zone}_{suffix}")
-                if rgb_nd is None:
-                    rgb_nd = nodes.new("ShaderNodeRGB")
-                    rgb_nd.name = f"{zone}_{suffix}"
-                    rgb_nd.label = f"{zone}_{suffix}"
-                    rgb_nd.outputs[0].default_value = rgba
-                    _gt_attach_local(rgb_nd, parent, _xy(40.0, 0.0, 3), hide=hide)
-                fac = _new_math(nodes, "MULTIPLY", f"GT_Pattern_fac_{suffix}_z{zone}", _xy(40.0, 40.0, 3), parent=parent, value=rgba[3])
+            # Raw pattern RGB by PatternMask.A, then each swatch by its own alpha × pattern channel.
+            patterned = mix("RawRGB", colour_src, tex_nd.outputs["Color"], factor=param(f"{zone}_PatternMask.A", pm[3]))
+            for suffix, channel in (("PatternColorA", "Red"), ("PatternColorB", "Green"), ("PatternColorC", "Blue")):
+                rgba = _colour_rgba(colours, f"{zone}_{suffix}", (1.0, 1.0, 1.0, 0.0))
+                rgb = _pb.bind(nodes, f"{zone}_{suffix}", tuple(rgba))
+                fac = _new_math(nodes, "MULTIPLY", f"GT_Pattern_fac_{suffix}_z{zone}", _xy(40.0, 40.0, 3), parent=parent)
                 links.new(sep.outputs[channel], fac.inputs[0])
-                patterned = mix(suffix, patterned, rgb_nd.outputs[0], factor=fac.outputs[0])
-            cm_sep = nodes.new("ShaderNodeSeparateColor")
-            cm_sep.name = f"GT_Pattern_ColorMask_z{zone}"
+                links.new(param(f"{zone}_{suffix}.A", rgba[3]), fac.inputs[1])
+                patterned = mix(suffix, patterned, rgb, factor=fac.outputs[0])
+            cm_sep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateColor', f'GT_Pattern_ColorMask_z{zone}', stage='Details', role='Pattern.cm.sep')
             _gt_attach_local(cm_sep, parent, _xy(-40.0, 0.0, 2), hide=hide)
             if color_mask_socket is not None:
                 links.new(color_mask_socket, cm_sep.inputs["Color"])
             else:
                 cm_sep.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
             gate = value("Gate0", 0.0)
-            for channel, amount in zip(("Red", "Green", "Blue"), pm[:3]):
-                gate = mix("Mask"+channel, gate, value("MaskValue"+channel, amount), factor=cm_sep.outputs[channel], dtype="FLOAT")
+            for i, channel in enumerate(("Red", "Green", "Blue")):
+                gate = mix("Mask"+channel, gate, param(f"{zone}_PatternMask.{'RGB'[i]}", pm[i]), factor=cm_sep.outputs[channel], dtype="FLOAT")
             if zone_mask_socket is not None:
                 zone_gate = _new_math(nodes, "MULTIPLY", f"GT_Pattern_ZoneGate_z{zone}", _xy(40.0, 40.0, 3), parent=parent)
                 links.new(gate, zone_gate.inputs[0])
@@ -1333,7 +1469,7 @@ def _wire_gt_zone_pattern_hue(
     if hue_fac > 1e-6 and hue_png:
         img = hue_cache.get("hue_img")
         if img is None:
-            img = _load_image_cached(hue_png)
+            img = _load_image_cached(hue_png, non_color=False, alpha_mode="CHANNEL_PACKED")
             if img is not None:
                 try:
                     img.colorspace_settings.name = "sRGB"
@@ -1349,31 +1485,31 @@ def _wire_gt_zone_pattern_hue(
                 hue_tile = 1.0
             uv = hue_cache.get("hue_uv")
             if uv is None:
-                uv = nodes.new("ShaderNodeTexCoord")
-                uv.name = "GT_Hue_UV"
-                uv.label = "GT HueVariation UV"
+                uv = _dr_ops.new_operation(nodes, 'ShaderNodeTexCoord', 'GT_Hue_UV', stage='Source', role='Pattern.uv')
+                pass
+                _dr_ops.set_label(uv, 'GT HueVariation UV')
                 uv.location = (-1080.0, 460.0) if col_x is None else (-2200.0, 2600.0)
                 uv.hide = hide
                 uv.parent = None if col_x is not None else parent
                 hue_cache["hue_uv"] = uv
-            mapping = nodes.new("ShaderNodeMapping")
-            mapping.name = f"GT_Hue_map_z{zone}"
-            mapping.label = f"GT Hue tile={hue_tile:.3f} z{zone}"
+            mapping = _dr_ops.new_operation(nodes, 'ShaderNodeMapping', f'GT_Hue_map_z{zone}', stage='Coordinates', role='Pattern.mapping')
+            pass
+            _dr_ops.set_label(mapping, f'GT Hue tile={hue_tile:.3f} z{zone}')
             _gt_attach_local(mapping, parent, _xy(280.0, 40.0, 5), hide=hide)
             mapping.inputs["Scale"].default_value = (hue_tile, hue_tile, hue_tile)
             links.new(uv.outputs["UV"], mapping.inputs["Vector"])
-            tex_nd = nodes.new("ShaderNodeTexImage")
-            tex_nd.name = f"GT_HueVariation_z{zone}"
-            tex_nd.label = os.path.basename(hue_png)
+            tex_nd = _dr_ops.new_operation(nodes, 'ShaderNodeTexImage', f'GT_HueVariation_z{zone}', stage='LayerInputs', role='Pattern.tex.nd')
+            pass
+            _dr_ops.set_label(tex_nd, os.path.basename(hue_png))
             tex_nd.image = img
             tex_nd.interpolation = "Cubic"
             _gt_attach_local(tex_nd, parent, _xy(380.0, 0.0, 6), hide=hide)
             links.new(mapping.outputs["Vector"], tex_nd.inputs["Vector"])
-            mix = nodes.new("ShaderNodeMix")
+            mix = _dr_ops.new_operation(nodes, 'ShaderNodeMix', f'GT_Hue_z{zone}', stage='Details', role='Pattern.mix')
             mix.data_type = "RGBA"
-            mix.blend_type = "MIX"
-            mix.name = f"GT_Hue_z{zone}"
-            mix.label = f"GT lerp(col,Hue,str×0.1={hue_fac:.3f}) z{zone}"
+            _assign(mix, "blend_type", "MIX")
+            pass
+            _dr_ops.set_label(mix, f'GT lerp(col,Hue,str×0.1={hue_fac:.3f}) z{zone}')
             _gt_attach_local(mix, parent, _xy(480.0, 0.0, 7), hide=hide)
             colour_src = _gt_mix_link(
                 links, mix, colour_src, tex_nd.outputs["Color"], fac_value=float(hue_fac)
@@ -1382,21 +1518,22 @@ def _wire_gt_zone_pattern_hue(
     return colour_src
 
 
+@_dr_ops.operation_build
 def _gt_wire_colour_n_group(
     nodes, links, row_parent, loc, zone, amt, swatch_nd, cm_src, colours, uses_sec,
     mat_key: str = "mat",
     packed_r=None,
 ):
     """Instance a per-zone GT_ColourN group (lerp A/A2 by packed BaseColor.R)."""
-    nd_a = nodes.get("ColorA")
-    nd_b = nodes.get("ColorB")
-    nd_c = nodes.get("ColorC")
-    nd_a2 = nodes.get("ColorA2") or nd_a
-    nd_b2 = nodes.get("ColorB2") or nd_b
-    nd_c2 = nodes.get("ColorC2") or nd_c
+    nd_a = _dr_stage_candidate.lookup(nodes).get("ColorA")
+    nd_b = _dr_stage_candidate.lookup(nodes).get("ColorB")
+    nd_c = _dr_stage_candidate.lookup(nodes).get("ColorC")
+    nd_a2 = _dr_stage_candidate.lookup(nodes).get("ColorA2") or nd_a
+    nd_b2 = _dr_stage_candidate.lookup(nodes).get("ColorB2") or nd_b
+    nd_c2 = _dr_stage_candidate.lookup(nodes).get("ColorC2") or nd_c
     if nd_a is None or nd_b is None or nd_c is None:
         return None
-    overlay_nd = nodes.get(f"{zone}_BaseColorOverlay")
+    overlay_nd = _dr_stage_candidate.lookup(nodes).get(f"{zone}_BaseColorOverlay")
     try:
         gtree = _gt_pbr.build_gt_colour_n_zone_group(
             zone=zone,
@@ -1416,10 +1553,10 @@ def _gt_wire_colour_n_group(
         return None
     if gtree is None:
         return None
-    g = nodes.new("ShaderNodeGroup")
+    g = _dr_ops.new_operation(nodes, 'ShaderNodeGroup', f'GT_ColourN_z{zone}', stage='LayerInputs', role='Palette.g')
     g.node_tree = gtree
-    g.name = f"GT_ColourN_z{zone}"
-    g.label = f"Colour {zone} (A/A2 lerp)"
+    pass
+    _dr_ops.set_label(g, f'Colour {zone} (A/A2 lerp)')
     _gt_attach_local(g, row_parent, loc("fac"))
     if cm_src is not None and getattr(cm_src, "outputs", None):
         try:
@@ -1430,9 +1567,9 @@ def _gt_wire_colour_n_group(
             links.new(cm_col, g.inputs["ColorMask"])
         except Exception:
             pass
-    amt_nd = nodes.new("ShaderNodeValue")
-    amt_nd.name = f"GT_amt_z{zone}"
-    amt_nd.label = f"Amt z{zone}"
+    amt_nd = _dr_ops.new_operation(nodes, 'ShaderNodeValue', f'GT_amt_z{zone}', stage='LayerInputs', role='Palette.amt.nd')
+    pass
+    _dr_ops.set_label(amt_nd, f'Amt z{zone}')
     amt_nd.outputs[0].default_value = float(amt)
     _gt_attach_local(amt_nd, row_parent, loc("amt"), hide=True)
     try:
@@ -1450,6 +1587,7 @@ def _gt_wire_colour_n_group(
         return g.outputs[0] if g.outputs else None
 
 
+@_dr_ops.operation_build
 def _wire_outfit_color_ground_truth(
     *,
     nodes,
@@ -1528,9 +1666,9 @@ def _wire_outfit_color_ground_truth(
         base_tex = _find_basecolor_tex_for_arc(nodes, group_node)
     packed_r = None
     if base_tex is not None and getattr(base_tex, "outputs", None):
-        packed_sep = nodes.new("ShaderNodeSeparateColor")
-        packed_sep.name = "GT_PackedR_Colour"
-        packed_sep.label = "packed BaseColor.R → A/A2"
+        packed_sep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateColor', 'GT_PackedR_Colour', stage='LayerInputs', role='Layer.packed.sep')
+        pass
+        _dr_ops.set_label(packed_sep, 'packed BaseColor.R → A/A2')
         packed_sep.hide = True
         try:
             links.new(base_tex.outputs["Color"], packed_sep.inputs[0])
@@ -1544,15 +1682,8 @@ def _wire_outfit_color_ground_truth(
     pattern_images = {}
     hue_cache = {}
 
-    scheme_frame = nodes.new("NodeFrame")
-    scheme_frame.label = (
-        "GT shared: per-zone ColorA/B/C vs A2 (SecondaryMask) + canvas white"
-        if bypass_arc
-        else (
-            "GT: zone primary|secondary ABC → fac=amt×ColorMask×Swatch → lerp(1,A,fac.r)→B→C "
-            "→ ×Overlay ×ColorTex (OCM/MID picks Colour N)"
-        )
-    )
+    scheme_frame = _dr_ops.new_operation(nodes, 'NodeFrame', None, stage='LayerInputs', role='Layout.PaletteScheme')
+    _dr_ops.set_label(scheme_frame, 'GT shared: per-zone ColorA/B/C vs A2 (SecondaryMask) + canvas white' if bypass_arc else 'GT: zone primary|secondary ABC → fac=amt×ColorMask×Swatch → lerp(1,A,fac.r)→B→C → ×Overlay ×ColorTex (OCM/MID picks Colour N)')
     scheme_frame.label_size = 14
     if bypass_arc:
         # Shirt 003: shared ABC/canvas cluster sits above the Colour columns (not UV maps).
@@ -1561,17 +1692,17 @@ def _wire_outfit_color_ground_truth(
     sep = None
     if cm_src is not None and not bypass_arc:
         try:
-            sep = nodes.new("ShaderNodeSeparateColor")
+            sep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateColor', 'GT_ColorMask_Separate', stage='LayerInputs', role='Layer.SeparateChannels')
         except Exception:
             sep = None
         if sep is None:
             try:
-                sep = nodes.new("ShaderNodeSeparateRGB")
+                sep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateRGB', 'GT_ColorMask_Separate', stage='LayerInputs', role='Layer.SeparateChannels')
             except Exception:
                 sep = None
         if sep is not None:
-            sep.label = "GT ColorMask.rgb splitter (×Swatch → wA/wB/wC; not XYZ G/B lerp)"
-            sep.name = "GT_ColorMask_Separate"
+            _dr_ops.set_label(sep, 'GT ColorMask.rgb splitter (×Swatch → wA/wB/wC; not XYZ G/B lerp)')
+            pass
             sep.location = (-1900.0, 520.0) if not bypass_arc else (-200.0, 80.0)
             sep.hide = False
             sep.parent = scheme_frame
@@ -1592,18 +1723,18 @@ def _wire_outfit_color_ground_truth(
         ("OutB", "ColorB", "ColorB2"),
         ("OutC", "ColorC", "ColorC2"),
     ):
-        pri_nd = nodes.get(pri_key)
+        pri_nd = _dr_stage_candidate.lookup(nodes).get(pri_key)
         if not pri_nd:
             continue
         scheme[out_key] = pri_nd
-        if nodes.get(sec_key) is not None:
+        if _dr_stage_candidate.lookup(nodes).get(sec_key) is not None:
             a2_linked.append(sec_key)
 
     # Shared white endpoint for D039 canvas lerps (one RGB node).
     # Needed as Mix A for lerp(1, ColorTex, strength) and parent-graph assemble lerps.
-    white_nd = nodes.new("ShaderNodeRGB")
-    white_nd.name = "GT_canvas_white"
-    white_nd.label = "GT canvas white (D039)"
+    white_nd = _dr_ops.new_operation(nodes, 'ShaderNodeRGB', 'GT_canvas_white', stage='LayerInputs', role='Layer.white.nd')
+    pass
+    _dr_ops.set_label(white_nd, 'GT canvas white (D039)')
     white_nd.outputs[0].default_value = (1.0, 1.0, 1.0, 1.0)
     # Shirt 003: local to the shared frame, just under the frame label.
     white_nd.location = (-1600.0, 560.0) if not bypass_arc else (30.0, -30.0)
@@ -1624,17 +1755,17 @@ def _wire_outfit_color_ground_truth(
     for zone in range(1, 9):
         colour_sock = f"Colour {zone}"
         if bypass_arc:
-            if nodes.get("ColorA") is None:
+            if _dr_stage_candidate.lookup(nodes).get("ColorA") is None:
                 continue
         else:
             if group_node is None or colour_sock not in group_node.inputs:
                 continue
-        if nodes.get("ColorA") is None or nodes.get("ColorB") is None or nodes.get("ColorC") is None:
+        if _dr_stage_candidate.lookup(nodes).get("ColorA") is None or _dr_stage_candidate.lookup(nodes).get("ColorB") is None or _dr_stage_candidate.lookup(nodes).get("ColorC") is None:
             continue
 
         if bypass_arc:
-            row_parent = nodes.new("NodeFrame")
-            row_parent.label = f"Colour {zone}"
+            row_parent = _dr_ops.new_operation(nodes, 'NodeFrame', None, stage='LayerInputs', role='Layout.PaletteZone')
+            _dr_ops.set_label(row_parent, f'Colour {zone}')
             row_parent.label_size = 16
             _gt_pbr.place(
                 row_parent,
@@ -1677,11 +1808,11 @@ def _wire_outfit_color_ground_truth(
 
         swatch_key = f"{zone}_ColorMaskSwatch"
         swatch_rgba = (colours or {}).get(swatch_key)
-        swatch_nd = nodes.get(swatch_key)
+        swatch_nd = _dr_stage_candidate.lookup(nodes).get(swatch_key)
         if swatch_nd is None and not bypass_arc:
-            swatch_nd = nodes.new("ShaderNodeRGB")
-            swatch_nd.label = swatch_key
-            swatch_nd.name = swatch_key
+            swatch_nd = _dr_ops.new_operation(nodes, 'ShaderNodeRGB', swatch_key, stage='LayerInputs', role='Layer.swatch.nd')
+            _dr_ops.set_label(swatch_nd, swatch_key)
+            pass
             if swatch_rgba is not None:
                 swatch_nd.outputs[0].default_value = (
                     float(swatch_rgba[0]),
@@ -1728,9 +1859,9 @@ def _wire_outfit_color_ground_truth(
             if fac_col is None:
                 fac_col = fac_bs.outputs[0]
             if amt < 0.999:
-                amt_nd = nodes.new("ShaderNodeRGB")
-                amt_nd.name = f"GT_amt_z{zone}"
-                amt_nd.label = f"GT amt={amt:.3f} z{zone}"
+                amt_nd = _dr_ops.new_operation(nodes, 'ShaderNodeRGB', f'GT_amt_z{zone}', stage='LayerInputs', role='Layer.amt.nd')
+                pass
+                _dr_ops.set_label(amt_nd, f'GT amt={amt:.3f} z{zone}')
                 amt_nd.outputs[0].default_value = (amt, amt, amt, 1.0)
                 _gt_attach_local(amt_nd, row_parent, loc("amt"), hide=hide)
                 fac_amt = _new_mix_multiply(
@@ -1746,9 +1877,9 @@ def _wire_outfit_color_ground_truth(
                 if fac_col is None:
                     fac_col = fac_amt.outputs[0]
 
-            fac_sep = nodes.new("ShaderNodeSeparateColor")
-            fac_sep.label = f"GT wA/wB/wC z{zone}"
-            fac_sep.name = f"GT_fac_sep_z{zone}"
+            fac_sep = _dr_ops.new_operation(nodes, 'ShaderNodeSeparateColor', f'GT_fac_sep_z{zone}', stage='LayerInputs', role='Layer.fac.sep')
+            _dr_ops.set_label(fac_sep, f'GT wA/wB/wC z{zone}')
+            pass
             _gt_attach_local(fac_sep, row_parent, loc("sep"), hide=hide)
             links.new(fac_col, fac_sep.inputs[0])
 
@@ -1763,19 +1894,19 @@ def _wire_outfit_color_ground_truth(
             _link_mix_factor_from_sep(links, fac_sep, mix_a, channel="Red", index=0)
             canvas_sock = white_nd.outputs[0]
             sec = bool(uses_sec[zone - 1]) if 0 <= zone - 1 < len(uses_sec) else False
-            nd_a = nodes.get("ColorA2" if sec else "ColorA") or nodes.get("ColorA")
-            nd_b = nodes.get("ColorB2" if sec else "ColorB") or nodes.get("ColorB")
-            nd_c = nodes.get("ColorC2" if sec else "ColorC") or nodes.get("ColorC")
+            nd_a = _dr_stage_candidate.lookup(nodes).get("ColorA2" if sec else "ColorA") or _dr_stage_candidate.lookup(nodes).get("ColorA")
+            nd_b = _dr_stage_candidate.lookup(nodes).get("ColorB2" if sec else "ColorB") or _dr_stage_candidate.lookup(nodes).get("ColorB")
+            nd_c = _dr_stage_candidate.lookup(nodes).get("ColorC2" if sec else "ColorC") or _dr_stage_candidate.lookup(nodes).get("ColorC")
             if nd_a is None or nd_b is None or nd_c is None:
                 continue
             scheme_a = nd_a.outputs[0]
             _gt_mix_link(links, mix_a, canvas_sock, scheme_a)
 
-            mix_ab = nodes.new("ShaderNodeMix")
+            mix_ab = _dr_ops.new_operation(nodes, 'ShaderNodeMix', f'GT_assemble_AB_z{zone}', stage='LayerInputs', role='Layer.mix.ab')
             mix_ab.data_type = "RGBA"
-            mix_ab.blend_type = "MIX"
-            mix_ab.name = f"GT_assemble_AB_z{zone}"
-            mix_ab.label = f"GT lerp(col,OutB,fac.g) z{zone}"
+            _assign(mix_ab, "blend_type", "MIX")
+            pass
+            _dr_ops.set_label(mix_ab, f'GT lerp(col,OutB,fac.g) z{zone}')
             mix_ab.hide = hide
             _gt_attach_local(mix_ab, row_parent, loc("ab"), hide=hide)
             _link_mix_factor_from_sep(links, fac_sep, mix_ab, channel="Green", index=1)
@@ -1783,11 +1914,11 @@ def _wire_outfit_color_ground_truth(
             scheme_b = nd_b.outputs[0]
             _gt_mix_link(links, mix_ab, mix_a_out, scheme_b)
 
-            mix_c = nodes.new("ShaderNodeMix")
+            mix_c = _dr_ops.new_operation(nodes, 'ShaderNodeMix', f'GT_assemble_C_z{zone}', stage='LayerInputs', role='Layer.mix.c')
             mix_c.data_type = "RGBA"
-            mix_c.blend_type = "MIX"
-            mix_c.name = f"GT_assemble_C_z{zone}"
-            mix_c.label = f"GT lerp(col,OutC,fac.b) z{zone}"
+            _assign(mix_c, "blend_type", "MIX")
+            pass
+            _dr_ops.set_label(mix_c, f'GT lerp(col,OutC,fac.b) z{zone}')
             mix_c.hide = hide
             _gt_attach_local(mix_c, row_parent, loc("c"), hide=hide)
             _link_mix_factor_from_sep(links, fac_sep, mix_c, channel="Blue", index=2)
@@ -1796,13 +1927,13 @@ def _wire_outfit_color_ground_truth(
             colour_src = _gt_mix_link(links, mix_c, mix_ab_out, scheme_c)
 
             # D034: col *= BaseColorOverlay (Fac Overlay stays 0 elsewhere).
-            overlay_nd = nodes.get(f"{zone}_BaseColorOverlay")
+            overlay_nd = _dr_stage_candidate.lookup(nodes).get(f"{zone}_BaseColorOverlay")
             if overlay_nd is None:
                 ov_rgba = (colours or {}).get(f"{zone}_BaseColorOverlay")
                 if ov_rgba is not None:
-                    overlay_nd = nodes.new("ShaderNodeRGB")
-                    overlay_nd.label = f"{zone}_BaseColorOverlay"
-                    overlay_nd.name = f"{zone}_BaseColorOverlay"
+                    overlay_nd = _dr_ops.new_operation(nodes, 'ShaderNodeRGB', f'{zone}_BaseColorOverlay', stage='LayerInputs', role='Layer.overlay.nd')
+                    _dr_ops.set_label(overlay_nd, f'{zone}_BaseColorOverlay')
+                    pass
                     overlay_nd.outputs[0].default_value = (
                         float(ov_rgba[0]),
                         float(ov_rgba[1]),
@@ -1830,22 +1961,28 @@ def _wire_outfit_color_ground_truth(
         tiling = _mi_layer_float(zone_scalars, zone, "ColorTextureTiling", 1.0)
         if tiling <= 1e-6:
             tiling = 1.0
-        if colortex_id >= 1.0 and png_lists:
-            png_path = _find_colortex_slice_png(png_lists, colortex_id)
+        # Built whenever the skin ships colour slices; ID < 1 outputs white (no tint) instead of
+        # dropping the nodes, so a colourway swap only rewrites the ID, image and tiling.
+        colortex_any = _find_colortex_slice_png(png_lists, colortex_id) if colortex_id >= 1.0 and png_lists else ""
+        if png_lists and not colortex_any:
+            colortex_any = next((_find_colortex_slice_png(png_lists, i) for i in range(1, 64)
+                                 if _find_colortex_slice_png(png_lists, i)), "")
+        if True:   # also without any Colors array here: a swap may bind one (gate keeps it white)
+            png_path = colortex_any
             img = colortex_images.get(png_path) if png_path else None
             if img is None and png_path:
-                img = _load_image_cached(png_path)
+                img = _load_image_cached(png_path, non_color=False, alpha_mode="CHANNEL_PACKED")
                 if img is not None:
                     try:
                         img.colorspace_settings.name = "sRGB"
                     except Exception:
                         pass
                     colortex_images[png_path] = img
-            if img is not None:
+            if True:
                 if colortex_uv is None:
-                    colortex_uv = nodes.new("ShaderNodeUVMap")
-                    colortex_uv.name = "GT_ColorTex_UV"
-                    colortex_uv.label = "UV1 ColorTex"
+                    colortex_uv = _dr_ops.new_operation(nodes, 'ShaderNodeUVMap', 'GT_ColorTex_UV', stage='Source', role='Layer.colortex.uv')
+                    pass
+                    _dr_ops.set_label(colortex_uv, 'UV1 ColorTex')
                     try:
                         colortex_uv.uv_map = "UV1"
                     except Exception:
@@ -1863,29 +2000,45 @@ def _wire_outfit_color_ground_truth(
                     )
                 else:
                     colortex_uv_sock = None
-                    orient_nd = nodes.get("GT_ColorTex_UV_orient")
+                    orient_nd = _dr_stage_candidate.lookup(nodes).get("GT_ColorTex_UV_orient")
                     if orient_nd is not None and getattr(orient_nd, "outputs", None):
                         colortex_uv_sock = orient_nd.outputs[0]
                     if colortex_uv_sock is None:
                         colortex_uv_sock = colortex_uv.outputs["UV"]
-                mapping = nodes.new("ShaderNodeMapping")
-                mapping.name = f"GT_ColorTex_map_z{zone}"
-                mapping.label = f"GT ColorTex tile={tiling:.3f} z{zone}"
+                mapping = _dr_ops.new_operation(nodes, 'ShaderNodeMapping', f'GT_ColorTex_map_z{zone}', stage='Coordinates', role='Layer.mapping')
+                pass
+                _dr_ops.set_label(mapping, f'GT ColorTex tile={tiling:.3f} z{zone}')
                 mapping.hide = True
                 _gt_attach_local(mapping, row_parent, loc("tex_map"), hide=True)
-                detail_t = _mi_layer_float(zone_scalars, zone, "DetailTiling", 1.0) or 1.0
-                glob_t = _mi_global_float(zone_scalars, "Tiling", 1.0)
-                scale = max(1e-6, float(glob_t) * float(detail_t) * float(tiling))
-                mapping.inputs["Scale"].default_value = (scale, scale, scale)
+                from . import param_bind as _pb
+                scale = _pb.bind(nodes, "Tiling", float(_mi_global_float(zone_scalars, "Tiling", 1.0)))
+                for key, val in ((f"{zone}_DetailTiling", _mi_layer_float(zone_scalars, zone, "DetailTiling", 1.0)),
+                                 (f"{zone}_ColorTextureTiling", tiling)):
+                    mul = _new_math(nodes, "MULTIPLY", f"GT_ColorTex_scale_{key}", loc("tex_map"), parent=row_parent)
+                    links.new(scale, mul.inputs[0])
+                    links.new(_pb.bind(nodes, key, float(val)), mul.inputs[1])
+                    scale = mul.outputs[0]
+                links.new(scale, mapping.inputs["Scale"])
                 links.new(colortex_uv_sock, mapping.inputs["Vector"])
-                tex_nd = nodes.new("ShaderNodeTexImage")
-                tex_nd.name = f"GT_ColorTex_z{zone}"
-                tex_nd.label = os.path.basename(png_path)
+                tex_nd = _dr_ops.new_operation(nodes, 'ShaderNodeTexImage', f'GT_ColorTex_z{zone}', stage='LayerInputs', role='Layer.tex.nd')
+                pass
+                _dr_ops.set_label(tex_nd, os.path.basename(png_path))
                 tex_nd.image = img
                 tex_nd.interpolation = "Cubic"
                 _gt_attach_local(tex_nd, row_parent, loc("tex"), hide=False if bypass_arc else hide)
-                links.new(mapping.outputs["Vector"], tex_nd.inputs["Vector"])
-                zone_colortex[zone] = tex_nd.outputs["Color"]
+                image_uv = _gt_pbr.orient_uv(nodes, links, mapping.outputs["Vector"], f"GT_ColorTex_ImageUV_z{zone}", tex_nd.location.x - 200.0, tex_nd.location.y)
+                links.new(image_uv, tex_nd.inputs["Vector"])
+                tex_nd["dr.texture_index_param"] = f"{zone}_ColorTextureID"
+                tex_nd["dr.texture_group"] = "colortex"
+                on = _new_math(nodes, "GREATER_THAN", f"GT_ColorTex_on_z{zone}", loc("tex"), parent=row_parent, value=0.5)
+                links.new(_pb.bind(nodes, f"{zone}_ColorTextureID", float(colortex_id)), on.inputs[0])
+                gate = _new_mix_lerp_white(nodes, name=f"GT_ColorTex_gate_z{zone}", label=f"ColorTex on z{zone}",
+                                           location=loc("tex"), hide=True)
+                g_fac, g_a, g_b, g_out = _gt_pbr.mix_io(gate)
+                g_a.default_value = (1.0, 1.0, 1.0, 1.0)
+                links.new(on.outputs[0], g_fac)
+                links.new(tex_nd.outputs["Color"], g_b)
+                zone_colortex[zone] = g_out
                 colortex_wired.append(zone)
 
         if not bypass_arc:
@@ -1989,8 +2142,8 @@ def _wire_outfit_color_legacy(
             for sock_i, (socket_name, pri_key, sec_key) in enumerate(_pri_sec):
                 if socket_name not in cm_grp.inputs:
                     continue
-                pri_nd = nodes.get(pri_key)
-                sec_nd = nodes.get(sec_key)
+                pri_nd = _dr_stage_candidate.lookup(nodes).get(pri_key)
+                sec_nd = _dr_stage_candidate.lookup(nodes).get(sec_key)
                 if not pri_nd:
                     continue
                 if not sec_nd:
@@ -1998,7 +2151,7 @@ def _wire_outfit_color_legacy(
                     continue
                 mix = nodes.new("ShaderNodeMix")
                 mix.data_type = "RGBA"
-                mix.blend_type = "MIX"
+                _assign(mix, "blend_type", "MIX")
                 mix.label = f"ColorSchemeBlend z{zone_i} {pri_key}↔{sec_key}"
                 mix.name = f"CSB_z{zone_i}_{pri_key}"
                 try:
@@ -2016,7 +2169,7 @@ def _wire_outfit_color_legacy(
             soft_zones.append(zone_i)
         else:
             for socket_name, colour_key in input_map.items():
-                rgb_nd = nodes.get(colour_key)
+                rgb_nd = _dr_stage_candidate.lookup(nodes).get(colour_key)
                 if rgb_nd and socket_name in cm_grp.inputs:
                     sock = cm_grp.inputs[socket_name]
                     while getattr(sock, "is_linked", False):
@@ -2056,10 +2209,10 @@ def apply_palette_routing_live(mat, mode: str, *, obj=None) -> int:
         if getattr(node, "bl_idname", "") != "ShaderNodeGroup":
             continue
         ng = getattr(node, "node_tree", None)
-        tname = getattr(ng, "name", "") or ""
+        tname = _group_contract_key(ng) or ""
         if not tname.startswith("ColorMask"):
             continue
-        lab = (getattr(node, "label", "") or "").strip()
+        lab = (_dr_ops.legacy_label(node) or "").strip()
         m = _CM_ZONE_LABEL_RE.search(lab)
         if not m:
             continue
@@ -2072,7 +2225,7 @@ def apply_palette_routing_live(mat, mode: str, *, obj=None) -> int:
             continue
         for socket_name, colour_key in zone_inputs.items():
             sock = node.inputs.get(socket_name)
-            rgb_nd = nodes.get(colour_key)
+            rgb_nd = _dr_stage_candidate.lookup(nodes).get(colour_key)
             if sock is None or rgb_nd is None:
                 continue
             while getattr(sock, "is_linked", False):
@@ -2224,10 +2377,10 @@ def _nct_ta_uv_chain_role(node, which: str, outgoing=None):
 
 def _iter_nct_layout_keys(node, outgoing=None):
     """Yield layout-index keys that may match a built clothing node."""
-    label = (getattr(node, "label", None) or "").strip()
+    label = (_dr_ops.legacy_label(node) or "").strip()
     ntype = getattr(node, "bl_idname", "") or ""
     tree = getattr(node, "node_tree", None)
-    tree_name = getattr(tree, "name", "") if tree is not None else ""
+    tree_name = _group_contract_key(tree) if tree is not None else ""
 
     if ntype == "ShaderNodeGroup" and tree_name:
         if tree_name.replace(" ", "") == "ArcTexturer" or tree_name.startswith("ArcTexturer"):
@@ -2329,7 +2482,7 @@ def apply_nct_clothing_layout(nodes) -> int:
             continue
         # Crease/Edge ColorOverlay RGB only (never skip ColorMask_XYZ / others that
         # might briefly share a Crease/Edge link — that wrecked NCT placement).
-        label = (getattr(node, "label", "") or "").strip()
+        label = (node.get("dr.parameter_key") or _dr_ops.legacy_label(node) or "").strip()
         if "_CreaseColorOverlay" in label or "_EdgeColorOverlay" in label:
             continue
         # BaseColorOverlay: first Overlay N link (NCT only had zones 1–5; socket-Y
@@ -2438,7 +2591,7 @@ _TA_TEXTURE_NAME_RE = re.compile(r"(?i)^TA_")
 
 def _ta_texture_basename(node) -> str:
     """Basename from image label/filepath for TA_* matching."""
-    label = (getattr(node, "label", None) or "").strip()
+    label = (_dr_ops.legacy_label(node) or "").strip()
     if label.lower().endswith((".png", ".tga", ".jpg", ".jpeg", ".exr")):
         return os.path.basename(label)
     img = getattr(node, "image", None)
@@ -2595,13 +2748,13 @@ def _ta_colormask_zone_from_first_link(node, tree) -> int | None:
         if getattr(to, "bl_idname", "") != "ShaderNodeGroup":
             continue
         ng = getattr(to, "node_tree", None)
-        name = getattr(ng, "name", "") or ""
+        name = _group_contract_key(ng) or ""
         if not name.startswith("ColorMask"):
             continue
         sock = (getattr(lnk.to_socket, "name", "") or "").strip()
         if not _TA_COLORMASK_FEED_SOCK_RE.match(sock):
             continue
-        label = (getattr(to, "label", "") or "").strip()
+        label = (_dr_ops.legacy_label(to) or "").strip()
         m = _TA_COLORMASK_ZONE_RE.search(label)
         if not m:
             continue
@@ -2781,7 +2934,7 @@ def place_decal_layermasks_on_color_rows(nodes) -> int:
     for node in nodes:
         if getattr(node, "bl_idname", "") == "NodeFrame" or getattr(node, "type", "") == "FRAME":
             continue
-        lab = (getattr(node, "label", None) or "").strip()
+        lab = (_dr_ops.legacy_label(node) or "").strip()
         m_data = _DECAL_DATA_TEX_LABEL_RE.match(lab)
         if m_data and getattr(node, "type", "") == "TEX_IMAGE":
             try:
@@ -2804,7 +2957,7 @@ def place_decal_layermasks_on_color_rows(nodes) -> int:
         # Only real LayerMask helpers (group / ColorRamp / legacy Math) — Mapping
         # nodes also store arc_decal_layer_mask and must not be moved here.
         bl_id = getattr(node, "bl_idname", "") or ""
-        tree_name = getattr(getattr(node, "node_tree", None), "name", "") or ""
+        tree_name = _group_contract_key(getattr(node, "node_tree", None)) or ""
         is_lm = (
             bl_id == "ShaderNodeValToRGB"
             or bl_id == "ShaderNodeMath"
@@ -2860,7 +3013,7 @@ def place_decal_normals_by_first_link(nodes, group_node=None) -> int:
             if getattr(n, "bl_idname", "") != "ShaderNodeGroup":
                 continue
             ng = getattr(n, "node_tree", None)
-            name = getattr(ng, "name", "") or ""
+            name = _group_contract_key(ng) or ""
             if name.replace(" ", "") == "ArcTexturer" or name.startswith("ArcTexturer"):
                 group_node = n
                 break
@@ -2903,7 +3056,7 @@ def place_crease_edge_overlays_by_first_link(nodes, group_node=None) -> int:
             if getattr(n, "bl_idname", "") != "ShaderNodeGroup":
                 continue
             ng = getattr(n, "node_tree", None)
-            name = getattr(ng, "name", "") or ""
+            name = _group_contract_key(ng) or ""
             if name.replace(" ", "") == "ArcTexturer" or name.startswith("ArcTexturer"):
                 group_node = n
                 break
@@ -2912,7 +3065,7 @@ def place_crease_edge_overlays_by_first_link(nodes, group_node=None) -> int:
     for node in list(nodes):
         if getattr(node, "bl_idname", "") == "NodeFrame" or getattr(node, "type", "") == "FRAME":
             continue
-        lab = (getattr(node, "label", "") or getattr(node, "name", "") or "").strip()
+        lab = (_dr_ops.legacy_label(node) or _dr_ops.legacy_name(node) or "").strip()
         m_lab = _CREASE_EDGE_OVERLAY_LABEL_RE.match(lab)
         if not m_lab:
             continue
@@ -2956,7 +3109,7 @@ def place_base_color_overlays_by_first_link(nodes, group_node=None) -> int:
             if getattr(n, "bl_idname", "") != "ShaderNodeGroup":
                 continue
             ng = getattr(n, "node_tree", None)
-            name = getattr(ng, "name", "") or ""
+            name = _group_contract_key(ng) or ""
             if name.replace(" ", "") == "ArcTexturer" or name.startswith("ArcTexturer"):
                 group_node = n
                 break
@@ -2968,7 +3121,7 @@ def place_base_color_overlays_by_first_link(nodes, group_node=None) -> int:
         # Prefer wired Overlay N; fall back to label zone for unlinked RGB.
         slot = _base_overlay_slot_from_first_link(node, tree)
         if slot is None:
-            lab = (getattr(node, "label", "") or getattr(node, "name", "") or "").strip()
+            lab = (_dr_ops.legacy_label(node) or _dr_ops.legacy_name(node) or "").strip()
             m = re.match(r"^(\d+)_BaseColorOverlay$", lab)
             if not m:
                 continue
@@ -3008,7 +3161,7 @@ def place_ta_normals_by_first_link(nodes, group_node=None) -> int:
             if getattr(n, "bl_idname", "") != "ShaderNodeGroup":
                 continue
             ng = getattr(n, "node_tree", None)
-            name = getattr(ng, "name", "") or ""
+            name = _group_contract_key(ng) or ""
             if name.replace(" ", "") == "ArcTexturer" or name.startswith("ArcTexturer"):
                 group_node = n
                 break
@@ -3069,10 +3222,10 @@ def place_ta_colormask_by_first_link(nodes) -> int:
         if getattr(n, "bl_idname", "") != "ShaderNodeGroup":
             continue
         ng = getattr(n, "node_tree", None)
-        name = getattr(ng, "name", "") or ""
+        name = _group_contract_key(ng) or ""
         if not name.startswith("ColorMask"):
             continue
-        m = _TA_COLORMASK_ZONE_RE.search((getattr(n, "label", "") or "").strip())
+        m = _TA_COLORMASK_ZONE_RE.search((_dr_ops.legacy_label(n) or "").strip())
         if not m:
             continue
         try:
@@ -3222,6 +3375,43 @@ def _gt_make_tex(nodes, fpath, name, loc, *, non_color=False):
     return _gt_pbr.make_tex(nodes, fpath, name, loc, non_color=non_color)
 
 
+def _gt_semantic_texture_roles(json_path: str, folder: str, main_pngs: list):
+    """Prefer effective named MI maps; filename discovery is legacy fallback.
+
+    PM_* values may be preview arrays and are deliberately not aliases for the
+    native base-map parameters. Missing authored references remain explicit.
+    """
+    names = {"OcclusionCurvatureMaterialID": "occlusion", "ColorMask": "colormask",
+             "BaseColor": "basecolor", "Normal": "normal", "BreakupMask": "breakup"}
+    roles = {role: [] for role in names.values()}
+    bindings = {}
+    missing = []
+    props = textures.load_mi_properties(json_path) if json_path else {}
+    for parameter in props.get("TextureParameterValues") or []:
+        name = str((parameter.get("ParameterInfo") or {}).get("Name") or "")
+        # Scoped flat-export aliases accompany the same native global parameter.
+        if name.startswith("Global."):
+            name = name[len("Global."):]
+        if name not in names:
+            continue
+        value = parameter.get("ParameterValue") or {}
+        reference = str(value.get("ObjectPath") or value.get("AssetPathName") or "") if isinstance(value, dict) else str(value)
+        role = names[name]
+        path = _resolve_mi_texture_path(reference) if reference else ""
+        bindings[role] = {"parameter": name, "reference": reference, "path": path}
+        roles[role] = [path] if path else []
+    for role, binding in bindings.items():
+        if not binding["path"]:
+            missing.append({"role": role, "parameter": binding["parameter"], "reference": binding["reference"]})
+    for filename in main_pngs or []:
+        role = textures.identify_texture(filename)
+        if role in roles and role not in bindings:
+            path = filename if os.path.isabs(filename) else os.path.join(folder, filename)
+            roles[role].append(path)
+    return roles, bindings, missing
+
+
+@_dr_operation_build
 def _setup_gt_bypass_material(
     obj,
     mat,
@@ -3240,23 +3430,14 @@ def _setup_gt_bypass_material(
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
 
-    occlusion_tex = []
-    normal_tex = []
-    basecolor_tex = []
-    colormask_tex = []
-    breakup_tex = []
-    for fname in main_pngs or []:
-        role = textures.identify_texture(fname)
-        if role == "occlusion":
-            occlusion_tex.append(fname)
-        elif role == "normal":
-            normal_tex.append(fname)
-        elif role == "basecolor":
-            basecolor_tex.append(fname)
-        elif role == "colormask":
-            colormask_tex.append(fname)
-        elif role == "breakup":
-            breakup_tex.append(fname)
+    semantic_roles, semantic_bindings, missing_bindings = _gt_semantic_texture_roles(json_path, folder, main_pngs)
+    occlusion_tex = semantic_roles["occlusion"]
+    normal_tex = semantic_roles["normal"]
+    basecolor_tex = semantic_roles["basecolor"]
+    colormask_tex = semantic_roles["colormask"]
+    breakup_tex = semantic_roles["breakup"]
+    mat["arc_gt_texture_bindings"] = json.dumps(semantic_bindings, sort_keys=True)
+    mat["arc_gt_missing_texture_bindings"] = json.dumps(missing_bindings, sort_keys=True)
 
     base_other = [
         p for p in (base_pngs or [])
@@ -3327,7 +3508,7 @@ def _setup_gt_bypass_material(
             base_tex = nd
 
     breakup_node = None
-    if not breakup_tex:
+    if not breakup_tex and "breakup" not in semantic_bindings:
         for p in base_other:
             if textures.identify_texture(os.path.basename(p)) == "breakup":
                 breakup_tex.append(p)
@@ -3361,6 +3542,13 @@ def _setup_gt_bypass_material(
         nd.label = f"Normal {fname}"
         if normal_node is None:
             normal_node = nd
+
+    # param_bind rebinds these from the next colourway's MI texture parameters (no rebuild).
+    for role, default, node in (("basecolor", "BaseColor", base_tex), ("colormask", "ColorMask", cm_src),
+                                ("normal", "Normal", normal_node), ("breakup", "BreakupMask", breakup_node),
+                                ("occlusion", "OcclusionCurvatureMaterialID", ocm_node)):
+        if node is not None:
+            node["dr.texture_param"] = (semantic_bindings.get(role) or {}).get("parameter") or default
 
     _mi_props = {}
     if json_path:
@@ -3404,13 +3592,13 @@ def _setup_gt_bypass_material(
 
     _ensure_core_scheme_colour_nodes(nodes, colours or {})
     for i, key in enumerate(("ColorA", "ColorB", "ColorC")):
-        nd = nodes.get(key)
+        nd = _dr_stage_candidate.lookup(nodes).get(key)
         if nd is None:
             continue
         _gt_place(nd, _gt_pbr.maps_cm_x(), _gt_pbr.colour_row_y("wet") - i * 80.0)
         nd.hide = True
     for i, key in enumerate(("ColorA2", "ColorB2", "ColorC2")):
-        nd = nodes.get(key)
+        nd = _dr_stage_candidate.lookup(nodes).get(key)
         if nd is None:
             continue
         _gt_place(nd, _gt_pbr.maps_cm_x() + 80.0, _gt_pbr.colour_row_y("wet") - i * 80.0)
@@ -3456,6 +3644,19 @@ def _setup_gt_bypass_material(
             _decals = textures.parse_decals(json_path) or []
         except Exception:
             _decals = []
+    hue_ref = next((
+        item.get("ParameterValue") for item in _mi_props.get("TextureParameterValues", [])
+        if (item.get("ParameterInfo") or {}).get("Name") == "HueVariation"
+    ), None)
+    if isinstance(hue_ref, dict):
+        hue_ref = hue_ref.get("ObjectPath") or hue_ref.get("AssetPathName") or ""
+    hue_ref = hue_ref or "/EmbarkScript/MaterialLibrary/Character/Templates/Textures/T_HueNoise_01_C"
+    hue_path = _resolve_mi_texture_path(
+        str(hue_ref), local_folders=[folder, os.path.dirname(json_path) if json_path else ""],
+    ) if any(_mi_layer_float(_zone_scalars, z, "HueVariationStrength", 0) != 0 for z in range(1, 9)) else ""
+    mat["arc_layered_missing_hue_texture"] = bool(
+        not hue_path and any(_mi_layer_float(_zone_scalars, z, "HueVariationStrength", 0) != 0 for z in range(1, 9))
+    )
     _gt_pbr.finish_gt_outfit_graph(
         nodes=nodes,
         links=links,
@@ -3477,11 +3678,14 @@ def _setup_gt_bypass_material(
         breakup_node=breakup_node,
         colortex_outputs=_gt.get("colortex_outputs") or {},
         pattern_png_lists=(base_other, base_pngs),
+        hue_variation_path=hue_path,
     )
-    _gt["pattern_zones"] = [z for z in range(1, 9) if nodes.get(f"GT_Pattern_z{z}") is not None]
+    _gt["pattern_zones"] = [z for z in range(1, 9) if _dr_stage_candidate.lookup(nodes).get(f"GT_Pattern_z{z}") is not None]
     mat["arc_layered_pattern_zones"] = json.dumps(_gt["pattern_zones"])
-    mat["arc_layered_medium_zones"] = json.dumps([z for z in range(1, 9) if nodes.get(f"GT_z{z}_MediumN") is not None])
-    mat["arc_layered_surface_schema"] = "native-pattern-medium-v1"
+    mat["arc_layered_medium_zones"] = json.dumps([z for z in range(1, 9) if _dr_stage_candidate.lookup(nodes).get(f"GT_z{z}_MediumN") is not None])
+    mat["arc_layered_surface_schema"] = "native-dry-layered-response-v3"
+    mat["arc_material_parity_verified"] = False
+    mat["arc_layered_renderer_limits"] = "Native dry cloth angular specular supported; indirect/specular AO and runtime wet/snow require matched renderer verification."
     mat["arc_medium_mip_note"] = "Native mask/strength/RNM; BOX reconstructed OCM mips approximate cooked filtering/compression."
     # Keep Colour-row frames; do not unparent/declutter (that made the spaghetti graph).
     n_moved = 0
@@ -3556,7 +3760,7 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
             json_path,
             fp,
             outfit_color_pipeline=outfit_color_pipeline_from_scene(),
-        )
+        ) + (_resolved_material_signature(mi_data),)
         if (use_material_cache and json_path)
         else None
     )
@@ -3564,7 +3768,7 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
         cached = _clothing_cache_get(cache_key)
         if cached is not None:
             _CLOTHING_CACHE_STATS["hits"] = int(_CLOTHING_CACHE_STATS.get("hits", 0)) + 1
-            _assign_clothing_material(obj, cached, psk_path)
+            _assign_clothing_material(obj, cached, psk_path, json_path)
             return cached
         _CLOTHING_CACHE_STATS["misses"] = int(_CLOTHING_CACHE_STATS.get("misses", 0)) + 1
 
@@ -3573,7 +3777,7 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
     # Prefer the opaque clothing / Visor shell slot. On multi-slot visor PSKs,
     # active_material often lands on glass — which apply_embedded_visor_slots then
     # overwrites, leaving MI_Visor_Visor untextured.
-    _assign_clothing_material(obj, mat, psk_path)
+    _assign_clothing_material(obj, mat, psk_path, json_path)
     try:
         if json_path:
             mat["arc_mi_path"] = _norm_path_key(json_path)
@@ -3612,6 +3816,11 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
 
     group_node = nodes.new("ShaderNodeGroup")
     group_node.node_tree = arc_ng
+    if arc_ng.get('dr.legacy_arc.recipe'):
+        mat['arc_legacy_composition_kind']='original-native-equation-compatibility-approximation'
+        mat['arc_legacy_composition_recipe']=arc_ng['dr.legacy_arc.recipe']
+        mat['arc_legacy_composition_limits']=arc_ng.get('dr.legacy_arc.limits','[]')
+        print('DataRaiders: legacy garment uses original native-equation compatibility preview; exact legacy band/noise/packed-port behavior is not claimed. Use Ground Truth for the verified native route.')
     # Match NodeConnectionTest GoalieShirt Arc Texturer placement.
     group_node.location = (282.24, -47.04)
     # ColorABC debug: Dirt/Variation wash ColorMask toward white (Q01).
@@ -3649,7 +3858,7 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
         for row, item in enumerate(file_list):
             fpath = item if is_paths else os.path.join(folder, item)
             fname = os.path.basename(fpath)
-            img = _load_image_cached(fpath)
+            img = _load_image_cached(fpath, non_color=non_color, alpha_mode="CHANNEL_PACKED")
             if img is None:
                 continue
             if non_color:
@@ -3701,7 +3910,7 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
         def connect_normal(node, img):
             img.colorspace_settings.name = "Non-Color"
             links.new(node.outputs["Color"], group_node.inputs["Base Normal"])
-        place_column(normal_tex, ABOVE_X + 20, connect_fn=connect_normal, collapsed=True,
+        place_column(normal_tex, ABOVE_X + 20, connect_fn=connect_normal, non_color=True, collapsed=True,
                      start_y=ABOVE_Y + len(occlusion_tex) * ABOVE_STEP - 40)
 
         def connect_basecolor(node, img):
@@ -3932,7 +4141,7 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
             stem = os.path.splitext(os.path.basename(png_path))[0]
             tex_nd = node_dict.get(stem)
             if tex_nd is None:
-                img = _load_image_cached(png_path)
+                img = _load_image_cached(png_path, non_color=non_color, alpha_mode="CHANNEL_PACKED")
                 if img is None:
                     return None, ""
                 if non_color:
@@ -4093,7 +4302,7 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
                 if rgba is None:
                     continue
                 # Skip keys already materialized as RGB nodes.
-                if nodes.get(key) is not None:
+                if _dr_stage_candidate.lookup(nodes).get(key) is not None:
                     continue
                 # BaseColorOverlay is not a sentinel by itself: BaseColorMaskStrength decides
                 # whether the authored overlay or ColorABC drives this zone.
@@ -4275,7 +4484,7 @@ def setup_arc_texturer_material(obj, folder: str, colours: dict, psk_path: str =
             if not colour_in.is_linked:
                 continue
 
-            overlay_nd = nodes.get(f"{zone_str}_BaseColorOverlay")
+            overlay_nd = _dr_stage_candidate.lookup(nodes).get(f"{zone_str}_BaseColorOverlay")
             if overlay_nd is None:
                 continue
             mix_fac = 0.0
@@ -4413,7 +4622,7 @@ def insert_curvature_id_override(mat, group_node) -> bool:
         if getattr(node, "type", "") != "GROUP":
             continue
         tree = getattr(node, "node_tree", None)
-        name = (getattr(tree, "name", "") or "") if tree else ""
+        name = (_group_contract_key(tree) or "") if tree else ""
         if name.replace(" ", "") == "CurvatureID_Override" or name.startswith(
             "CurvatureID_Override"
         ):
@@ -4524,7 +4733,7 @@ def _find_colormask_image_node(nodes, group_node):
         if getattr(node, "type", "") != "GROUP":
             continue
         tree = getattr(node, "node_tree", None)
-        tname = (getattr(tree, "name", "") or "") if tree else ""
+        tname = (_group_contract_key(tree) or "") if tree else ""
         if not tname.startswith("ColorMask_XYZ"):
             continue
         sock = node.inputs.get("ColorMask") if node.inputs else None
@@ -4536,7 +4745,7 @@ def _find_colormask_image_node(nodes, group_node):
         if node.type != "TEX_IMAGE" or node.image is None:
             continue
         name = (node.image.name or "").lower()
-        label = (node.label or "").lower()
+        label = (_dr_ops.legacy_label(node) or "").lower()
         blob = f"{name} {label}"
         if "colormask" in blob.replace("_", "") or "color_mask" in blob:
             if "occlusion" in blob or "curvature" in blob or "materialid" in blob:
@@ -4608,7 +4817,7 @@ _TA_MASK_SLICE_RE = re.compile(r"(?i)masks_(\d+)\.png$")
 
 
 def _colour_node_label(node) -> str:
-    return (getattr(node, "label", None) or getattr(node, "name", None) or "").strip()
+    return (_dr_ops.legacy_label(node) or _dr_ops.legacy_name(node) or "").strip()
 
 
 
@@ -4882,7 +5091,7 @@ def _find_mi_param_grid_anchor(nodes):
     for node in nodes:
         if getattr(node, "bl_idname", "") != "ShaderNodeValue":
             continue
-        label = (getattr(node, "label", None) or "").strip()
+        label = (_dr_ops.legacy_label(node) or "").strip()
         m = _MI_PARAM_NAME_RE.match(label)
         if not m or m.group(2) != "BaseRoughness":
             continue
@@ -5066,7 +5275,7 @@ def _find_ocm_image_node(nodes, group_node):
         if node.type != "TEX_IMAGE" or node.image is None:
             continue
         name = (node.image.name or "").lower()
-        label = (node.label or "").lower()
+        label = (_dr_ops.legacy_label(node) or "").lower()
         if "occlusioncurvaturematerialid" in name or "occlusioncurvaturematerialid" in label:
             return node
     return None
@@ -5109,7 +5318,7 @@ def _find_arc_role_image_node(nodes, group_node, role: str):
         if getattr(node, "type", "") != "TEX_IMAGE" or node.image is None:
             continue
         name = (node.image.name or "").lower()
-        label = (node.label or "").lower()
+        label = (_dr_ops.legacy_label(node) or "").lower()
         path = ""
         try:
             path = (node.image.filepath or "").replace("\\", "/").lower()
@@ -5545,7 +5754,7 @@ def setup_decals(nodes, links, group_node, decals: list, decal_folder: str,
 
         if tex_stem not in _decal_tex_cache:
             if tex_fpath:
-                img = _load_image_cached(tex_fpath)
+                img = _load_image_cached(tex_fpath, non_color=False, alpha_mode="CHANNEL_PACKED")
                 if img is not None:
                     tex_node = nodes.new("ShaderNodeTexImage")
                     tex_node.image = img
@@ -5583,7 +5792,7 @@ def setup_decals(nodes, links, group_node, decals: list, decal_folder: str,
                     data_stem, decal.get("data_texture_path", ""), decal_folder, search_dirs=search_dirs
                 )
                 if data_fpath:
-                    data_img = _load_image_cached(data_fpath)
+                    data_img = _load_image_cached(data_fpath, non_color=True, alpha_mode="CHANNEL_PACKED")
                     if data_img is not None:
                         data_img.colorspace_settings.name = "Non-Color"
                         data_node = nodes.new("ShaderNodeTexImage")
@@ -6244,7 +6453,7 @@ def _parse_fur_mi(mi_path: str) -> dict:
             obj_path = str(pv.get("ObjectPath", "") or "")
             if name and obj_path:
                 result["textures"][name] = obj_path
-        bpo = props.get("BasePropertyOverrides", {}) or {}
+        bpo = base_property_overrides(props.get("BasePropertyOverrides"), snapshot=True)
         if "OpacityMaskClipValue" in bpo:
             try:
                 result["opacity_clip"] = float(bpo.get("OpacityMaskClipValue") or 0.3333)
@@ -6267,7 +6476,7 @@ def _parse_fur_mi(mi_path: str) -> dict:
             for name, path in (flat.get("Textures") or {}).items():
                 if path:
                     result["textures"].setdefault(name, path)
-            flat_bpo = (params.get("Properties") or {}).get("BasePropertyOverrides") or {}
+            flat_bpo = base_property_overrides((params.get("Properties") or {}).get("BasePropertyOverrides"), snapshot=True)
             if "OpacityMaskClipValue" in flat_bpo:
                 try:
                     result["opacity_clip"] = float(
@@ -6708,7 +6917,11 @@ def _setup_fur_material(mat, mi_path: str, psk_path: str = "", obj=None):
     """
     from . import fur_shells
     if fur_shells.setup_material(mat, mi_path, source=psk_path, obj=obj):
+        mat["arc_fur_fallback"] = False
         return
+    mat["arc_fur_fallback"] = True
+    mat["arc_material_parity_verified"] = False
+    mat["arc_fur_limits"] = "Unresolved native fur profile: legacy heuristic shader; not verified against game."
     del psk_path  # unused; kept for call-site compatibility
     mi = _parse_fur_mi(mi_path)
     if not mat.use_nodes:
@@ -6915,8 +7128,10 @@ def apply_embedded_fur_slots(obj, psk_path: str, skin_json: str = "") -> int:
     fur_names = [value for slot in sk_slots for value in slot[:2]] + [
         slot.material.name if slot.material else "" for slot in obj.material_slots
     ]
-    if str(psk_path or "").lower().endswith(".uemodel") and any(
-        "fur" in str(name or "").lower() for name in fur_names
+    if str(psk_path or "").lower().endswith(".uemodel") and (
+        str(obj.get("arc_model_type") or "").lower() == "fur"
+        or "fur" in os.path.basename(psk_path).lower()
+        or any("fur" in str(name or "").lower() for name in fur_names)
     ):
         try:
             from . import fur_shells
@@ -6954,6 +7169,33 @@ def apply_embedded_fur_slots(obj, psk_path: str, skin_json: str = "") -> int:
             for s in obj.material_slots
         ]
 
+    # Current native section order plus explicit per-slot preset bindings wins
+    # over the legacy same-folder fur-name search. Selected variants frequently
+    # live beside their base MI, so a folder scan cannot choose the colorway.
+    sections = [{"index": i, "slot": name, "reference": stem, "path": path}
+                for i, (name, stem, path) in enumerate(sk_slots)]
+    if native_slots:
+        visual_bindings = textures.authored_visual_part_materials(psk_path)
+        from ..native_material_slots import load_native_material_layout, translate_visual_part_bindings
+        layout = load_native_material_layout(psk_path, lod.name, lod.materials)
+        if layout is not None:
+            visual_bindings, unused = translate_visual_part_bindings(visual_bindings, layout)
+            obj["arc_unused_visual_part_material_bindings"] = json.dumps(unused, sort_keys=True)
+        for section in sections:
+            candidates = {binding["path"] for binding in visual_bindings
+                          if (binding["render_index"] == section["index"] if "render_index" in binding
+                              else str(binding["slot"]).casefold() == str(section["slot"]).casefold())}
+            if len(candidates) == 1:
+                section["path"] = next(iter(candidates))
+    section_paths = _native_clothing_section_paths(obj, sections)
+    explicit_indices = set()
+    for property_name in ("arc_outfit_material_bindings", "arc_backpack_material_bindings"):
+        try:
+            explicit_indices.update(int(key) for key in json.loads(str(obj.get(property_name) or "{}")) if str(key).isdigit())
+        except (TypeError, ValueError):
+            pass
+    missing_bindings = []
+
     used_indices = set()
     applied = 0
     for i, (sk_name, mi_stem, mi_json) in enumerate(sk_slots):
@@ -6961,8 +7203,12 @@ def apply_embedded_fur_slots(obj, psk_path: str, skin_json: str = "") -> int:
         if i < len(obj.material_slots) and obj.material_slots[i].material:
             mat_name_probe = obj.material_slots[i].material.name
         names_probe = (sk_name, mi_stem, mat_name_probe)
-        mi_path = mi_json if mi_json and os.path.isfile(mi_json) else ""
-        if not mi_path and not native_slots:
+        exact_section = native_slots or i in explicit_indices
+        selected_path = section_paths.get(i, "") if exact_section else mi_json
+        mi_path = selected_path if selected_path and os.path.isfile(selected_path) else ""
+        if exact_section and selected_path and not mi_path:
+            missing_bindings.append({"slot": i, "path": selected_path})
+        if not mi_path and not exact_section:
             for stem in names_probe:
                 if not stem:
                     continue
@@ -6972,16 +7218,16 @@ def apply_embedded_fur_slots(obj, psk_path: str, skin_json: str = "") -> int:
         if not _slot_is_fur(names_probe, mi_path):
             continue
 
-        target, index = _match_fur_material_slot(
-            obj, sk_name, i, used_indices, mi_stem,
-        )
+        if exact_section:
+            target, index = (obj.material_slots[i], i) if i < len(obj.material_slots) else (None, -1)
+        else:
+            target, index = _match_fur_material_slot(obj, sk_name, i, used_indices, mi_stem)
         if target is None:
             continue
         mat_name = target.material.name if target.material else ""
         names = (sk_name, mi_stem, mat_name)
-        mi_path = _resolve_colorway_fur_mi(
-            mi_path, mi_stem, sk_name, skin_json, psk_folder,
-        )
+        if not exact_section:
+            mi_path = _resolve_colorway_fur_mi(mi_path, mi_stem, sk_name, skin_json, psk_folder)
         if not mi_path or not textures.is_fur_mi(mi_path):
             continue
         used_indices.add(index)
@@ -6997,6 +7243,7 @@ def apply_embedded_fur_slots(obj, psk_path: str, skin_json: str = "") -> int:
             f"'{sk_name or mat_name}' (index {index}) on '{obj.name}' "
             f"← {os.path.basename(mi_path)} → '{mat.name}'"
         )
+    obj["arc_fur_binding_missing"] = json.dumps(missing_bindings, sort_keys=True)
     if applied:
         _ensure_fur_displacement_subdiv(obj)
     return applied
@@ -7070,7 +7317,7 @@ def _parse_visor_mi(mi_path: str) -> dict:
             if name and obj_path:
                 result['textures'][name] = obj_path
 
-        bpo = props.get("BasePropertyOverrides", {}) or {}
+        bpo = base_property_overrides(props.get("BasePropertyOverrides"), snapshot=True)
         blend_mode = str(bpo.get("BlendMode", "") or "")
 
         # Flat dump fallback: Parameters/{Scalars,Colors} with a Textures map beside it.
@@ -7089,7 +7336,7 @@ def _parse_visor_mi(mi_path: str) -> dict:
                 result['textures'].setdefault(name, path)
             translucent_flag = bool(params.get("IsTranslucent"))
             if not blend_mode:
-                flat_bpo = (params.get("Properties") or {}).get("BasePropertyOverrides") or {}
+                flat_bpo = base_property_overrides((params.get("Properties") or {}).get("BasePropertyOverrides"), snapshot=True)
                 blend_mode = str(flat_bpo.get("BlendMode", "") or "")
 
         # The gameplay parent authors Opacity but is Opaque + Default Lit, so the parent name wins
@@ -7294,8 +7541,25 @@ def _names_suggest_visor_glass_slot(names) -> bool:
 
 
 
+def _explicit_nonvisor_mi(mi_path: str) -> bool:
+    """A readable authored MI beats lens-looking mesh/slot names and siblings.
+
+    Keep legacy SimplePBR lens placeholders eligible for the glass resolver.
+    Unreadable/empty records remain inconclusive rather than inventing a family.
+    """
+    if not mi_path or not os.path.isfile(mi_path):
+        return False
+    mi = _parse_visor_mi(mi_path)
+    if not (mi.get("found") or mi.get("parent")) or _is_visor_glass_mi(mi):
+        return False
+    return not (_is_simple_pbr_material_name(os.path.basename(mi_path).split(".")[0])
+                or _is_simple_pbr_material_name(mi.get("parent") or ""))
+
+
 def _slot_is_visor_lens(names, psk_path: str = "", mi_path: str = "") -> bool:
     """True when this material slot should receive the glass shader (not ArcTexturer)."""
+    if _explicit_nonvisor_mi(mi_path):
+        return False
     if any(_is_visor_shell_slot_name(n) for n in (names or ())):
         # Shell name wins even if another alias looks lens-like or MI is glass.
         if not any(_name_has_glass_lens_token(n or "") for n in (names or ())):
@@ -7310,7 +7574,7 @@ def _slot_is_visor_lens(names, psk_path: str = "", mi_path: str = "") -> bool:
 
 
 
-def _find_clothing_shell_slot_index(obj, psk_path: str = "") -> int:
+def _find_clothing_shell_slot_index(obj, psk_path: str = "", requested_mi_path: str = "") -> int:
     """Index of the ColorMask / opaque clothing slot (skip glass / SimplePBR lens).
 
     ``setup_arc_texturer_material`` must land here — ``active_material`` alone often
@@ -7320,6 +7584,13 @@ def _find_clothing_shell_slot_index(obj, psk_path: str = "") -> int:
     if obj is None:
         return -1
     _ensure_clothing_sk_slot_count(obj, psk_path)
+    native_index = _native_clothing_owner_index(obj, psk_path, requested_mi_path)
+    if isinstance(native_index, tuple):
+        # Several authored sections share this MI; there is no singular shell.
+        # Assignment/restoration use the complete exact owner set above.
+        return -1
+    if native_index is not None:
+        return native_index
     if not getattr(obj, "material_slots", None):
         return -1
     try:
@@ -7486,7 +7757,7 @@ def _find_curvature_id_override_node(mat):
         if getattr(node, "type", "") != "GROUP":
             continue
         tree = getattr(node, "node_tree", None)
-        name = (getattr(tree, "name", "") or "") if tree else ""
+        name = (_group_contract_key(tree) or "") if tree else ""
         if name.replace(" ", "") == "CurvatureID_Override" or name.startswith(
             "CurvatureID_Override"
         ):
@@ -7508,7 +7779,7 @@ def _is_visor_group_node(node) -> bool:
     if getattr(node, "type", "") != "GROUP" and getattr(node, "bl_idname", "") != "ShaderNodeGroup":
         return False
     tree = getattr(node, "node_tree", None)
-    name = (getattr(tree, "name", "") or "") if tree else ""
+    name = (_group_contract_key(tree) or "") if tree else ""
     compact = name.replace(" ", "")
     return compact == "Visor"
 
@@ -7805,6 +8076,14 @@ def apply_embedded_visor_slots(obj, psk_path: str, skin_json: str = ""):
         sk_slots = _parse_sk_material_slots(psk_path)
     except Exception:
         sk_slots = []
+    # UEModel LOD sections and DA_VP/colorway bindings are authoritative. A
+    # sibling glass MI must never replace an explicitly bound CRT display merely
+    # because its mesh is named HelmetVisor (StationMaster, Wrapper, Dweller).
+    native_sections = _native_clothing_sections(psk_path) if str(psk_path or "").lower().endswith(".uemodel") else []
+    if native_sections:
+        native_paths = _native_clothing_section_paths(obj, native_sections)
+        sk_slots = [(section["slot"], section["reference"].rsplit("/", 1)[-1].split(".")[0],
+                     native_paths.get(section["index"], "")) for section in native_sections]
     if sk_slots:
         _ensure_clothing_sk_slot_count(obj, psk_path)
 
@@ -7852,7 +8131,11 @@ def apply_embedded_visor_slots(obj, psk_path: str, skin_json: str = ""):
     used_indices = set()
     applied = 0
     for i, (sk_name, mi_stem, mi_json) in enumerate(sk_slots):
-        target, index = _match_material_slot(obj, sk_name, i, used_indices, mi_stem)
+        if native_sections:
+            index = native_sections[i]["index"]
+            target = obj.material_slots[index] if index < len(obj.material_slots) else None
+        else:
+            target, index = _match_material_slot(obj, sk_name, i, used_indices, mi_stem)
         if target is None:
             continue
         mat_name = target.material.name if target.material else ""
@@ -7996,13 +8279,9 @@ def _visor_math(nodes, operation, location, label="", clamp=False):
 
 
 
-def _visor_image(nodes, links, path, label, location, vector_socket):
+def _visor_image(nodes, links, path, label, location, vector_socket, *, non_color=True):
     """Non-colour image node wired to a tiled UV, plus its red channel."""
-    img = bpy.data.images.load(path, check_existing=True)
-    try:
-        img.colorspace_settings.name = "Non-Color"
-    except Exception:
-        pass
+    img = _load_image_cached(path, non_color=non_color, alpha_mode="CHANNEL_PACKED")
     node = nodes.new("ShaderNodeTexImage")
     node.image = img
     node.label = label
@@ -8043,6 +8322,24 @@ def _resolve_visor_textures(mi: dict, mi_path: str, psk_path: str, skin_json: st
 
 
 
+def _stamp_visor_material_source(mat, mi_path, parsed):
+    """Record only the exact MI actually parsed, without asserting native parity."""
+    for key in ("arc_mi_path", "arc_skin_json", "arc_visor_source_signature"):
+        if key in mat:
+            del mat[key]
+    mi_path = textures._fs_abspath(mi_path) if mi_path else ""
+    mat["arc_visor_source_read"] = bool(parsed.get("found") and mi_path and os.path.isfile(mi_path))
+    if not mat["arc_visor_source_read"]:
+        return False
+    exact = textures._fs_abspath(mi_path)
+    mat["arc_mi_path"] = exact
+    mat["arc_skin_json"] = exact
+    mat["arc_visor_source_signature"] = json.dumps(textures.material_lineage_signature(mi_path), default=str)
+    mat["arc_visor_engine_parity_verified"] = False
+    mat["arc_visor_approximation"] = "Bundled Visor graph; native opaque/translucent shader parity not established"
+    return True
+
+
 def _setup_visor_material(mat, mi_path: str = "", psk_path: str = "", skin_json: str = ""):
     """Arc Raiders visor glass with the Blender viewport material defaults.
 
@@ -8052,7 +8349,15 @@ def _setup_visor_material(mat, mi_path: str = "", psk_path: str = "", skin_json:
     own image datablocks. Falls back to a minimal Principled stub only if the
     group is missing from ArcTexturer.blend.
     """
+    mi_path = textures._fs_abspath(mi_path) if mi_path else ""
+    from .glass_native import read_parameters, setup_native_opaque
+    native_opaque = read_parameters(mi_path)
+    if native_opaque is not None:
+        # Static asset imports explicitly request the reconstructed dry snapshot.
+        # Dynamic primitive/scene weather transport is not inferred here.
+        return setup_native_opaque(mat, mi_path, psk_path, record=native_opaque, dry_snapshot=True)
     mi = _parse_visor_mi(mi_path)
+    _stamp_visor_material_source(mat, mi_path, mi)
     textures_by_param = _resolve_visor_textures(mi, mi_path, psk_path, skin_json)
     color_a, color_b, color_c, dirt_color, color_source = _resolve_visor_lens_colors(mi, skin_json)
     try:
@@ -8068,6 +8373,9 @@ def _setup_visor_material(mat, mi_path: str = "", psk_path: str = "", skin_json:
     nodes.clear()
 
     if not utils.ensure_visor_node_group():
+        mat["arc_visor_setup"] = "fallback-principled-v1"
+        mat["arc_visor_fallback"] = 1
+        mat["arc_visor_fallback_reason"] = "Bundled Visor node group unavailable"
         # Minimal stub — keep import usable if ArcTexturer.blend is incomplete.
         out_node = nodes.new("ShaderNodeOutputMaterial")
         out_node.location = (300, 0)
@@ -8214,6 +8522,10 @@ def _setup_visor_material(mat, mi_path: str = "", psk_path: str = "", skin_json:
         origin=(-200.0, 200.0),
         skip_if_linked=True,
     )
+    mat["arc_visor_setup"] = "bundled-visor-approx-v1"
+    mat["arc_visor_fallback"] = 0
+    if "arc_visor_fallback_reason" in mat:
+        del mat["arc_visor_fallback_reason"]
 
 
 
@@ -8288,13 +8600,8 @@ def _wire_visor_shell_surface_inputs(
                 non_color = role in ("normal", "occlusion")
                 tex = _visor_image(
                     nodes, links, path, sock_name,
-                    (ox - 480, oy + 200 - y_off), None,
+                    (ox - 480, oy + 200 - y_off), None, non_color=non_color,
                 )
-                if not non_color:
-                    try:
-                        tex.image.colorspace_settings.name = "sRGB"
-                    except Exception:
-                        pass
                 y_off += 280
         if tex is None:
             continue
@@ -8559,6 +8866,11 @@ def apply_ocm_curvature_visor_override(obj, psk_path: str = "", skin_json: str =
         mat["arc_ocm_curvature_color_n"] = int(color_n)
         if glass_mi:
             mat["arc_visor_mi"] = os.path.basename(glass_mi)
+            parsed_glass = _parse_visor_mi(glass_mi)
+            if parsed_glass.get("found") and os.path.isfile(glass_mi):
+                mat["arc_visor_override_mi_path"] = os.path.abspath(glass_mi)
+                mat["arc_visor_override_source_signature"] = json.dumps(textures.material_lineage_signature(glass_mi), default=str)
+                mat["arc_visor_override_approximation"] = "Bundled Visor override; native parity unverified"
     except Exception:
         pass
 
@@ -8594,6 +8906,14 @@ def setup_visor_material(obj, psk_path: str, mi_path: str = "", skin_json: str =
     if applied:
         return applied
 
+    # apply_embedded_visor_slots returning zero is not permission to turn an
+    # explicitly authored non-glass mesh into its neighboring glass material.
+    sections = _native_clothing_sections(psk_path)
+    if sections:
+        paths = _native_clothing_section_paths(obj, sections)
+        if all(_explicit_nonvisor_mi(paths.get(section["index"], "")) for section in sections):
+            return 0
+
     folder = os.path.dirname(psk_path) if psk_path else ""
     glass_mi = _resolve_visor_glass_mi_path(psk_path, mi_path=mi_path, skin_json=skin_json)
 
@@ -8626,3 +8946,19 @@ def setup_visor_material(obj, psk_path: str, mi_path: str = "", skin_json: str =
     _setup_visor_material(mat, mi_path=glass_mi, psk_path=psk_path, skin_json=skin_json)
     return 1
 
+
+
+def _group_contract_key(tree):
+    """Stable public group contract key across original DR display identities."""
+    if tree is None:return ''
+    getter=getattr(tree,'get',None)
+    if callable(getter):
+        for key in ('dr.legacy_group_key','dr.definition.legacy_key'):
+            value=getter(key)
+            if value:return str(value)
+    return str(getattr(tree,'name','') or '')
+
+
+def _legacy_composition_recipe():
+    from .dr_legacy_arc import RECIPE
+    return RECIPE

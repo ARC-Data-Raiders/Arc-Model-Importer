@@ -42,7 +42,7 @@ def texture_environment_object(obj, psk_path: str) -> str:
         return f"FAIL export root not a directory: {root}"
     try:
         index = get_index(root)
-        reports = texture_objects([obj], index, "", src, False) or []
+        reports = texture_objects([obj], index, "", src, False, preserve_material=_preserve_native_material) or []
     except Exception as exc:
         return f"FAIL surface rebuild: {exc}"
     errors = [r for r in reports if r.get("error")]
@@ -66,6 +66,130 @@ def texture_environment_object(obj, psk_path: str) -> str:
     print(f"Arc Raiders surface rebuild {obj.name}: {line}")
     _write_report(obj.name, line, reports)
     return line
+
+
+def _mi_package(mat) -> str:
+    """Package of a legacy slot's MI JSON (``.../PioneerGame/Content/...MI_X.json`` -> ``PioneerGame/.../MI_X``)."""
+    path = str(mat.get("arc_mi_path") or "").replace("\\", "/")
+    at = path.casefold().find("pioneergame/content/")
+    return path[at:].rsplit(".", 1)[0] if at >= 0 and path.casefold().endswith(".json") else ""
+
+
+def rebuild_surface_families(obj, psk_path: str, families) -> list:
+    """Rebuild only the slots surface_rebuild classifies into ``families``; every other slot keeps its graph.
+
+    Item routes wire accessories through the authored-slot dispatch, which picks a legacy family from the
+    shading model. A master with a compiled-shader surface profile (M_GlassOpaque_NX_01 on the resin pickup,
+    TwoSidedFoliage) would otherwise get the foliage graph.
+    """
+    if obj is None or getattr(obj, "type", "") != "MESH" or not psk_path or not os.path.isfile(psk_path):
+        return []
+    from .surface_rebuild.records import MaterialLibrary
+    src = os.path.abspath(psk_path)
+    try:
+        index = get_index(str(infer_export_root(src)))
+    except Exception as exc:
+        print(f"Arc Raiders surface families {obj.name}: export root unavailable: {exc}")
+        return []
+    lib = MaterialLibrary(index)
+
+    def keep_other_families(obj, slot_index, mat, index):
+        package = mat.get("arc_package") or _mi_package(mat)
+        try:
+            family = lib.load(package)["family"] if package else None
+        except Exception:
+            family = None
+        if family in families:
+            mat["arc_package"] = package
+            return None
+        return {"object": obj.name, "slot": slot_index, "material": mat.name, "family": "kept",
+                "preserved_native_graph": True, "missing_textures": [], "warnings": []}
+
+    reports = texture_objects([obj], index, "", src, False, preserve_material=keep_other_families) or []
+    rebuilt = [r for r in reports if r.get("family") in families or r.get("error")]
+    for report in rebuilt:
+        print(f"Arc Raiders surface families {obj.name}[{report.get('slot')}]: "
+              f"{report.get('family') or 'error'} {str(report.get('error') or '')[:120]}")
+    return rebuilt
+
+
+def _has_surface_output(mat) -> bool:
+    tree = getattr(mat, "node_tree", None)
+    return bool(tree and any(n.type == "OUTPUT_MATERIAL" and n.inputs["Surface"].is_linked
+                             for n in tree.nodes))
+
+
+def _preserve_native_material(obj, slot_index, mat, index):
+    """Keep only root profiles with an explicit, supported implementation marker.
+
+    A texture-bearing graph alone is not evidence of the correct shader family.
+    The packed profile additionally has to resolve to a recognized native master.
+    Neither graph preservation nor a successful build establishes game parity.
+    """
+    if mat is None:
+        return None
+    from .material_runtime.native_families import MASTERS, is_user_override, native_cache_is_stale
+    if is_user_override(mat):
+        report = {"object": obj.name, "slot": slot_index, "material": mat.name,
+                  "family": "user_override", "preserved_native_graph": True,
+                  "texture_required": False, "engine_parity_verified": False,
+                  "missing_textures": [], "warnings": ["Explicit user material override preserved"]}
+        mat["arc_native_surface_report"] = json.dumps(report)
+        return report
+    if not getattr(mat, "use_nodes", False) or not _has_surface_output(mat):
+        return None
+    native_family = str(mat.get("dr_native_family") or "")
+    try:
+        native = json.loads(mat.get("dr_native_report") or "{}")
+    except (ValueError, TypeError):
+        native = {}
+    if (native_family and MASTERS.get(native.get("master")) == native_family
+            and mat.get("dr_native_active_signature")):
+        source = str(mat.get("arc_mi_path") or mat.get("arc_source_json") or "")
+        stale = native_cache_is_stale(mat, source, obj=obj)
+        warnings = list(native.get("diagnostics") or [])
+        diagnostic = str(mat.get("dr_native_route_diagnostic") or "")
+        if diagnostic:
+            warnings.append(diagnostic)
+        if stale:
+            warnings.append("Dedicated native profile needs refresh; retained instead of generic reconstruction")
+        report = {"object": obj.name, "slot": slot_index, "material": mat.name,
+                  "package": str(mat.get("arc_package") or ""), "master": native["master"],
+                  "family": "native_" + native_family, "subtype": native.get("subtype", ""),
+                  "preserved_native_graph": True, "implementation": "original-native-runtime",
+                  "native_cache_current": not stale and bool(mat.get("dr_native_signature_complete")),
+                  "texture_required": bool(native.get("images")), "engine_parity_verified": False,
+                  "missing_textures": [], "warnings": list(dict.fromkeys(warnings))}
+        mat["arc_native_surface_report"] = json.dumps(report)
+        return report
+    family = ""
+    master = ""
+    if str(mat.get("arc_env_surface_setup") or "") == "packed-prop-v2":
+        from .materials.common import _parse_flat_mi_json
+        from .materials.environment import _is_packed_prop_preset, env_props
+        source = str(mat.get("arc_mi_path") or mat.get("arc_source_json") or "")
+        if not source or not os.path.isfile(source):
+            return None
+        mi = env_props.merge_preset_defaults(_parse_flat_mi_json(source), source)
+        if not _is_packed_prop_preset(mi):
+            return None
+        family = "native_packed_prop"
+        master = str(mi.get("parent") or mi.get("preset_key") or "")
+    emission = str(mat.get("arc_emissive_setup") or "")
+    if emission in {"authored-light-v1", "native-lantern-static-v1"}:
+        family = "native_light" if emission == "authored-light-v1" else "native_lantern"
+    if not family:
+        return None
+    report = {
+        "object": obj.name, "slot": slot_index, "material": mat.name,
+        "package": str(mat.get("arc_package") or mat.get("arc_mi_path") or ""),
+        "master": master, "family": family, "preserved_native_graph": True,
+        "implementation": emission or str(mat.get("arc_env_surface_setup") or ""),
+        "texture_required": family != "native_light", "engine_parity_verified": False,
+        "missing_textures": [], "warnings": [],
+    }
+    mat["arc_native_surface_report"] = json.dumps(report)
+    return report
 
 
 def _loaded_images(tree) -> list:
@@ -93,7 +217,7 @@ def _image_ready(img) -> bool:
 
 
 def verify_surface_materials(obj) -> dict:
-    """A slot counts only when its graph (including groups) has a loaded texture.
+    """Require loaded maps, or an explicitly preserved texture-free light profile.
 
     Top-level node count is not enough: the old simple graph and a failed
     rebuild can both be a handful of nodes.
@@ -103,6 +227,12 @@ def verify_surface_materials(obj) -> dict:
     slots = list(getattr(obj, "material_slots", []) or [])
     for slot in slots:
         mat = slot.material
+        if mat is not None:
+            from .material_runtime.native_families import is_user_override
+            if is_user_override(mat):
+                counts.append(0)
+                rebuilt += 1
+                continue
         if mat is None or not getattr(mat, "use_nodes", False):
             counts.append(0)
             continue
@@ -113,6 +243,15 @@ def verify_surface_materials(obj) -> dict:
         if "beacon" in name:
             if ready:
                 rebuilt += 1
+            continue
+        native = {}
+        try:
+            native = json.loads(mat.get("arc_native_surface_report") or "{}")
+        except (TypeError, ValueError):
+            pass
+        if (native.get("preserved_native_graph") and _has_surface_output(mat)
+                and (ready or not native.get("texture_required", True))):
+            rebuilt += 1
             continue
         family = ""
         try:

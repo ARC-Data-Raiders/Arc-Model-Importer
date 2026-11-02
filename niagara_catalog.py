@@ -1,10 +1,4 @@
-"""Searchable catalog of cooked Niagara systems (NS_*.json).
-
-Indexes files under an explicit dump folder or the Pioneer Effects tree.
-Marks whether each file carries ShaderLUT data (headless ``niagara-ns-dump``
-property export) so the UI can prefer curve-complete dumps over FModel's
-Exports+Metadata JSON, which silently drops the LUTs.
-"""
+"""Packaged Niagara browse metadata with explicit-action source resolution."""
 
 from __future__ import annotations
 
@@ -12,6 +6,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from . import utils
+from . import fmdex
 
 _cache: Dict[str, Any] = {
     "fingerprint": None,
@@ -69,13 +64,6 @@ def resolved_asset_root(asset_root: str = "") -> str:
     return ""
 
 
-def _fingerprint(catalog_root: str) -> tuple:
-    root = resolved_catalog_root(catalog_root)
-    try:
-        mtime = os.path.getmtime(root) if root and os.path.isdir(root) else 0.0
-    except OSError:
-        mtime = 0.0
-    return (root, mtime)
 
 
 def _folder_label(path: str, root: str) -> str:
@@ -133,22 +121,43 @@ def _index_ns_dir(root: str) -> List[dict]:
 
 
 def ensure_loaded(catalog_root: str = "") -> List[dict]:
-    fp = _fingerprint(catalog_root)
-    if _cache.get("fingerprint") == fp and _cache.get("entries") is not None:
+    """Return shipped systems; the root override is used only when importing."""
+    if _cache.get("entries") is not None:
         return _cache["entries"]
-
-    root = resolved_catalog_root(catalog_root)
-    entries = _index_ns_dir(root)
-    _cache["fingerprint"] = fp
+    entries, stats = fmdex.packaged_browser("effects")
+    for entry in entries:
+        entry["path"] = ""
     _cache["entries"] = entries
-    _cache["by_key"] = {e["key"].lower(): e for e in entries}
-    _cache["stats"] = {
-        "total": len(entries),
-        "with_lut": sum(1 for e in entries if e.get("has_lut")),
-        "without_lut": sum(1 for e in entries if not e.get("has_lut")),
-        "catalog_root": root,
-    }
+    _cache["by_key"] = {entry["key"].lower(): entry for entry in entries}
+    _cache["stats"] = stats
     return entries
+
+
+def resolve_entry_path(entry: dict, catalog_root: str = "", scene=None) -> str:
+    """Resolve an actual NS JSON only for an explicit import or playback action."""
+    if not entry:
+        return ""
+    if not catalog_root and scene is not None:
+        catalog_root = getattr(scene, "arc_ns_catalog_root", "") or ""
+    try:
+        import bpy
+        catalog_root = bpy.path.abspath(catalog_root) if catalog_root else ""
+    except ImportError:
+        pass
+    existing = entry.get("path") or ""
+    if existing and os.path.isfile(existing):
+        return existing
+    found = fmdex.resolve_catalog_file(entry, ".json", catalog_root)
+    if found:
+        return found
+    if (entry.get("key") or entry.get("stem")) != entry.get("stem"):
+        return ""
+    root = resolved_catalog_root(catalog_root)
+    matches = [candidate for candidate in _index_ns_dir(root)
+               if candidate["stem"].lower() == (entry.get("stem") or "").lower()]
+    if len(matches) == 1:
+        return matches[0]["path"]
+    return fmdex.resolve_export_file(entry.get("stem") or "", ".json") or ""
 
 
 def catalog_stats(catalog_root: str = "") -> dict:
@@ -160,7 +169,8 @@ def get_entry(key: str, catalog_root: str = "") -> Optional[dict]:
     if not key or key == "NONE":
         return None
     ensure_loaded(catalog_root)
-    return (_cache.get("by_key") or {}).get(key.strip().lower())
+    entry = (_cache.get("by_key") or {}).get(key.strip().lower())
+    return dict(entry) if entry is not None else None
 
 
 def display_label(entry: dict) -> str:
@@ -201,7 +211,7 @@ def filter_entries(
         if not _query_match(entry, query):
             continue
         out.append(entry)
-        if len(out) >= limit:
+        if limit and len(out) >= limit:
             break
     return out
 

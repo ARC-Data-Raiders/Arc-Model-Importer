@@ -7,6 +7,7 @@ import re
 import json
 import bpy
 from . import utils
+from .material_runtime.interop import authored_srgb_decode
 
 # ---------------------------------------------------------------------------
 # Colour key generation (loops instead of hardcoded lists)
@@ -73,6 +74,9 @@ _CLOTHING_MI_INDEX = None  # stem.lower() -> [paths], Outfits first
 _CLOTHING_MI_INDEX_ROOT = None
 # Session caches for batch clothing import (cleared via clear_clothing_path_caches).
 _CLOTHING_MI_PARSE_CACHE: dict[str, dict] = {}
+_CLOTHING_MI_PARSE_SIGNATURES: dict[str, tuple] = {}
+_MATERIAL_SOURCE_CACHE: dict[str, tuple] = {}
+_MATERIAL_LINEAGE_CACHE: dict[str, dict] = {}
 _PART_MI_RESOLVE_CACHE: dict[tuple[str, str], str] = {}
 _OBJECT_PATH_ASSET_CACHE: dict[tuple[str, str], str] = {}
 _NULL_OBJECT_PATH_MARKERS = frozenset({
@@ -108,13 +112,30 @@ def _load_clothing_mi_entry(json_path: str):
     if _is_thin_fmodel_mi_data(data):
         params = data.get("Parameters") or {}
         props = dict(params.get("Properties") or {})
-        props["ScalarParameterValues"] = [{"ParameterInfo": {"Name": k}, "ParameterValue": v} for k, v in (params.get("Scalars") or {}).items()]
-        props["VectorParameterValues"] = [{"ParameterInfo": {"Name": k}, "ParameterValue": v} for k, v in (params.get("Colors") or {}).items()]
-        props["TextureParameterValues"] = [{"ParameterInfo": {"Name": k}, "ParameterValue": {"ObjectPath": v, "ObjectName": "Texture2D'" + v.split("/")[-1].split(".")[0] + "'"}} for k, v in (data.get("Textures") or {}).items()]
-        props["StaticParametersRuntime"] = {"StaticSwitchParameters": [{"ParameterInfo": {"Name": k}, "Value": bool(v)} for k, v in (params.get("Switches") or {}).items()]}
-        if data.get("Parent"):
-            props["Parent"] = data["Parent"]
-        entry = {"Type": "MaterialInstanceConstant", "Name": os.path.splitext(os.path.basename(json_path))[0], "Properties": props}
+        projected = {}
+        for source, target in (('Scalars', 'ScalarParameterValues'), ('Colors', 'VectorParameterValues')):
+            if source not in params:
+                continue
+            projected[target] = []
+            for name, value in (params.get(source) or {}).items():
+                if source == 'Colors' and isinstance(value, (list, tuple)):
+                    value = dict(zip('RGBA', [*value, 1, 1, 1, 1][:4]))
+                projected[target].append({'ParameterInfo': {'Name': name}, 'ParameterValue': value})
+        if 'Textures' in data:
+            projected['TextureParameterValues'] = []
+            for name, value in (data.get('Textures') or {}).items():
+                if isinstance(value, str):
+                    stem = value.split('/')[-1].split('.')[0]
+                    value = {'ObjectPath': value, 'ObjectName': "Texture2D'" + stem + "'"}
+                projected['TextureParameterValues'].append({'ParameterInfo': {'Name': name}, 'ParameterValue': value})
+        if 'Switches' in params:
+            projected['StaticParametersRuntime'] = {'StaticSwitchParameters': [
+                {'ParameterInfo': {'Name': name}, 'Value': bool(value), 'bOverride': True}
+                for name, value in (params.get('Switches') or {}).items()]}
+        props = _merge_material_properties(props, projected)
+        if data.get('Parent'):
+            props['Parent'] = data['Parent']
+        entry = {'Type': 'MaterialInstanceConstant', 'Name': os.path.basename(json_path).split('.', 1)[0], 'Properties': props}
         return entry, data
     entry = utils.first_ue_export(data, "MaterialInstanceConstant")
     if not entry:
@@ -173,7 +194,9 @@ def clothing_mi_json_is_valid(json_path: str, expected_stem: str = "") -> bool:
     if body_stem.lower() != stem.lower():
         return False
     if _mic_is_layered_character(entry) and not _mic_has_instance_payload(entry):
-        return False
+        inherited = _material_lineage(json_path)['properties']
+        if not (inherited.get('VectorParameterValues') or inherited.get('TextureParameterValues')):
+            return False
     return True
 
 
@@ -303,6 +326,9 @@ def invalidate_clothing_mi_index() -> None:
 def clear_clothing_path_caches() -> None:
     """Drop session caches for MI parse / part resolve / ObjectPath assets."""
     _CLOTHING_MI_PARSE_CACHE.clear()
+    _CLOTHING_MI_PARSE_SIGNATURES.clear()
+    _MATERIAL_SOURCE_CACHE.clear()
+    _MATERIAL_LINEAGE_CACHE.clear()
     _PART_MI_RESOLVE_CACHE.clear()
     _OBJECT_PATH_ASSET_CACHE.clear()
 
@@ -447,6 +473,33 @@ def scan_skins(psk_path: str, manual_folder: str = "") -> list:
             results.append((os.path.basename(directory), path))
     results.extend(_scan_main_folder_skins(psk_path))
     return results
+
+def authored_srgb_sidecar(path: str) -> bool:
+    """True when a PNG's .arc-texture.json leaves SRGB at its default on an sRGB-capable format.
+
+    The game's sampler decodes those whatever role the material gives them
+    (T_FurMask_04_A, T_Bilguun_CloakOrange_Tassels_Roughnessmetal).
+    """
+    try:
+        with open(os.path.splitext(path)[0] + '.arc-texture.json', encoding='utf8') as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and authored_srgb_decode(
+        {**(data.get('Properties') or {}), 'Type': data.get('Type'), 'source_path': path})
+
+def authored_linear_sidecar(path: str) -> bool:
+    """True when a PNG's .arc-texture.json authors SRGB=false.
+
+    The game samples those raw whatever role the material gives them, colour maps included
+    (T_ArcFieldCrate_01_A_CR, T_ConcretePanel_02_CR).
+    """
+    try:
+        with open(os.path.splitext(path)[0] + '.arc-texture.json', encoding='utf8') as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and (data.get('Properties') or {}).get('SRGB', True) is False
 
 def _fs_abspath(path: str) -> str:
     """Resolve Blender-relative paths and preserve native absolute Windows paths."""
@@ -673,6 +726,7 @@ def name_suggests_fur(name: str) -> bool:
 
 def is_fur_mi(json_path: str) -> bool:
     """Generic fur MI detection from filename, parent, FurMask textures, or fur scalars."""
+    json_path = _fs_abspath(json_path)
     if not json_path or not os.path.isfile(json_path):
         return False
     if name_suggests_fur(json_path):
@@ -827,7 +881,7 @@ def authored_visual_part_materials(psk_path: str) -> list:
                     material_path = reference.get("ObjectPath") or reference.get("AssetPathName") or ""
                     path = find_asset_from_object_path(material_path, ".json")
                     path = resolve_part_mi_json(path, mi_stem_from_material_ref(reference)) if path else ""
-                    key = (str(override.get("Key") or ""), os.path.normcase(path))
+                    key = (str(override.get("Key") if override.get("Key") is not None else ""), os.path.normcase(path))
                     if path and key not in seen:
                         seen.add(key)
                         result.append({"slot": key[0], "path": path, "material_path": material_path,
@@ -944,10 +998,10 @@ def find_texture_from_object_path(obj_path: str) -> str:
 
 
 def find_asset_from_object_path(obj_path: str, extension: str) -> str:
-    """Resolve a /Game/... ObjectPath to a file under Pioneer Content (multi-root).
+    """Resolve exact Game, Engine, and plugin virtual packages across known roots.
 
-    Searches every Content dir from :func:`utils.get_content_dirs` so MapPlacements
-    mesh-only trees still resolve MI/SM JSON from the sibling full FModel dump.
+    Non-Game mounts use only direct known-layout probes, never Content basename
+    guesses or a directory walk. Game retains the existing Content fallback.
     """
     utils.invalidate_dir_caches_if_root_changed()
     if not obj_path:
@@ -955,12 +1009,17 @@ def find_asset_from_object_path(obj_path: str, extension: str) -> str:
     # Engine null stubs — never BFS Content / EmbarkScript for these.
     if _object_path_is_null_stub(obj_path):
         return ""
+    obj_path = str(obj_path).replace("\\", "/")
+    parts = obj_path.strip("/").split("/")
+    if any(not part or part in (".", "..") or ":" in part or "\x00" in part for part in parts):
+        return ""
+    non_game_mount = obj_path.startswith("/") and parts[0].casefold() != "game"
     # UE dumps often use AssetName.AssetName — strip trailing instance suffix
     leaf = obj_path.split("/")[-1]
     if "." in leaf:
         obj_path = obj_path[: -len(leaf)] + leaf.split(".")[0]
     clean = obj_path
-    if clean.startswith('/Game/'):
+    if clean.casefold().startswith('/game/'):
         rel = clean[len('/Game/'):]
     else:
         rel = clean.lstrip('/')
@@ -969,11 +1028,24 @@ def find_asset_from_object_path(obj_path: str, extension: str) -> str:
 
     cache_key = (clean.replace("\\", "/").lower(), extension.lower())
     if cache_key in _OBJECT_PATH_ASSET_CACHE:
-        return _OBJECT_PATH_ASSET_CACHE[cache_key]
+        cached = _OBJECT_PATH_ASSET_CACHE[cache_key]
+        return _fs_abspath(cached) if cached else ""
+
+    def _mount_candidates(cache_root):
+        if not non_game_mount:
+            return [_fs_abspath(os.path.join(cache_root, *mount.split("/"), rel.replace('/', os.sep)) + extension)
+                    for mount in ("PioneerGame/Content", "RemappedPlugins/Content", "Game")]
+        mount, _, tail = rel.partition("/")
+        if tail.casefold().startswith("content/"):
+            tail = tail[len("content/"):]
+        layouts = ((mount,), (mount, "Content"), ("RemappedPlugins", mount, "Content"),
+                   ("Plugins", mount, "Content"))
+        return [_fs_abspath(os.path.join(cache_root, *layout, tail.replace('/', os.sep)) + extension)
+                for layout in layouts]
 
     # Prefer current extraction payloads over old full-dump donor trees.
     for cache_root in reversed(getattr(utils, "_pak_cache_roots", [])):
-        candidates = [os.path.join(cache_root, *mount.split("/"), rel.replace('/', os.sep)) + extension for mount in ("PioneerGame/Content", "RemappedPlugins/Content", "Game")]
+        candidates = _mount_candidates(cache_root)
         candidates = [p for p in candidates if os.path.isfile(p)]
         if candidates:
             candidate = max(candidates, key=os.path.getmtime)
@@ -986,9 +1058,29 @@ def find_asset_from_object_path(obj_path: str, extension: str) -> str:
         if cd:
             content_dirs = [cd]
 
+    if non_game_mount:
+        # A secondary FModel root is known from its exact Content directory.
+        # Probe its sibling mount layouts; do not pretend plugin paths are Game.
+        seen = set()
+        for content_dir in content_dirs:
+            if os.path.basename(os.path.normpath(content_dir)).casefold() == "content":
+                export_root = os.path.dirname(os.path.dirname(content_dir))
+            else:
+                export_root = os.path.dirname(content_dir)
+            if export_root in seen:
+                continue
+            seen.add(export_root)
+            candidates = [path for path in _mount_candidates(export_root) if os.path.isfile(path)]
+            if candidates:
+                candidate = max(candidates, key=os.path.getmtime)
+                _OBJECT_PATH_ASSET_CACHE[cache_key] = candidate
+                return candidate
+        _OBJECT_PATH_ASSET_CACHE[cache_key] = ""
+        return ""
+
     rel_os = rel.replace('/', os.sep)
     for content_dir in content_dirs:
-        candidate = os.path.join(content_dir, rel_os) + extension
+        candidate = _fs_abspath(os.path.join(content_dir, rel_os) + extension)
         if os.path.isfile(candidate):
             _OBJECT_PATH_ASSET_CACHE[cache_key] = candidate
             return candidate
@@ -1001,7 +1093,7 @@ def find_asset_from_object_path(obj_path: str, extension: str) -> str:
         filename = rel_parts[-1] + extension
         found_dir = utils.find_relative_dir(root, dir_parts)
         if found_dir:
-            candidate = os.path.join(found_dir, filename)
+            candidate = _fs_abspath(os.path.join(found_dir, filename))
             if os.path.isfile(candidate):
                 _OBJECT_PATH_ASSET_CACHE[cache_key] = candidate
                 return candidate
@@ -1048,6 +1140,8 @@ _ZONE_SCALAR_SUFFIXES = (
     'LayerMask',
     'MediumNormalStrength',
     'MediumNormalTiling',
+    'MediumMaskValue',
+    'MediumMaskSoftness',
     'EdgeNormalTiling',
     'CreaseNormalTiling',
     'ColorTextureTiling',
@@ -1071,27 +1165,280 @@ _ZONE_SCALAR_SUFFIXES = (
 )
 
 
-def load_mi_properties(json_path: str) -> dict:
-    """Load an MI JSON once and return its Properties dict (or {}).
+def _material_file_stamp(path: str) -> tuple:
+    path = _fs_abspath(path)
+    try:
+        stat = os.stat(path)
+        return (_norm_cache_path(path), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return (_norm_cache_path(path), -1, -1)
 
-    Resolves corrupt Characters dumps to identity-valid Outfits Parts copies when
-    available. Never returns Properties from a non-MIC export.
-    """
+
+def _material_ref_path(reference) -> str:
+    if isinstance(reference, dict):
+        reference = reference.get('ObjectPath') or reference.get('AssetPathName') or reference.get('ObjectName')
+    value = str(reference or '').replace('\\', '/')
+    if "'" in value:
+        value = value.split("'", 1)[1].rstrip("'")
+    leaf = value.rsplit('/', 1)[-1]
+    return value[:-len(leaf)] + leaf.split('.', 1)[0] if leaf else ''
+
+
+def _material_package_identity(reference) -> str:
+    value = _material_ref_path(reference).strip('/').casefold()
+    if value.startswith('game/'):
+        return value[5:]
+    if '/content/' in value:
+        return value.split('/content/', 1)[1]
+    if value.startswith('content/'):
+        return value[8:]
+    return value
+
+
+def _material_source(path: str, expected_ref=None):
+    """Read one exact source identity. No Blender calls and no basename search."""
+    path = _fs_abspath(path)
+    stamp = _material_file_stamp(path)
+    if stamp[1] < 0:
+        return None, None
+    cached = _MATERIAL_SOURCE_CACHE.get(stamp[0])
+    if cached and cached[0] == stamp:
+        entry, data = cached[1:]
+    else:
+        data = _load_mi_json_data(path)
+        entry = None
+        if _is_thin_fmodel_mi_data(data):
+            entry, _ = _load_clothing_mi_entry(path)
+        else:
+            for candidate in utils.ue_export_entries(data):
+                if isinstance(candidate, dict) and candidate.get('Type') in ('Material', 'MaterialInstanceConstant', 'MaterialInstance'):
+                    entry = candidate
+                    break
+        if entry:
+            # Shader resources/disassemblies can dwarf the named parameters in
+            # full FModel dumps. Retain only fields needed for inheritance.
+            entry = {key: entry[key] for key in ('Type', 'Name', 'Package', 'Properties',
+                                                'CachedExpressionData', 'cached') if key in entry}
+        if not _is_thin_fmodel_mi_data(data):
+            metadata = data.get('Metadata') if isinstance(data, dict) else None
+            data = {'Metadata': {'ImportMap': (metadata or {}).get('ImportMap', [])}} if metadata else None
+        _MATERIAL_SOURCE_CACHE[stamp[0]] = (stamp, entry, data)
+    if not entry:
+        return None, data
+    expected_stem = _material_ref_path(expected_ref).rsplit('/', 1)[-1] if expected_ref else os.path.basename(path).split('.', 1)[0]
+    if _mi_entry_stem(entry).casefold() != expected_stem.casefold():
+        return None, data
+    if expected_ref and '/' in _material_ref_path(expected_ref) and entry.get('Package'):
+        if _material_package_identity(entry['Package']) != _material_package_identity(expected_ref):
+            return None, data
+    return entry, data
+
+
+def _cached_material_properties(entry: dict) -> dict:
+    """Translate named current master defaults into the existing MIC interface."""
+    cached = entry.get('CachedExpressionData', entry.get('cached', {})) or {}
+    properties = {}
+    kinds = [('ScalarValues', (0,), 'ScalarParameterValues'),
+             ('VectorValues', (1,), 'VectorParameterValues'),
+             ('TextureValues', (3,), 'TextureParameterValues'),
+             ('StaticSwitchValues', (8, 7), 'StaticSwitchParameters')]
+    runtime = cached.get('RuntimeEntries')
+    for value_key, indices, output_key in kinds:
+        values = cached.get(value_key) or []
+        if not values:
+            continue
+        infos = []
+        for index in indices:
+            block = (runtime[index] if isinstance(runtime, list) and index < len(runtime)
+                     else cached.get('RuntimeEntries' + (f'[{index}]' if index else ''), {}))
+            candidate = block.get('ParameterInfoSet') or [] if isinstance(block, dict) else []
+            if len(candidate) == len(values):
+                infos = candidate
+                break
+        parameters = []
+        for info, value in zip(infos, values):
+            if not isinstance(info, dict) or not info.get('Name'):
+                continue
+            info = dict(info)
+            if output_key == 'StaticSwitchParameters':
+                parameters.append({'ParameterInfo': info, 'Value': bool(value), 'bOverride': True})
+                continue
+            if output_key == 'VectorParameterValues' and isinstance(value, (list, tuple)):
+                value = dict(zip('RGBA', [*value, 1, 1, 1, 1][:4]))
+            if output_key == 'TextureParameterValues':
+                if not isinstance(value, dict):
+                    value = {'ObjectPath': value}
+                value = dict(value)
+                if value.get('ObjectPath') and not value.get('ObjectName'):
+                    stem = _material_ref_path(value['ObjectPath']).rsplit('/', 1)[-1]
+                    value['ObjectName'] = "Texture2D'" + stem + "'"
+            parameters.append({'ParameterInfo': info, 'ParameterValue': value})
+        if output_key == 'StaticSwitchParameters':
+            properties['StaticParametersRuntime'] = {output_key: parameters}
+        else:
+            properties[output_key] = parameters
+    return properties
+
+
+def _material_parameter_identity(parameter: dict) -> tuple:
+    info = parameter.get('ParameterInfo') or {}
+    association = str(info.get('Association', 'GlobalParameter')).rsplit('::', 1)[-1]
+    return (str(info.get('Name') or parameter.get('ParameterName') or ''),
+            association, info.get('Index', -1))
+
+
+def _merge_material_properties(parent: dict, child: dict) -> dict:
+    result = dict(parent or {})
+    result.update(child or {})
+    for key in ('ScalarParameterValues', 'VectorParameterValues', 'TextureParameterValues'):
+        values = {}
+        for parameter in [*((parent or {}).get(key) or []), *((child or {}).get(key) or [])]:
+            if isinstance(parameter, dict):
+                values[_material_parameter_identity(parameter)] = parameter
+        if values:
+            result[key] = list(values.values())
+    switches = {}
+    for properties in (parent or {}, child or {}):
+        static = properties.get('StaticParametersRuntime') or properties.get('StaticParameters') or {}
+        for parameter in static.get('StaticSwitchParameters') or []:
+            if isinstance(parameter, dict) and parameter.get('bOverride', True):
+                switches[_material_parameter_identity(parameter)] = parameter
+    if switches:
+        result['StaticParametersRuntime'] = {'StaticSwitchParameters': list(switches.values())}
+    if (parent or {}).get('BasePropertyOverrides') or (child or {}).get('BasePropertyOverrides'):
+        overrides = dict((parent or {}).get('BasePropertyOverrides') or {})
+        own = (child or {}).get('BasePropertyOverrides') or {}
+        for key, value in own.items():
+            if key.startswith('bOverride_'):
+                continue
+            if own.get('bOverride_' + key, True):
+                overrides[key] = value
+                overrides['bOverride_' + key] = True
+        result['BasePropertyOverrides'] = overrides
+    return result
+
+
+def _local_material_parent_candidates(reference, current_path: str) -> list:
+    """Exact package paths within the source export, including mount aliases."""
+    reference = _material_ref_path(reference)
+    if not reference:
+        return []
+    directory = os.path.dirname(_fs_abspath(current_path))
+    if '/' not in reference:
+        bases = [os.path.join(directory, reference)]
+    else:
+        normalized = directory.replace('\\', '/')
+        lower = normalized.casefold()
+        roots = []
+        for boundary in ('/pioneergame/content/', '/engine/content/', '/remappedplugins/', '/content/pioneer/', '/game/pioneer/', '/outfits/'):
+            index = lower.find(boundary)
+            if index >= 0:
+                roots.append(normalized[:index])
+        # A tree rooted directly at PioneerGame/Content still has that boundary;
+        # unstructured exports can only use an explicitly local package subtree.
+        roots = list(dict.fromkeys(roots)) or [directory]
+        clean = reference.strip('/')
+        relative = clean[5:] if clean.casefold().startswith('game/') else clean
+        layouts = ['PioneerGame/Content/' + relative, 'Content/' + relative]
+        if clean.casefold().startswith(('game/', 'pioneergame/content/')):
+            if clean.casefold().startswith('pioneergame/content/'):
+                relative = clean.split('/', 2)[2]
+                layouts = [clean, 'Content/' + relative]
+            layouts.extend(['RemappedPlugins/Content/' + relative, 'Game/' + relative])
+        elif clean.casefold().startswith('engine/'):
+            layouts = ['Engine/Content/' + clean[7:]]
+        elif clean.casefold().startswith('remappedplugins/'):
+            layouts = [clean]
+        elif reference.startswith('/'):
+            mount, _, rest = clean.partition('/')
+            layouts = ['RemappedPlugins/' + mount + '/Content/' + rest, mount + '/Content/' + rest]
+        bases = [os.path.join(root, *layout.split('/')) for root in roots for layout in layouts]
+    result = []
+    for base in bases:
+        for suffix in ('.arc-material.json', '.json'):
+            candidate = _fs_abspath(base + suffix)
+            if candidate not in result:
+                result.append(candidate)
+    return result
+
+
+def _material_lineage(json_path: str, stack=()) -> dict:
+    """Resolve current source-local inheritance and cache every dependency stamp."""
+    path = _fs_abspath(json_path)
+    identity = _norm_cache_path(path)
+    cached = _MATERIAL_LINEAGE_CACHE.get(identity)
+    if cached and cached['signature'] == tuple(_material_file_stamp(p) for p in cached['dependencies']):
+        return cached
+    if identity in stack or len(stack) >= 64:
+        return {'properties': {}, 'local_properties': {}, 'dependencies': (path,),
+                'signature': (_material_file_stamp(path),), 'sources': (),
+                'unresolved': ('Material inheritance cycle: ' + path,)}
+    dependencies, sources, unresolved = [path], [], []
+    entry, data = _material_source(path)
+    if not entry:
+        result = {'properties': {}, 'local_properties': {}, 'dependencies': (path,),
+                  'signature': (_material_file_stamp(path),), 'sources': (),
+                  'unresolved': ('Material source identity missing or invalid: ' + path,)}
+        _MATERIAL_LINEAGE_CACHE[identity] = result
+        return result
+    fallback = {}
+    native_path = path[:-len('.json')] + '.arc-material.json' if not path.casefold().endswith('.arc-material.json') else path
+    if native_path != path:
+        dependencies.append(native_path)
+        native_entry, _ = _material_source(native_path, entry.get('Package') or _mi_entry_stem(entry))
+        if native_entry:
+            fallback = _merge_material_properties(_cached_material_properties(entry), entry.get('Properties') or {})
+            entry = native_entry
+            sources.append(native_path)
+    sources.append(path)
+    local = _merge_material_properties(_cached_material_properties(entry), entry.get('Properties') or {})
+    effective = {}
+    parent = local.get('Parent')
+    if _material_ref_path(parent):
+        found = ''
+        for candidate in _local_material_parent_candidates(parent, path):
+            dependencies.append(candidate)
+            parent_entry, _ = _material_source(candidate, parent)
+            if parent_entry:
+                found = candidate
+                break
+        if found:
+            inherited = _material_lineage(found, (*stack, identity))
+            effective = inherited['properties']
+            dependencies.extend(inherited['dependencies'])
+            sources.extend(inherited['sources'])
+            unresolved.extend(inherited['unresolved'])
+        else:
+            unresolved.append(_material_ref_path(parent))
+    effective = _merge_material_properties(effective, local)
+    if fallback:
+        effective = _merge_material_properties(fallback, effective)
+    dependencies = tuple(dict.fromkeys(dependencies))
+    result = {'properties': effective, 'local_properties': local, 'dependencies': dependencies,
+              'signature': tuple(_material_file_stamp(p) for p in dependencies),
+              'sources': tuple(dict.fromkeys(sources)), 'unresolved': tuple(dict.fromkeys(unresolved))}
+    _MATERIAL_LINEAGE_CACHE[identity] = result
+    return result
+
+
+def material_lineage_signature(json_path: str) -> tuple:
+    """Content signature covering child, native sidecar and all parent sources."""
+    if not json_path:
+        return ()
+    return _material_lineage(json_path)['signature']
+
+
+def load_mi_properties_local(json_path: str) -> dict:
+    """Effective exact-source properties without UI-root lookup or Blender access."""
+    return _material_lineage(json_path)['properties'] if json_path else {}
+
+
+def load_mi_properties(json_path: str) -> dict:
+    """Load identity-checked current properties with exact source-local parents."""
     if not json_path:
         return {}
     resolved = resolve_clothing_mi_json(json_path)
-    if not resolved:
-        # Non-clothing MI callers (hair etc.) may still want strict local load.
-        if not os.path.isfile(json_path):
-            return {}
-        entry, _data = _load_clothing_mi_entry(json_path)
-        return (entry.get("Properties") or {}) if entry else {}
-    try:
-        entry, _data = _load_clothing_mi_entry(resolved)
-        return (entry.get("Properties") or {}) if entry else {}
-    except Exception as e:
-        print(f"Arc Raiders PSK Importer: Failed to load MI JSON '{resolved}': {e}")
-        return {}
+    return _material_lineage(resolved or json_path)['properties']
 
 
 def _colours_from_props(props: dict) -> dict:
@@ -1228,6 +1575,10 @@ def _decals_from_props(props: dict) -> list:
     if not isinstance(props, dict):
         return []
     active_slots = set()
+    # An authored N_UseDecal switch decides its slot, also when it is off: the
+    # master material's default DecalColor (T_Decal_Checkers_01_C) stays bound
+    # on disabled slots (Voltedge OrangePurple trousers rendered a checkerboard).
+    authored_switch = False
     static_rt = props.get("StaticParametersRuntime") or {}
     if not isinstance(static_rt, dict):
         static_rt = {}
@@ -1236,8 +1587,10 @@ def _decals_from_props(props: dict) -> list:
             continue
         name = (sw.get("ParameterInfo") or {}).get("Name", "")
         m = re.match(r"(\d+)_UseDecal$", name)
-        if m and sw.get("Value", False):
-            active_slots.add(int(m.group(1)))
+        if m:
+            authored_switch = True
+            if sw.get("Value", False):
+                active_slots.add(int(m.group(1)))
     scalar_lookup = {}
     for sp in props.get("ScalarParameterValues") or []:
         if not isinstance(sp, dict):
@@ -1280,7 +1633,7 @@ def _decals_from_props(props: dict) -> list:
             )
         except (TypeError, ValueError):
             continue
-    if not active_slots:
+    if not active_slots and not authored_switch:
         for n, pair in tex_lookup.items():
             m = re.match(r"(\d+)_DecalColor$", n)
             if not m:
@@ -1315,6 +1668,11 @@ def _decals_from_props(props: dict) -> list:
             "layer_mask": scalar_lookup.get(f"{idx}_LayerMask", 255.0),
             # M_Character_Layered lerps sampled decal RGB (0) to ColorA/B (1).
             # The master material's authored default is 0.
+            "surface_override": scalar_lookup.get(f"{idx}_SurfaceOverride", 0.0),
+            "wear_override": scalar_lookup.get(f"{idx}_WearOverride", 0.0),
+            "base_normal_override": scalar_lookup.get(f"{idx}_BaseNormalOverride", 0.0),
+            "detail_normal_override": scalar_lookup.get(f"{idx}_DetailNormalOverride", 0.0),
+            "tiling": scalar_lookup.get(f"{idx}_Tiling", 0.0),
             "color_override": color_override,
             "original_color": color_override < 0.9999,
         })
@@ -1325,7 +1683,7 @@ def _colours_from_palette_sidecar(json_path: str) -> dict:
     """ColorA/B/C(/2) from FModel ``*.palette.json`` next to a scalar-only MIC."""
     if not json_path:
         return {}
-    sidecar = os.path.splitext(json_path)[0] + ".palette.json"
+    sidecar = _fs_abspath(os.path.splitext(json_path)[0] + ".palette.json")
     if not os.path.isfile(sidecar):
         return {}
     try:
@@ -1360,7 +1718,7 @@ def _decals_from_palette_sidecar(json_path: str) -> list:
     """Decal slots from FModel ``*.palette.json`` (CUE4Parse GetParams, inherited)."""
     if not json_path:
         return []
-    sidecar = os.path.splitext(json_path)[0] + ".palette.json"
+    sidecar = _fs_abspath(os.path.splitext(json_path)[0] + ".palette.json")
     if not os.path.isfile(sidecar):
         return []
     try:
@@ -1408,6 +1766,9 @@ def _decals_from_palette_sidecar(json_path: str) -> list:
             "layer_mask": item.get("layer_mask", 255.0),
             "color_override": float(item.get("color_override") or 0.0),
             "original_color": float(item.get("color_override") or 0.0) < 0.9999,
+            **{key: float(item.get(key) or 0.0) for key in (
+                "surface_override", "wear_override", "base_normal_override",
+                "detail_normal_override", "tiling")},
         })
     return results
 
@@ -1442,77 +1803,58 @@ def _empty_clothing_mi() -> dict:
     }
 
 
+def _parse_effective_clothing_mi(json_path: str) -> dict:
+    lineage = _material_lineage(json_path)
+    props, local = lineage['properties'], lineage['local_properties']
+    if not props:
+        return _empty_clothing_mi()
+    colours = _colours_from_props(props)
+    # Preserve the effective FModel palette sidecar fallback when the child
+    # itself omitted colour vectors; inherited master whites must not hide it.
+    if 'ColorA' not in _colours_from_props(local):
+        colours.update(_colours_from_palette_sidecar(json_path))
+    local_decals = _decals_from_props(local)
+    sidecar_decals = _decals_from_palette_sidecar(json_path)
+    decals = _decals_from_props(props) if local_decals else (sidecar_decals or _decals_from_props(props))
+    return {
+        'colours': colours,
+        'ta_ids': _ta_ids_from_props(props),
+        'zone_scalars': _zone_scalars_from_props(props),
+        'mi_params': _mi_params_from_props(props, set(colours.keys())),
+        'decals': decals,
+        'inheritance': {'sources': list(lineage['sources']), 'unresolved': list(lineage['unresolved'])},
+    }
+
+
 def parse_clothing_mi_local(json_path: str) -> dict:
-    """Parse an already-resolved MI path. No bpy, no stem-index repair (worker-safe)."""
-    empty = _empty_clothing_mi()
+    """Parse an already-resolved MI and exact parents without bpy (worker-safe)."""
     if not json_path:
-        return empty
+        return _empty_clothing_mi()
     try:
-        entry, data = _load_clothing_mi_entry(json_path)
-        if entry:
-            props = entry.get("Properties") or {}
-            colours = _colours_from_props(props)
-            if "ColorA" not in colours:
-                colours.update(_colours_from_palette_sidecar(json_path))
-            return {
-                "colours": colours,
-                "ta_ids": _ta_ids_from_props(props),
-                "zone_scalars": _zone_scalars_from_props(props),
-                "mi_params": _mi_params_from_props(props, set(colours.keys())),
-                "decals": _decals_from_props(props) or _decals_from_palette_sidecar(json_path),
-            }
-        if data and _is_thin_fmodel_mi_data(data):
-            colours = _colours_from_thin_mi_data(data)
-            if colours:
-                return {**empty, "colours": colours}
-    except Exception as e:
-        print(f"Arc Raiders PSK Importer: Failed to parse clothing MI (local) '{json_path}': {e}")
-    return empty
+        return _parse_effective_clothing_mi(json_path)
+    except Exception as exc:
+        print(f"Arc Raiders PSK Importer: Failed to parse clothing MI (local) '{json_path}': {exc}")
+        return _empty_clothing_mi()
 
 
 def parse_clothing_mi(json_path: str) -> dict:
-    """Parse colours, texture-array IDs, MI params, and decals from one MI load.
-
-    Results are session-cached by absolute path so batch colourway imports do not
-    re-parse multi-MB MIC JSON for every part.  Never raises — bad/null FModel
-    fields return an empty MI so FoxHat/Huntsman/etc. cannot abort a batch.
-    """
-    empty = _empty_clothing_mi()
+    """Parse effective current MI values; invalidate on any ancestor overwrite."""
     if not json_path:
-        return empty
-    key = _norm_cache_path(json_path)
-    if key and key in _CLOTHING_MI_PARSE_CACHE:
-        return _CLOTHING_MI_PARSE_CACHE[key]
+        return _empty_clothing_mi()
     try:
-        props = load_mi_properties(json_path)
-        if props:
-            colours = _colours_from_props(props)
-            if "ColorA" not in colours:
-                colours.update(_colours_from_palette_sidecar(json_path))
-            result = {
-                "colours": colours,
-                "ta_ids": _ta_ids_from_props(props),
-                "zone_scalars": _zone_scalars_from_props(props),
-                "mi_params": _mi_params_from_props(props, set(colours.keys())),
-                "decals": _decals_from_props(props) or _decals_from_palette_sidecar(json_path),
-            }
-            if key:
-                _CLOTHING_MI_PARSE_CACHE[key] = result
-            return result
-        # Thin mesh-folder dumps (no MIC export) — still expose ColorA/B/C for shared SimplePBR.
-        data = _load_mi_json_data(json_path)
-        if data and _is_thin_fmodel_mi_data(data):
-            colours = _colours_from_thin_mi_data(data)
-            if colours:
-                result = {**empty, "colours": colours}
-                if key:
-                    _CLOTHING_MI_PARSE_CACHE[key] = result
-                return result
-    except Exception as e:
-        print(f"Arc Raiders PSK Importer: Failed to parse clothing MI '{json_path}': {e}")
-    if key:
-        _CLOTHING_MI_PARSE_CACHE[key] = empty
-    return empty
+        resolved = resolve_clothing_mi_json(json_path) or json_path
+        key = _norm_cache_path(resolved)
+        sidecar = os.path.splitext(resolved)[0] + '.palette.json'
+        signature = (*material_lineage_signature(resolved), _material_file_stamp(sidecar))
+        if key in _CLOTHING_MI_PARSE_CACHE and _CLOTHING_MI_PARSE_SIGNATURES.get(key) == signature:
+            return _CLOTHING_MI_PARSE_CACHE[key]
+        result = _parse_effective_clothing_mi(resolved)
+        _CLOTHING_MI_PARSE_CACHE[key] = result
+        _CLOTHING_MI_PARSE_SIGNATURES[key] = signature
+        return result
+    except Exception as exc:
+        print(f"Arc Raiders PSK Importer: Failed to parse clothing MI '{json_path}': {exc}")
+        return _empty_clothing_mi()
 
 
 def parse_skin_colours(json_path: str) -> dict:
@@ -1591,6 +1933,10 @@ def detect_model_type(psk_path: str) -> str:
         return "weapon"
     if domain == _ad.DOMAIN_ENVIRONMENT:
         return "map"
+    # Effect meshes are never outfit parts, and their export folder collects other effects' textures
+    # (T_MechanicalDebris beside SM_FX_RadialBlur_01) that the outfit misc heuristics below would borrow.
+    if domain == _ad.DOMAIN_UNKNOWN and "/pioneer/effects/" in _ad.norm_asset_path(psk_path):
+        return "map"
 
     # Outfit domain (or unknown): refine character/outfit subtypes only.
     # Never let occlusion / misc heuristics reclassify env/gun/arc paths.
@@ -1621,6 +1967,11 @@ def detect_model_type(psk_path: str) -> str:
             return "clothing"
         if is_misc(psk_path):
             return "misc"
+    # Item, effect and gameplay meshes (WhiteFlag VAT, projectiles, light beams) keep their textures beside the
+    # instances, not the mesh; the surface rebuild resolves their authored slots from the mesh export.
+    if domain == _ad.DOMAIN_UNKNOWN and any(seg in _ad.norm_asset_path(psk_path)
+                                            for seg in ("/pioneer/items/", "/pioneer/effects/", "/pioneer/core/")):
+        return "map"
     return "unknown"
 
 
@@ -1707,6 +2058,7 @@ def _mi_parent_blob(json_path: str) -> str:
 
 def is_hair_cards_mi(json_path: str) -> bool:
     """True for Metahuman hair-card MIs (M_Hair_Metahuman_*, GlobalHairColor)."""
+    json_path = _fs_abspath(json_path)
     if not json_path or not os.path.isfile(json_path):
         return False
     parent_s = _mi_parent_blob(json_path)

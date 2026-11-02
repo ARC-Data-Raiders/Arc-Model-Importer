@@ -4,17 +4,16 @@ Import Arc Raiders models by selecting an outfit folder.
 """
 
 bl_info = {
-    "name": "Arc Model Importer v2.19.49",
+    "name": "Arc Model Importer v2.22.14",
     "author": "Silarious (Ai Vibe Code)/ Naryun & Zebulon Core Functions",
-    "version": (2, 19, 49),
+    "version": (2, 22, 14),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Arc Model Importer",
-    "description": "Import Arc Raiders outfits, weapons, and models by selecting content folders.",
+    "description": "Import Arc Raiders outfits, weapons, animations, and models by selecting content folders.",
     "category": "Import-Export",
 }
 
 import os
-import shutil
 import sys
 
 # Redirect bytecode out of the addon tree BEFORE submodule imports so zip/install
@@ -23,6 +22,8 @@ _addon_dir = os.path.dirname(__file__)
 
 
 def _configure_pycache_prefix():
+    if sys.pycache_prefix:
+        return
     local = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or os.path.expanduser("~")
     # Per-addon folder (DataRaiders-Outfits vs DataRaiders-MapImporter) so the
     # two installs never share bytecode.
@@ -35,23 +36,7 @@ def _configure_pycache_prefix():
         print(f"Arc Raiders: could not set pycache_prefix ({prefix}): {exc}")
 
 
-def _scrub_inplace_pycache(root: str) -> None:
-    """Remove leftover __pycache__ dirs under the addon (from before prefix redirect)."""
-    if not root or not os.path.isdir(root):
-        return
-    for dirpath, dirnames, _filenames in os.walk(root, topdown=True):
-        if "__pycache__" not in dirnames:
-            continue
-        path = os.path.join(dirpath, "__pycache__")
-        try:
-            shutil.rmtree(path, ignore_errors=True)
-        except OSError:
-            pass
-        dirnames.remove("__pycache__")
-
-
 _configure_pycache_prefix()
-_scrub_inplace_pycache(_addon_dir)
 
 import bpy
 
@@ -71,7 +56,6 @@ from . import utils
 from . import pak_extract
 from . import map_placement  # noqa: F401 Ã¢â‚¬â€ map-importer lane; bridge helpers shared with outfits
 
-_last_search_value = [("", "")]
 
 
 def _safe_register_class(cls):
@@ -110,47 +94,6 @@ def _safe_unregister_class(cls):
             pass
 
 
-def _search_poll():
-    try:
-        scene = bpy.context.scene
-        current = (
-            getattr(scene, "arc_outfit_search", "") or "",
-            getattr(scene, "arc_anim_search", "") or "",
-        )
-        if current != _last_search_value[0]:
-            _last_search_value[0] = current
-            for area in bpy.context.screen.areas:
-                if area.type == "VIEW_3D":
-                    area.tag_redraw()
-    except Exception:
-        pass
-    return 0.5
-
-
-def _initialize_runtime():
-    """Load data-dependent resources after addon registration restrictions end."""
-    if getattr(bpy.data, "node_groups", None) is None:
-        return 0.1
-    try:
-        if not utils.ensure_psk_addon():
-            print(
-                "Arc Raiders PSK Importer: warning Ã¢â‚¬â€ PSK import ops missing; "
-                "mesh import will fail until Unreal PSK/PSA is enabled."
-            )
-    except Exception as e:
-        print(f"Arc Raiders PSK Importer: ensure_psk_addon failed: {e}")
-
-    from . import reference_overlay
-    reference_overlay.register()
-
-    try:
-        utils.preload_arc_node_groups()
-    except Exception as e:
-        print(f"Arc Raiders PSK Importer: ArcTexturer preload failed (non-fatal): {e}")
-
-    return None
-
-
 def register():
     """Register all modules and properties (idempotent on reinstall/reload)."""
     # Clean slate so Preferences Ã¢â€ â€™ Install over an enabled copy cannot double-register.
@@ -160,6 +103,10 @@ def register():
         pass
 
     properties.register()
+    from . import weapon_ui
+    weapon_ui.register()
+    from . import arc_ui
+    arc_ui.register()
     pak_extract.register_defaults()
     if not addon_line.is_map_importer_line():
         from . import character_fit
@@ -182,18 +129,13 @@ def register():
 
     for cls in ui.classes:
         _safe_register_class(cls)
-
-    delay = _initialize_runtime()
-    if delay is not None:
-        bpy.app.timers.register(_initialize_runtime, first_interval=delay)
-
     try:
-        if not bpy.app.timers.is_registered(_search_poll):
-            bpy.app.timers.register(_search_poll, first_interval=0.5, persistent=True)
-    except Exception:
-        bpy.app.timers.register(_search_poll, first_interval=0.5, persistent=True)
-    if addon_line.is_map_importer_line():
-        bpy.app.timers.register(_auto_start_listener, first_interval=0.25, persistent=False)
+        from .material_runtime import shader_parity
+        shader_parity.register()
+    except Exception as e:
+        print(f"Arc Raiders shader parity: register failed: {e}")
+
+    # Runtime resources and listeners are initialized on demand by their UI actions.
 
     # Instancer material focus is map Fast-import only.
     if addon_line.is_map_importer_line():
@@ -208,35 +150,24 @@ def register():
     )
 
 
-def _auto_start_listener():
-    """Start the FModel TCP listener after register (scene props must exist)."""
-    try:
-        from .map_tools import fmodel_bridge as bridge
-
-        scene = bpy.context.scene
-        if not getattr(scene, "arc_auto_listen", True):
-            return None
-        if bridge.is_listening():
-            return None
-        port = int(getattr(scene, "arc_placement_listen_port", bridge.DEFAULT_PORT) or bridge.DEFAULT_PORT)
-        msg = bridge.start_listener(port=port)
-        print(f"Arc Raiders FModel bridge: {msg}")
-    except Exception as e:
-        print(f"Arc Raiders FModel bridge auto-start failed: {e}")
-    return None
-
-
 def unregister():
     """Unregister all modules and properties (safe if partially registered)."""
+    try:
+        from .material_runtime import shader_parity
+        shader_parity.unregister()
+    except Exception:
+        pass
     from . import reference_overlay
     reference_overlay.unregister()
+    from . import arc_ui
+    arc_ui.unregister()
+    from . import weapon_ui
+    weapon_ui.unregister()
     from . import appearance_queue
     appearance_queue.unregister()
     pak_extract.unregister_defaults()
     from . import character_fit
     character_fit.unregister()
-    if bpy.app.timers.is_registered(_initialize_runtime):
-        bpy.app.timers.unregister(_initialize_runtime)
     try:
         if addon_line.is_map_importer_line():
             map_placement.unregister_instancer_material_focus()
@@ -250,11 +181,6 @@ def unregister():
     except Exception:
         pass
 
-    try:
-        if bpy.app.timers.is_registered(_search_poll):
-            bpy.app.timers.unregister(_search_poll)
-    except Exception:
-        pass
 
     for cls in reversed(ui.classes):
         _safe_unregister_class(cls)

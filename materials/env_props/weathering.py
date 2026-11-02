@@ -9,6 +9,10 @@ texture out of the material library ourselves:
 * ``Use Dust`` — top-down settled dust from ``T_Propdust_01_X``, masked by how
   upward-facing the surface is (``Top Down Dust Bias`` / ``Sharpness``).
 
+The M_PropPreset masters (CR+NOM, CR+NOX+XEM) never sample ``T_Propdust``:
+their dust is a ``TA_Weathering_Props_01`` slice under a world breakup,
+decoded from their SM5 base pass (:func:`apply_prop_preset_dust`).
+
 UE texture arrays are exported one PNG per slice (``TA_Weathering_Props_01_0``
 … ``_3``), so ``Weathering Index`` selects the file rather than a sub-rect.
 """
@@ -23,6 +27,7 @@ from ..common import (
     _mi_scalar,
     _mi_switch,
     _mix_float,
+    _mix_normals_vec,
     _mix_rgba,
     _new_tex_image,
     _resolve_mi_texture_path,
@@ -32,6 +37,17 @@ WEATHERING_ARRAY = "/Game/Pioneer/MaterialLibrary/Textures/Props/Detail/TA_Weath
 DUST_TEXTURE = "/Game/Pioneer/MaterialLibrary/Textures/Props/T_Propdust_01_X"
 DUST_BREAKUP_TEXTURE = "/Game/Pioneer/MaterialLibrary/Textures/Props/T_Propdust_01_Breakup_01_X"
 DETAIL_ARRAY = "/Game/Pioneer/MaterialLibrary/Textures/Props/Detail/TA_Detail_Props_02"
+PROP_DUST_BREAKUP_TEXTURE = "/Game/Pioneer/MaterialLibrary/Textures/Breakup/T_ConcreteBuildingWorld_01_GRM"
+
+# M_PropPreset dust colour per TA_Weathering_Props_01 slice (PS F49808A9AA1DBB15); slice 2 scales by its W.b.
+_PROP_DUST_COLOURS = (
+    (0.631944, 0.535275, 0.443328),
+    (0.127743, 0.15625, 0.007503),
+    (0.375, 0.237554, 0.149315),
+    (0.86914, 0.90831, 0.927083),
+)
+# T_ConcreteBuildingWorld_01_GRM means (R + G, B + A); they stand in when the texture is absent.
+_PROP_DUST_BREAKUP_MEAN = (0.275, 0.234)
 
 # WeatheringColor default from M_TrimMap_01 / M_PropTrimPreset (hex B18759).
 _DEFAULT_WEATHERING_RGBA = (0.4375, 0.242337, 0.10026, 1.0)
@@ -39,8 +55,10 @@ _DEFAULT_WEATHERING_RGBA = (0.4375, 0.242337, 0.10026, 1.0)
 # Probe-calibrated coverage scale (map_tools/probe_trimmap_albedo.py --variant
 # v3_less_weather). Full strength*blend (~0.55 on the elevator) over-muddied
 # grey paint away from RT Base Color olive; 0.45 restores chroma without
-# inventing a ColorTint the MI did not author.
-_WEATHERING_COVERAGE_SCALE = 0.45
+# inventing a ColorTint the MI did not author. That probe sampled the streak
+# array as sRGB; it is authored SRGB=False, and its slices average 0.45-0.49x
+# raw when decoded, so 0.45 * 0.46 keeps the calibrated mean coverage.
+_WEATHERING_COVERAGE_SCALE = 0.2
 
 
 def load_library_image(obj_path: str, local_folders=None, slice_index=None):
@@ -53,9 +71,10 @@ def load_library_image(obj_path: str, local_folders=None, slice_index=None):
             idx = max(int(round(float(slice_index))), 0)
         except (TypeError, ValueError):
             idx = 0
-        candidates.append(f"{obj_path}_{idx}")
+        # FModel names array slices _N; current UEFormat/ArcPak exports _LAYERN.
+        candidates += [f"{obj_path}_LAYER{idx}", f"{obj_path}_{idx}"]
         if idx != 0:
-            candidates.append(f"{obj_path}_0")
+            candidates += [f"{obj_path}_LAYER0", f"{obj_path}_0"]
     candidates.append(obj_path)
     for cand in candidates:
         fpath = _resolve_mi_texture_path(cand, local_folders)
@@ -142,7 +161,8 @@ def apply_weathering(
     w_rough = _mi_scalar(scalars, "5. Weathering Roughness", default=0.0)
 
     ox, oy = loc
-    node = _new_tex_image(nodes, img, "Weathering Streaks", (ox, oy))
+    # TA_Weathering_Props_01, T_Propdust_01_X and its breakup are authored SRGB=False.
+    node = _new_tex_image(nodes, img, "Weathering Streaks", (ox, oy), non_color=True)
     links.new(
         _world_projected_vector(
             nodes, links, mask_tile, (ox - 400, oy), f"Weathering ×{mask_tile:g}",
@@ -258,7 +278,7 @@ def apply_top_down_dust(
         nodes, links, bias, sharpness, (ox, oy), "Top-Down Dust Facing",
     )
 
-    dust_node = _new_tex_image(nodes, img, "Prop Dust", (ox, oy - 300))
+    dust_node = _new_tex_image(nodes, img, "Prop Dust", (ox, oy - 300), non_color=True)
     links.new(
         _world_projected_vector(
             nodes, links, uv_tiling, (ox - 400, oy - 300), f"Dust ×{uv_tiling:g}",
@@ -287,7 +307,7 @@ def apply_top_down_dust(
 
     breakup_img = load_library_image(DUST_BREAKUP_TEXTURE, local_folders)
     if breakup_img is not None and breakup_str > 0.001:
-        b_node = _new_tex_image(nodes, breakup_img, "Dust Breakup", (ox, oy - 600))
+        b_node = _new_tex_image(nodes, breakup_img, "Dust Breakup", (ox, oy - 600), non_color=True)
         links.new(
             _world_projected_vector(
                 nodes, links, max(float(breakup_tile) * 0.25, 0.02),
@@ -351,3 +371,176 @@ def apply_top_down_dust(
             (ox + 1220, oy - 400), "Dust → Rough",
         )
     return albedo_out, rough_out, True
+
+
+def _math(nodes, links, operation, *values, loc=(0, 0), label="", clamp=False):
+    """Math node over sockets or constants."""
+    node = nodes.new("ShaderNodeMath")
+    node.operation = operation
+    node.use_clamp = clamp
+    node.location = loc
+    if label:
+        node.label = label
+    for index, value in enumerate(values):
+        if hasattr(value, "node"):
+            links.new(value, node.inputs[index])
+        else:
+            node.inputs[index].default_value = float(value)
+    return node.outputs["Value"]
+
+
+def _prop_dust_planar(nodes, links, geo, loc):
+    """World planar coordinates the prop presets pick by vertex normal.
+
+    ``|Nz| > 0.5`` reads (X, Y), ``|Nx| > 0.5`` reads (Y, -Z), anything else
+    (X, -Z). Blender's Y is UE's -Y: a mirror the breakup noise does not show.
+    """
+    ox, oy = loc
+    pos = nodes.new("ShaderNodeSeparateXYZ")
+    pos.label = "World position"
+    pos.location = (ox, oy)
+    links.new(geo.outputs["Position"], pos.inputs["Vector"])
+    nrm = nodes.new("ShaderNodeSeparateXYZ")
+    nrm.label = "Vertex normal"
+    nrm.location = (ox, oy - 200)
+    links.new(geo.outputs["Normal"], nrm.inputs["Vector"])
+    neg_z = _math(nodes, links, "MULTIPLY", pos.outputs["Z"], -1.0, loc=(ox + 180, oy - 60), label="-Z")
+
+    def plane(u, v, y, label):
+        node = nodes.new("ShaderNodeCombineXYZ")
+        node.label = label
+        node.location = (ox + 360, y)
+        links.new(u, node.inputs["X"])
+        links.new(v, node.inputs["Y"])
+        return node.outputs["Vector"]
+
+    def facing(axis, y):
+        size = _math(nodes, links, "ABSOLUTE", nrm.outputs[axis], loc=(ox + 180, y))
+        return _math(nodes, links, "GREATER_THAN", size, 0.5, loc=(ox + 360, y), label=f"|N{axis.lower()}| > 0.5")
+
+    side = _mix_normals_vec(
+        nodes, links, plane(pos.outputs["X"], neg_z, oy - 280, "Planar X, -Z"),
+        plane(pos.outputs["Y"], neg_z, oy - 140, "Planar Y, -Z"), facing("X", oy - 420),
+        (ox + 540, oy - 200), "Planar by |Nx|",
+    )
+    return _mix_normals_vec(
+        nodes, links, side, plane(pos.outputs["X"], pos.outputs["Y"], oy, "Planar X, Y"),
+        facing("Z", oy - 560), (ox + 720, oy - 100), "Planar by |Nz|",
+    )
+
+
+def apply_prop_preset_dust(
+    nodes,
+    links,
+    *,
+    mi: dict,
+    albedo_sock,
+    ao_sock=None,
+    local_folders=None,
+    unit_scale: float = 0.01,
+    loc=(0, -2600),
+):
+    """M_PropPreset_CR+NOM / CR+NOX+XEM settled dust, as their shared SM5 base pass computes it.
+
+    Decoded from PS F49808A9AA1DBB15 (MI_Cmr_LampCeiling_01). W is a
+    TA_Weathering_Props_01 slice and the breakup T_ConcreteBuildingWorld_01_GRM,
+    both on world planar coordinates over a 1024 uu period::
+
+        topdown = sat(0.5 * Sharpness * Nz + Bias)
+        aodust  = sat(sat((1 - AO) * (1 + 2 * Contrast) - Contrast) * AO Dust Multiply)
+        breakup = sat(GRM.r + GRM.g + (GRM.b + GRM.a) * Dust Extra World Breakup Strength)
+        dust    = sat(1.2 * (topdown + aodust) * W.a * (1 - breakup))
+
+    AO is the normal texture's B. Base colour lerps to the slice's dust colour
+    here; the caller lerps roughness to W.b and the normal to W.rg by *dust* and
+    scales metallic by 1 - dust. Use Prim Data Weathering Index (on by default)
+    pins Sharpness/Bias to 5/-1.5, the period to 1024 uu and the slice to custom
+    primitive data 9, which reads 0 unless the placed component sets it. The W
+    UV drops the shader's object-scale and past-one-period offset/rotation terms.
+
+    Returns ``(albedo_sock, dust, applied)``; *dust* holds the ``fac``,
+    ``clean`` (1 - dust), ``rough`` (W.b) and ``normal_rg`` sockets.
+    """
+    if albedo_sock is None:
+        return albedo_sock, None, False
+    scalars = mi.get("scalars") or {}
+    switches = mi.get("switches") or {}
+    # Both masters default Use Dust on; parentless compact exports list only the switches that are on.
+    if not _mi_switch(switches, "Use Dust", "UseDust", default=bool(str(mi.get("parent") or "").strip())):
+        return albedo_sock, None, False
+    if _mi_switch(switches, "Use Prim Data Weathering Index", default=True):
+        sharpness, bias, period, index = 5.0, -1.5, 1024.0, 0.0
+    else:
+        sharpness = _mi_scalar(scalars, "Top Down Dust Sharpness", default=5.0)
+        bias = _mi_scalar(scalars, "Top Down Dust Bias", default=-1.5)
+        period = 1024.0 / max(_mi_scalar(scalars, "Dust Detail Breakup Tiling", default=1.0), 1e-4) + 1.0
+        index = _mi_scalar(scalars, "Weathering Index", default=0.0)
+    index = min(max(int(round(index)), 0), len(_PROP_DUST_COLOURS) - 1)
+    weather_img = load_library_image(WEATHERING_ARRAY, local_folders, slice_index=index)
+    if weather_img is None:
+        return albedo_sock, None, False
+    contrast = _mi_scalar(scalars, "AO Dust Contrast", default=0.5)
+    multiply = _mi_scalar(scalars, "AO Dust Multiply", default=1.0)
+    strength = _mi_scalar(scalars, "Dust Extra World Breakup Strength", default=0.5)
+    tiling = _mi_scalar(scalars, "Weathering Tiling", default=5.0)
+    # Planar coordinates count periods of UE units; Position is in this mesh's units.
+    per_unit = 1.0 / (max(float(unit_scale), 1e-6) * period)
+
+    ox, oy = loc
+    geo = nodes.new("ShaderNodeNewGeometry")
+    geo.location = (ox - 1500, oy)
+    planar = _prop_dust_planar(nodes, links, geo, (ox - 1300, oy - 300))
+
+    def sampled(img, scale, y, label):
+        uv = nodes.new("ShaderNodeVectorMath")
+        uv.operation = "SCALE"
+        uv.label = f"Planar x {scale:.6g}"
+        uv.location = (ox - 400, y)
+        links.new(planar, uv.inputs[0])
+        uv.inputs["Scale"].default_value = scale
+        tex = _new_tex_image(nodes, img, label, (ox - 200, y), non_color=True)
+        links.new(uv.outputs["Vector"], tex.inputs["Vector"])
+        sep = nodes.new("ShaderNodeSeparateColor")
+        sep.location = (ox + 100, y)
+        links.new(tex.outputs["Color"], sep.inputs["Color"])
+        return tex, sep
+
+    weather, w = sampled(weather_img, per_unit * tiling, oy - 300, f"Prop dust W (TA_Weathering_Props_01 slice {index})")
+    breakup_img = load_library_image(PROP_DUST_BREAKUP_TEXTURE, local_folders)
+    if breakup_img is not None:
+        grm, g = sampled(breakup_img, per_unit, oy - 650, "Prop dust breakup (T_ConcreteBuildingWorld_01_GRM)")
+        rg = _math(nodes, links, "ADD", g.outputs["Red"], g.outputs["Green"], loc=(ox + 280, oy - 600))
+        ba = _math(nodes, links, "ADD", g.outputs["Blue"], grm.outputs["Alpha"], loc=(ox + 280, oy - 740))
+        breakup = _math(nodes, links, "MULTIPLY_ADD", ba, strength, rg, loc=(ox + 460, oy - 650), label="Breakup", clamp=True)
+        keep = _math(nodes, links, "SUBTRACT", 1.0, breakup, loc=(ox + 640, oy - 650), label="1 - breakup")
+    else:
+        keep = 1.0 - min(max(_PROP_DUST_BREAKUP_MEAN[0] + _PROP_DUST_BREAKUP_MEAN[1] * strength, 0.0), 1.0)
+
+    nz = nodes.new("ShaderNodeSeparateXYZ")
+    nz.location = (ox - 1300, oy + 300)
+    links.new(geo.outputs["Normal"], nz.inputs["Vector"])
+    amount = _math(nodes, links, "MULTIPLY_ADD", nz.outputs["Z"], 0.5 * sharpness, bias,
+                   loc=(ox + 100, oy + 300), label="Top-down dust", clamp=True)
+    if ao_sock is not None:
+        occluded = _math(nodes, links, "SUBTRACT", 1.0, ao_sock, loc=(ox - 100, oy + 120), label="1 - AO")
+        shaped = _math(nodes, links, "MULTIPLY_ADD", occluded, 1.0 + 2.0 * contrast, -contrast,
+                       loc=(ox + 100, oy + 120), label="AO dust contrast", clamp=True)
+        ao_dust = _math(nodes, links, "MULTIPLY", shaped, multiply, loc=(ox + 280, oy + 120), label="AO dust", clamp=True)
+        amount = _math(nodes, links, "ADD", amount, ao_dust, loc=(ox + 460, oy + 200))
+    amount = _math(nodes, links, "MULTIPLY", amount, weather.outputs["Alpha"], loc=(ox + 640, oy + 100), label="x W.a")
+    amount = _math(nodes, links, "MULTIPLY", amount, keep, loc=(ox + 820, oy), label="x (1 - breakup)")
+    dust = _math(nodes, links, "MULTIPLY", amount, 1.2, loc=(ox + 1000, oy), label="Prop dust", clamp=True)
+
+    tone = nodes.new("ShaderNodeRGB")
+    tone.label = f"Dust colour, slice {index}"
+    tone.location = (ox + 820, oy + 320)
+    tone.outputs[0].default_value = (*_PROP_DUST_COLOURS[index], 1.0)
+    colour = tone.outputs[0]
+    if index == 2:
+        colour = _mix_rgba(nodes, links, colour, w.outputs["Blue"], 1.0, (ox + 1000, oy + 320),
+                           "Dust colour x W.b", blend="MULTIPLY")
+    albedo_out = _mix_rgba(nodes, links, albedo_sock, colour, dust, (ox + 1200, oy + 200), "Prop Dust Mix")
+    clean = _math(nodes, links, "SUBTRACT", 1.0, dust, loc=(ox + 1200, oy - 100), label="1 - dust")
+    return albedo_out, {
+        "fac": dust, "clean": clean, "rough": w.outputs["Blue"], "normal_rg": (w.outputs["Red"], w.outputs["Green"]),
+    }, True

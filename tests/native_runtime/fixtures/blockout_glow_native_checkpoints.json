@@ -1,0 +1,2090 @@
+{
+  "scope": "Independent numeric checkpoints captured from the native preshader +26-instruction SM5 pixel slice replay in double precision. No shader binaries, game textures, native SDK or local dump files required by tests.",
+  "shader_resource": "4749573C28EBFFC0C58AF70A35FAE33F96EB2210",
+  "pixel_program": "602F37178BA2EEF249D506168B99B816B5849A18",
+  "bytecode_sha256": "3371dd83360a32d039adaabca3f2eb6e9fd0ba132fb2f91e8ab5c74449cc85f6",
+  "disassembly_sha256": "e97a90dd6b06ef085debcc21ab5b90800999983e89731cfa97275a2dab1a80f2",
+  "native_material_sha256": "9d26cc10dea26f901f8b6b5a1d5c85ae3e02a6304c8ba576dbc832da3e9808c9",
+  "replay_interpreter_sha256": "1b415850ed5dc42c2aee2760767e087e8fd97c08b2d4cab2ea1498e638d01248",
+  "native_instruction_facts": {
+    "instructions_per_checkpoint": 26,
+    "damage_preshader": {
+      "parameter_index": 9,
+      "constant": 1.0,
+      "opcode": 4,
+      "operation": "Add"
+    },
+    "shading_model_low4bits": 1,
+    "gbufferB_model_encoded_uint8": [
+      225,
+      161
+    ],
+    "material_outputs": {
+      "roughness": 0.85,
+      "metallic": 0.0,
+      "specular": 0.5
+    },
+    "fixed_gradient_channel": "R",
+    "fixed_gradient_role": "data",
+    "static_switches": {
+      "Pulsing": false,
+      "SwirlTexture": false
+    },
+    "MPC_FX_Emissive_Intensity_default": 1.0
+  },
+  "source_versions": {
+    "game_snapshot": "2.2.0",
+    "proof_platform": "SP_PCD3D_SM5",
+    "gbuffer_ABI_reference": "Official Unreal Engine5.0.3 source plus current native output instruction evidence; not a current game engine-version claim"
+  },
+  "cases": [
+    {
+      "case": 0,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.13651691206800187,
+          "PowerPercent": 0.45341681462099936,
+          "ShouldUsePowerForColor": 1.1452439372985426,
+          "GradientAmount": 1.0309702985261269,
+          "Intensity": 0.780883228881498,
+          "DamagePercent": 0.47713321237617934
+        },
+        "colors": {
+          "Color": [
+            0.814265460751683,
+            1.975110004015297,
+            1.897685312917734,
+            0.5608983822100492
+          ],
+          "ChargingUpColor": [
+            1.4362164440223262,
+            2.1966251099654936,
+            -0.026561767355687743,
+            0.8098254874672866
+          ],
+          "NoPowerColor": [
+            2.211073154432072,
+            -0.0027634099637566245,
+            0.3510607612878891,
+            0.6193908954995069
+          ],
+          "SelectionColor": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": -1.0,
+        "eye_adaptation": 0.25,
+        "fx_emissive_intensity": 0.0
+      },
+      "gradient_rgba": [
+        0.017478136156700352,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "base_color": [
+          1.0,
+          0.8363421294328715,
+          0.066742757725339
+        ]
+      }
+    },
+    {
+      "case": 1,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": -0.37804081937156025,
+          "PowerPercent": 0.9071103270964206,
+          "ShouldUsePowerForColor": 0.09918951597825554,
+          "GradientAmount": 0.21383550337005997,
+          "Intensity": 2.3333763136114234,
+          "DamagePercent": -0.21249557118371476
+        },
+        "colors": {
+          "Color": [
+            2.4478302346287175,
+            1.1226816773153696,
+            0.9471525930771587,
+            0.43005619263863726
+          ],
+          "ChargingUpColor": [
+            0.931745524440583,
+            -0.14972862772391218,
+            0.4309682501375167,
+            0.5703212397960319
+          ],
+          "NoPowerColor": [
+            1.2366998306226265,
+            1.4443665377173631,
+            0.4783182999806168,
+            0.4573545519973299
+          ],
+          "SelectionColor": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 0.0,
+        "eye_adaptation": 1.0,
+        "fx_emissive_intensity": 0.5
+      },
+      "gradient_rgba": [
+        0.3096383184545134,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.3522077728390004,
+          0.15159683382600278,
+          0.13764944365861423
+        ],
+        "base_color": [
+          1.0,
+          0.9678789516579847,
+          0.878831014224997
+        ]
+      }
+    },
+    {
+      "case": 2,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": -0.06666521124459096,
+          "PowerPercent": 0.8016214676788626,
+          "ShouldUsePowerForColor": -0.17401640268783866,
+          "GradientAmount": 0.5316744295892851,
+          "Intensity": 1.1003608901339597,
+          "DamagePercent": 0.8469095578652859
+        },
+        "colors": {
+          "Color": [
+            -0.021656674471362103,
+            -0.242420263512039,
+            0.1834287326089884,
+            0.9828325207689513
+          ],
+          "ChargingUpColor": [
+            0.46984225981272454,
+            -0.05146299877738125,
+            0.34970104428057924,
+            0.49885921078010853
+          ],
+          "NoPowerColor": [
+            1.3094254306679576,
+            0.37600531427129646,
+            0.16354405388448678,
+            0.48105924314651294
+          ],
+          "SelectionColor": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0,
+        "eye_adaptation": 4.0,
+        "fx_emissive_intensity": 1.0
+      },
+      "gradient_rgba": [
+        0.14941564321835765,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.0,
+          0.0,
+          0.04293151737317756
+        ],
+        "base_color": [
+          0.0,
+          0.0,
+          0.15937472413594048
+        ]
+      }
+    },
+    {
+      "case": 3,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": -0.35740417569389316,
+          "PowerPercent": 0.02107485966994732,
+          "ShouldUsePowerForColor": 0.7034451260021503,
+          "GradientAmount": 0.4550621986372293,
+          "Intensity": 3.473140821127182,
+          "DamagePercent": -0.5645902966859969
+        },
+        "colors": {
+          "Color": [
+            2.15557918380166,
+            1.7918469017667515,
+            0.3496669685432988,
+            0.5871931790195696
+          ],
+          "ChargingUpColor": [
+            0.8683595039337924,
+            2.095131179873703,
+            1.7596928369044145,
+            0.625582989229708
+          ],
+          "NoPowerColor": [
+            -0.15025259107196212,
+            -0.12105928502155339,
+            1.8925062088472946,
+            0.08930475188617326
+          ],
+          "SelectionColor": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0002,
+        "eye_adaptation": 0.25,
+        "fx_emissive_intensity": 2.0
+      },
+      "gradient_rgba": [
+        0.021813269822187564,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          3.52021819349449,
+          3.122939855853372,
+          9.35854611671315
+        ],
+        "base_color": [
+          0.541833633546976,
+          0.4806843656943762,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 4,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": -0.09929805881098702,
+          "PowerPercent": -0.23682133887805598,
+          "ShouldUsePowerForColor": 1.1579381632284833,
+          "GradientAmount": 1.2263763898798885,
+          "Intensity": 5.1294303090926885,
+          "DamagePercent": 1.2359350434786602
+        },
+        "colors": {
+          "Color": [
+            0.16803752854194876,
+            1.3556306561053164,
+            0.07340181392585254,
+            0.5078907772205565
+          ],
+          "ChargingUpColor": [
+            0.4937228732518735,
+            2.303650521744284,
+            0.049108225091437585,
+            0.5294424813186035
+          ],
+          "NoPowerColor": [
+            1.8694335833364102,
+            1.6570184726990733,
+            1.7269691861218919,
+            0.10646453894619856
+          ],
+          "SelectionColor": [
+            0.21043913639852008,
+            2.1231509864874476,
+            0.48101391618980816,
+            0.02716330575733905
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": -1.0,
+        "eye_adaptation": 1.0,
+        "fx_emissive_intensity": 0.0
+      },
+      "gradient_rgba": [
+        0.9343664875386026,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.005716222605303379,
+          0.05767179941495457,
+          0.01306592807899882
+        ],
+        "base_color": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 5,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.9715534668990674,
+          "PowerPercent": 1.1359283196757763,
+          "ShouldUsePowerForColor": 0.2760921009880244,
+          "GradientAmount": -0.34309810999312074,
+          "Intensity": 5.118455827773486,
+          "DamagePercent": 0.8534057352790632
+        },
+        "colors": {
+          "Color": [
+            1.3272304218418776,
+            0.2386522285361854,
+            0.6998680057764778,
+            0.4469983130163241
+          ],
+          "ChargingUpColor": [
+            0.34941299813374105,
+            0.2688565323477714,
+            -0.05185895293754597,
+            0.5241787241239719
+          ],
+          "NoPowerColor": [
+            1.5423104132864707,
+            2.1823857289531636,
+            0.11867576191510154,
+            0.10096371690406558
+          ],
+          "SelectionColor": [
+            1.2647772244527244,
+            1.4970311355411123,
+            0.6908311037299345,
+            0.9633831746981416
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 0.0,
+        "eye_adaptation": 4.0,
+        "fx_emissive_intensity": 0.5
+      },
+      "gradient_rgba": [
+        0.9769376711533599,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          1.2299352348266694,
+          1.4436673814831102,
+          0.6717931641615678
+        ],
+        "base_color": [
+          1.0,
+          0.1659758338290354,
+          0.7149729396310973
+        ]
+      }
+    },
+    {
+      "case": 6,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": -0.14130874216030476,
+          "PowerPercent": 0.3125159032235886,
+          "ShouldUsePowerForColor": 0.8894598715404657,
+          "GradientAmount": -0.38252461694044076,
+          "Intensity": 1.9828759002779428,
+          "DamagePercent": 1.4096515945283854
+        },
+        "colors": {
+          "Color": [
+            -0.00024359108167337773,
+            0.8051174496901015,
+            2.239423498030425,
+            0.7154498030381896
+          ],
+          "ChargingUpColor": [
+            1.6100743406799098,
+            0.4593474665565903,
+            1.6125111155760072,
+            0.038551806676480393
+          ],
+          "NoPowerColor": [
+            1.5730403781457263,
+            1.4539350264026178,
+            2.235471293307423,
+            0.5584869824987779
+          ],
+          "SelectionColor": [
+            1.7158878375387505,
+            0.3583639997528758,
+            2.4699811671005607,
+            0.8405220900776869
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0,
+        "eye_adaptation": 0.25,
+        "fx_emissive_intensity": 1.0
+      },
+      "gradient_rgba": [
+        0.7042686577813424,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          6.278419844815325,
+          3.8878219161929195,
+          8.769129772580158
+        ],
+        "base_color": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 7,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.8128826882533003,
+          "PowerPercent": 1.0652850158070066,
+          "ShouldUsePowerForColor": 0.5273822978285923,
+          "GradientAmount": 0.812948330032247,
+          "Intensity": 4.663152269019163,
+          "DamagePercent": 0.5367545022127627
+        },
+        "colors": {
+          "Color": [
+            2.067194978615528,
+            0.6936135887273764,
+            2.4441515941512364,
+            0.31857059902149176
+          ],
+          "ChargingUpColor": [
+            0.7567364559273304,
+            1.0235933379983693,
+            1.660255384019496,
+            0.36790202190088983
+          ],
+          "NoPowerColor": [
+            2.0104770805313565,
+            -0.12312410964994416,
+            -0.11015635580615116,
+            0.5472250746275014
+          ],
+          "SelectionColor": [
+            1.2647586911248883,
+            1.930222218286446,
+            0.38319437039372417,
+            0.6859705419019552
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0002,
+        "eye_adaptation": 1.0,
+        "fx_emissive_intensity": 2.0
+      },
+      "gradient_rgba": [
+        0.5330508344173651,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          6.087075318486171,
+          3.3682765399451187,
+          6.883042056023449
+        ],
+        "base_color": [
+          1.0,
+          0.7564230671043679,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 8,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 1.365705998419454,
+          "PowerPercent": -0.3543581006804274,
+          "ShouldUsePowerForColor": 0.6015870131688689,
+          "GradientAmount": 0.07972800054316276,
+          "Intensity": 2.9628133469541877,
+          "DamagePercent": -0.15757778842981984
+        },
+        "colors": {
+          "Color": [
+            0.6089549672466451,
+            0.050002284626729065,
+            2.390135490550782,
+            0.9832714539695693
+          ],
+          "ChargingUpColor": [
+            0.9827390812726886,
+            0.8367550546440068,
+            0.816745435661332,
+            0.3383387945837393
+          ],
+          "NoPowerColor": [
+            2.0698273345785196,
+            0.961917530431853,
+            2.0003502152466806,
+            0.017975233238229582
+          ],
+          "SelectionColor": [
+            1.4277332447039264,
+            0.029349651027648194,
+            0.2687470870935179,
+            0.039276243432122326
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": -1.0,
+        "eye_adaptation": 4.0,
+        "fx_emissive_intensity": 0.0
+      },
+      "gradient_rgba": [
+        0.6848123839698407,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.05607599847512529,
+          0.0011527440384097496,
+          0.01055537601435879
+        ],
+        "base_color": [
+          1.0,
+          0.8543336181659406,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 9,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": -0.24917600803028062,
+          "PowerPercent": 0.9934315264271304,
+          "ShouldUsePowerForColor": 0.3965474252981681,
+          "GradientAmount": 1.109578042068534,
+          "Intensity": 3.632242829942574,
+          "DamagePercent": -0.07707676827927279
+        },
+        "colors": {
+          "Color": [
+            1.824427048039626,
+            1.4131210818529945,
+            2.2504363582025473,
+            0.9251298604899123
+          ],
+          "ChargingUpColor": [
+            0.2064054527946002,
+            -0.09915754131715515,
+            0.45288461412810666,
+            0.05728912126133112
+          ],
+          "NoPowerColor": [
+            0.8513026398718271,
+            0.4486209514135038,
+            1.1723244749490362,
+            0.5012437745505328
+          ],
+          "SelectionColor": [
+            1.0284767883050425,
+            1.2687421964870016,
+            1.5016329709067762,
+            0.1845861226399318
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 0.0,
+        "eye_adaptation": 0.25,
+        "fx_emissive_intensity": 0.5
+      },
+      "gradient_rgba": [
+        0.6230798184177839,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.8422787458375249,
+          0.658106044488459,
+          1.1442345890233583
+        ],
+        "base_color": [
+          1.0,
+          0.6664108001923085,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 10,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.5999361360526388,
+          "PowerPercent": 0.3358289954120044,
+          "ShouldUsePowerForColor": 0.5916385872971466,
+          "GradientAmount": -0.06001815100607122,
+          "Intensity": 2.0343839113947375,
+          "DamagePercent": -0.1761124343253686
+        },
+        "colors": {
+          "Color": [
+            1.9521251396828823,
+            1.7730872274164993,
+            0.6611789630917829,
+            0.7070425570575127
+          ],
+          "ChargingUpColor": [
+            2.397992097979317,
+            1.2750840271510022,
+            0.5718215049738071,
+            0.07220054865076286
+          ],
+          "NoPowerColor": [
+            0.664473287255437,
+            1.1463406561788887,
+            0.900358011944554,
+            0.8758195431413887
+          ],
+          "SelectionColor": [
+            1.8989742389047914,
+            2.1961159478906325,
+            1.191606905541661,
+            0.23340971079573236
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0,
+        "eye_adaptation": 1.0,
+        "fx_emissive_intensity": 1.0
+      },
+      "gradient_rgba": [
+        0.12404219329539479,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          2.382712849774948,
+          2.459448418093905,
+          1.257385000672369
+        ],
+        "base_color": [
+          1.0,
+          1.0,
+          0.7480612922808496
+        ]
+      }
+    },
+    {
+      "case": 11,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.6433729340626434,
+          "PowerPercent": -0.05723272490271619,
+          "ShouldUsePowerForColor": -0.31910665026646934,
+          "GradientAmount": 0.045539794397610966,
+          "Intensity": 1.3135053134408132,
+          "DamagePercent": 0.300104182432813
+        },
+        "colors": {
+          "Color": [
+            0.5386827847012727,
+            0.40080020935053395,
+            1.6351683977912865,
+            0.26373740408972846
+          ],
+          "ChargingUpColor": [
+            2.284483409314087,
+            0.8590823719205085,
+            1.590820329997428,
+            0.640171201994516
+          ],
+          "NoPowerColor": [
+            2.349041745556767,
+            2.005207765677875,
+            2.357427831081635,
+            0.03993427564300578
+          ],
+          "SelectionColor": [
+            1.0784842208455498,
+            0.19557901828422536,
+            2.278324331042236,
+            0.3748382748104787
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0002,
+        "eye_adaptation": 4.0,
+        "fx_emissive_intensity": 2.0
+      },
+      "gradient_rgba": [
+        0.6377707334357489,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.37341139632931686,
+          0.0034489292629346496,
+          1.5608868830793954
+        ],
+        "base_color": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 12,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.3917323890845187,
+          "PowerPercent": 1.2055921206858264,
+          "ShouldUsePowerForColor": 0.16037134326628077,
+          "GradientAmount": 1.0070323949288267,
+          "Intensity": 4.189555875743142,
+          "DamagePercent": -0.3454851236527472
+        },
+        "colors": {
+          "Color": [
+            1.870148441031299,
+            1.614648023669539,
+            2.4695126702674615,
+            0.6488542680107259
+          ],
+          "ChargingUpColor": [
+            1.7601937238693885,
+            -0.16895527767384594,
+            0.7045767117695529,
+            0.0879365207074243
+          ],
+          "NoPowerColor": [
+            1.745653126708377,
+            0.5846516053931631,
+            0.13681937250370646,
+            0.05042714959155126
+          ],
+          "SelectionColor": [
+            -0.15060121168682755,
+            1.587576011566754,
+            -0.07576686431097224,
+            0.38140234317981836
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": -1.0,
+        "eye_adaptation": 0.25,
+        "fx_emissive_intensity": 0.0
+      },
+      "gradient_rgba": [
+        0.7268992845481567,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.0,
+          0.6055052107876304,
+          0.0
+        ],
+        "base_color": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 13,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.9005070733728299,
+          "PowerPercent": 1.3359469334262046,
+          "ShouldUsePowerForColor": 0.22616081590073644,
+          "GradientAmount": 0.32556868574264175,
+          "Intensity": 0.18072694485676188,
+          "DamagePercent": 0.6453910691781828
+        },
+        "colors": {
+          "Color": [
+            0.9951707340445453,
+            0.8129527261434373,
+            2.4511074714829264,
+            0.9109980360717481
+          ],
+          "ChargingUpColor": [
+            1.450196953069325,
+            -0.09622538917175966,
+            1.0372449039230913,
+            0.14283834189971856
+          ],
+          "NoPowerColor": [
+            2.304653052581197,
+            0.16691846360227514,
+            1.2002246425868,
+            0.8953419475416207
+          ],
+          "SelectionColor": [
+            -0.18933235485967395,
+            1.8054440248417918,
+            -0.023838956681209972,
+            0.5581124359899288
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 0.0,
+        "eye_adaptation": 1.0,
+        "fx_emissive_intensity": 0.5
+      },
+      "gradient_rgba": [
+        0.1518021657528592,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.0,
+          1.0155801734823764,
+          0.010508901110991273
+        ],
+        "base_color": [
+          0.9093572405857834,
+          0.8347066275546169,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 14,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.9215903046684716,
+          "PowerPercent": 0.10913776277306275,
+          "ShouldUsePowerForColor": 0.7385425786893446,
+          "GradientAmount": 0.36492455934781554,
+          "Intensity": 0.4616388120463466,
+          "DamagePercent": 1.073071065918835
+        },
+        "colors": {
+          "Color": [
+            0.8355803618772526,
+            0.8209197391015035,
+            -0.09037896698675352,
+            0.4993337979814787
+          ],
+          "ChargingUpColor": [
+            0.1677748352615298,
+            0.8761223591906433,
+            1.24071659841681,
+            0.39692277282815835
+          ],
+          "NoPowerColor": [
+            -0.036589709344645144,
+            0.34219570246074094,
+            2.029285736213355,
+            0.589491646244875
+          ],
+          "SelectionColor": [
+            0.0004818435633689444,
+            0.1803402137077943,
+            2.1095268728271828,
+            0.4722204301335061
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0,
+        "eye_adaptation": 4.0,
+        "fx_emissive_intensity": 1.0
+      },
+      "gradient_rgba": [
+        0.7861111337500498,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.029245994767615215,
+          0.14221106532388073,
+          1.1440735974457392
+        ],
+        "base_color": [
+          0.2575244894152643,
+          0.5062970761416612,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 15,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": -0.20506219010074248,
+          "PowerPercent": -0.22896443693799964,
+          "ShouldUsePowerForColor": 0.6281783314303541,
+          "GradientAmount": 1.1063465663615486,
+          "Intensity": 1.6190006121738612,
+          "DamagePercent": -0.39378233088887515
+        },
+        "colors": {
+          "Color": [
+            1.0125606570138812,
+            -0.2379877289049506,
+            1.8480463748922435,
+            0.4315273588070869
+          ],
+          "ChargingUpColor": [
+            1.8160614104219421,
+            0.7665726054040785,
+            0.16488100679666873,
+            0.3890617558564592
+          ],
+          "NoPowerColor": [
+            0.07802602438497708,
+            1.6706413549756838,
+            -0.09885661340824448,
+            0.9306351473964712
+          ],
+          "SelectionColor": [
+            -0.16963104310165905,
+            0.10684596786647743,
+            1.1484898080926007,
+            0.9280296679996035
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0002,
+        "eye_adaptation": 0.25,
+        "fx_emissive_intensity": 2.0
+      },
+      "gradient_rgba": [
+        0.8294242705876341,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.0,
+          0.5700984620506802,
+          1.3483663655071423
+        ],
+        "base_color": [
+          0.1518251463511201,
+          1.0,
+          0.6367542018064611
+        ]
+      }
+    },
+    {
+      "case": 16,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.9927654504400424,
+          "PowerPercent": -0.12688265582391112,
+          "ShouldUsePowerForColor": 1.3604786635338146,
+          "GradientAmount": 0.14493640530490204,
+          "Intensity": 1.7156281942345772,
+          "DamagePercent": -0.8429914984882458
+        },
+        "colors": {
+          "Color": [
+            1.826819519210447,
+            0.996967506542777,
+            2.3572558574273383,
+            0.6479510609894185
+          ],
+          "ChargingUpColor": [
+            0.11560526272521382,
+            1.7623521136602647,
+            0.7872630806668683,
+            0.19530709517848477
+          ],
+          "NoPowerColor": [
+            -0.01451777156232223,
+            0.3665736441145,
+            2.2838500893267306,
+            0.3112090263022337
+          ],
+          "SelectionColor": [
+            0.593938288179708,
+            2.2103492059140635,
+            2.12522398117085,
+            0.7020371286711512
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": -1.0,
+        "eye_adaptation": 1.0,
+        "fx_emissive_intensity": 0.0
+      },
+      "gradient_rgba": [
+        0.7148178343978489,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.4169667304415409,
+          1.5517472098804683,
+          1.4919861415242561
+        ],
+        "base_color": [
+          0.0,
+          0.02955495607766856,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 17,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": -0.05467280865714658,
+          "PowerPercent": 0.6016486012513896,
+          "ShouldUsePowerForColor": 1.0173661250560708,
+          "GradientAmount": 0.5161229482750642,
+          "Intensity": 5.548677224488085,
+          "DamagePercent": 0.5106538532765215
+        },
+        "colors": {
+          "Color": [
+            1.3880118081023949,
+            2.2838572634145073,
+            1.3473021885926901,
+            0.043380455326298306
+          ],
+          "ChargingUpColor": [
+            1.5232892173929615,
+            0.9386996966200591,
+            1.2843421983683507,
+            0.039035554512807935
+          ],
+          "NoPowerColor": [
+            1.271978459839875,
+            2.3882328027598483,
+            0.15281864459517247,
+            0.2577237783950984
+          ],
+          "SelectionColor": [
+            2.292763319870734,
+            2.0128983130263354,
+            0.6674874968082518,
+            0.3458350905342785
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 0.0,
+        "eye_adaptation": 4.0,
+        "fx_emissive_intensity": 0.5
+      },
+      "gradient_rgba": [
+        0.9398898025616539,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.9826406655690596,
+          0.8897664019623185,
+          0.34010219918550955
+        ],
+        "base_color": [
+          1.0,
+          1.0,
+          0.8225702007738651
+        ]
+      }
+    },
+    {
+      "case": 18,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": -0.34586189489637065,
+          "PowerPercent": 0.6447265797776339,
+          "ShouldUsePowerForColor": 1.285817270376691,
+          "GradientAmount": 1.0913413024101217,
+          "Intensity": 2.30049341833367,
+          "DamagePercent": -0.7453220405276222
+        },
+        "colors": {
+          "Color": [
+            1.1578290390913708,
+            0.2348060012815194,
+            0.9871189250560408,
+            0.7950214160471075
+          ],
+          "ChargingUpColor": [
+            2.4966157225969297,
+            1.6549129205176865,
+            2.277898919480402,
+            0.6647120436663657
+          ],
+          "NoPowerColor": [
+            0.3461114780915655,
+            2.2422956449791074,
+            1.5590000703922726,
+            0.6367945244008061
+          ],
+          "SelectionColor": [
+            1.6976159212259039,
+            0.014760109608394412,
+            1.4043404051029846,
+            0.7908085867519803
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0,
+        "eye_adaptation": 0.25,
+        "fx_emissive_intensity": 1.0
+      },
+      "gradient_rgba": [
+        0.05509754320362259,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          1.3087107309656265,
+          0.0,
+          1.0707465795338027
+        ],
+        "base_color": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 19,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.6353607858585494,
+          "PowerPercent": 1.3533939970991136,
+          "ShouldUsePowerForColor": -0.12191771720567346,
+          "GradientAmount": -0.3365749529519775,
+          "Intensity": 3.4065902042103113,
+          "DamagePercent": -0.8704835969711052
+        },
+        "colors": {
+          "Color": [
+            0.684665029619375,
+            1.1060794394044504,
+            -0.24804056568009503,
+            0.9078561864609705
+          ],
+          "ChargingUpColor": [
+            2.305767709055306,
+            0.3860050042947798,
+            0.9056547315503702,
+            0.9205110758148627
+          ],
+          "NoPowerColor": [
+            2.076069507934452,
+            0.06598525092187008,
+            0.06008184932077926,
+            0.34361779522007707
+          ],
+          "SelectionColor": [
+            0.7572674167584745,
+            0.8508953617067256,
+            0.7950202325635725,
+            0.6312611387408987
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0002,
+        "eye_adaptation": 1.0,
+        "fx_emissive_intensity": 2.0
+      },
+      "gradient_rgba": [
+        0.4286805393000237,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.720995848466086,
+          0.9518850823163412,
+          0.38765340684932914
+        ],
+        "base_color": [
+          0.6470776717299342,
+          1.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "case": 20,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.7068405404531583,
+          "PowerPercent": -0.38534345082286414,
+          "ShouldUsePowerForColor": 1.0298424121924978,
+          "GradientAmount": 1.1415248344270132,
+          "Intensity": 0.008962846442955419,
+          "DamagePercent": -0.7478528892344749
+        },
+        "colors": {
+          "Color": [
+            2.493738367525451,
+            0.25404211959970724,
+            -0.018799830685305163,
+            0.0143169547576244
+          ],
+          "ChargingUpColor": [
+            1.8404781030586532,
+            0.42766908792798075,
+            1.606003179518033,
+            0.4209112487369162
+          ],
+          "NoPowerColor": [
+            1.080990079790487,
+            1.2094772845882795,
+            0.1425027702943089,
+            0.9240268539836415
+          ],
+          "SelectionColor": [
+            1.0659706917037646,
+            0.21053116163870256,
+            1.9368925457306854,
+            0.4196233717317155
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": -1.0,
+        "eye_adaptation": 4.0,
+        "fx_emissive_intensity": 0.0
+      },
+      "gradient_rgba": [
+        0.6254502949189996,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.4473062158199227,
+          0.08834379590142716,
+          0.8127653807215361
+        ],
+        "base_color": [
+          0.5541901341699516,
+          1.0,
+          0.022301441392124845
+        ]
+      }
+    },
+    {
+      "case": 21,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.1643000412456892,
+          "PowerPercent": 1.3339853301029811,
+          "ShouldUsePowerForColor": 1.028694271936606,
+          "GradientAmount": 0.996396593467379,
+          "Intensity": 2.0124051041947473,
+          "DamagePercent": 0.3514433237107464
+        },
+        "colors": {
+          "Color": [
+            0.36290990292205283,
+            0.46932050691285676,
+            1.3178686125959842,
+            0.11328337005015254
+          ],
+          "ChargingUpColor": [
+            -0.14729294442932997,
+            1.7419426542945107,
+            0.18123705395075285,
+            0.10503249552680649
+          ],
+          "NoPowerColor": [
+            2.278416209554174,
+            1.1506497647347398,
+            1.3630532437181748,
+            0.2546628147191887
+          ],
+          "SelectionColor": [
+            -0.20792370072919575,
+            0.40633649075671274,
+            1.264868544721669,
+            0.9518262468671554
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 0.0,
+        "eye_adaptation": 0.25,
+        "fx_emissive_intensity": 0.5
+      },
+      "gradient_rgba": [
+        0.9982324750683104,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.0,
+          0.47541729781244446,
+          1.2038751956589304
+        ],
+        "base_color": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "case": 22,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.7189286316538498,
+          "PowerPercent": 0.2844595372207175,
+          "ShouldUsePowerForColor": -0.39846121055318123,
+          "GradientAmount": -0.06555195438780226,
+          "Intensity": 4.077647615840001,
+          "DamagePercent": 1.4711515792236538
+        },
+        "colors": {
+          "Color": [
+            0.6601433140655012,
+            0.309117410654002,
+            1.9430006517361211,
+            0.9717377063303322
+          ],
+          "ChargingUpColor": [
+            -0.05263021990192651,
+            0.6962872416202003,
+            2.249035398420389,
+            0.6715127612480964
+          ],
+          "NoPowerColor": [
+            -0.11756191290153895,
+            0.18826399304209412,
+            2.178280473164266,
+            0.9699523494793383
+          ],
+          "SelectionColor": [
+            1.02123602438221,
+            -0.03501378557176915,
+            1.7673107299206916,
+            0.22226848811514732
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0,
+        "eye_adaptation": 1.0,
+        "fx_emissive_intensity": 1.0
+      },
+      "gradient_rgba": [
+        0.24964591535214486,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          7.4261648056216085,
+          2.6283994082866595,
+          15.244772713042911
+        ],
+        "base_color": [
+          0.9045866147346682,
+          0.3312399586786918,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 23,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 1.3056630291239721,
+          "PowerPercent": 1.3941450010793441,
+          "ShouldUsePowerForColor": 0.7994144587184943,
+          "GradientAmount": 0.0050189539524404525,
+          "Intensity": 1.7675566166265821,
+          "DamagePercent": 0.6520534426864928
+        },
+        "colors": {
+          "Color": [
+            2.007225378948611,
+            -0.019203364011170565,
+            0.6549145406841644,
+            0.3163545360129473
+          ],
+          "ChargingUpColor": [
+            0.533800203539555,
+            1.9500127025356861,
+            2.0221946484490405,
+            0.4810094504108553
+          ],
+          "NoPowerColor": [
+            2.3614160809433025,
+            0.72334589019698,
+            1.197734624555584,
+            0.7783947401167344
+          ],
+          "SelectionColor": [
+            -0.159477165060965,
+            1.5568116064019752,
+            -0.14122461312625098,
+            0.5536677309314575
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0002,
+        "eye_adaptation": 4.0,
+        "fx_emissive_intensity": 2.0
+      },
+      "gradient_rgba": [
+        0.9359150479475745,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          1.4233924289989772,
+          0.27936104600065215,
+          0.0
+        ],
+        "base_color": [
+          1.0,
+          0.0,
+          0.018100477886415556
+        ]
+      }
+    },
+    {
+      "case": 24,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.8451011714751201,
+          "PowerPercent": 0.3602248522299363,
+          "ShouldUsePowerForColor": 0.9770819480901974,
+          "GradientAmount": -0.26393870315428514,
+          "Intensity": 1.9174414096143935,
+          "DamagePercent": -0.23436956395312225
+        },
+        "colors": {
+          "Color": [
+            1.9356523275568396,
+            1.4051239638979016,
+            1.9393935132053652,
+            0.6967551378823739
+          ],
+          "ChargingUpColor": [
+            1.4618845274742869,
+            1.8193564282195567,
+            1.1004021592135946,
+            0.4155838533650129
+          ],
+          "NoPowerColor": [
+            0.035604282917139574,
+            1.161917204102615,
+            2.3717665002420336,
+            0.5321358097753012
+          ],
+          "SelectionColor": [
+            1.059046768897752,
+            1.380027213100792,
+            1.5513872146885663,
+            0.3865893074608411
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": -1.0,
+        "eye_adaptation": 0.25,
+        "fx_emissive_intensity": 0.0
+      },
+      "gradient_rgba": [
+        0.4090680518184935,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.4094161569568234,
+          0.5335037645897497,
+          0.5997497089300561
+        ],
+        "base_color": [
+          0.722078434647466,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 25,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.7267830499563498,
+          "PowerPercent": -0.34962942913951867,
+          "ShouldUsePowerForColor": 0.2013490356478369,
+          "GradientAmount": 0.6423555193335758,
+          "Intensity": 1.046460630000726,
+          "DamagePercent": 0.9651229364163834
+        },
+        "colors": {
+          "Color": [
+            1.0712076993822142,
+            0.26696828688672736,
+            1.299884958565876,
+            0.0045127179440086485
+          ],
+          "ChargingUpColor": [
+            -0.18092467034282145,
+            0.9353292297734008,
+            1.8987879172514752,
+            0.4928088150555072
+          ],
+          "NoPowerColor": [
+            1.4520935802170247,
+            1.6732400262831562,
+            1.8489963687070894,
+            0.0704056531580024
+          ],
+          "SelectionColor": [
+            0.058531040088510566,
+            1.358608582728402,
+            1.248621733794825,
+            0.37564583480643887
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 0.0,
+        "eye_adaptation": 1.0,
+        "fx_emissive_intensity": 0.5
+      },
+      "gradient_rgba": [
+        0.497195451181197,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.12619244662747878,
+          0.5656629048385119,
+          0.5940018807605099
+        ],
+        "base_color": [
+          1.0,
+          0.6362627052813647,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 26,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.6578732612280159,
+          "PowerPercent": -0.2959630303976887,
+          "ShouldUsePowerForColor": 0.2026437228000575,
+          "GradientAmount": 1.1879082778179848,
+          "Intensity": 0.20861801758699405,
+          "DamagePercent": -0.555739564315347
+        },
+        "colors": {
+          "Color": [
+            -0.21638889049789664,
+            2.126589932094326,
+            0.6068475453941962,
+            0.9741833569302627
+          ],
+          "ChargingUpColor": [
+            1.5837774581116562,
+            1.8923597175795175,
+            0.6131711084167543,
+            0.027921858537913846
+          ],
+          "NoPowerColor": [
+            1.544693168320718,
+            -0.08013802834112235,
+            1.2645634245375312,
+            0.4153940749784266
+          ],
+          "SelectionColor": [
+            2.4535627000895515,
+            0.9964726187543897,
+            1.376473828865008,
+            0.2882485302292247
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0,
+        "eye_adaptation": 4.0,
+        "fx_emissive_intensity": 1.0
+      },
+      "gradient_rgba": [
+        0.7917655618121301,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.7097487488056194,
+          0.30587575588716454,
+          0.4061307493322941
+        ],
+        "base_color": [
+          0.2091665827284582,
+          1.0,
+          0.7794463289953458
+        ]
+      }
+    },
+    {
+      "case": 27,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 0.06522977495217402,
+          "PowerPercent": -0.2178416852912131,
+          "ShouldUsePowerForColor": 1.1823504980070694,
+          "GradientAmount": 0.5074496338189293,
+          "Intensity": 5.211542586711679,
+          "DamagePercent": -0.6426569860626774
+        },
+        "colors": {
+          "Color": [
+            1.503149191364419,
+            0.03310746179373736,
+            1.1069890462200436,
+            0.9998513955743586
+          ],
+          "ChargingUpColor": [
+            1.3372425513814836,
+            1.292077546820536,
+            2.179028871221975,
+            0.4954059654143318
+          ],
+          "NoPowerColor": [
+            2.023196197123732,
+            0.6823692636451377,
+            -0.17212156748354515,
+            0.1374103458229904
+          ],
+          "SelectionColor": [
+            2.1449460407497223,
+            1.3125411558055131,
+            2.485423108524932,
+            0.3714346366227682
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0002,
+        "eye_adaptation": 0.25,
+        "fx_emissive_intensity": 2.0
+      },
+      "gradient_rgba": [
+        0.08979455592190977,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          11.974956878081763,
+          3.7302819176442883,
+          0.0
+        ],
+        "base_color": [
+          1.0,
+          0.6648746831350453,
+          0.0
+        ]
+      }
+    },
+    {
+      "case": 28,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": 1.377705650511675,
+          "PowerPercent": 0.021151823694919247,
+          "ShouldUsePowerForColor": 0.011177822945255322,
+          "GradientAmount": 1.080810839472345,
+          "Intensity": 0.5196287387022394,
+          "DamagePercent": -0.09068018296011304
+        },
+        "colors": {
+          "Color": [
+            0.9397361543857872,
+            1.8769336755352115,
+            1.2722796302455732,
+            0.6203376415830987
+          ],
+          "ChargingUpColor": [
+            0.2766947186264551,
+            1.3012246375371461,
+            2.251119538445295,
+            0.8162750221683696
+          ],
+          "NoPowerColor": [
+            1.319616966104479,
+            1.4682779714939413,
+            1.384419438762661,
+            0.8803201580674085
+          ],
+          "SelectionColor": [
+            0.974796442008824,
+            2.3929191042502223,
+            2.2442500323120944,
+            0.7638513677075747
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": -1.0,
+        "eye_adaptation": 1.0,
+        "fx_emissive_intensity": 0.0
+      },
+      "gradient_rgba": [
+        0.3949181941512696,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.7445995954649177,
+          1.8278345305951167,
+          1.714273456659362
+        ],
+        "base_color": [
+          0.9439517896737567,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 29,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": -0.31331818320286337,
+          "PowerPercent": 0.907709543537352,
+          "ShouldUsePowerForColor": -0.14753535461091183,
+          "GradientAmount": -0.20632554161193153,
+          "Intensity": 4.500271600759094,
+          "DamagePercent": -0.11843444613904763
+        },
+        "colors": {
+          "Color": [
+            -0.09684788286368498,
+            1.7469219396637459,
+            1.2613694193956047,
+            0.3554656258157034
+          ],
+          "ChargingUpColor": [
+            0.17718661582185868,
+            0.8207109991763104,
+            -0.14921902677143245,
+            0.5143777052294741
+          ],
+          "NoPowerColor": [
+            0.5903631269941099,
+            1.4851196272780403,
+            0.14741732432893495,
+            0.2005176267564689
+          ],
+          "SelectionColor": [
+            1.50248805684193,
+            2.1135825217734405,
+            0.5350972900756753,
+            0.28649782258010303
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 0.0,
+        "eye_adaptation": 4.0,
+        "fx_emissive_intensity": 0.5
+      },
+      "gradient_rgba": [
+        0.53392875926797,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.4184823384065137,
+          0.753961581291311,
+          0.27157236926669137
+        ],
+        "base_color": [
+          0.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 30,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": -0.2343307242105052,
+          "PowerPercent": -0.31545617989146046,
+          "ShouldUsePowerForColor": 0.7949523841559748,
+          "GradientAmount": -0.06277900513010981,
+          "Intensity": 1.0468797931506515,
+          "DamagePercent": -0.5730441947012851
+        },
+        "colors": {
+          "Color": [
+            0.5532484452809692,
+            2.4061764339438043,
+            1.1706583766478704,
+            0.40103096573571073
+          ],
+          "ChargingUpColor": [
+            1.607981717537156,
+            0.4364805135491735,
+            0.958642427759983,
+            0.9385780471519516
+          ],
+          "NoPowerColor": [
+            1.5285031849679867,
+            0.41821065391816425,
+            1.4401169834685654,
+            0.9089709712761903
+          ],
+          "SelectionColor": [
+            0.4111634327649515,
+            1.8738752111160197,
+            2.154361176361725,
+            0.9265603354624561
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0,
+        "eye_adaptation": 0.25,
+        "fx_emissive_intensity": 1.0
+      },
+      "gradient_rgba": [
+        0.7161659658213956,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          0.5422235231430617,
+          1.8574641210033986,
+          2.1925142190359628
+        ],
+        "base_color": [
+          1.0,
+          0.9370034053833538,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": 31,
+      "record": {
+        "package": "/Game/Tests/Glow",
+        "master": "/Game/Pioneer/MaterialLibrary/M_Presets/M_BlockoutPreset_Glow",
+        "scalars": {
+          "ChargingUpPercent": -0.27821267908430114,
+          "PowerPercent": -0.1367593712551885,
+          "ShouldUsePowerForColor": -0.17945958225959163,
+          "GradientAmount": 0.2044137862973595,
+          "Intensity": 4.857906530344964,
+          "DamagePercent": -0.3327304879549111
+        },
+        "colors": {
+          "Color": [
+            2.1386412417511425,
+            0.4003157288346455,
+            0.5701798744707776,
+            0.6418628445816802
+          ],
+          "ChargingUpColor": [
+            1.809825856484642,
+            2.0199242515454556,
+            0.014486236996194224,
+            0.031097511711349557
+          ],
+          "NoPowerColor": [
+            1.422340068022877,
+            0.29543302689841855,
+            2.407833650362153,
+            0.06399739179851405
+          ],
+          "SelectionColor": [
+            0.7508251338178318,
+            1.761259798924359,
+            0.8530232285423296,
+            0.7721927037650287
+          ]
+        }
+      },
+      "context": {
+        "vertex_ndotv": 1.0002,
+        "eye_adaptation": 1.0,
+        "fx_emissive_intensity": 2.0
+      },
+      "gradient_rgba": [
+        0.7678934821336261,
+        0.31,
+        0.73,
+        0.91
+      ],
+      "expected": {
+        "emission": [
+          3.676639058306556,
+          2.0034081309261222,
+          0.9008716377116098
+        ],
+        "base_color": [
+          1.0,
+          0.4725206119781704,
+          0.17786155869593379
+        ]
+      }
+    }
+  ]
+}

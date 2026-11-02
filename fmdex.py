@@ -8,6 +8,7 @@ colliding basenames keep a nested ``tree``. Indexes are ``*_FMDex.json.br``
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import os
@@ -15,6 +16,69 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 log = logging.getLogger("arc_raiders.fmdex")
+
+_BROWSE_CATALOG_PATH = os.path.join(os.path.dirname(__file__), "assets", "browse_catalogs.json.gz")
+_browse_catalog = None
+
+
+def packaged_browser(kind: str) -> tuple:
+    """Read only shipped metadata; external FMDex discovery is action-time work."""
+    global _browse_catalog
+    if _browse_catalog is None:
+        with gzip.open(_BROWSE_CATALOG_PATH, "rt", encoding="utf-8") as source:
+            document = json.load(source)
+        if document.get("schema") != 1:
+            raise ValueError("Unsupported packaged browse catalog schema")
+        _browse_catalog = document
+    catalog = _browse_catalog[kind]
+    entries = [dict(zip(catalog["columns"], row)) for row in catalog["rows"]]
+    stats = dict(catalog["stats"])
+    stats.update(source_build=_browse_catalog["source_build"],
+                 source_generation=_browse_catalog["source_generation"])
+    return entries, stats
+
+
+def resolve_catalog_file(entry: dict, extension: str, root: str = "") -> str:
+    """Resolve portable package references only during an explicit asset action."""
+    from . import utils
+
+    def roots():
+        if root:
+            yield root
+        pioneer = utils.get_pioneer_root() or ""
+        if pioneer and pioneer != root:
+            yield pioneer
+
+    reference = (entry.get("source_json") or "").replace("\\", "/")
+    game_path = entry.get("game_path") or package_to_game_path(entry.get("package") or "")
+    relatives = []
+    if reference:
+        relatives.append(os.path.splitext(reference)[0] + extension)
+    if game_path.startswith("/Game/"):
+        relative = game_path[len("/Game/"):] + extension
+        relatives.extend(("PioneerGame/Content/" + relative, "Content/" + relative, relative))
+        if relative.startswith("Pioneer/"):
+            relatives.append(relative[len("Pioneer/"):])
+    for relative in tuple(relatives):
+        marker = "Effects/"
+        if marker in relative:
+            relatives.append(relative.split(marker, 1)[1])
+    stem = entry.get("stem") or entry.get("key") or ""
+    if (entry.get("key") or stem) == stem and stem and "/" not in stem and "\\" not in stem:
+        relatives.append(stem + extension)
+    for candidate_root in roots():
+        absolute_root = os.path.abspath(candidate_root)
+        for relative in dict.fromkeys(relatives):
+            candidate = os.path.abspath(os.path.join(absolute_root, relative))
+            try:
+                if os.path.commonpath((absolute_root, candidate)) != absolute_root:
+                    continue
+            except ValueError:
+                continue
+            if os.path.isfile(candidate):
+                return candidate
+    return ""
+
 
 FILE_GROUPS_KEY = "*"
 LAYOUT_FLAT_UNIQUE = "flatUnique"

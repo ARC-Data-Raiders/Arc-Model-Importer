@@ -78,6 +78,17 @@ def _run_export(command):
     return proc.returncode, ((proc.stdout or '') + '\n' + (proc.stderr or '')).strip()
 
 
+def _run_export_commands(commands):
+    """Sequential immutable command plan runs outside Blender on the IO executor."""
+    logs = []
+    for command in commands:
+        code, log = _run_export(command)
+        logs.append(log)
+        if code:
+            return code, "\n".join(logs)
+    return 0, "\n".join(logs)
+
+
 class BatchQueue:
     """Start the next batch only after every current import has returned fully."""
     def __init__(self, jobs, prepare, import_one, finalize=lambda _batch, _value: None):
@@ -146,7 +157,7 @@ class BatchQueue:
 def _prepare_batch(owner, batch):
     from . import appearance, pak_extract
     scene = owner._scene
-    game = pak_extract.configured_dir(scene)
+    game = pak_extract.configured_dir(scene) if str(getattr(scene, "arc_import_source", "PAK")) == "PAK" else ""
     if not game:
         return None
     rels = [job['rel'] for job in batch]
@@ -166,6 +177,7 @@ def _prepare_batch(owner, batch):
             if package:
                 rels.append(package)
     paths = []
+    cached_models = []
     for rel in rels:
         path = pak_extract.game_path(rel)
         if '/T_UI_Icon_' in path:
@@ -174,26 +186,43 @@ def _prepare_batch(owner, batch):
                 continue
         cached = pak_extract._expected_uemodel(pak_extract.cache_dir(), path)
         if cached and appearance._mesh_file_usable(cached) and pak_extract.mesh_cache_is_current(cached, scene):
+            cached_models.append(cached)
             continue
         if path not in paths:
             paths.append(path)
     owner._extract_plan = None
-    if not paths:
-        return None
+    metadata = pak_extract.material_metadata_plan(scene, cached_models)
+    if not paths and metadata is None:
+        raw = pak_extract.raw_material_metadata_plan(scene, model_paths=cached_models)
+        if raw is None:
+            return None
+        owner._extract_plan = {'raw_plan': raw, 'out': pak_extract.cache_dir(), 'paths': []}
+        return owner._executor.submit(_run_export, raw['command'])
     mapping = pak_extract.resolve_usmap(scene)
     if not mapping:
         raise RuntimeError('Select a usmap in Settings')
     out = pak_extract.cache_dir()
-    command = pak_extract.extraction_command(game, mapping, paths, out_dir=out)
-    owner._extract_plan = {'out': out, 'paths': paths, 'revision': pak_extract._extraction_revision(scene)}
-    return owner._executor.submit(_run_export, command)
+    commands = [metadata["command"]] if metadata else []
+    if paths:
+        commands.append(pak_extract.extraction_command(game, mapping, paths, out_dir=out))
+    owner._extract_plan = {'out': out, 'paths': paths, 'revision': pak_extract._extraction_revision(scene),
+                            'metadata_models': metadata['models'] if metadata else []}
+    return owner._executor.submit(_run_export_commands, commands)
 
 
 def _finalize_batch(owner, batch, result):
     from . import appearance, pak_extract
     plan = owner._extract_plan
     code, log = result
+    if plan.get('raw_plan'):
+        pak_extract.complete_raw_material_metadata(owner._scene, plan['raw_plan'], code, log)
+        return None
     pak_extract.complete_extraction(plan['out'], plan['paths'], code, log, plan['revision'])
+    if code:
+        raise RuntimeError('Pak preparation failed: ' + pak_extract._log_tail(log))
+    missing_metadata = [path for path in plan.get('metadata_models', ()) if not pak_extract.mesh_material_metadata_is_current(path)]
+    if missing_metadata:
+        raise RuntimeError('Native metadata does not match cached mesh: ' + str(missing_metadata))
     if batch[0]['part'] == 'BACKPACK' and not plan.get('material_pass'):
         dependencies = []
         for job in batch:
@@ -207,6 +236,11 @@ def _finalize_batch(owner, batch, result):
                 pak_extract.resolve_usmap(owner._scene), dependencies, out_dir=plan['out'])
             owner._extract_plan = {**plan, 'paths': dependencies, 'material_pass': True}
             return owner._executor.submit(_run_export, command)
+    models = [pak_extract._expected_uemodel(plan['out'], pak_extract.game_path(job['rel'])) for job in batch]
+    raw = pak_extract.raw_material_metadata_plan(owner._scene, model_paths=models)
+    if raw is not None:
+        owner._extract_plan = {**plan, 'paths': [], 'raw_plan': raw}
+        return owner._executor.submit(_run_export, raw['command'])
     for job in batch:
         path = pak_extract._expected_uemodel(plan['out'], pak_extract.game_path(job['rel']))
         if not appearance._mesh_file_usable(path):

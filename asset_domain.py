@@ -64,6 +64,13 @@ _DOMAIN_PATH_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "/landscape/",
             "/vehicles/",
             "/interactables/",
+            # Player outpost rooms and modules (architecture/prop-trim MIs).
+            "/items/outpost/",
+            # Top-level level, lighting and material-library meshes. Anchored so
+            # a Characters/.../Maps texture folder never matches.
+            "/pioneer/maps/",
+            "/pioneer/lighting/",
+            "/pioneer/materiallibrary/",
             # Top-level Props dumps (not Characters/.../Props)
             "/content/pioneer/props/",
             "/pioneer/props/",

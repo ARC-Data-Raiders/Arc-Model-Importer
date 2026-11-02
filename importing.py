@@ -813,72 +813,247 @@ def _fuzzy_skin_item_dir(slot_dir: str, item_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 def apply_outfit_preset(context, preset_json_path: str) -> int:
+    # One ArcPak metadata pass per outfit, not one per part: warm every part's
+    # slot sidecar together, then merge each part's material hierarchy request.
+    from . import pak_extract
+    scene = context.scene
+    with pak_extract.batched_material_hierarchy(scene):
+        meshes = [textures._fs_abspath(bpy.path.abspath(entry.psk_path)) for entry in scene.arc_psk_entries]
+        pak_extract.ensure_cached_mesh_material_metadata(scene, meshes)
+        return _apply_outfit_preset(context, preset_json_path)
+
+
+def _apply_outfit_preset(context, preset_json_path: str) -> int:
+    # Do not route authored batch choices through ``skin_choice``. It is a
+    # dynamic EnumProperty whose IDs are the scanned filenames; ArcPak may expose
+    # ``MI_*.arc-material.json`` there while DA_OI references ``MI_*.json``.
+    # Blender rejects the latter as an enum value and silently leaves the entry
+    # on NONE (the default skin). A string override keeps the exact authored path.
+    bindings = parse_outfit_preset_bindings(preset_json_path)
     preset_map = parse_outfit_preset(preset_json_path)
     mi_stems_from_preset = list(preset_map.values()) if preset_map else []
-    # Cosmetics often fail Assets-style part keys — also collect bare MI stems from the JSON
     if not mi_stems_from_preset:
         mi_stems_from_preset = _mi_stems_from_colourway_json(preset_json_path)
 
     updated = 0
     for entry in context.scene.arc_psk_entries:
+        try:
+            entry.batch_skin_json = ""
+            entry["arc_outfit_material_bindings"] = "{}"
+            entry["arc_unused_outfit_material_bindings"] = "[]"
+        except Exception:
+            pass
         psk_path = bpy.path.abspath(entry.psk_path)
-        mi_stem = None
-
         part_key = get_part_key(psk_path) or get_characters_rel_key(psk_path)
-        if part_key and preset_map:
-            part_key_norm = utils.normalize_part_key(part_key)
-            for pk, stem in preset_map.items():
-                if utils.normalize_part_key(pk) == part_key_norm:
-                    mi_stem = stem
-                    break
+        part_key_norm = utils.normalize_part_key(part_key) if part_key else ""
+        material_ref = bindings.get(part_key_norm, "")
+        resolved_bindings = resolve_outfit_preset_material_bindings(preset_json_path, psk_path)
+        entry["arc_outfit_material_bindings"] = json.dumps(resolved_bindings, sort_keys=True)
+        entry["arc_unused_outfit_material_bindings"] = json.dumps(getattr(resolved_bindings, "unused_native_bindings", []), sort_keys=True)
+        from .materials.dispatch import _mi_uses_layered_character_profile
+        layered = {path for path in resolved_bindings.values() if _mi_uses_layered_character_profile(path)}
+        skin_json = next(iter(layered)) if len(layered) == 1 else resolved_bindings.get("0", "")
+        secondary_only = bool(resolved_bindings) and not skin_json
+        mi_stem = os.path.basename(skin_json).split(".", 1)[0] if skin_json else ""
+
+        # Prefer the full Unreal package reference, matching ARC Texturer's
+        # part-and-slot-aware resolution. Basename matching remains a fallback
+        # for exports whose referenced MI has not been extracted yet.
+        if material_ref and not skin_json:
+            mi_stem = material_ref.rsplit("/", 1)[-1].split(".", 1)[0]
+            try:
+                skin_json = textures.find_asset_from_object_path(material_ref, ".json")
+                skin_json = textures.resolve_part_mi_json(skin_json, mi_stem) if skin_json else ""
+            except Exception:
+                skin_json = ""
 
         # Cosmetic fallback: any MI stem from the colourway that resolves beside this mesh
-        if not mi_stem:
+        if not secondary_only and not skin_json and not mi_stem:
+            mi_stem = next((stem for pk, stem in preset_map.items()
+                            if part_key_norm and utils.normalize_part_key(pk) == part_key_norm), "")
+        if not secondary_only and not skin_json and not mi_stem:
             for stem in mi_stems_from_preset:
                 if textures.find_skin_json_for_mi_stem(psk_path, stem):
                     mi_stem = stem
                     break
 
-        if not mi_stem:
-            continue
-        skin_json = textures.find_skin_json_for_mi_stem(psk_path, mi_stem)
+        if not skin_json and mi_stem:
+            skin_json = textures.find_skin_json_for_mi_stem(psk_path, mi_stem)
         if skin_json:
-            default_json = textures.get_base_skin_json(psk_path, entry.manual_skins_folder)
-            target_value = 'NONE'
-            if not (default_json and os.path.normcase(os.path.normpath(skin_json)) == os.path.normcase(os.path.normpath(default_json))):
-                target_value = skin_json
             try:
-                entry.skin_choice = target_value
+                entry.batch_skin_json = os.path.abspath(skin_json)
                 updated += 1
-            except TypeError as e:
-                print(f"Arc Raiders PSK Importer: Could not set skin for '{part_key}': {e}")
+            except Exception as e:
+                print(f"Arc Raiders PSK Importer: Could not set exact colourway MI for '{part_key}': {e}")
     return updated
 
-def parse_outfit_preset(json_path: str) -> dict:
+
+def parse_outfit_preset_slot_bindings(json_path: str) -> dict:
+    """Preserve exact DA_VP identity and material-slot selectors from modifiers."""
     result = {}
-    if not json_path or not os.path.isfile(json_path):
+    data = _load_ue_json(json_path)
+    if not data:
         return result
-    try:
-        data = _load_ue_json(json_path)
-        if not data:
-            return result
-        for entry in utils.ue_export_entries(data):
-            if entry.get("Type") not in _COLOURWAY_MOD_TYPES:
-                continue
-            props = entry.get("Properties", {})
-            mat_path = _soft_asset_path(props.get("Material"))
-            part_path = _soft_asset_path(props.get("Part"))
-            if not mat_path or not part_path:
-                continue
-            part_key = get_part_key_from_asset_path(part_path) or get_characters_rel_key(part_path)
-            if not part_key:
-                continue
-            mi_stem = mat_path.split("/")[-1].split(".")[0]
-            if mi_stem:
-                result[part_key] = mi_stem
-    except Exception as e:
-        print(f"Arc Raiders PSK Importer: Failed to parse outfit preset '{json_path}': {e}")
+    for entry in utils.ue_export_entries(data):
+        if entry.get("Type") not in _COLOURWAY_MOD_TYPES:
+            continue
+        props = entry.get("Properties") or {}
+        material = _soft_asset_path(props.get("Material"))
+        part = _soft_asset_path(props.get("Part"))
+        if not material or not part:
+            continue
+        part_key = get_part_key_from_asset_path(part) or get_characters_rel_key(part)
+        if not part_key:
+            continue
+        key = props.get("MaterialOverrideKey")
+        slot = key if key is not None and key != "" else props.get("MaterialSlot", 0)
+        if isinstance(slot, dict):
+            slot = slot.get("Name") or slot.get("Value")
+        if isinstance(slot, bool) or slot is None:
+            raise ValueError("Invalid authored material slot selector: " + repr(slot))
+        if isinstance(slot, int) or str(slot).isdigit():
+            slot = int(slot)
+        result.setdefault(utils.normalize_part_key(part_key), []).append({
+            "part": part, "slot": slot, "material": material,
+            "explicit_slot": "MaterialSlot" in props or "MaterialOverrideKey" in props,
+            "material_slot": props.get("MaterialSlot"), "material_override_key": props.get("MaterialOverrideKey")})
     return result
+
+
+def parse_outfit_preset_bindings(json_path: str) -> dict:
+    """Compatibility primary part binding; secondary section overrides stay separate."""
+    result = {}
+    for part, records in parse_outfit_preset_slot_bindings(json_path).items():
+        primary = {record["material"] for record in records if record["slot"] == 0}
+        if len(primary) > 1:
+            # Exact per-mesh API resolves distinct visual-part variants. The
+            # compatibility map cannot represent them and must not pick one.
+            continue
+        if primary:
+            result[part] = next(iter(primary))
+    return result
+
+
+def parse_outfit_preset(json_path: str) -> dict:
+    slots = parse_outfit_preset_slot_bindings(json_path)
+    result = {}
+    for part, reference in parse_outfit_preset_bindings(json_path).items():
+        original = get_part_key_from_asset_path(slots[part][0]["part"]) or get_characters_rel_key(slots[part][0]["part"])
+        result[original] = reference.rsplit("/", 1)[-1].split(".", 1)[0]
+    return result
+
+
+def _outfit_package_key(path):
+    text = str(path or "").replace("\\", "/")
+    for boundary in ("/PioneerGame/Content/", "/RemappedPlugins/Content/", "/Game/"):
+        offset = text.casefold().find(boundary.casefold())
+        if offset >= 0:
+            text = text[offset + len(boundary):]
+            break
+    leaf = text.rsplit("/", 1)[-1]
+    if "." in leaf:
+        text = text[:-len(leaf)] + leaf.split(".", 1)[0]
+    return text.strip("/").casefold()
+
+
+def _merge_outfit_slot_records(records, section_names=()):
+    """Merge exact matching visual-part records without a last-wins rule."""
+    result = {}
+    for record in records:
+        selector = record["slot"]
+        if isinstance(selector, int):
+            index = selector
+        else:
+            matches = [i for i, name in enumerate(section_names) if str(name).casefold() == str(selector).casefold()]
+            if len(matches) != 1:
+                raise ValueError("Authored material key has no unique native section: " + str(selector))
+            index = matches[0]
+        if index < 0 or (section_names and index >= len(section_names)):
+            raise ValueError("Authored material slot exceeds native section count: " + str(index))
+        previous = result.get(str(index))
+        if previous and _outfit_package_key(previous) != _outfit_package_key(record["material"]):
+            raise ValueError("Distinct materials bind the same exact visual-part slot: " + str(index))
+        result[str(index)] = record["material"]
+    return result
+
+
+def resolve_outfit_preset_material_bindings(json_path: str, mesh_path: str) -> dict:
+    """Resolve exact DA_VP.Mesh + selector to current section-indexed MI files."""
+    mesh_path = textures._fs_abspath(mesh_path)
+    import threading
+    if threading.current_thread() is threading.main_thread():
+        scene = getattr(getattr(globals().get('bpy'), "context", None), "scene", None)
+        if scene is not None:
+            from . import pak_extract
+            pak_extract.ensure_cached_mesh_material_metadata(scene, [mesh_path])
+    part = get_part_key(mesh_path) or get_characters_rel_key(mesh_path)
+    records = parse_outfit_preset_slot_bindings(json_path).get(utils.normalize_part_key(part), [])
+    selected, unresolved_parts = [], []
+    mesh_key = _outfit_package_key(mesh_path)
+    for record in records:
+        path = textures.find_asset_from_object_path(record["part"], ".json")
+        data = _load_ue_json(path) if path else None
+        mesh_refs = []
+        for entry in utils.ue_export_entries(data) if data else []:
+            props = entry.get("Properties") or {}
+            reference = _soft_asset_path(props.get("Mesh") or props.get("StaticMesh"))
+            if reference:
+                mesh_refs.append(reference)
+        if not mesh_refs:
+            unresolved_parts.append(record)
+        elif any(_outfit_package_key(reference) == mesh_key for reference in mesh_refs):
+            selected.append(record)
+    if not selected and records:
+        # Legacy exports without DA_VP JSON retain only an unambiguous main MI.
+        unique = {record["material"] for record in records if record["slot"] == 0}
+        if len(unique) == 1 and all(record["slot"] == 0 for record in records) and unresolved_parts:
+            selected = unresolved_parts
+        elif unresolved_parts:
+            raise ValueError("Missing exact visual-part mesh metadata for slot-aware preset: " + part)
+    if not selected:
+        return {}
+    sections = []
+    native_layout = None
+    if str(mesh_path).casefold().endswith(".uemodel") and os.path.isfile(mesh_path):
+        from .uemodel_import import parse_uemodel
+        _, _, lods = parse_uemodel(mesh_path)
+        sections = [row[0] for row in lods[0].materials]
+        from .native_material_slots import load_native_material_layout
+        native_layout = load_native_material_layout(mesh_path, lods[0].name, lods[0].materials)
+    else:
+        from .materials.common import _parse_sk_material_slots
+        sections = [row[0] for row in _parse_sk_material_slots(mesh_path)]
+    if native_layout is not None:
+        from .native_material_slots import resolve_native_slot_records, ResolvedMaterialBindings
+        references = resolve_native_slot_records(selected, native_layout)
+        result = ResolvedMaterialBindings(unused_native_bindings=references.unused_native_bindings)
+        if references.unused_native_bindings:
+            utils.get_logger().info("Retained unused native material bindings for %s: %s",
+                                    os.path.basename(mesh_path), references.unused_native_bindings)
+    else:
+        # Legacy caches retain strict section-range validation; never waive an
+        # out-of-range selector without exact native material-table metadata.
+        references = _merge_outfit_slot_records(selected, sections)
+        result = {}
+    for index, reference in references.items():
+        path = textures.find_asset_from_object_path(reference, ".json")
+        if not path or not os.path.isfile(path):
+            raise FileNotFoundError("Missing exact preset material: " + reference)
+        result[index] = os.path.abspath(path)
+    if threading.current_thread() is threading.main_thread():
+        scene = getattr(getattr(globals().get('bpy'), "context", None), "scene", None)
+        if scene is not None:
+            from . import pak_extract
+            pak_extract.ensure_cached_material_hierarchy(scene, material_paths=list(result.values()))
+    return result
+
+
+def stamp_outfit_preset_material_bindings(obj, json_path, mesh_path):
+    bindings = resolve_outfit_preset_material_bindings(json_path, mesh_path)
+    obj["arc_outfit_material_bindings"] = json.dumps(bindings, sort_keys=True)
+    obj["arc_unused_outfit_material_bindings"] = json.dumps(getattr(bindings, "unused_native_bindings", []), sort_keys=True)
+    obj["arc_outfit_material_preset"] = os.path.abspath(json_path)
+    return bindings
 
 
 def _mi_stems_from_colourway_json(json_path: str) -> list:
@@ -1162,3 +1337,4 @@ def get_character_name(psk_path: str) -> str:
             if i + 1 < len(parts):
                 return parts[i + 1]
     return ""
+

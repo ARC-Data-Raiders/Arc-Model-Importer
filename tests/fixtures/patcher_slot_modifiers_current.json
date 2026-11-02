@@ -1,0 +1,333 @@
+{
+  "source_build": 25979580,
+  "description": "Exact current cooked Patcher modifier fields for three two-slot visual parts. Source paths retained for traceability.",
+  "presets": {
+    "DA_OI_Outfit_Patcher_Color_Basic.json": [
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Emissive/MI_CRT_Screen_Blue.MI_CRT_Screen_Blue",
+            "SubPathString": ""
+          },
+          "MaterialSlot": 1,
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/DA_VP_Patcher_HeadgearTech.DA_VP_Patcher_HeadgearTech",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Emissive/MI_CRT_Screen_Blue.MI_CRT_Screen_Blue",
+            "SubPathString": ""
+          },
+          "MaterialSlot": 1,
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/DA_VP_Patcher_MaskSocket.DA_VP_Patcher_MaskSocket",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/Skins/Metal/MI_Patcher_Headgear_Metal.MI_Patcher_Headgear_Metal",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/DA_VP_Patcher_Headgear.DA_VP_Patcher_Headgear",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/Skins/Metal/MI_Patcher_Mask_Metal.MI_Patcher_Mask_Metal",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/DA_VP_Patcher_Mask.DA_VP_Patcher_Mask",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/Skins/Metal/MI_Patcher_Headgear_Metal.MI_Patcher_Headgear_Metal",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/DA_VP_Patcher_HeadgearTech.DA_VP_Patcher_HeadgearTech",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Pauldrone/Skins/Metal/MI_Patcher_Pauldrone_Metal.MI_Patcher_Pauldrone_Metal",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Pauldrone/DA_VP_Patcher_Pauldrone.DA_VP_Patcher_Pauldrone",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Emissive/MI_CRT_Screen_Blue.MI_CRT_Screen_Blue",
+            "SubPathString": ""
+          },
+          "MaterialSlot": 1,
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Pauldrone/DA_VP_Patcher_Pauldrone.DA_VP_Patcher_Pauldrone",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/Skins/Metal/MI_Patcher_Mask_Metal.MI_Patcher_Mask_Metal",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/DA_VP_Patcher_MaskSocket.DA_VP_Patcher_MaskSocket",
+            "SubPathString": ""
+          }
+        }
+      }
+    ],
+    "DA_OI_Outfit_Patcher_Color_Black.json": [
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Emissive/MI_CRT_Screen_Red.MI_CRT_Screen_Red",
+            "SubPathString": ""
+          },
+          "MaterialSlot": 1,
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Pauldrone/DA_VP_Patcher_Pauldrone.DA_VP_Patcher_Pauldrone",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/Skins/Metal_Black/MI_Patcher_Headgear_Metal_Black.MI_Patcher_Headgear_Metal_Black",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/DA_VP_Patcher_Headgear.DA_VP_Patcher_Headgear",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/Skins/Metal_Black/MI_Patcher_Mask_Metal_Black.MI_Patcher_Mask_Metal_Black",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/DA_VP_Patcher_Mask.DA_VP_Patcher_Mask",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/Skins/Metal_Black/MI_Patcher_Headgear_Metal_Black.MI_Patcher_Headgear_Metal_Black",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/DA_VP_Patcher_HeadgearTech.DA_VP_Patcher_HeadgearTech",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Emissive/MI_CRT_Screen_Red.MI_CRT_Screen_Red",
+            "SubPathString": ""
+          },
+          "MaterialSlot": 1,
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/DA_VP_Patcher_MaskSocket.DA_VP_Patcher_MaskSocket",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Emissive/MI_CRT_Screen_Red.MI_CRT_Screen_Red",
+            "SubPathString": ""
+          },
+          "MaterialSlot": 1,
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/DA_VP_Patcher_HeadgearTech.DA_VP_Patcher_HeadgearTech",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Pauldrone/Skins/Metal_Black/MI_Patcher_Pauldrone_Metal_Black.MI_Patcher_Pauldrone_Metal_Black",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Pauldrone/DA_VP_Patcher_Pauldrone.DA_VP_Patcher_Pauldrone",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/Skins/Metal_Black/MI_Patcher_Mask_Metal_Black.MI_Patcher_Mask_Metal_Black",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/DA_VP_Patcher_MaskSocket.DA_VP_Patcher_MaskSocket",
+            "SubPathString": ""
+          }
+        }
+      }
+    ],
+    "DA_OI_Outfit_Patcher_Color_White.json": [
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Emissive/MI_CRT_Screen_Yellow.MI_CRT_Screen_Yellow",
+            "SubPathString": ""
+          },
+          "MaterialSlot": 1,
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/DA_VP_Patcher_HeadgearTech.DA_VP_Patcher_HeadgearTech",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/Skins/Metal_White/MI_Patcher_Headgear_Metal_White.MI_Patcher_Headgear_Metal_White",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/DA_VP_Patcher_Headgear.DA_VP_Patcher_Headgear",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/Skins/Metal_White/MI_Patcher_Mask_Metal_White.MI_Patcher_Mask_Metal_White",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/DA_VP_Patcher_Mask.DA_VP_Patcher_Mask",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Emissive/MI_CRT_Screen_Yellow.MI_CRT_Screen_Yellow",
+            "SubPathString": ""
+          },
+          "MaterialSlot": 1,
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Pauldrone/DA_VP_Patcher_Pauldrone.DA_VP_Patcher_Pauldrone",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/Skins/Metal_White/MI_Patcher_Headgear_Metal_White.MI_Patcher_Headgear_Metal_White",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Headgear/DA_VP_Patcher_HeadgearTech.DA_VP_Patcher_HeadgearTech",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/Skins/Metal_White/MI_Patcher_Mask_Metal_White.MI_Patcher_Mask_Metal_White",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/DA_VP_Patcher_MaskSocket.DA_VP_Patcher_MaskSocket",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Pauldrone/Skins/Metal_White/MI_Patcher_Pauldrone_Metal_White.MI_Patcher_Pauldrone_Metal_White",
+            "SubPathString": ""
+          },
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Pauldrone/DA_VP_Patcher_Pauldrone.DA_VP_Patcher_Pauldrone",
+            "SubPathString": ""
+          }
+        }
+      },
+      {
+        "Type": "CustomizationVisualPartSetMaterialModifier",
+        "Properties": {
+          "Material": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Emissive/MI_CRT_Screen_Yellow.MI_CRT_Screen_Yellow",
+            "SubPathString": ""
+          },
+          "MaterialSlot": 1,
+          "Part": {
+            "AssetPathName": "/Game/Pioneer/Characters/Assets/Patcher/Mask/DA_VP_Patcher_MaskSocket.DA_VP_Patcher_MaskSocket",
+            "SubPathString": ""
+          }
+        }
+      }
+    ]
+  }
+}

@@ -310,20 +310,10 @@ def run_io_pool(func, items, *, max_workers=None, enabled=None, context=None):
 
 
 def preload_arc_node_groups() -> None:
-    """Warm ArcTexturer + helper groups so the first material skips libraries.load."""
-    ensure_arc_texturer_node_group()
-    ensure_decal_data_node_group()
-    ensure_decal_layermask_gate_node_group()
-    ensure_decal_layer_mask_node_group()
-    ensure_colormask_node_group()
-    ensure_curvature_id_override_node_group()
-    ensure_visor_node_group()
-    try:
-        from .materials import weapon as _weapon_mats
-
-        _weapon_mats.ensure_weapon_texturer_node_group()
-    except Exception as exc:
-        print(f"Arc Raiders PSK Importer: WeaponTexturer preload failed (non-fatal): {exc}")
+    """Original procedural helper; no retained binary library append."""
+    from .material_runtime.shared_helpers import ensure_group
+    for key in ('NormalFlipper','ColorMask_XYZ','Decal Data','Decal LayerMask Gate','Decal LayerMask','CurvatureID_Override','Visor'):
+        ensure_group(key,bpy)
 
 
 # ---------------------------------------------------------------------------
@@ -1057,6 +1047,10 @@ def find_node_group(name: str):
     """
     if not name:
         return None
+    from .material_runtime.shared_helpers import find_group as _find_original_helper
+    from .material_runtime.shared_helpers import supports as _helper_supported
+    original=_find_original_helper(name,bpy)
+    if _helper_supported(name):return original
     try:
         ng = bpy.data.node_groups.get(name)
         if ng is not None:
@@ -1577,203 +1571,33 @@ def apply_arc_debug_disable_mid_softlight(ng=None) -> int:
 
 
 def ensure_arc_texturer_node_group():
-    """Load ArcTexturer from ArcTexturer.blend; refresh if missing new sockets.
-
-    Returns the node group on success, or None (truthy/falsy for callers).
-    """
-    existing = find_arc_texturer_node_group()
-    if existing is not None and _arc_texturer_has_overlay_sockets(existing):
-        ensure_decal_data_node_group()
-        ensure_decal_layermask_gate_node_group()
-        ensure_colormask_node_group()
-        repair_arc_texturer_metal_rough_types(existing)
-        apply_arc_debug_weather_defaults(existing)
-        apply_arc_debug_disable_mid_softlight(existing)
-        return existing
-    if not os.path.isfile(_BLEND_PATH):
-        print(f"Arc Raiders PSK Importer: Cannot find bundled blend at '{_BLEND_PATH}'")
-        return None
-    # Stale in-memory group (pre-overlay / broken DN5): replace from blend.
-    if existing is not None:
-        try:
-            existing.name = f"{_NODE_GROUP}_stale"
-        except Exception:
-            pass
-    with bpy.data.libraries.load(_BLEND_PATH, link=False) as (data_from, data_to):
-        blend_names = list(data_from.node_groups)
-        load_name = None
-        for candidate in _NODE_GROUP_ALIASES:
-            if candidate in blend_names:
-                load_name = candidate
-                break
-        if load_name is None:
-            for n in blend_names:
-                if n.replace(" ", "") == "ArcTexturer":
-                    load_name = n
-                    break
-        if load_name is None:
-            print(f"Arc Raiders PSK Importer: Node group '{_NODE_GROUP}' not in blend file")
-            return None
-        data_to.node_groups = [load_name]
-    loaded = find_arc_texturer_node_group()
-    if loaded is None:
-        for ng in bpy.data.node_groups:
-            compact = ng.name.replace(" ", "")
-            if compact.startswith("ArcTexturer") and _arc_texturer_has_overlay_sockets(ng):
-                try:
-                    ng.name = _NODE_GROUP
-                except Exception:
-                    pass
-                loaded = find_arc_texturer_node_group() or ng
-                break
-    stale = find_node_group(f"{_NODE_GROUP}_stale")
-    if stale is not None and stale.users == 0:
-        bpy.data.node_groups.remove(stale)
-    ensure_decal_data_node_group()
-    ensure_decal_layermask_gate_node_group()
-    ensure_colormask_node_group()
-    final = find_arc_texturer_node_group() or loaded
-    if final is not None and _arc_texturer_has_overlay_sockets(final):
-        repair_arc_texturer_metal_rough_types(final)
-        apply_arc_debug_weather_defaults(final)
-        apply_arc_debug_disable_mid_softlight(final)
-        return final
-    return None
+    """Original procedural helper; no retained binary library append."""
+    from .material_runtime.shared_helpers import ensure_group
+    return ensure_group(_NODE_GROUP,bpy)
 
 
 def ensure_decal_data_node_group() -> bool:
-    """Load the Decal Data helper group (RG->Z normal reconstruct + rough/metal)."""
-    if find_node_group(_DECAL_DATA_GROUP) is not None:
-        return True
-    if not os.path.isfile(_BLEND_PATH):
-        return False
-    with bpy.data.libraries.load(_BLEND_PATH, link=False) as (data_from, data_to):
-        if _DECAL_DATA_GROUP not in data_from.node_groups:
-            print(f"Arc Raiders PSK Importer: Node group '{_DECAL_DATA_GROUP}' not in blend file")
-            return False
-        data_to.node_groups = [_DECAL_DATA_GROUP]
-    loaded = find_node_group(_DECAL_DATA_GROUP)
-    if loaded is None:
-        for ng in bpy.data.node_groups:
-            if ng.name.startswith(f"{_DECAL_DATA_GROUP}."):
-                try:
-                    ng.name = _DECAL_DATA_GROUP
-                except Exception:
-                    pass
-                loaded = find_node_group(_DECAL_DATA_GROUP) or ng
-                break
-    return loaded is not None
+    """Original procedural helper; no retained binary library append."""
+    from .material_runtime.shared_helpers import ensure_group
+    return ensure_group(_DECAL_DATA_GROUP,bpy) is not None
 
 
 def ensure_decal_layermask_gate_node_group() -> bool:
-    """Load Decal LayerMask Gate (Material ID + bitmask → 0/1 zone gate)."""
-    if find_node_group(_DECAL_LAYERMASK_GATE_GROUP) is not None:
-        return True
-    if not os.path.isfile(_BLEND_PATH):
-        return False
-    with bpy.data.libraries.load(_BLEND_PATH, link=False) as (data_from, data_to):
-        if _DECAL_LAYERMASK_GATE_GROUP not in data_from.node_groups:
-            print(
-                f"Arc Raiders PSK Importer: Node group "
-                f"'{_DECAL_LAYERMASK_GATE_GROUP}' not in blend file"
-            )
-            return False
-        data_to.node_groups = [_DECAL_LAYERMASK_GATE_GROUP]
-    loaded = find_node_group(_DECAL_LAYERMASK_GATE_GROUP)
-    if loaded is None:
-        for ng in bpy.data.node_groups:
-            if ng.name.startswith(f"{_DECAL_LAYERMASK_GATE_GROUP}."):
-                try:
-                    ng.name = _DECAL_LAYERMASK_GATE_GROUP
-                except Exception:
-                    pass
-                loaded = find_node_group(_DECAL_LAYERMASK_GATE_GROUP) or ng
-                break
-    return loaded is not None
+    """Original procedural helper; no retained binary library append."""
+    from .material_runtime.shared_helpers import ensure_group
+    return ensure_group(_DECAL_LAYERMASK_GATE_GROUP,bpy) is not None
 
 
 def ensure_decal_layer_mask_node_group() -> bool:
-    """Ensure ``Decal LayerMask``: Material ID + bitmask + Alpha → masked Alpha.
-
-    Wraps ``Decal LayerMask Gate`` × sticker Alpha so each decal only needs one
-    external node (per-material LayerMask default on the group instance).
-    """
-    existing = find_node_group(_DECAL_LAYER_MASK_GROUP)
-    if existing is not None:
-        try:
-            names = {item.name for item in existing.interface.items_tree if hasattr(item, "name")}
-        except Exception:
-            names = set()
-        if {"Material ID", "LayerMask", "Alpha"}.issubset(names) and "Alpha" in names:
-            return True
-        # Stale/incomplete — rebuild.
-        try:
-            existing.name = f"{_DECAL_LAYER_MASK_GROUP}_stale"
-        except Exception:
-            pass
-
-    if not ensure_decal_layermask_gate_node_group():
-        return False
-    gate_tree = find_node_group(_DECAL_LAYERMASK_GATE_GROUP)
-    if gate_tree is None:
-        return False
-
-    ng = bpy.data.node_groups.new(_DECAL_LAYER_MASK_GROUP, "ShaderNodeTree")
-    iface = ng.interface
-    iface.new_socket(name="Material ID", in_out="INPUT", socket_type="NodeSocketFloat")
-    mask_sock = iface.new_socket(
-        name="LayerMask", in_out="INPUT", socket_type="NodeSocketFloat"
-    )
-    try:
-        mask_sock.default_value = 255.0
-    except Exception:
-        pass
-    iface.new_socket(name="Alpha", in_out="INPUT", socket_type="NodeSocketFloat")
-    iface.new_socket(name="Alpha", in_out="OUTPUT", socket_type="NodeSocketFloat")
-
-    gi = ng.nodes.new("NodeGroupInput")
-    gi.location = (-480.0, 0.0)
-    go = ng.nodes.new("NodeGroupOutput")
-    go.location = (280.0, 0.0)
-
-    gate = ng.nodes.new("ShaderNodeGroup")
-    gate.node_tree = gate_tree
-    gate.label = "Zone Gate"
-    gate.location = (-200.0, 80.0)
-
-    mul = ng.nodes.new("ShaderNodeMath")
-    mul.operation = "MULTIPLY"
-    mul.label = "Gate × Alpha"
-    mul.location = (40.0, 0.0)
-
-    ng.links.new(gi.outputs["Material ID"], gate.inputs["Material ID"])
-    ng.links.new(gi.outputs["LayerMask"], gate.inputs["LayerMask"])
-    ng.links.new(gate.outputs["Gate"], mul.inputs[0])
-    ng.links.new(gi.outputs["Alpha"], mul.inputs[1])
-    ng.links.new(mul.outputs[0], go.inputs["Alpha"])
-
-    stale = find_node_group(f"{_DECAL_LAYER_MASK_GROUP}_stale")
-    if stale is not None and stale.users == 0:
-        try:
-            bpy.data.node_groups.remove(stale)
-        except Exception:
-            pass
-    return find_node_group(_DECAL_LAYER_MASK_GROUP) is not None
+    """Original procedural helper; no retained binary library append."""
+    from .material_runtime.shared_helpers import ensure_group
+    return ensure_group(_DECAL_LAYER_MASK_GROUP,bpy) is not None
 
 
 def ensure_colormask_node_group() -> bool:
-    existing = find_node_group(_COLORMASK_GROUP)
-    if existing is not None:
-        return True
-    if not os.path.isfile(_BLEND_PATH):
-        print(f"Arc Raiders PSK Importer: Cannot find bundled blend at '{_BLEND_PATH}'")
-        return False
-    with bpy.data.libraries.load(_BLEND_PATH, link=False) as (data_from, data_to):
-        if _COLORMASK_GROUP not in data_from.node_groups:
-            print(f"Arc Raiders PSK Importer: Node group '{_COLORMASK_GROUP}' not in blend file")
-            return False
-        data_to.node_groups = [_COLORMASK_GROUP]
-    return find_node_group(_COLORMASK_GROUP) is not None
+    """Original procedural helper; no retained binary library append."""
+    from .material_runtime.shared_helpers import ensure_group
+    return ensure_group(_COLORMASK_GROUP,bpy) is not None
 
 
 def _curvature_id_override_has_color_map(ng) -> bool:
@@ -1830,58 +1654,15 @@ def _curvature_id_override_is_current(ng) -> bool:
 
 
 def ensure_curvature_id_override_node_group() -> bool:
-    """Load CurvatureID_Override (Arc + override BSDF mixer via OCM Color N).
-
-    Reloads from ArcTexturer.blend when the in-memory group still has the legacy
-    float ``Material ID`` socket (pre Color-input Separate Color inside group)
-    or is missing the ``Enable`` passthrough gate.
-    """
-    existing = find_node_group(_CURVATURE_ID_OVERRIDE_GROUP)
-    if existing is not None and _curvature_id_override_is_current(existing):
-        return True
-    if not os.path.isfile(_BLEND_PATH):
-        return existing is not None
-    if existing is not None:
-        try:
-            existing.name = f"{_CURVATURE_ID_OVERRIDE_GROUP}_stale"
-        except Exception:
-            pass
-    with bpy.data.libraries.load(_BLEND_PATH, link=False) as (data_from, data_to):
-        if _CURVATURE_ID_OVERRIDE_GROUP not in data_from.node_groups:
-            print(
-                f"Arc Raiders PSK Importer: Node group "
-                f"'{_CURVATURE_ID_OVERRIDE_GROUP}' not found in blend file"
-            )
-            stale = find_node_group(f"{_CURVATURE_ID_OVERRIDE_GROUP}_stale")
-            if stale is not None:
-                try:
-                    stale.name = _CURVATURE_ID_OVERRIDE_GROUP
-                except Exception:
-                    pass
-            return find_node_group(_CURVATURE_ID_OVERRIDE_GROUP) is not None
-        data_to.node_groups = [_CURVATURE_ID_OVERRIDE_GROUP]
-    loaded = find_node_group(_CURVATURE_ID_OVERRIDE_GROUP)
-    if loaded is None:
-        for ng in bpy.data.node_groups:
-            if ng.name.startswith(f"{_CURVATURE_ID_OVERRIDE_GROUP}."):
-                try:
-                    ng.name = _CURVATURE_ID_OVERRIDE_GROUP
-                except Exception:
-                    pass
-                loaded = find_node_group(_CURVATURE_ID_OVERRIDE_GROUP) or ng
-                break
-    stale = find_node_group(f"{_CURVATURE_ID_OVERRIDE_GROUP}_stale")
-    if stale is not None and stale.users == 0:
-        try:
-            bpy.data.node_groups.remove(stale)
-        except Exception:
-            pass
-    return loaded is not None and _curvature_id_override_is_current(loaded)
+    """Original procedural helper; no retained binary library append."""
+    from .material_runtime.shared_helpers import ensure_group
+    return ensure_group(_CURVATURE_ID_OVERRIDE_GROUP,bpy) is not None
 
 
 def ensure_visor_node_group() -> bool:
-    """Load reusable Visor glass BSDF group."""
-    return ensure_node_group(_VISOR_GROUP)
+    """Original procedural helper; no retained binary library append."""
+    from .material_runtime.shared_helpers import ensure_group
+    return ensure_group(_VISOR_GROUP,bpy) is not None
 
 
 def strip_node_group_material_outputs(ng) -> int:
@@ -2061,43 +1842,16 @@ def repair_teeth_group(ng=None) -> bool:
 
 
 def ensure_node_group(name: str) -> bool:
-    existing = find_node_group(name)
-    if existing is not None:
-        if name == "Face Shader":
-            strip_node_group_material_outputs(existing)
-            repair_face_shader_normal_flipper(existing)
-        elif name == "Teeth":
-            repair_teeth_group(existing)
-        return True
-    if not os.path.isfile(_BLEND_PATH):
-        return False
-    # Face Shader / Teeth nest NormalFlipper — load the dependency first.
-    if name in ("Face Shader", "Teeth") and find_node_group("NormalFlipper") is None:
-        ensure_node_group("NormalFlipper")
-    with bpy.data.libraries.load(_BLEND_PATH, link=False) as (data_from, data_to):
-        if name not in data_from.node_groups:
-            print(f"Arc Raiders PSK Importer: Node group '{name}' not found in blend file")
-            return False
-        data_to.node_groups = [name]
-    ng = find_node_group(name)
-    if ng is not None and name == "Face Shader":
-        strip_node_group_material_outputs(ng)
-        repair_face_shader_normal_flipper(ng)
-    elif ng is not None and name == "Teeth":
-        repair_teeth_group(ng)
-    return ng is not None
+    """Original procedural helper; no retained binary library append."""
+    from .material_runtime.shared_helpers import ensure_group
+    return ensure_group(name,bpy) is not None
 
 def ensure_material(name: str) -> bool:
-    if name in bpy.data.materials:
-        return True
-    if not os.path.isfile(_BLEND_PATH):
-        return False
-    with bpy.data.libraries.load(_BLEND_PATH, link=False) as (data_from, data_to):
-        if name not in data_from.materials:
-            print(f"Arc Raiders PSK Importer: Material '{name}' not found in blend file")
-            return False
-        data_to.materials = [name]
-    return name in bpy.data.materials
+    """Original procedural helper; no retained binary library append."""
+    from .material_runtime.shared_helpers import UnsupportedHelperGroup
+    existing=bpy.data.materials.get(name)
+    if existing is not None and existing.get('dr.original_construction') and existing.get('dr.legacy_material_key')==name:return True
+    raise UnsupportedHelperGroup('Historical bundled material templates are retired from production fallback: '+str(name))
 
 def normalize_ue_uv_layer_names(mesh) -> int:
     """Rename UV layers to ``UV0``, ``UV1``, … matching UE TexCoord indices.

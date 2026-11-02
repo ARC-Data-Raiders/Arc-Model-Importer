@@ -1,0 +1,1705 @@
+{
+  "meta": {
+    "source": "SK_Goalie_Shirt.001_Mat (live Goalie Shirt clothing graph)",
+    "material": "SK_Goalie_Shirt.001_Mat",
+    "object": "SK_Goalie_Shirt.001",
+    "notes": "Captured absolute node locations from user-arranged Goalie clothing graph. ColorABC/ColorABC2 absolute from SK_Goalie_Shirt.001 (primary ~-2360, secondary ~-1790); TA ColorMask placer is TA_* only and must not move them. Unconnected ColorMaskSwatch/Pattern* RGB row only (never ColorABC) at 5_ColorMaskSwatch (-2618.32, 1287.78), step +280 X. Unconnected TA mask textures are packed at runtime into the left 2-col cluster (~-5441/-5132); connected masks keep ColorMask/Arc placers. No ColorTex / TextureArray_Colors. TA normals left of BaseColorOverlay; dual TA UV roles. BaseColorOverlay 1–5 absolute; 6–9 extrapolated (~-249.47 Y/step) — placer uses first Overlay N link (not socket-index Y). Decals internalized. Overlay Fac on Arc only. MI params at captured labels. TA image labels are Cotton skin; cross-skin placement uses role:TAMask:N / role:TANormal:N.",
+    "count": 180,
+    "ta_normal_slots": {
+      "1": [
+        -457.0,
+        -506.26
+      ],
+      "2": [
+        -452.32,
+        -754.57
+      ],
+      "3": [
+        -440.92,
+        -996.53
+      ],
+      "4": [
+        -446.67,
+        -1246.1
+      ],
+      "5": [
+        -446.93,
+        -1497.6
+      ],
+      "6": [
+        -434.81,
+        -1745.88
+      ],
+      "7": [
+        -426.16,
+        -1995.47
+      ],
+      "8": [
+        -428.23,
+        -2245.93
+      ],
+      "9": [
+        -427.88,
+        -2497.41
+      ]
+    },
+    "ta_normal_slots_note": "Mix 1-9 placeholder coords from SK_Goalie_UpperBody live graph. TA normals place by first Arc Mix/Medium/Edge/Crease Normal link slot; role:TANormal:N slice keys are not used for Y. Collapsed (hide=true) by default.",
+    "ta_colormask_slots": {
+      "1": [
+        -3607.39,
+        -537.89
+      ],
+      "2": [
+        -3342.95,
+        -798.86
+      ],
+      "3": [
+        -3114.59,
+        -1042.52
+      ],
+      "4": [
+        -2865.84,
+        -1304.82
+      ],
+      "5": [
+        -2597.95,
+        -1578.98
+      ],
+      "6": [
+        -2367.99,
+        -1805.97
+      ],
+      "7": [
+        -2106.69,
+        -2077.15
+      ],
+      "8": [
+        -1855.38,
+        -2341.55
+      ]
+    },
+    "ta_colormask_slots_note": "ColorMask_XYZ zone 1-8 adjacent coords from SK_Goalie_Pants live graph. TA feeds (BaseRoughness masks / any ColorMask Roughness|Metal|X_Green|Y_Blue|Z_Pink link) place by first ColorMask zone link; collapsed (hide=true) by default."
+  },
+  "nodes": [
+    {
+      "key": "role:ArcTexturer",
+      "location": [
+        282.24,
+        -47.04
+      ],
+      "hide": false,
+      "width": 246.64
+    },
+    {
+      "key": "label:T_Shirt_OcclusionCurvatureMaterialID.png",
+      "location": [
+        -40.36,
+        268.09
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "role:MainOcclusion",
+      "location": [
+        -40.36,
+        268.09
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:T_Shirt_Normal.png",
+      "location": [
+        -27.87,
+        -125.02
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "role:MainNormal",
+      "location": [
+        -27.87,
+        -125.02
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:T_Shirt_BaseColor.png",
+      "location": [
+        -37.42,
+        69.3
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "role:MainBaseColor",
+      "location": [
+        -37.42,
+        69.3
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:T_Shirt_ColorMask.png",
+      "location": [
+        -3632.24,
+        96.31
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "role:MainColorMask",
+      "location": [
+        -3632.24,
+        96.31
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:ColorMask_XYZ (zone 1)",
+      "location": [
+        -2847.47,
+        -295.73
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:ColorMask_XYZ (zone 2)",
+      "location": [
+        -2577.38,
+        -544.29
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:ColorMask_XYZ (zone 3)",
+      "location": [
+        -2306.97,
+        -800.41
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:ColorMask_XYZ (zone 4)",
+      "location": [
+        -2050.51,
+        -1041.78
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:ColorMask_XYZ (zone 5)",
+      "location": [
+        -1790.93,
+        -1282.83
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:ColorMask_XYZ (zone 6)",
+      "location": [
+        -1572.08,
+        -1490.92
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:ColorMask_XYZ (zone 7)",
+      "location": [
+        -1300.19,
+        -1742.9
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:ColorMask_XYZ (zone 8)",
+      "location": [
+        -1006.37,
+        -2006.72
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "role:TANormalUV",
+      "location": [
+        -876.0,
+        71.0
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "role:TANormalMapping",
+      "location": [
+        -674.0,
+        77.0
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "role:TAMaskUV",
+      "location": [
+        -4290.8,
+        -163.98
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "role:TAMaskMapping",
+      "location": [
+        -4086.54,
+        -167.46
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Masks_0.png",
+      "location": [
+        -3703.09,
+        -702.7
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "role:TAMask:0",
+      "location": [
+        -3703.09,
+        -702.7
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Masks_1.png",
+      "location": [
+        -5441.27,
+        -1343.98
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "role:TAMask:1",
+      "location": [
+        -5441.27,
+        -1343.98
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Masks_10.png",
+      "location": [
+        -5131.9,
+        -1355.71
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "role:TAMask:10",
+      "location": [
+        -5131.9,
+        -1355.71
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Masks_2.png",
+      "location": [
+        -3205.83,
+        -1750.9
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "role:TAMask:2",
+      "location": [
+        -3205.83,
+        -1750.9
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Masks_3.png",
+      "location": [
+        -5448.16,
+        -1836.38
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "role:TAMask:3",
+      "location": [
+        -5448.16,
+        -1836.38
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Masks_4.png",
+      "location": [
+        -3578.03,
+        -975.41
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "role:TAMask:4",
+      "location": [
+        -3578.03,
+        -975.41
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Masks_5.png",
+      "location": [
+        -5119.82,
+        -1850.92
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "role:TAMask:5",
+      "location": [
+        -5119.82,
+        -1850.92
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Masks_6.png",
+      "location": [
+        -5445.04,
+        -2307.25
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "role:TAMask:6",
+      "location": [
+        -5445.04,
+        -2307.25
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Masks_7.png",
+      "location": [
+        -5094.61,
+        -2326.38
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "role:TAMask:7",
+      "location": [
+        -5094.61,
+        -2326.38
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Masks_8.png",
+      "location": [
+        -3327.63,
+        -1485.59
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "role:TAMask:8",
+      "location": [
+        -3327.63,
+        -1485.59
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Masks_9.png",
+      "location": [
+        -5466.23,
+        -2869.91
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "role:TAMask:9",
+      "location": [
+        -5466.23,
+        -2869.91
+      ],
+      "hide": false,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Normals_5.png",
+      "location": [
+        -465.94,
+        -1246.08
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "role:TANormal:5",
+      "location": [
+        -465.94,
+        -1246.08
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Normals_2.png",
+      "location": [
+        -487.6,
+        -768.19
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "role:TANormal:2",
+      "location": [
+        -487.6,
+        -768.19
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Normals_0.png",
+      "location": [
+        -503.82,
+        -498.49
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "role:TANormal:0",
+      "location": [
+        -503.82,
+        -498.49
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:TA_Goalie_Shirt_Cotton_Normals_3.png",
+      "location": [
+        -452.32,
+        -1503.87
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "role:TANormal:3",
+      "location": [
+        -452.32,
+        -1503.87
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "role:MaterialOutput",
+      "location": [
+        607.44,
+        -21.24
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:ColorA",
+      "location": [
+        -2352.45,
+        586.35
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:ColorB",
+      "location": [
+        -2371.8,
+        156.9
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:ColorC",
+      "location": [
+        -2361.49,
+        385.11
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:ColorA2",
+      "location": [
+        -1785.17,
+        598.71
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:ColorB2",
+      "location": [
+        -1794.86,
+        399.69
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:ColorC2",
+      "location": [
+        -1792.6,
+        169.17
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_ColorMaskSwatch",
+      "location": [
+        -2618.32,
+        1287.78
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:1_CreaseColorOverlay",
+      "location": [
+        66.57,
+        -405.75
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:1_BaseColorOverlay",
+      "location": [
+        -97.06,
+        -292.69
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_EdgeColorOverlay",
+      "location": [
+        81.64,
+        -681.27
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_CreaseColorOverlay",
+      "location": [
+        82.01,
+        -649.76
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_BaseColorOverlay",
+      "location": [
+        -85.53,
+        -541.69
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_EdgeColorOverlay",
+      "location": [
+        96.84,
+        -928.06
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_CreaseColorOverlay",
+      "location": [
+        96.27,
+        -894.53
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_BaseColorOverlay",
+      "location": [
+        -80.65,
+        -794.9
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:4_CreaseColorOverlay",
+      "location": [
+        107.72,
+        -1159.22
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:4_BaseColorOverlay",
+      "location": [
+        -85.22,
+        -1043.42
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_EdgeColorOverlay",
+      "location": [
+        96.6,
+        -1432.98
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_CreaseColorOverlay",
+      "location": [
+        95.83,
+        -1398.19
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_BaseColorOverlay",
+      "location": [
+        -79.4,
+        -1290.58
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:6_BaseColorOverlay",
+      "location": [
+        -79.4,
+        -1540.05
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:7_BaseColorOverlay",
+      "location": [
+        -79.4,
+        -1789.52
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:8_BaseColorOverlay",
+      "location": [
+        -79.4,
+        -2039.0
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:9_BaseColorOverlay",
+      "location": [
+        -79.4,
+        -2288.47
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal UV",
+      "location": [
+        -1524.45,
+        -3400.87
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 1  R=0.0170 G=-0.0855  SX=2.463 SY=4.699  Rot=-0.0\u00b0  CLI",
+      "location": [
+        -1002.5,
+        -2633.85
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 1 UVMap",
+      "location": [
+        -1002.5,
+        -2633.85
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 1 Scale/Loc",
+      "location": [
+        -835.74,
+        -2641.05
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 1: T_Decal_ALASquare_01_C",
+      "location": [
+        -533.61,
+        -2650.01
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 1 ColorTex",
+      "location": [
+        -533.61,
+        -2650.01
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 2  R=0.3208 G=0.1915  SX=2.488 SY=3.662  Rot=86.8\u00b0  CLIP",
+      "location": [
+        -1002.99,
+        -2850.94
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 2 UVMap",
+      "location": [
+        -1002.99,
+        -2850.94
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 2 Scale/Loc",
+      "location": [
+        -837.4,
+        -2851.44
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 2: T_Line_Dual_C",
+      "location": [
+        -527.43,
+        -2861.99
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 2 ColorTex",
+      "location": [
+        -527.43,
+        -2861.99
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 2 Normal: T_Line_Dual_M",
+      "location": [
+        -166.65,
+        -2896.79
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 2 DataTex",
+      "location": [
+        -166.65,
+        -2896.79
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 3  R=0.0891 G=0.0330  SX=4.875 SY=4.270  Rot=14.0\u00b0  CLIP",
+      "location": [
+        -999.36,
+        -3066.91
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 3 UVMap",
+      "location": [
+        -999.36,
+        -3066.91
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 3 Scale/Loc",
+      "location": [
+        -833.29,
+        -3072.46
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 3: T_Line_Dual_C",
+      "location": [
+        -512.19,
+        -3079.76
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 3 ColorTex",
+      "location": [
+        -512.19,
+        -3079.76
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 3 Normal: T_Line_Dual_M",
+      "location": [
+        -168.02,
+        -3106.03
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 3 DataTex",
+      "location": [
+        -168.02,
+        -3106.03
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 4  R=0.1450 G=-0.1809  SX=1.290 SY=6.510  Rot=-0.4\u00b0  CLI",
+      "location": [
+        -1003.52,
+        -3286.09
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 4 UVMap",
+      "location": [
+        -1003.52,
+        -3286.09
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 4 Scale/Loc",
+      "location": [
+        -832.58,
+        -3287.69
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 4: T_Line_Single_C",
+      "location": [
+        -515.98,
+        -3284.96
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 4 ColorTex",
+      "location": [
+        -515.98,
+        -3284.96
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 4 Normal: T_Line_Single_M",
+      "location": [
+        -170.38,
+        -3309.59
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 4 DataTex",
+      "location": [
+        -170.38,
+        -3309.59
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 5  R=-0.3699 G=-0.1196  SX=1.290 SY=6.510  Rot=0.5\u00b0  CLI",
+      "location": [
+        -1004.81,
+        -3510.59
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 5 UVMap",
+      "location": [
+        -1004.81,
+        -3510.59
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 5 Scale/Loc",
+      "location": [
+        -832.84,
+        -3509.47
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 5: T_Line_Single_C",
+      "location": [
+        -507.97,
+        -3495.59
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 5 ColorTex",
+      "location": [
+        -507.97,
+        -3495.59
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 5 Normal: T_Line_Single_M",
+      "location": [
+        -167.14,
+        -3518.96
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 5 DataTex",
+      "location": [
+        -167.14,
+        -3518.96
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 6  R=0.1983 G=-0.1801  SX=3.548 SY=3.636  Rot=15.2\u00b0  CLI",
+      "location": [
+        -1011.54,
+        -3723.72
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 6 UVMap",
+      "location": [
+        -1011.54,
+        -3723.72
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 6 Scale/Loc",
+      "location": [
+        -825.09,
+        -3731.24
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 6: T_Decal_ALASquare_2_C",
+      "location": [
+        -509.63,
+        -3704.05
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 6 ColorTex",
+      "location": [
+        -509.63,
+        -3704.05
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 7  R=-0.1525 G=-0.0067  SX=8.054 SY=8.054  Rot=-0.0\u00b0  CL",
+      "location": [
+        -1011.07,
+        -3953.17
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 7 UVMap",
+      "location": [
+        -1011.07,
+        -3953.17
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 7 Scale/Loc",
+      "location": [
+        -826.84,
+        -3953.9
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 7: T_Decal_Number_09_C",
+      "location": [
+        -509.28,
+        -3918.83
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 7 ColorTex",
+      "location": [
+        -509.28,
+        -3918.83
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 8  R=0.0170 G=0.1707  SX=2.463 SY=4.699  Rot=-0.0\u00b0  CLIP",
+      "location": [
+        -1003.05,
+        -4168.14
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 8 UVMap",
+      "location": [
+        -1003.05,
+        -4168.14
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 8 Scale/Loc",
+      "location": [
+        -826.26,
+        -4171.01
+      ],
+      "hide": true,
+      "width": 140.0
+    },
+    {
+      "key": "label:Decal 8: T_Decal_ALASquare_01_C",
+      "location": [
+        -531.67,
+        -4144.01
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:Decal 8 ColorTex",
+      "location": [
+        -531.67,
+        -4144.01
+      ],
+      "hide": true,
+      "width": 240.0
+    },
+    {
+      "key": "label:4_BaseRoughness",
+      "location": [
+        -9263.12,
+        -2769.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:4_BaseMetallicity",
+      "location": [
+        -9263.12,
+        -3049.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:4_BaseSpecular",
+      "location": [
+        -9263.12,
+        -3329.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:4_EdgeSpecular",
+      "location": [
+        -9263.12,
+        -3609.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:4_EdgeRoughness",
+      "location": [
+        -9263.12,
+        -3889.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:4_EdgeMetallicity",
+      "location": [
+        -9263.12,
+        -4169.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:4_CreaseSpecular",
+      "location": [
+        -9263.12,
+        -4449.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:4_CreaseRoughness",
+      "location": [
+        -9263.12,
+        -4729.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:4_CreaseMetallicity",
+      "location": [
+        -8963.12,
+        -2769.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:4_BaseRoughnessTiling",
+      "location": [
+        -8963.12,
+        -3049.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:4_BaseTextureStrength",
+      "location": [
+        -8963.12,
+        -3329.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_BaseRoughness",
+      "location": [
+        -8963.12,
+        -3609.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_BaseMetallicity",
+      "location": [
+        -8963.12,
+        -3889.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_BaseSpecular",
+      "location": [
+        -8963.12,
+        -4169.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_EdgeSpecular",
+      "location": [
+        -8963.12,
+        -4449.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_EdgeRoughness",
+      "location": [
+        -8963.12,
+        -4729.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_EdgeMetallicity",
+      "location": [
+        -8663.12,
+        -2769.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_CreaseSpecular",
+      "location": [
+        -8663.12,
+        -3049.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_CreaseRoughness",
+      "location": [
+        -8663.12,
+        -3329.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_CreaseMetallicity",
+      "location": [
+        -8663.12,
+        -3609.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_BaseRoughnessTiling",
+      "location": [
+        -8663.12,
+        -3889.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:3_BaseTextureStrength",
+      "location": [
+        -8663.12,
+        -4169.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_BaseRoughness",
+      "location": [
+        -8663.12,
+        -4449.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_BaseMetallicity",
+      "location": [
+        -8663.12,
+        -4729.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_BaseSpecular",
+      "location": [
+        -8363.12,
+        -2769.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_EdgeSpecular",
+      "location": [
+        -8363.12,
+        -3049.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_EdgeRoughness",
+      "location": [
+        -8363.12,
+        -3329.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_EdgeMetallicity",
+      "location": [
+        -8363.12,
+        -3609.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_CreaseSpecular",
+      "location": [
+        -8363.12,
+        -3889.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_CreaseRoughness",
+      "location": [
+        -8363.12,
+        -4169.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_CreaseMetallicity",
+      "location": [
+        -8363.12,
+        -4449.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_BaseRoughnessTiling",
+      "location": [
+        -8363.12,
+        -4729.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:2_BaseTextureStrength",
+      "location": [
+        -8063.12,
+        -2769.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:1_BaseRoughness",
+      "location": [
+        -8063.12,
+        -3049.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:1_BaseMetallicity",
+      "location": [
+        -8063.12,
+        -3329.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:1_BaseSpecular",
+      "location": [
+        -8063.12,
+        -3609.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:1_EdgeSpecular",
+      "location": [
+        -8063.12,
+        -3889.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:1_EdgeRoughness",
+      "location": [
+        -8063.12,
+        -4169.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:1_EdgeMetallicity",
+      "location": [
+        -8063.12,
+        -4449.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:1_CreaseSpecular",
+      "location": [
+        -8063.12,
+        -4729.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:1_CreaseRoughness",
+      "location": [
+        -7763.12,
+        -2769.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:1_CreaseMetallicity",
+      "location": [
+        -7763.12,
+        -3049.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:1_BaseRoughnessTiling",
+      "location": [
+        -7763.12,
+        -3329.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:1_BaseTextureStrength",
+      "location": [
+        -7763.12,
+        -3609.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_BaseRoughness",
+      "location": [
+        -7763.12,
+        -3889.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_BaseMetallicity",
+      "location": [
+        -7763.12,
+        -4169.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_BaseSpecular",
+      "location": [
+        -7763.12,
+        -4449.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_EdgeSpecular",
+      "location": [
+        -7763.12,
+        -4729.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_EdgeRoughness",
+      "location": [
+        -7463.12,
+        -2769.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_EdgeMetallicity",
+      "location": [
+        -7463.12,
+        -3049.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_CreaseSpecular",
+      "location": [
+        -7463.12,
+        -3329.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_CreaseRoughness",
+      "location": [
+        -7463.12,
+        -3609.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_CreaseMetallicity",
+      "location": [
+        -7463.12,
+        -3889.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_BaseRoughnessTiling",
+      "location": [
+        -7463.12,
+        -4169.48
+      ],
+      "hide": false,
+      "width": 140.0
+    },
+    {
+      "key": "label:5_BaseTextureStrength",
+      "location": [
+        -7463.12,
+        -4449.48
+      ],
+      "hide": false,
+      "width": 140.0
+    }
+  ]
+}

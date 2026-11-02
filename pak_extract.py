@@ -11,6 +11,8 @@ import subprocess
 import hashlib
 import json
 import threading
+from contextlib import contextmanager
+from functools import lru_cache
 
 import bpy
 from bpy.props import BoolProperty, CollectionProperty, IntProperty, StringProperty
@@ -62,24 +64,472 @@ def bundled_usmap() -> str:
     return hits[-1] if hits else ""
 
 
+@lru_cache(maxsize=8)
+def _mapping_sha256(path, mtime_ns, size):
+    with open(path, 'rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
 def _extraction_revision(scene=None) -> str:
     if scene is None:
         scene = bpy.context.scene
     mapping = resolve_usmap(scene)
     if not mapping or not os.path.isfile(mapping):
-        return ""
-    with open(mapping, "rb") as stream:
-        return "2.19.16:" + hashlib.sha256(stream.read()).hexdigest()
+        return ''
+    from .pak_catalog import filesystem_path, display_path
+    mapping = filesystem_path(os.path.abspath(mapping))
+    stat = os.stat(mapping)
+    game = configured_dir(scene)
+    if not game:
+        return ''
+    build, depot = _installed_material_provenance(game)
+    containers = []
+    with os.scandir(game) as entries:
+        for entry in entries:
+            if entry.name.casefold().endswith(('.utoc', '.ucas', '.pak')) and entry.is_file():
+                file_stat = entry.stat()
+                containers.append((entry.name.casefold(), file_stat.st_size, file_stat.st_mtime_ns))
+    if not containers:
+        return ''
+    record = {'game': os.path.normcase(os.path.abspath(display_path(game))),
+              'build': build, 'depot': depot, 'containers': sorted(containers),
+              'usmap': _mapping_sha256(mapping, stat.st_mtime_ns, stat.st_size)}
+    return 'native-source-v1:' + hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
 
 
-def mesh_cache_is_current(path: str, scene=None) -> bool:
+def mesh_cache_is_current(path: str, scene=None, allow_legacy_root=False) -> bool:
     from .pak_catalog import filesystem_path
+    # No container mounts RemappedPlugins/Content. Older exporters wrote there when
+    # CUE4Parse guessed the wrong project and dropped /Game soft texture defaults
+    # from MI JSON. Re-extract once; the newer PioneerGame/Content copy then wins.
+    if not allow_legacy_root and "/remappedplugins/content/" in str(path).replace("\\", "/").casefold():
+        return False
     try:
         with open(filesystem_path(path + ".arc-extract.json"), "r", encoding="utf-8") as stream:
             record = json.load(stream)
         return bool(record.get("revision")) and record["revision"] == _extraction_revision(scene)
     except (OSError, ValueError):
         return False
+
+
+@lru_cache(maxsize=256)
+def _mesh_metadata_state(path, model_stamp, metadata_stamp):
+    from . import uemodel_import
+    from .native_material_slots import load_native_material_layout
+    _name, version, _flip, attributes = uemodel_import._read_uemodel_root(path)
+    if version < 10 or not any(name == 'SKELETON' for name, _payload in attributes):
+        return True
+    if metadata_stamp is None:
+        return False
+    _name, _version, lods = uemodel_import.parse_uemodel(path)
+    return load_native_material_layout(path, lods[0].name, lods[0].materials) is not None
+
+
+def mesh_material_metadata_is_current(path: str) -> bool:
+    """Validate native-skinned metadata separately from geometry cache revision."""
+    from .pak_catalog import filesystem_path
+    path = filesystem_path(path)
+    if not str(path).lower().endswith('.uemodel'):
+        return True
+    sidecar = filesystem_path(os.path.splitext(path)[0] + '.arc-material-slots.json')
+    try:
+        model = os.stat(path)
+        meta = os.stat(sidecar) if os.path.isfile(sidecar) else None
+        return _mesh_metadata_state(path, (model.st_mtime_ns, model.st_size),
+                                    (meta.st_mtime_ns, meta.st_size) if meta else None)
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
+def material_metadata_plan(scene, model_paths):
+    """Prepare only cached primary-Pak meshes; offline FModel never launches a helper."""
+    if str(getattr(scene, 'arc_import_source', 'PAK')) != 'PAK':
+        return None
+    game = configured_dir(scene)
+    if not game:
+        return None
+    from .pak_catalog import filesystem_path, display_path
+    out = cache_dir()
+    root = os.path.normcase(os.path.abspath(display_path(out)))
+    models, paths = [], []
+    for model in dict.fromkeys(model_paths):
+        path = filesystem_path(model)
+        if not str(path).lower().endswith('.uemodel'):
+            continue
+        try:
+            if os.path.commonpath((root, os.path.normcase(os.path.abspath(display_path(path))))) != root:
+                continue
+        except ValueError:
+            continue
+        if not mesh_cache_is_current(path, scene, allow_legacy_root=True):
+            raise RuntimeError('Cached primary geometry source stamp is stale; re-extract the mesh from the configured game: ' + path)
+        if mesh_material_metadata_is_current(path):
+            continue
+        package = saved_material_package(path)
+        if not package:
+            raise RuntimeError('Cannot recover exact native mesh package for metadata: ' + path)
+        models.append(path); paths.append(package)
+    if not models:
+        return None
+    mapping = resolve_usmap(scene)
+    if not mapping:
+        raise RuntimeError('Select a usmap before preparing native mesh metadata')
+    return {'models': models, 'paths': paths,
+            'command': extraction_command(game, mapping, paths, out_dir=out,
+                                           metadata_only=True, model_files=models)}
+
+
+def ensure_cached_mesh_material_metadata(scene, model_paths):
+    """One bounded metadata-only helper call; no mesh/texture/blend re-export."""
+    plan = material_metadata_plan(scene, model_paths)
+    if plan is None:
+        ensure_cached_material_hierarchy(scene, model_paths=model_paths)
+        return
+    proc = subprocess.run(plan['command'], capture_output=True, text=True, timeout=600,
+                          creationflags=_CREATE_NO_WINDOW)
+    log = ((proc.stdout or '') + '\n' + (proc.stderr or '')).strip()
+    if proc.returncode:
+        raise RuntimeError('Native mesh metadata preparation failed: ' + _log_tail(log))
+    missing = [path for path in plan['models'] if not mesh_material_metadata_is_current(path)]
+    if missing:
+        raise RuntimeError('Native mesh metadata does not match cached geometry: ' + str(missing))
+    ensure_cached_material_hierarchy(scene, model_paths=model_paths)
+
+
+def _material_companion(path):
+    from .pak_catalog import filesystem_path
+    return filesystem_path(path if path.casefold().endswith('.arc-material.json') else os.path.splitext(path)[0] + '.arc-material.json')
+
+
+@lru_cache(maxsize=512)
+def _raw_material_record(path, stamp):
+    with open(path, encoding='utf-8-sig') as stream:
+        data = json.load(stream)
+    if not isinstance(data, dict):
+        raise ValueError('Malformed raw material metadata: ' + path)
+    return data
+
+
+def _material_hierarchy_dependencies(material_file, build='', depot=''):
+    """Named native raw metadata, exact physical alias and parent closure proof."""
+    from .pak_catalog import canonical_path, filesystem_path, display_path
+    path = filesystem_path(material_file)
+    physical = display_path(path).replace('\\', '/')
+    def plugin(package):
+        # A mounted plugin is cached at <cache>/<Plugin>/... with no Content folder (EmbarkScript templates).
+        return ('/' in package and '/content/' not in package.casefold()
+                and package.split('/', 1)[0].casefold() not in ('pioneergame', 'remappedplugins', 'engine', 'game', 'indexes'))
+    marker = physical.casefold().find('/content/pioneer/')
+    if marker >= 0:
+        mount_root = physical[:marker]
+        cache_root = mount_root.rsplit('/', 1)[0]
+        relative = physical[marker + len('/content/'):]
+        if relative.casefold().endswith('.arc-material.json'):
+            relative = relative[:-18]
+        elif relative.casefold().endswith('.json'):
+            relative = relative[:-5]
+        else:
+            raise ValueError('Material metadata requires exact JSON source')
+        expected = canonical_path('PioneerGame/Content/' + relative)
+    else:
+        # A plugin root names its own package; its location under the cache must agree.
+        companion = display_path(_material_companion(path)).replace('\\', '/')
+        try:
+            stat = os.stat(filesystem_path(companion))
+        except FileNotFoundError:
+            return None
+        source = _raw_material_record(filesystem_path(companion), (stat.st_mtime_ns, stat.st_size)).get('DataRaidersSource') or {}
+        if not source.get('package'):
+            return None
+        expected = canonical_path(source['package'])
+        suffix = '/' + expected + '.arc-material.json'
+        if not plugin(expected) or not companion.casefold().endswith(suffix.casefold()):
+            raise ValueError('Material path has no exact native mount: ' + physical)
+        cache_root = companion[:-len(suffix)]
+        mount_root = cache_root + '/PioneerGame'
+    visited = set()
+    dependencies = []
+    for depth in range(64):
+        if expected.casefold().startswith('pioneergame/content/'):
+            sidecar = filesystem_path(mount_root + '/Content/' + expected[len('PioneerGame/Content/'):] + '.arc-material.json')
+        elif plugin(expected):
+            sidecar = filesystem_path(cache_root + '/' + expected + '.arc-material.json')
+        else:
+            raise ValueError('Unsupported exact material parent mount for raw cache upgrade: ' + expected)
+        if expected.casefold() in visited:
+            raise ValueError('Native material parent cycle: ' + expected)
+        visited.add(expected.casefold())
+        try:
+            stat = os.stat(sidecar)
+        except FileNotFoundError:
+            return None
+        data = _raw_material_record(sidecar, (stat.st_mtime_ns, stat.st_size))
+        source = data.get('DataRaidersSource')
+        if not source:
+            return None  # Old raw exports need a provenance-only refresh.
+        if source.get('schema') != 'dataraiders.native-material-hierarchy' or source.get('version') != 1:
+            return None
+        if canonical_path(source.get('package', '')).casefold() != expected.casefold() or canonical_path(source.get('object_path', '')).casefold() != expected.casefold():
+            raise ValueError('Exact native material provenance mismatch: ' + sidecar)
+        exports = data.get('Exports')
+        if not isinstance(exports, list) or len(exports) != 1 or str(exports[0].get('Name', '')).casefold() != expected.rsplit('/', 1)[-1].casefold():
+            raise ValueError('Raw material export identity mismatch: ' + sidecar)
+        if (build and source.get('build_id') != build) or (depot and source.get('depot_manifest') != depot):
+            return None
+        parent = source.get('parent', '')
+        properties = exports[0].get('Properties', exports[0])
+        raw_parent = properties.get('Parent') or ''
+        if isinstance(raw_parent, dict):
+            raw_parent = raw_parent.get('ObjectPath') or raw_parent.get('AssetPathName') or ''
+        if not isinstance(raw_parent, str) or bool(raw_parent) != bool(parent) or (raw_parent and canonical_path(raw_parent).casefold() != canonical_path(parent).casefold()):
+            raise ValueError('Raw material Parent disagrees with native provenance: ' + sidecar)
+        if not isinstance(parent, str):
+            raise ValueError('Malformed native Parent provenance: ' + sidecar)
+        dependencies.append(sidecar)
+        if not parent:
+            return dependencies
+        expected = canonical_path(parent)
+    raise ValueError('Native material parent depth exceeds 64')
+
+
+@lru_cache(maxsize=512)
+def _raw_material_digest(path, mtime_ns, size):
+    with open(path, 'rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def _material_dependency_signature(paths):
+    from .pak_catalog import display_path, filesystem_path
+    result = []
+    for path in paths:
+        # Closure members can cross MAX_PATH by suffix alone (Driftcoat's ...InnerSleeves_Cotton.arc-material.json.textures.json, 260).
+        native = filesystem_path(path)
+        stat = os.stat(native)
+        result.append({'path': os.path.normcase(os.path.abspath(display_path(path))),
+                       'sha256': _raw_material_digest(native, stat.st_mtime_ns, stat.st_size)})
+    return result
+
+
+def _material_receipt_root(path):
+    from .pak_catalog import display_path
+    return os.path.normcase(os.path.abspath(display_path(_material_companion(path))))
+
+
+def material_hierarchy_is_current(material_file, build='', depot='', source_revision='', *, metadata_revision='', producer=None, mapping_sha=''):
+    from .material_texture_metadata import (RECEIPT_VERSION, RECIPE, producer_signature,
+        metadata_revision as texture_revision, closure_dependencies)
+    if not source_revision:
+        return False
+    try:
+        from .pak_catalog import filesystem_path
+        with open(filesystem_path(_material_companion(material_file) + '.ready'), encoding='utf-8') as stream:
+            receipt = json.load(stream)
+    except (FileNotFoundError, ValueError):
+        return False
+    # Version1 proved raw parents only. It must upgrade once even when every
+    # existing mesh/PNG remains current under the unchanged source revision.
+    if receipt.get('schema') != 'dataraiders.material-hierarchy-ready' or receipt.get('version') != RECEIPT_VERSION or receipt.get('recipe') != RECIPE:
+        return False
+    producer = producer if producer is not None else producer_signature(exe_path())
+    metadata_revision = metadata_revision or texture_revision(source_revision, producer)
+    if receipt.get('metadata_revision') != metadata_revision or receipt.get('producer_assemblies') != producer:
+        return False
+    if mapping_sha and receipt.get('mapping_sha256') != mapping_sha:
+        return False
+    dependencies = _material_hierarchy_dependencies(material_file, build, depot)
+    if dependencies is None:
+        return False
+    textures = closure_dependencies(_material_companion(material_file), dependencies, build, depot, producer, mapping_sha or receipt.get('mapping_sha256',''))
+    if textures is None:
+        return False
+    return (receipt.get('root') == _material_receipt_root(material_file)
+            and receipt.get('revision') == source_revision
+            and receipt.get('dependencies') == _material_dependency_signature(dependencies + textures))
+
+
+def _write_material_receipt(material_file, revision, dependencies, *, metadata_revision, producer, mapping_sha):
+    import time
+    import uuid
+    from .pak_catalog import filesystem_path
+    # The temp name adds 43 characters, enough to cross MAX_PATH under the installed addon cache
+    # (MI_ShoulderPadSkull_ShoulderPadSkull, 283), so both names take the long-path form on their own length.
+    target = filesystem_path(_material_companion(material_file) + '.ready')
+    temp = filesystem_path(target + '.tmp-' + uuid.uuid4().hex)
+    from .material_texture_metadata import RECEIPT_VERSION, RECIPE
+    data = {'schema': 'dataraiders.material-hierarchy-ready', 'version': RECEIPT_VERSION, 'recipe': RECIPE,
+            'root': _material_receipt_root(material_file), 'revision': revision,
+            'metadata_revision': metadata_revision, 'producer_assemblies': producer, 'mapping_sha256': mapping_sha,
+            'dependencies': _material_dependency_signature(dependencies)}
+    try:
+        with open(temp, 'x', encoding='utf-8') as stream:
+            json.dump(data, stream, sort_keys=True)
+        for attempt in range(7):
+            try:
+                os.replace(temp, target)
+                break
+            except OSError as error:
+                if attempt == 6 or getattr(error, 'winerror', None) not in (5, 32, 33):
+                    raise
+                time.sleep(0.01 * (2 ** attempt))
+    finally:
+        try:
+            os.unlink(temp)
+        except FileNotFoundError:
+            pass
+
+
+def _installed_material_provenance(game):
+    from pathlib import Path
+    from . import pak_catalog
+    build = pak_catalog.installed_build(game)
+    depot = ''
+    for folder in (Path(game).absolute(), *tuple(Path(game).absolute().parents)[:8]):
+        if folder.name.casefold() != 'steamapps':
+            continue
+        try:
+            text = (folder / 'appmanifest_1808500.acf').read_text(encoding='utf-8-sig')
+        except FileNotFoundError:
+            break
+        installed = text.split('"InstalledDepots"', 1)
+        if len(installed) == 2:
+            match = re.search(r'"1808501"\s*\{[^{}]*"manifest"\s*"(\d{1,32})"', installed[1])
+            depot = match.group(1) if match else ''
+        break
+    return build, depot
+
+
+def raw_material_metadata_plan(scene, *, model_paths=(), material_paths=()):
+    """Capture exact material roots on the main thread; no worker bpy access."""
+    if str(getattr(scene, 'arc_import_source', 'PAK')) != 'PAK':
+        return None
+    game = configured_dir(scene)
+    if not game:
+        return None
+    from .pak_catalog import filesystem_path, display_path
+    out = cache_dir()
+    root = os.path.normcase(os.path.abspath(display_path(out)))
+    def owned(path):
+        try:
+            return os.path.commonpath((root, os.path.normcase(os.path.abspath(display_path(path))))) == root
+        except ValueError:
+            return False
+    files = list(material_paths)
+    for model in dict.fromkeys(model_paths):
+        if not owned(model):
+            continue
+        sidecar = filesystem_path(os.path.splitext(model)[0] + '.arc-material-slots.json')
+        if os.path.isfile(sidecar):
+            with open(sidecar, encoding='utf-8-sig') as stream:
+                layout = json.load(stream)
+            for slot in layout['materials']:
+                reference = slot.get('material')
+                if reference:
+                    path = textures.find_asset_from_object_path(reference, '.json')
+                    if not path:
+                        raise FileNotFoundError('Exact native material cache source missing: ' + reference)
+                    if not owned(path):
+                        raise ValueError('Owned primary mesh default material resolved to a foreign cache: ' + reference)
+                    files.append(path)
+        for binding in textures.authored_visual_part_materials(model):
+            if not owned(binding['path']):
+                raise ValueError('Owned primary mesh DA material resolved to a foreign cache: ' + str(binding.get('material_path', '')))
+            files.append(binding['path'])
+    build, depot = _installed_material_provenance(game)
+    revision = _extraction_revision(scene)
+    if not revision:
+        raise RuntimeError('Cannot establish current game/mapping revision for raw material upgrade')
+    from .material_texture_metadata import producer_signature, metadata_revision as texture_revision
+    producer = producer_signature(exe_path())
+    metadata_revision = texture_revision(revision, producer)
+    mapping = resolve_usmap(scene)
+    if not mapping or not os.path.isfile(mapping):
+        raise RuntimeError('Select a current usmap before preparing compact texture metadata')
+    mapping_stat = os.stat(mapping)
+    mapping_sha = _mapping_sha256(mapping, mapping_stat.st_mtime_ns, mapping_stat.st_size)
+    selected, packages = [], []
+    for file in dict.fromkeys(files):
+        path = filesystem_path(file)
+        if not owned(path):
+            continue  # FModel/foreign caches never invoke a primary-game helper.
+        package_source = path[:-18] + '.json' if path.casefold().endswith('.arc-material.json') else path
+        package = saved_material_package(package_source) or cached_plugin_package(package_source, display_path(out))
+        if not package:
+            raise ValueError('Exact material package cannot be recovered: ' + path)
+        if not material_hierarchy_is_current(path, build, depot, revision, metadata_revision=metadata_revision, producer=producer, mapping_sha=mapping_sha):
+            selected.append(path); packages.append(package)
+    if not selected:
+        return None
+    mapping = resolve_usmap(scene)
+    if not mapping:
+        raise RuntimeError('Select a usmap before preparing raw material metadata')
+    return {'files': selected, 'paths': packages, 'build': build, 'depot': depot, 'revision': revision,
+            'metadata_revision': metadata_revision, 'producer': producer, 'mapping_sha': mapping_sha,
+            'command': extraction_command(game, mapping, packages, out_dir=out,
+                        material_metadata_only=True, material_files=selected)}
+
+
+def complete_raw_material_metadata(scene, plan, code, log):
+    if code or re.search(r'(?im)^\s*\[[^\]\r\n]*\bERR\]|ParserException|Failed to deserialize', log or ''):
+        raise RuntimeError('Native material hierarchy preparation failed: ' + _log_tail(log))
+    from .material_texture_metadata import producer_signature, metadata_revision as texture_revision, closure_dependencies
+    producer = producer_signature(exe_path())
+    if producer != plan['producer'] or texture_revision(plan['revision'], producer) != plan['metadata_revision']:
+        raise RuntimeError('Compact metadata producer changed during upgrade; completion rejected')
+    if _extraction_revision(scene) != plan['revision']:
+        raise RuntimeError('Game or mapping changed during raw material metadata export; completion rejected')
+    closures = []
+    for path in plan['files']:
+        dependencies = _material_hierarchy_dependencies(path, plan['build'], plan['depot'])
+        if dependencies is None:
+            raise RuntimeError('Native material hierarchy does not match exact source: ' + path)
+        textures = closure_dependencies(_material_companion(path), dependencies, plan['build'], plan['depot'], producer, plan['mapping_sha'])
+        if textures is None:
+            raise RuntimeError('Required compact native texture metadata is missing/stale: ' + path)
+        closures.append((path, dependencies + textures))
+    for path, dependencies in closures:
+        _write_material_receipt(path, plan['revision'], dependencies, metadata_revision=plan['metadata_revision'], producer=producer, mapping_sha=plan['mapping_sha'])
+    if _extraction_revision(scene) != plan['revision'] or producer_signature(exe_path()) != producer:
+        raise RuntimeError('Game, mapping or producer changed during raw material receipt commit; completion rejected')
+    if any(not material_hierarchy_is_current(path, plan['build'], plan['depot'], plan['revision'], metadata_revision=plan['metadata_revision'], producer=producer, mapping_sha=plan['mapping_sha']) for path in plan['files']):
+        raise RuntimeError('Raw material dependency changed during receipt commit; completion rejected')
+    from .surface_rebuild.assets import invalidate_index
+    invalidate_index()
+
+
+_HIERARCHY_BATCH = threading.local()
+
+
+@contextmanager
+def batched_material_hierarchy(scene):
+    """Defer hierarchy requests inside the block to one helper call (an outfit's parts).
+
+    Each part used to launch its own ArcPak metadata pass (about 20 per outfit).
+    Requests are still exact per path; only the launches are merged. A failed
+    block launches nothing, and nested blocks join the outermost one.
+    """
+    if getattr(_HIERARCHY_BATCH, 'pending', None) is not None:
+        yield
+        return
+    pending = _HIERARCHY_BATCH.pending = ([], [])
+    try:
+        yield
+    finally:
+        _HIERARCHY_BATCH.pending = None
+    if pending[0] or pending[1]:
+        ensure_cached_material_hierarchy(scene, model_paths=pending[0], material_paths=pending[1])
+
+
+def ensure_cached_material_hierarchy(scene, *, model_paths=(), material_paths=()):
+    pending = getattr(globals().get('_HIERARCHY_BATCH'), 'pending', None)
+    if pending is not None:
+        pending[0].extend(model_paths); pending[1].extend(material_paths)
+        return
+    plan = raw_material_metadata_plan(scene, model_paths=model_paths, material_paths=material_paths)
+    if plan is None:
+        return
+    proc = subprocess.run(plan['command'], capture_output=True, text=True, timeout=600,
+                          creationflags=_CREATE_NO_WINDOW)
+    complete_raw_material_metadata(scene, plan, proc.returncode, ((proc.stdout or '') + '\n' + (proc.stderr or '')).strip())
 
 
 def cache_dir() -> str:
@@ -202,13 +652,7 @@ def configured_dir(scene) -> str:
 
 
 def _initialize_pak_defaults():
-    # addon_utils.enable() registers addons under _RestrictData. Scene data
-    # becomes available after registration returns to Blender's event loop.
-    scenes = getattr(bpy.data, "scenes", None)
-    if scenes is None:
-        return 0.1
-    for scene in scenes:
-        reconcile_pak_dir(scene, restore_default=True)
+    """Retired startup callback. PAK validation belongs to explicit actions."""
     return None
 
 
@@ -219,9 +663,6 @@ def _load_pak_defaults(_unused=None):
 
 def register_defaults():
     unregister_defaults()
-    # Scene property defaults provide the common install path immediately;
-    # reconcile saved/invalid paths after a .blend finishes loading.
-    bpy.app.handlers.load_post.append(_load_pak_defaults)
 
 
 def unregister_defaults():
@@ -278,6 +719,111 @@ def _package_aliases(asset_path: str) -> list[str]:
             aliases.extend(root + tail for root in ("PioneerGame/Content/", "RemappedPlugins/Content/"))
             break
     return list(dict.fromkeys(aliases))
+
+
+def saved_material_package(source: str) -> str:
+    """Canonical identity of a physical saved game source, or empty if untrusted."""
+    from . import pak_catalog
+    original = str(source or "")
+    text = pak_catalog.display_path(original).replace("\\", "/")
+    low = text.casefold()
+    marker = "/content/pioneer/"
+    offset = low.find(marker)
+    if offset < 0:
+        return ""
+    # A coincidental user folder named Content/Pioneer is not game provenance.
+    owner = low[:offset].rstrip("/").rsplit("/", 1)[-1]
+    if owner not in ("pioneergame", "remappedplugins"):
+        return ""
+    relative = text[offset + len("/content/"):]
+    extension = os.path.splitext(relative)[1].lower()
+    if extension not in (".psk", ".pskx", ".uemodel", ".json", ".png"):
+        return ""
+    try:
+        return pak_catalog.canonical_path("PioneerGame/Content/" + relative)
+    except ValueError:
+        return ""
+
+
+def cached_plugin_package(source: str, cache_root: str) -> str:
+    """Mounted-plugin package of an exporter cache file, or empty.
+
+    ArcPak writes plugin sources under their mount name with no Content folder
+    (<cache>/EmbarkScript/ClothingAssetTemplates/M_Character_ClothMaterial.json, Banshee's cloth parent), so the
+    cache-relative path is the package the exporter itself resolved.
+    """
+    from . import pak_catalog
+    try:
+        relative = os.path.relpath(os.path.abspath(pak_catalog.display_path(str(source or ''))),
+                                   os.path.abspath(cache_root)).replace('\\', '/')
+    except ValueError:
+        return ''
+    head = relative.split('/', 1)[0].casefold()
+    if relative.startswith('../') or '/' not in relative or head in ('pioneergame', 'remappedplugins', 'engine', 'indexes'):
+        return ''
+    if os.path.splitext(relative)[1].lower() != '.json':
+        return ''
+    try:
+        return pak_catalog.canonical_path(relative)
+    except ValueError:
+        return ''
+
+
+def recover_saved_material_source(source: str, roots, *, native_pak=False) -> dict:
+    """Resolve an old physical game path by exact package in explicit cache roots.
+
+    Pure filesystem lookup; never walks or borrows a basename. A native UEModel
+    fallback supplies a material folder only, retaining the original source format.
+    """
+    from . import pak_catalog
+    original = str(source or "")
+    package = saved_material_package(original)
+    if not package:
+        return {}
+    extension = os.path.splitext(original)[1].lower()
+    seen = set()
+    search_roots = []
+    for root in roots:
+        if not root:
+            continue
+        root = os.path.normpath(str(root))
+        key = os.path.normcase(os.path.abspath(root))
+        if key not in seen:
+            seen.add(key)
+            search_roots.append(root)
+    extensions = [extension]
+    if native_pak and extension in (".psk", ".pskx"):
+        extensions.append(".uemodel")
+    # Format-preserving copies in any explicit root beat a UEModel fallback.
+    for candidate_extension in extensions:
+        for root in search_roots:
+            matches = []
+            for alias in _package_aliases(package):
+                direct = os.path.join(root, *alias.split("/"))
+                leaf = alias.rsplit("/", 1)[-1]
+                for path in (direct + candidate_extension,
+                             os.path.join(direct, leaf + candidate_extension)):
+                    path = pak_catalog.filesystem_path(path)
+                    if os.path.isfile(path):
+                        matches.append(path)
+            if matches:
+                actual = max(matches, key=lambda path: os.stat(path).st_mtime_ns)
+                same_format = candidate_extension == extension
+                lookup = actual if same_format else os.path.splitext(actual)[0] + extension
+                return {"path": lookup, "actual_path": actual,
+                        "package": package, "same_format": same_format,
+                        "original": original}
+        if candidate_extension == extension:
+            # The stamped file itself is explicit provenance, even after an
+            # offline restart with no registered roots. Probe only that file;
+            # never discover an unregistered tree. A real PSK beats a native
+            # UEModel folder fallback and preserves its source-unit semantics.
+            supplied = pak_catalog.filesystem_path(original)
+            if os.path.isfile(supplied):
+                return {"path": supplied, "actual_path": supplied,
+                        "package": package, "same_format": True,
+                        "original": original}
+    return {}
 
 
 def _expected_uemodel(out_dir: str, asset_path: str) -> str:
@@ -396,15 +942,27 @@ def ensure_pak_browser(scene) -> tuple[dict, str]:
     return index, pak_catalog.browser_tree(index, cache_dir(), configured_dir(scene))
 
 
-def extraction_command(game_dir: str, usmap: str, paths: list[str], *, out_dir=None) -> list[str]:
+def extraction_command(game_dir: str, usmap: str, paths: list[str], *, out_dir=None, metadata_only=False, model_files=(), material_metadata_only=False, material_files=()) -> list[str]:
     """Build extraction arguments on the main thread; workers receive strings only."""
     exe = exe_path()
     if not exe:
         raise FileNotFoundError("ArcPak.Export.exe is missing; reinstall the packaged addon")
-    cmd = [exe, "extract", "--game-dir", game_dir, "--usmap", usmap,
+    if metadata_only and material_metadata_only:
+        raise ValueError("Choose one metadata mode")
+    cmd = [exe, "material-metadata" if material_metadata_only else "mesh-metadata" if metadata_only else "extract", "--game-dir", game_dir, "--usmap", usmap,
            "--out", out_dir or cache_dir(), "--index-dir", index_dir()]
     for asset in paths:
         cmd.extend(["--path", asset])
+    if model_files:
+        if not metadata_only or len(model_files) != len(paths):
+            raise ValueError("Exact metadata model files must match mesh package count")
+        for model in model_files:
+            cmd.extend(["--model-file", model])
+    if material_files:
+        if not material_metadata_only or len(material_files) != len(paths):
+            raise ValueError("Exact metadata material files must match material package count")
+        for material in material_files:
+            cmd.extend(["--material-file", material])
     bundled_index = os.path.join(_addon_dir(), "ArcPak", "mappings", "pak-index.bin")
     if os.path.isfile(bundled_index):
         cmd.extend(["--index", bundled_index])
@@ -417,11 +975,12 @@ def complete_extraction(out_dir, paths, code, log, revision):
     _LAST_EXTRACT_LOG = log
     from .pak_catalog import filesystem_path
     meshes = _collect_uemodels(out_dir, paths)
+    producer = _extraction_producer() if code == 0 else None
     for mesh in meshes:
         stamp = filesystem_path(mesh + ".arc-extract.json")
         if code == 0:
             with open(stamp, "w", encoding="utf-8") as stream:
-                json.dump({"revision": revision}, stream)
+                json.dump({"revision": revision, "producer": producer}, stream)
         else:
             # A failed overwrite may leave incomplete metadata beside an old
             # current stamp. Force the next import to retry the extraction.
@@ -429,10 +988,55 @@ def complete_extraction(out_dir, paths, code, log, revision):
                 os.remove(stamp)
             except FileNotFoundError:
                 pass
+    _finish_extraction(out_dir)
+    return meshes
+
+
+def _finish_extraction(out_dir):
     utils.set_pak_cache_root(out_dir)
     textures.clear_clothing_path_caches()
+    from .materials.common import clear_material_session_caches
+    from .surface_rebuild.assets import invalidate_index
+    clear_material_session_caches()
+    invalidate_index(out_dir)
     appearance._ICON_SCAN_CACHE.clear()
-    return meshes
+
+
+def _extraction_producer():
+    """Exporter assemblies that write the cache; None when the bundle is incomplete."""
+    from .material_texture_metadata import producer_signature
+    try:
+        return producer_signature(exe_path())
+    except (OSError, ValueError):
+        return None
+
+
+def current_extracted_meshes(scene, paths: list[str]) -> list[str]:
+    """Cached models for exact mesh packages, without running the exporter.
+
+    Empty unless every package has a cached model whose receipt names this game
+    revision and this exporter build. That successful extraction also wrote the
+    mesh's materials, textures and data assets.
+    """
+    from .pak_catalog import filesystem_path, is_mesh
+    revision = _extraction_revision(scene)
+    producer = _extraction_producer()
+    if not revision or producer is None:
+        return []
+    out_dir = cache_dir()
+    for path in paths:
+        model = _expected_uemodel(out_dir, path) if is_mesh(path) else ""
+        # Same legacy-root rule as mesh_cache_is_current.
+        if not model or "/remappedplugins/content/" in model.replace("\\", "/").casefold():
+            return []
+        try:
+            with open(filesystem_path(model + ".arc-extract.json"), "r", encoding="utf-8") as stream:
+                record = json.load(stream)
+        except (OSError, ValueError):
+            return []
+        if not isinstance(record, dict) or record.get("revision") != revision or record.get("producer") != producer:
+            return []
+    return _collect_uemodels(out_dir, paths)
 
 
 def extract_paths(game_dir: str, usmap: str, asset_paths: list[str]) -> tuple[int, str, list[str]]:
@@ -455,8 +1059,12 @@ def extract_asset(game_dir: str, usmap: str, asset_path: str) -> tuple[int, str,
     return code, log, meshes[0] if meshes else ""
 
 
-def ensure_rels(scene, rels: list[str]) -> list[str]:
-    """Extract Pioneer-relative paths when the paks folder is set. Empty if it is not."""
+def ensure_rels(scene, rels: list[str], *, reuse_current: bool = False) -> list[str]:
+    """Extract Pioneer-relative paths when the paks folder is set. Empty if it is not.
+
+    ``reuse_current`` returns current cached meshes without the exporter when
+    every path is an exact mesh package (see current_extracted_meshes).
+    """
     game = configured_dir(scene)
     if not game:
         return []
@@ -474,6 +1082,11 @@ def ensure_rels(scene, rels: list[str]) -> list[str]:
         paths.append(cooked)
     if not paths:
         return []
+    if reuse_current:
+        meshes = current_extracted_meshes(scene, paths)
+        if meshes:
+            utils.set_pak_cache_root(cache_dir())
+            return meshes
     _code, log, meshes = extract_paths(game, usmap, paths)
     if not meshes:
         print(f"Arc Pak: {_log_tail(log)}")
@@ -537,6 +1150,16 @@ class ARC_OT_pick_pak_dir(Operator, ImportHelper):
         default=DEFAULT_PAK_PICKER_DIR,
     )
 
+    def invoke(self, context, event):
+        # ImportHelper can restore Blender's last-used file-browser location,
+        # which otherwise hides this property's default. Set both fields so
+        # the first picker view consistently opens at Steam's common folder.
+        start = DEFAULT_PAK_PICKER_DIR
+        if os.path.isdir(start):
+            self.directory = start + os.sep
+            self.filepath = self.directory
+        return ImportHelper.invoke(self, context, event)
+
     def execute(self, context):
         folder = utils.resolved_picked_dir(
             bpy.path.abspath(getattr(self, "filepath", "") or ""),
@@ -546,7 +1169,7 @@ class ARC_OT_pick_pak_dir(Operator, ImportHelper):
         if not paks_folder:
             context.scene.arc_pak_dir = ""
             context.scene["arc_pak_dir_user_cleared"] = True
-            self.report({"ERROR"}, "Select a folder containing game .pak or .utoc files")
+            self.report({"ERROR"}, "Select a Steam library, Arc Raiders, PioneerGame, Content, or Paks folder")
             return {"CANCELLED"}
         # Preserve the selected install/root folder for a clearer UI value;
         # configured_dir() resolves it to PioneerGame/Content/Paks as needed.

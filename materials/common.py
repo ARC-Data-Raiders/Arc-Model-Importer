@@ -15,6 +15,7 @@ from mathutils import Vector
 
 from .. import utils
 from .. import textures
+from ..material_runtime.core import base_property_overrides
 from .. import palette_calibration
 from ..properties import BODY_ALBEDO, BODY_NORMAL
 
@@ -26,7 +27,7 @@ from ..properties import BODY_ALBEDO, BODY_NORMAL
 # Identical MI defs are rebuilt thousands of times on Buried City-scale maps when
 # each unique SRC mesh creates its own Material datablock. Cache by absolute MI
 # JSON path so shaders + texture loads happen once per material definition.
-_FLAT_MI_CACHE: dict[str, dict] = {}
+_FLAT_MI_CACHE: dict[tuple, dict] = {}
 
 _MI_JSON_PATH_CACHE: dict[tuple, str] = {}
 
@@ -34,7 +35,7 @@ _SK_SLOTS_CACHE: dict[str, list] = {}
 
 _SHARED_MI_MATERIALS: dict[str, object] = {}
 
-_IMAGE_BY_PATH: dict[str, object] = {}
+_IMAGE_BY_PATH: dict[object, object] = {}
 
 # Clothing ArcTexturer mats: (normalized_mi_json_path, texture_fingerprint) → Material
 _CLOTHING_MATERIAL_CACHE: dict[tuple, object] = {}
@@ -340,22 +341,90 @@ def _norm_path_key(path: str) -> str:
 
 
 
-def _load_image_cached(fpath: str):
-    """Load an image once per path; faster than repeated check_existing scans."""
+def _load_image_cached(fpath: str, *, non_color=None, alpha_mode=None):
+    """Load by path and explicit shader role without mutating another consumer.
+
+    Calls without a role retain legacy prefetch behavior. Shader builders must
+    request their color space and alpha interpretation: both are Image-level
+    properties, so sharing by file path alone makes import order change shading.
+    """
     if not fpath:
         return None
-    # Blender image IO also needs the Windows extended prefix for deep Pak paths.
     fpath = textures._fs_abspath(fpath)
-    key = _norm_path_key(fpath)
+    path_key = _norm_path_key(fpath)
+    colorspace = None if non_color is None else ('Non-Color' if non_color else 'sRGB')
+    explicit_role = colorspace is not None or alpha_mode is not None
+    try:
+        source_stat = os.stat(fpath)
+        stamp = (source_stat.st_mtime_ns, source_stat.st_size)
+    except OSError:
+        stamp = (0, 0)
+    key = (path_key, colorspace, alpha_mode, *stamp) if explicit_role else path_key
     img = _IMAGE_BY_PATH.get(key)
     if img is not None:
         try:
-            _ = img.name
-            return img
+            if ((colorspace is None or img.colorspace_settings.name == colorspace)
+                    and (alpha_mode is None or img.alpha_mode == alpha_mode)):
+                return img
         except ReferenceError:
-            _IMAGE_BY_PATH.pop(key, None)
-    img = bpy.data.images.load(fpath, check_existing=True)
+            pass
+        _IMAGE_BY_PATH.pop(key, None)
+    if explicit_role:
+        marker = json.dumps(key)
+        # Reuse role-matched images after a session-cache reset or file reload.
+        img = next((candidate for candidate in bpy.data.images
+                    if candidate.get('arc_shader_image_key') == marker
+                    and (colorspace is None or candidate.colorspace_settings.name == colorspace)
+                    and (alpha_mode is None or candidate.alpha_mode == alpha_mode)), None)
+        if img is None:
+            # Adopt an unconsumed prefetch buffer instead of decoding the same
+            # large texture a second time. Existing scene consumers stay isolated.
+            img = next((candidate for candidate in bpy.data.images
+                        if candidate.get("arc_shader_prefetch_path") == path_key
+                        and candidate.users == 0 and not candidate.is_dirty
+                        and not getattr(candidate, "packed_file", None)), None)
+            if img is None:
+                # check_existing=True may alias a different shader role.
+                img = bpy.data.images.load(fpath, check_existing=False)
+            elif "arc_shader_prefetch_path" in img:
+                del img["arc_shader_prefetch_path"]
+            if colorspace is not None:
+                img.colorspace_settings.name = colorspace
+            if alpha_mode is not None:
+                img.alpha_mode = alpha_mode
+            img['arc_shader_image_key'] = marker
+    else:
+        img = bpy.data.images.load(fpath, check_existing=True)
     _IMAGE_BY_PATH[key] = img
+    return img
+
+
+def _shader_role_image(img, *, non_color=False, alpha_mode='CHANNEL_PACKED'):
+    """Return an isolated shader interpretation of a loaded or generated image."""
+    if img is None:
+        return None
+    filepath = bpy.path.abspath(img.filepath) if getattr(img, 'filepath', '') else ''
+    if (getattr(img, 'source', '') == 'FILE' and filepath
+            and not getattr(img, 'packed_file', None) and not getattr(img, 'is_dirty', False)
+            and os.path.isfile(textures._fs_abspath(filepath))):
+        return _load_image_cached(filepath, non_color=non_color, alpha_mode=alpha_mode)
+    colorspace = 'Non-Color' if non_color else 'sRGB'
+    if img.colorspace_settings.name == colorspace and img.alpha_mode == alpha_mode:
+        return img
+    # Role changes can recreate a generated buffer and reset its alpha. Snapshot
+    # before changing metadata, then restore samples in the final interpretation.
+    from array import array
+    pixels = array('f', [0.]) * len(img.pixels)
+    img.pixels.foreach_get(pixels)
+    preserve_buffer = bool(getattr(img, 'packed_file', None)) or img.source == 'GENERATED' or img.is_dirty
+    if img.users:
+        img = img.copy()
+    img.colorspace_settings.name = colorspace
+    img.alpha_mode = alpha_mode
+    img.pixels.foreach_set(pixels)
+    img.update()
+    if preserve_buffer:
+        img.pack()
     return img
 
 
@@ -392,6 +461,9 @@ def prefetch_images(paths, *, force_decode: bool = True) -> int:
             img = _load_image_cached(p)
             if img is None:
                 continue
+            if (img.users == 0 and not img.is_dirty and not getattr(img, "packed_file", None)
+                    and not img.get("arc_shader_image_key")):
+                img["arc_shader_prefetch_path"] = _norm_path_key(textures._fs_abspath(p))
             if force_decode:
                 _force_image_ready(img)
             n += 1
@@ -768,6 +840,7 @@ def _enrich_broken_glass_default_textures(mi: dict, mi_stem: str = "") -> None:
 
 def _apply_bpo_flags(result: dict, bpo: dict):
     """Copy BlendMode / TwoSided / OpacityMaskClip / shading from BasePropertyOverrides."""
+    bpo = base_property_overrides(bpo, snapshot=True)
     if not bpo:
         return
     if result.get("blend_mode") is None and bpo.get("BlendMode") is not None:
@@ -786,6 +859,55 @@ def _apply_bpo_flags(result: dict, bpo: dict):
 
 
 
+def _flat_named_mi_parameters(properties: dict) -> dict:
+    """Keep scoped parameter keys while giving the global alias precedence."""
+    result = {'textures': {}, 'colours': {}, 'scalars': {}, 'switches': {}}
+    aliases = {key: {} for key in result}
+    priorities = {key: {} for key in result}
+    groups = [('TextureParameterValues', 'textures'), ('VectorParameterValues', 'colours'),
+              ('ScalarParameterValues', 'scalars')]
+    static = properties.get('StaticParametersRuntime') or properties.get('StaticParameters') or {}
+    for array, target in [*groups, ('StaticSwitchParameters', 'switches')]:
+        parameters = static.get(array, []) if target == 'switches' else properties.get(array, [])
+        for parameter in parameters or []:
+            if not isinstance(parameter, dict):
+                continue
+            info = parameter.get('ParameterInfo') or {}
+            name = info.get('Name') or parameter.get('ParameterName') or ''
+            if not name or (target == 'switches' and not parameter.get('bOverride', True)):
+                continue
+            association = str(info.get('Association', 'GlobalParameter')).rsplit('::', 1)[-1]
+            is_global = association in ('GlobalParameter', '0')
+            scope = ('Global' if is_global else ('Layer' if association in ('LayerParameter', '1') else 'Blend') + str(info.get('Index', 0)))
+            value = parameter.get('Value', parameter.get('ParameterValue')) if target == 'switches' else parameter.get('ParameterValue')
+            try:
+                if target == 'textures':
+                    value = textures._material_ref_path(value)
+                    if not value:
+                        continue
+                elif target == 'colours':
+                    if isinstance(value, dict):
+                        value = tuple(float(value.get(channel, 1)) for channel in 'RGBA')
+                    elif isinstance(value, (tuple, list)) and len(value) >= 3:
+                        value = tuple(float(v) for v in (*value, 1)[:4])
+                    else:
+                        continue
+                elif target == 'scalars':
+                    value = float(value)
+                else:
+                    value = bool(value)
+            except (TypeError, ValueError):
+                continue
+            result[target][scope + '.' + name] = value
+            priority = 2 if is_global else 1
+            if priority >= priorities[target].get(name, 0):
+                aliases[target][name] = value
+                priorities[target][name] = priority
+    for target in result:
+        result[target].update(aliases[target])
+    return result
+
+
 def _parse_flat_mi_json(json_path: str) -> dict:
     result = {
         'textures': [], 'colours': [], 'switches': {}, 'scalars': {},
@@ -793,133 +915,76 @@ def _parse_flat_mi_json(json_path: str) -> dict:
         'parent': '', 'two_sided': False, 'shading_model': '',
         'dithered_lod': False, 'is_translucent': False,
     }
+    json_path = textures._fs_abspath(json_path)
     if not json_path or not os.path.isfile(json_path):
         return result
-    cache_key = _norm_path_key(json_path)
+    path_key = _norm_path_key(json_path)
+    signature = textures.material_lineage_signature(json_path)
+    cache_key = (path_key, signature)
     cached = _FLAT_MI_CACHE.get(cache_key)
     if cached is not None:
         return cached
     try:
-        with open(json_path, 'r', encoding='utf-8') as fh:
-            data = json.load(fh)
-        # Keep the full dump (Exports + Metadata) so ImportMap fallback works.
-        # Thin dumps may be a bare list or a single export dict.
-        root = data
+        properties = textures.load_mi_properties_local(json_path)
+        named = _flat_named_mi_parameters(properties)
+        result.update(textures=list(named['textures'].items()), colours=list(named['colours'].items()),
+                      switches=named['switches'], scalars=named['scalars'])
+        parent_ref = properties.get('Parent')
+        result['parent'] = _parent_name_from_object(parent_ref)
+        parent_path = textures._material_ref_path(parent_ref)
+        if parent_path:
+            result['parent_object_path'] = parent_path
+        # Material defaults live on the current exact parent, not the bundled
+        # historical preset. Child BPO flags are already merged by the resolver.
+        result['blend_mode'] = properties.get('BlendMode')
+        result['two_sided'] = bool(properties.get('TwoSided', properties.get('bTwoSided', False)))
+        result['shading_model'] = str(properties.get('ShadingModel') or '')
+        if properties.get('OpacityMaskClipValue') is not None:
+            result['opacity_clip'] = float(properties['OpacityMaskClipValue'])
+        _apply_bpo_flags(result, properties.get('BasePropertyOverrides') or {})
+        _source_entry, data = textures._material_source(json_path)
         thin = data[0] if isinstance(data, list) and data else data
-        if not isinstance(thin, dict):
-            thin = {}
-        for param, path in thin.get('Textures', {}).items():
-            obj_path = path.rsplit('.', 1)[0] if '.' in path.split('/')[-1] else path
-            result['textures'].append((param, obj_path))
-        params = thin.get('Parameters', {}) or {}
-        for param, val in params.get('Colors', {}).items():
-            result['colours'].append((param, (
-                float(val.get('R', 1.0)),
-                float(val.get('G', 1.0)),
-                float(val.get('B', 1.0)),
-                float(val.get('A', 1.0)),
-            )))
-        result['switches'] = params.get('Switches', {}) or {}
-        result['scalars'] = params.get('Scalars', {}) or {}
-        result['is_null'] = bool(params.get('IsNull', False))
-        result['is_translucent'] = bool(params.get('IsTranslucent', False))
-        props = params.get('Properties') or {}
-        bpo = props.get('BasePropertyOverrides') or {}
-        result['blend_mode'] = bpo.get('BlendMode') or params.get('BlendMode')
-        _apply_bpo_flags(result, bpo)
-
-        # Full FModel Exports dump — fill gaps + always capture Parent / BPO flags.
-        parent_obj_path = ""
-        entry = utils.first_ue_export(root, "MaterialInstanceConstant")
-        if entry:
-            eprops = entry.get("Properties") or {}
-            parent_ref = eprops.get("Parent")
-            if not result.get("parent"):
-                result["parent"] = _parent_name_from_object(parent_ref)
-            parent_obj_path = _parent_object_path(parent_ref)
-            if parent_obj_path:
-                result["parent_object_path"] = parent_obj_path
-            bpo2 = eprops.get("BasePropertyOverrides") or {}
-            _apply_bpo_flags(result, bpo2)
-            need_tex = not result['textures']
-            need_scalars = not result['scalars']
-            need_switches = not result['switches']
-            need_colours = not result['colours']
-            if need_tex or need_scalars or need_switches or need_colours:
-                if need_tex:
-                    for t in eprops.get("TextureParameterValues") or []:
-                        info = t.get("ParameterInfo") or {}
-                        name = info.get("Name") or t.get("ParameterName") or ""
-                        val = t.get("ParameterValue") or {}
-                        obj_path = ""
-                        if isinstance(val, dict):
-                            obj_path = val.get("ObjectPath") or ""
-                        elif isinstance(val, str):
-                            obj_path = val
-                        if name and obj_path:
-                            clean = obj_path.rsplit(".", 1)[0] if "." in obj_path.split("/")[-1] else obj_path
-                            result['textures'].append((name, clean))
-                    # Pioneer cooked MIs: texture refs often only in Metadata.ImportMap.
-                    if not result['textures']:
-                        meta = root.get("Metadata") if isinstance(root, dict) else None
-                        for imp in (meta or {}).get("ImportMap") or []:
-                            if not isinstance(imp, dict):
-                                continue
-                            oname = str(imp.get("ObjectName") or "")
-                            opath = str(imp.get("ObjectPath") or "")
-                            m = re.search(r"Texture2D'([^']+)'", oname, re.I)
-                            if not m or not opath:
-                                continue
-                            stem = m.group(1)
-                            clean = opath.rsplit(".", 1)[0] if "." in opath.split("/")[-1] else opath
-                            result['textures'].append((stem, clean))
-                if need_scalars:
-                    for s in eprops.get("ScalarParameterValues") or []:
-                        info = s.get("ParameterInfo") or {}
-                        name = info.get("Name") or s.get("ParameterName") or ""
-                        if name and "ParameterValue" in s:
-                            try:
-                                result['scalars'][name] = float(s["ParameterValue"])
-                            except (TypeError, ValueError):
-                                pass
-                if need_switches:
-                    static = eprops.get("StaticSwitchParameterValues")
-                    if static is None:
-                        static = (eprops.get("StaticParameters") or {}).get("StaticSwitchParameters")
-                    if not static:
-                        # Full FModel dumps often store switches here (ArchitecturePreset_Trim).
-                        static = (eprops.get("StaticParametersRuntime") or {}).get(
-                            "StaticSwitchParameters"
-                        ) or []
-                    for s in static or []:
-                        info = s.get("ParameterInfo") or {}
-                        name = info.get("Name") or s.get("ParameterName") or ""
-                        if name:
-                            result['switches'][name] = bool(s.get("Value", s.get("ParameterValue", False)))
-                if need_colours:
-                    for c in eprops.get("VectorParameterValues") or []:
-                        info = c.get("ParameterInfo") or {}
-                        name = info.get("Name") or c.get("ParameterName") or ""
-                        val = c.get("ParameterValue") or {}
-                        if name and isinstance(val, dict):
-                            result['colours'].append((name, (
-                                float(val.get("R", 1.0)),
-                                float(val.get("G", 1.0)),
-                                float(val.get("B", 1.0)),
-                                float(val.get("A", 1.0)),
-                            )))
-    except Exception as e:
-        print(f"Arc Raiders PSK Importer: Failed to parse flat MI JSON '{json_path}': {e}")
+        if isinstance(thin, dict) and textures._is_thin_fmodel_mi_data(thin):
+            params = thin.get('Parameters') or {}
+            result['is_null'] = bool(params.get('IsNull', False))
+            result['is_translucent'] = bool(params.get('IsTranslucent', False))
+            if result['blend_mode'] is None:
+                result['blend_mode'] = params.get('BlendMode')
+        # A few legacy exports only retain explicit texture references in the
+        # ImportMap. Keep that fallback, but never borrow a neighbouring MI.
+        if not result['textures'] and isinstance(data, dict):
+            for item in (data.get('Metadata') or {}).get('ImportMap') or []:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get('ObjectName') or '')
+                path = textures._material_ref_path(item.get('ObjectPath'))
+                match = re.search(r"Texture2D'([^']+)'", name, re.I)
+                if match and path:
+                    result['textures'].append((match.group(1), path))
+        lineage = textures._material_lineage(json_path)
+        result['material_source_paths'] = list(lineage['sources'])
+        result['unresolved_material_parents'] = list(lineage['unresolved'])
+        # Colourway instances name another instance as Parent (MI_Glowstick_01_Green_A -> _Blue_A); the last
+        # source of a fully resolved lineage is the root master whose permutation the game compiles.
+        if lineage['sources'] and not lineage['unresolved']:
+            root = os.path.basename(str(lineage['sources'][-1])).split('.', 1)[0]
+            if not root.casefold().startswith('mi_'):
+                result['root_master'] = root
+    except Exception as exc:
+        print(f"Arc Raiders PSK Importer: Failed to parse flat MI JSON '{json_path}': {exc}")
         return result
-    # Compact FModel dumps for child PropTrim MIs often omit inherited CR/NXX
-    # (only Prop AO + Overlay overrides). Pull those from the library parent.
-    stem = os.path.splitext(os.path.basename(json_path or ""))[0]
-    _enrich_proptrim_inherited_textures(result, stem, json_path)
-    _enrich_parent_material_textures(
-        result, json_path, result.get("parent_object_path") or "",
-    )
-    _enrich_weapon_stencil_parent(result, json_path)
+    # Legacy texture-only recoveries remain available when current metadata is
+    # incomplete; exact named inheritance above always has first precedence.
+    stem = os.path.splitext(os.path.basename(json_path or ''))[0]
+    if not any('cycle' in message.casefold() for message in result['unresolved_material_parents']):
+        _enrich_proptrim_inherited_textures(result, stem, json_path)
+        _enrich_parent_material_textures(result, json_path, result.get('parent_object_path') or '')
+        _enrich_weapon_stencil_parent(result, json_path)
     _enrich_broken_glass_default_textures(result, stem)
+    # Bound stale parse entries when an artist overwrites a file repeatedly.
+    for old_key in list(_FLAT_MI_CACHE):
+        if old_key != cache_key and isinstance(old_key, tuple) and old_key[0] == path_key:
+            del _FLAT_MI_CACHE[old_key]
     _FLAT_MI_CACHE[cache_key] = result
     return result
 
@@ -1977,6 +2042,23 @@ _ENGINE_OR_EMPTY_MESH_RE = re.compile(
 
 
 
+def _uemodel_section_materials(mesh_path: str) -> list:
+    """Authored material object path per UEModel LOD0 section, in Blender slot order.
+
+    The section table names each slot's exact MI wherever it lives (shared enemy,
+    hero, effect or other room folders); folder and basename lookups miss those.
+    """
+    if not str(mesh_path or "").casefold().endswith(".uemodel") or not os.path.isfile(mesh_path):
+        return []
+    try:
+        from ..uemodel_import import parse_uemodel
+        _name, _version, lods = parse_uemodel(mesh_path, scale=1.0)
+    except Exception:
+        return []
+    return [str(path or "") for _slot, path, _first, _faces in (lods[0].materials if lods else ())]
+
+
+
 def _parse_sk_material_slots(psk_path: str, *, context: str = CTX_ANY) -> list:
     """Return [(slot_name, mi_stem, mi_json_path), ...] from sibling SK_/SM_*.json.
 
@@ -2156,22 +2238,26 @@ def _match_material_slot(
 
 
 def _resolve_mi_texture_path(obj_path: str, local_folders: list = None) -> str:
-    """Resolve a MI texture ObjectPath to a PNG, with local-folder fallback."""
+    """Resolve a MI texture ObjectPath to a supported image, with local fallback."""
     if not obj_path:
         return ""
     lookup = obj_path if obj_path.endswith(".0") else (obj_path + ".0")
-    fpath = textures.find_texture_from_object_path(lookup)
-    if fpath:
-        return fpath
+    for ext in (".png", ".tga", ".jpg", ".jpeg", ".hdr", ".exr"):
+        fpath = textures.find_asset_from_object_path(lookup, ext)
+        if fpath:
+            return textures._fs_abspath(fpath)
     leaf = obj_path.rstrip("/").split("/")[-1]
     leaf = leaf.split(".")[0]
     if not leaf:
         return ""
     for folder in (local_folders or []):
-        if not folder or not os.path.isdir(folder):
+        if not folder:
             continue
-        for ext in (".png", ".tga", ".jpg", ".jpeg"):
-            candidate = os.path.join(folder, leaf + ext)
+        folder = textures._fs_abspath(folder)
+        if not os.path.isdir(folder):
+            continue
+        for ext in (".png", ".tga", ".jpg", ".jpeg", ".hdr", ".exr"):
+            candidate = textures._fs_abspath(os.path.join(folder, leaf + ext))
             if os.path.isfile(candidate):
                 return candidate
     return ""
@@ -2223,10 +2309,13 @@ def _find_flat_tex(tex_lookup: dict, *keys_or_suffixes: str):
 
 def _unlink_input(links, socket):
     """Remove any existing links into a node socket."""
+    # Most targets are freshly created sockets; avoid a full graph link scan.
+    if not socket.is_linked:
+        return
     for lnk in list(socket.links):
         links.remove(lnk)
 
-_TEX_IMAGE_EXTS = (".png", ".tga", ".jpg", ".jpeg")
+_TEX_IMAGE_EXTS = (".png", ".tga", ".jpg", ".jpeg", ".hdr", ".exr")
 
 # Map names / tokens that should get sand BRDF on CityGroundPlane
 _SANDY_MAP_TOKENS = (
@@ -2242,7 +2331,7 @@ _GROUND_MAP_REFS_DIR = os.path.normpath(os.path.join(
     os.path.dirname(__file__), "..", "assets", "ground_map_refs",
 ))
 
-_IMAGE_FILE_EXTS = (".png", ".tga", ".jpg", ".jpeg", ".tif", ".tiff", ".webp")
+_IMAGE_FILE_EXTS = (".png", ".tga", ".jpg", ".jpeg", ".tif", ".tiff", ".webp", ".hdr", ".exr")
 
 
 
@@ -2349,16 +2438,33 @@ def _find_env_tex(tex_lookup: dict, *keys: str):
 
 
 
-def _new_tex_image(nodes, img, label: str, loc, non_color: bool = False):
-    if non_color:
-        try:
-            img.colorspace_settings.name = "Non-Color"
-        except Exception:
-            pass
+def _authored_sampling(img):
+    """How the game's sampler reads a file image, from its .arc-texture.json.
+
+    True: a default-flag sRGB-capable encoding, decoded whatever role the material gives it
+    (T_CA_LampDesk_01_A_XEM). False: authored SRGB=false, sampled raw (T_ArcFieldCrate_01_A_CR).
+    None: no sidecar decides, so the builder's hint stands.
+    """
+    filepath = getattr(img, 'filepath', '') if img is not None else ''
+    if not filepath:
+        return None
+    path = textures._fs_abspath(filepath)
+    if textures.authored_srgb_sidecar(path):
+        return True
+    return False if textures.authored_linear_sidecar(path) else None
+
+
+def _new_tex_image(nodes, img, label: str, loc, non_color: bool = False, normal: bool = False):
+    # Colour and data reads follow the authored sampling; normal maps keep the raw read, as in
+    # material_runtime.interop.Graph.image.
+    decoded = None if normal else _authored_sampling(img)
+    if decoded is not None:
+        non_color = not decoded
+    img = _shader_role_image(img, non_color=non_color)
     node = nodes.new("ShaderNodeTexImage")
     node.image = img
     node.label = label
-    node.interpolation = "Cubic"
+    node.interpolation = "Linear"
     node.location = loc
     return node
 
@@ -2469,7 +2575,7 @@ def _wire_normal_map(nodes, links, color_sock, loc, strength: float = 1.0, label
     nm_in = color_sock
     if utils.ensure_node_group("NormalFlipper"):
         flipper = nodes.new("ShaderNodeGroup")
-        flipper.node_tree = bpy.data.node_groups["NormalFlipper"]
+        flipper.node_tree = utils.find_node_group("NormalFlipper")
         flipper.location = (loc[0] - 180, loc[1])
         links.new(color_sock, flipper.inputs[0])
         nm_in = flipper.outputs[0]

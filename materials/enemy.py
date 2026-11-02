@@ -149,7 +149,7 @@ def _setup_enemy_decal_material(mat, mi_path: str, psk_path: str):
 
         if utils.ensure_node_group("NormalFlipper"):
             flipper = nodes.new("ShaderNodeGroup")
-            flipper.node_tree = bpy.data.node_groups["NormalFlipper"]
+            flipper.node_tree = utils.find_node_group("NormalFlipper")
             flipper.location = (COL_MIX - 200, 280)
             links.new(combine.outputs["Color"], flipper.inputs[0])
             nm_in = flipper.outputs[0]
@@ -774,6 +774,11 @@ def _is_enemy_scan_display_mi(mi: dict, mi_stem_lower: str = "", slot_lower: str
 
 
 def _setup_enemy_scan_display_material(mat, mi_path: str):
+    from .enemy_scan import setup_enemy_scan_display_material
+    return setup_enemy_scan_display_material(mat, mi_path)
+
+
+def _setup_legacy_enemy_scan_display_material(mat, mi_path: str):
     """Wire Arc_EnemyScanDisplay from MI_EnemyScanDisplay_* / parent preset JSON."""
     mi = _parse_flat_mi_json(mi_path)
     ng = ensure_arc_enemy_scan_display_node_group()
@@ -881,10 +886,69 @@ def _setup_enemy_scan_display_material(mat, mi_path: str):
 
 
 def setup_enemy_material(obj, psk_path: str) -> int:
-    """Enemy SK/SM slot materials (Arc enemies, ScanDisplay, enemy decals).
+    """Wire enemy slots without entering the firearm material setup path.
 
-    Same multi-slot SK wiring as weapons, kept as an explicit enemy-domain
-    entrypoint so operators do not route enemies through setup_weapon_material.
+    Enemy exports can omit SkeletalMaterials entirely. In that case use the
+    imported material-slot names to find sibling MI JSONs; this preserves
+    multi-material enemies such as Tarragon instead of applying one fallback
+    MI to the whole mesh.
     """
-    from .weapon import setup_weapon_material
-    return setup_weapon_material(obj, psk_path)
+    from .common import _parse_sk_material_slots, _uemodel_section_materials
+    from .dispatch import _get_or_build_shared_mi_material
+    from .weapon import _ensure_mesh_material_slot_count, _match_material_slot
+
+    if not obj or obj.type != "MESH":
+        return 0
+
+    folder = os.path.dirname(psk_path or "")
+    slots = _parse_sk_material_slots(psk_path)
+    if not slots or not any(mi for _name, _stem, mi in slots):
+        authored = _uemodel_section_materials(psk_path)
+        inferred = []
+        for slot_index, material_slot in enumerate(obj.material_slots):
+            material = material_slot.material
+            if not material:
+                continue
+            stem = str(material.get("arc_mi_stem") or re.sub(r"\.\d{3}$", "", material.name))
+            candidate = os.path.join(folder, f"{stem}.json")
+            if not os.path.isfile(candidate):
+                stamped = str(material.get("arc_mi_path") or "")
+                if os.path.isfile(stamped):
+                    candidate = stamped
+                elif slot_index < len(authored) and authored[slot_index]:
+                    # The UEModel section table names the exact MI, which may live in a
+                    # shared folder (Wasp/Hornet: Enemies/Shared/Art/LightAndEliteDrone).
+                    candidate = textures.find_asset_from_object_path(authored[slot_index], ".json") or ""
+                elif "enemyscandisplay" in stem.lower():
+                    candidate = textures.find_asset_from_object_path(
+                        "/Game/Pioneer/MaterialLibrary/Material_Instances/Enemies/" + stem,
+                        ".json",
+                    )
+            if candidate and os.path.isfile(candidate):
+                inferred.append((material_slot.name or stem, stem, candidate))
+        slots = inferred
+
+    if not slots or not any(mi for _name, _stem, mi in slots):
+        return 0
+
+    # Upgrade compact legacy PAK metadata only for this enemy's materials.
+    from .enemy_surface import ensure_enemy_sources
+    ensure_enemy_sources([mi for _name, _stem, mi in slots if mi])
+    _ensure_mesh_material_slot_count(obj, len(slots))
+    used_indices = set()
+    wired = 0
+    for index, (slot_name, mi_stem, mi_path) in enumerate(slots):
+        target, slot_index = _match_material_slot(
+            obj, slot_name, index, used_indices, mi_stem
+        )
+        if target is None or not mi_path:
+            continue
+        used_indices.add(slot_index)
+        material = _get_or_build_shared_mi_material(
+            mi_stem, mi_path, psk_path, (slot_name or mi_stem).lower(), obj=obj
+        )
+        if material is None:
+            continue
+        target.material = material
+        wired += 1
+    return wired

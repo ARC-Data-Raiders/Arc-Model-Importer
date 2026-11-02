@@ -129,7 +129,7 @@ internal sealed class PakIndex
         {
             if (TryExact(assetPath, out var hit, out var packagePath))
             {
-                if (seen.Add(packagePath))
+                if (seen.Add(PackageIdentity(packagePath)))
                 {
                     packages.Add(packagePath);
                     hits.Add(hit);
@@ -175,8 +175,8 @@ internal sealed class PakIndex
 
     /// <summary>
     /// Sidebar preview textures. Stored in the index and exported as PNG during reindex.
-    /// Kept out of <see cref="IsListedPackage"/> so a folder extract does not spend its
-    /// package cap on icons.
+    /// Kept out of <see cref="IsListedPackage"/> so a mesh/preset folder extract
+    /// does not include unrelated preview textures.
     /// </summary>
     internal static bool IsPreviewPackage(string path)
     {
@@ -197,7 +197,7 @@ internal sealed class PakIndex
             if (!_pathToContainer.TryGetValue(Hash(candidate), out var found))
                 continue;
             if (found.Container == ushort.MaxValue)
-                return false;
+                return TryDuplicated(assetPath, out hit);
             hit = found;
             packagePath = assetPath;
             return true;
@@ -206,13 +206,36 @@ internal sealed class PakIndex
         return false;
     }
 
+    /// <summary>
+    /// A path cooked into two containers is stored as ambiguous. Its /Game
+    /// package id is the same in both, so the indexed container serves it.
+    /// </summary>
+    private bool TryDuplicated(string assetPath, out PathHit hit)
+    {
+        hit = default;
+        var normalized = Normalize(assetPath);
+        const string cooked = "pioneergame/content/";
+        const string game = "game/";
+        string rest;
+        if (normalized.StartsWith(cooked, StringComparison.Ordinal))
+            rest = normalized[cooked.Length..];
+        else if (normalized.StartsWith(game, StringComparison.Ordinal))
+            rest = normalized[game.Length..];
+        else
+            return false;
+        var packageId = FPackageId.FromName("/Game/" + rest).id;
+        if (!_packageToContainer.TryGetValue(packageId, out var container) || container >= Containers.Length)
+            return false;
+        hit = new PathHit(container, packageId);
+        return true;
+    }
+
     private void AppendMeshes(string assetPath, List<string> packages, List<PathHit> hits, HashSet<string> seen)
     {
         var prefixes = Candidates(assetPath).Where(prefix => prefix.Length > 0).Distinct().ToList();
         if (prefixes.Count == 0)
             return;
 
-        var added = 0;
         foreach (var stored in _storedPaths)
         {
             if (stored.Container == ushort.MaxValue || stored.Container >= Containers.Length)
@@ -230,12 +253,10 @@ internal sealed class PakIndex
                 }
             }
 
-            if (!match || !seen.Add(stored.Path))
+            if (!match || !seen.Add(PackageIdentity(stored.Path)))
                 continue;
             packages.Add(stored.Path);
             hits.Add(new PathHit(stored.Container, stored.PackageId));
-            if (++added >= 128)
-                break;
         }
     }
 
@@ -489,6 +510,19 @@ internal sealed class PakIndex
             yield return cooked + normalized[remapped.Length..];
             yield return game + normalized[remapped.Length..];
         }
+    }
+
+    internal static string PackageIdentity(string path)
+    {
+        var normalized = Normalize(path);
+        const string cooked = "pioneergame/content/";
+        const string game = "game/";
+        const string remapped = "remappedplugins/content/";
+        if (normalized.StartsWith(game, StringComparison.Ordinal))
+            return cooked + normalized[game.Length..];
+        if (normalized.StartsWith(remapped, StringComparison.Ordinal))
+            return cooked + normalized[remapped.Length..];
+        return normalized;
     }
 
     internal static string Normalize(string path)

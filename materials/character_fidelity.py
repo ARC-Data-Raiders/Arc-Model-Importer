@@ -48,40 +48,18 @@ def build_face_normals():
     put(normal.inputs['Color'],encoded);l.new(normal.outputs['Normal'],out.inputs['Normal']);return t
 
 
-def prepare_face_shader(material, base_tree, previous_tree=None):
-    """Own the response per material; keep textures and overlay masks external."""
-    previous_tree = previous_tree or base_tree
-    if previous_tree.get('arc_face_shader_owner') == material.name and previous_tree.users <= 1:
-        tree = previous_tree
-    else:
-        tree = previous_tree.copy()
-        tree.name = 'ARC Face Shader - ' + material.name
-    tree['arc_face_shader'] = True
-    tree['arc_face_shader_owner'] = material.name
-    needed = [('Hair Coverage',0),('Hair Mask Amount',1),('FacialHair Coverage',0),('FacialHair Mask Amount',0),('NormalFlatness',0)]
-    existing = {item.name for item in tree.interface.items_tree if getattr(item,'in_out','') == 'INPUT'}
-    for name, default in needed:
-        if name not in existing:
-            socket = tree.interface.new_socket(name=name,in_out='INPUT',socket_type='NodeSocketFloat')
-            socket.default_value = default
-    normals = next((n for n in tree.nodes if n.get('arc_face_normal_branch')),None)
-    if normals is None:
-        normals = tree.nodes.new('ShaderNodeGroup')
-        normals.node_tree = build_face_normals()
-        normals.label = 'Authored packed RG and NXA coverage'
-        normals['arc_face_normal_branch'] = True
-    inp = next(n for n in tree.nodes if n.type=='GROUP_INPUT')
-    for name in ['Normal 1','Normal 2','Normal 3'] + [name for name,_ in needed]:
-        if name in inp.outputs and name in normals.inputs:
-            tree.links.new(inp.outputs[name],normals.inputs[name])
-    for bsdf in tree.nodes:
-        if bsdf.type=='BSDF_PRINCIPLED':
-            tree.links.new(normals.outputs['Normal'],bsdf.inputs['Normal'])
-    tree['arc_face_normal_revision'] = 1
-    return tree
+def prepare_face_shader(material, base_tree=None, previous_tree=None, mi_path=""):
+    """Standalone native construction, or an explicit original default interface."""
+    if mi_path and os.path.isfile(mi_path):
+        from .character_bootstrap import prepare_native_face
+        return prepare_native_face(material, mi_path, previous_tree)
+    from .character_fallback import prepare_default_face
+    return prepare_default_face(material, previous_tree)
 
 
-def _authored_eye_material(mi_path: str, uv_name: str = ""):
+
+
+def _authored_eye_material(mi_path: str, uv_name: str = "", *, allow_missing=False, previous=None):
     """Static M_EyeRefractive colour/UV response; keep the separate EyeShell.
 
     Shipping shader4938 and its preshaders establish the centered iris radius,
@@ -89,10 +67,11 @@ def _authored_eye_material(mi_path: str, uv_name: str = ""):
     eye subsurface lighting and runtime weather are not engine-identical here.
     """
     from .character import _mi_parent_chain_jsons, _parse_flat_mi_json, _find_tex_path
-    if not mi_path or not os.path.isfile(mi_path):
+    source_present = bool(mi_path and os.path.isfile(mi_path))
+    if not source_present and not allow_missing:
         return None
     scalars, colours, texture_refs = {}, {}, {}
-    for path in reversed(_mi_parent_chain_jsons(mi_path) or [mi_path]):
+    for path in reversed((_mi_parent_chain_jsons(mi_path) or [mi_path]) if source_present else []):
         parsed = _parse_flat_mi_json(path) or {}
         scalars.update(parsed.get("scalars") or {})
         colours.update(dict(parsed.get("colours") or []))
@@ -102,11 +81,18 @@ def _authored_eye_material(mi_path: str, uv_name: str = ""):
     iris_path = image_path("IrisColor", "/Game/Pioneer/Characters/Heads/Shared/Eyes/Textures/T_EyeIrisBaseColor_Example_2")
     sclera_path = image_path("ScleraColor", "/Game/Pioneer/Characters/Heads/Shared/Eyes/Textures/T_EyeScleraBaseColor_Example_2")
     normal_path = image_path("NormalMap", "/Game/Pioneer/Characters/Heads/Shared/Eyes/Textures/T_Eye_Wet_Normal")
-    if not iris_path or not sclera_path:
+    missing_eye = [name for name,path in (("IrisColor",iris_path),("ScleraColor",sclera_path),("NormalMap",normal_path)) if not path]
+    if (not iris_path or not sclera_path) and not allow_missing:
         return None
-    identity = os.path.normcase(os.path.abspath(mi_path))
+    if allow_missing and previous is not None and previous.use_nodes:
+        for control in previous.node_tree.nodes:
+            if control.type == "VALUE" and control.label:
+                scalars[control.label] = float(control.outputs[0].default_value)
+            elif control.type == "RGB" and control.label:
+                colours[control.label] = tuple(control.outputs[0].default_value)
+    identity = os.path.normcase(os.path.abspath(mi_path)) if source_present else "missing-source"
     for existing in bpy.data.materials:
-        if existing.get("arc_eye_setup") == "authored-v1" and existing.get("arc_eye_mi_identity") == identity and existing.get("arc_eye_uv_layer", "") == uv_name:
+        if not allow_missing and existing.get("arc_eye_setup") == "authored-v2" and existing.get("arc_eye_mi_identity") == identity and existing.get("arc_eye_uv_layer", "") == uv_name:
             return existing
     mat = bpy.data.materials.new(os.path.splitext(os.path.basename(mi_path))[0] + "_Eyes")
     mat.use_nodes = True
@@ -119,6 +105,8 @@ def _authored_eye_material(mi_path: str, uv_name: str = ""):
         if hasattr(value, "node"):
             links.new(value, socket)
         else:
+            if isinstance(value, (tuple, list)) and len(value) == 3 and hasattr(socket.default_value, '__len__') and len(socket.default_value) == 4:
+                value = tuple(value) + (1.,)
             socket.default_value = value
     def scalar(name, default):
         result = node("ShaderNodeValue", name)
@@ -145,6 +133,23 @@ def _authored_eye_material(mi_path: str, uv_name: str = ""):
         put(result.inputs[1], a); put(result.inputs[2], b)
         return result.outputs[0]
     def texture(path, coordinates, label, non_color=False):
+        if not path:
+            # Original missing-image approximation. The authored coordinate and
+            # tint controls remain available, without a borrowed iris template.
+            if label == "Authored IrisColor":
+                centered_uv = vector("SUBTRACT", coordinates, (.5,.5,0), "Procedural iris center")
+                split = node("ShaderNodeSeparateXYZ", "Procedural iris polar coordinates")
+                links.new(centered_uv, split.inputs[0])
+                angle = math_node("ARCTAN2", split.outputs['Y'], split.outputs['X'])
+                stripe = math_node("ADD", .5, math_node("MULTIPLY", .5, math_node("SINE", math_node("MULTIPLY", angle, 37.))))
+                iris_color = lerp((.035,.065,.02,1.), (.18,.28,.10,1.), stripe, "Original iris striations")
+                pupil_mask = math_node("LESS_THAN", vector("LENGTH", centered_uv), .20)
+                result = node("ShaderNodeMixRGB", "Original procedural pupil")
+                put(result.inputs[0], pupil_mask);put(result.inputs[1], iris_color);put(result.inputs[2], (.001,.001,.001,1.))
+                return result
+            result = node("ShaderNodeRGB", "Missing sclera texture neutral source")
+            result.outputs[0].default_value = (.8,.8,.8,1.)
+            return result
         image = bpy.data.images.load(path, check_existing=True)
         wanted_space = "Non-Color" if non_color else "sRGB"
         if image.colorspace_settings.name != wanted_space:
@@ -193,7 +198,12 @@ def _authored_eye_material(mi_path: str, uv_name: str = ""):
     sclera_spec = scalar("SpecularityScelera", 1.0)
     spec = math_node("ADD", sclera_spec, math_node("MULTIPLY", mask, math_node("SUBTRACT", scalar("SpecularityIris", 1.0), sclera_spec)))
     links.new(rough, principled.inputs["Roughness"]); links.new(spec, principled.inputs["Specular IOR Level"])
-    principled.inputs["IOR"].default_value = float(scalars.get("IoR", 1.336))
+    # IoR controls the game's iris refraction, not UE's independent Specular
+    # F0. At IOR1.5 Blender maps Specular IOR Level directly to .08*Specular.
+    principled.inputs["IOR"].default_value = 1.5
+    refraction_ior = scalar("Authored refraction IoR (engine effect)", float(scalars.get("IoR", 1.336)))
+    mat["arc_eye_refraction_ior"] = float(refraction_ior.default_value)
+    mat["arc_eye_bsdf_ior"] = 1.5
     if normal_path:
         normal_scale = math_node("MAXIMUM", scalar("NormalUVScale", 2.4), 1e-5)
         normal_uv = vector("ADD", vector("SCALE", vector("SUBTRACT", uv.outputs[0], (0.5, 0.5, 0)), math_node("DIVIDE", 1.0, normal_scale)), (0.5, 0.5, 0), "Normal UV")
@@ -222,11 +232,17 @@ def _authored_eye_material(mi_path: str, uv_name: str = ""):
     output = node("ShaderNodeOutputMaterial", "Material Output")
     links.new(principled.outputs[0], output.inputs["Surface"])
     mat["arc_head_role"] = "eyes"
-    mat["arc_mi_path"] = os.path.abspath(mi_path)
+    if mi_path:
+        mat["arc_mi_path"] = os.path.abspath(mi_path)
     mat["arc_eye_mi_identity"] = identity
     mat["arc_eye_uv_layer"] = uv_name
-    mat["arc_eye_setup"] = "authored-v1"
+    mat["arc_eye_setup"] = "fallback-original-v1" if allow_missing else "authored-v2"
     mat["arc_eye_static_approximation"] = "Authored radius/pupil/limbus/textures/colour; UE corneal refraction, concavity, eye SSS lighting and weather differ. Separate EyeShell retained."
-    from ..surface_rebuild.graph import arrange
-    arrange(mat.node_tree)
+    if allow_missing:
+        from .character_fallback import finish, surface_controls, apply_controls
+        apply_controls(principled, surface_controls(previous, 'eyes'))
+        finish(mat, 'eyes', ['Missing eye source/resources: '+', '.join(missing_eye or ['native material lineage']), 'Original procedural iris/neutral sclera used only for absent images; corneal refraction/concavity/SSS/weather remain Blender approximations'])
+    else:
+        from ..surface_rebuild.graph import arrange
+        arrange(mat.node_tree)
     return mat

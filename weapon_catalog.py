@@ -76,7 +76,7 @@ def weapon_enum_items(_self=None, _context=None):
     if _WEAPON_ENUM_ITEMS is not None:
         return _WEAPON_ENUM_ITEMS
     items: list[tuple[str, str, str]] = [
-        ("NONE", "Select Weapon...", "Pick a firearm or launcher from the ST catalog"),
+        ("NONE", "Select Weapon...", ""),
     ]
     for entry in weapons():
         key = str(entry.get("key") or "").strip()
@@ -250,51 +250,40 @@ def list_weapon_skins(pioneer_root: str, entry: dict | None = None) -> list[tupl
 
 
 def resolve_weapon_skin_mi(
-    pioneer_root: str, entry: dict | None, skin_name: str,
+    pioneer_root: str | list[str] | tuple[str,...], entry: dict | None, skin_name: str,
 ) -> str:
     """Resolve Skins/<skin_name>/MI_*.json for a catalog gun, or ''."""
     name = (skin_name or "").strip()
     if not name or name == "NONE":
         return ""
-    for folder_name, mi_path in list_weapon_skins(pioneer_root, entry):
-        if folder_name == name:
-            return mi_path
+    roots=list(pioneer_root) if isinstance(pioneer_root,(list,tuple)) else [pioneer_root]
+    def sources():
+        yield from roots
+        from . import weapon_assets
+        yield from (str(root) for root in weapon_assets.pioneer_roots())
+    seen=set()
+    for root in sources():
+        if not root or root in seen:continue
+        seen.add(root)
+        for folder_name, mi_path in list_weapon_skins(root, entry):
+            if folder_name == name:return mi_path
     return ""
 
 
 def skin_enum_items(_self=None, context=None):
-    """Enum for scene.arc_weapon_skin — colourways under the selected gun's Skins/."""
-    pioneer = ""
-    weapon_key = "NONE"
-    try:
-        from . import utils
+    scene = _self if hasattr(_self, "arc_weapon_key") else getattr(context, "scene", None)
+    weapon_key = getattr(scene, "arc_weapon_key", "NONE") or "NONE"
+    from . import weapon_assets
 
-        pioneer = utils.get_pioneer_root() or ""
-        scene = getattr(context, "scene", None) if context is not None else None
-        if not pioneer and scene is not None:
-            pioneer = getattr(scene, "arc_pioneer_root", "") or ""
-        if scene is not None:
-            weapon_key = getattr(scene, "arc_weapon_key", "NONE") or "NONE"
-        pioneer = os.path.normcase(os.path.normpath(pioneer)) if pioneer else ""
-    except Exception:
-        pioneer = ""
-        weapon_key = "NONE"
-
-    cache_key = (pioneer, weapon_key)
+    cache_key = (weapon_key, weapon_assets._REVISION)
     if _SKIN_ENUM_CACHE["items"] is not None and _SKIN_ENUM_CACHE["key"] == cache_key:
         return _SKIN_ENUM_CACHE["items"]
 
-    items: list[tuple[str, str, str]] = [
-        ("NONE", "Default (base MI)", "Use the gun's base MI — no Skins/ colourway"),
-    ]
-    entry = weapon_by_key(weapon_key) if weapon_key and weapon_key != "NONE" else None
-    if entry and pioneer:
-        for name, mi_path in list_weapon_skins(pioneer, entry):
-            items.append((name, name, os.path.basename(mi_path)))
-    elif entry and not pioneer:
-        items.append(
-            ("NONE", "Default (set Pioneer root)", "Point Settings → Pioneer at Content/Pioneer"),
-        )
+    items: list[tuple[str, str, str]] = [("NONE", "Default", "")]
+    entry = weapon_by_key(weapon_key) if weapon_key != "NONE" else None
+    if entry:
+        for skin in weapon_assets.bundled_skins(entry):
+            items.append((skin["id"], skin["label"], ""))
 
     _SKIN_ENUM_CACHE["key"] = cache_key
     _SKIN_ENUM_CACHE["items"] = items
@@ -302,49 +291,16 @@ def skin_enum_items(_self=None, context=None):
 
 
 def pattern_enum_items(_self=None, context=None):
-    pioneer = ""
-    try:
-        from . import utils
+    from . import weapon_assets
 
-        pioneer = utils.get_pioneer_root() or ""
-        if not pioneer and context is not None:
-            pioneer = getattr(getattr(context, "scene", None), "arc_pioneer_root", "") or ""
-        pioneer = os.path.normcase(os.path.normpath(pioneer)) if pioneer else ""
-    except Exception:
-        pioneer = ""
-
-    if (
-        _PATTERN_ENUM_CACHE["items"] is not None
-        and _PATTERN_ENUM_CACHE["root"] == pioneer
-    ):
+    revision = weapon_assets._REVISION
+    if _PATTERN_ENUM_CACHE["items"] is not None and _PATTERN_ENUM_CACHE["root"] == revision:
         return _PATTERN_ENUM_CACHE["items"]
 
-    items: list[tuple[str, str, str]] = [
-        ("NONE", "No Pattern", "Pattern path disabled (Use Pattern = 0)"),
-    ]
-    try:
-        pdir = patterns_dir(pioneer)
-        if pdir:
-            for name in sorted(os.listdir(pdir)):
-                low = name.lower()
-                if not low.endswith(".png"):
-                    continue
-                if "_c.png" not in low and not low.endswith("_c.png"):
-                    # Prefer colour (_C) maps; still list ID maps with a marker
-                    if "_id.png" in low:
-                        label = os.path.splitext(name)[0]
-                        items.append((name, f"{label} (ID)", name))
-                    continue
-                label = os.path.splitext(name)[0]
-                # Strip common prefix for UI
-                if label.lower().startswith("t_weapons_pattern_"):
-                    label = label[len("T_Weapons_Pattern_") :]
-                if label.endswith("_C") or label.endswith("_c"):
-                    label = label[:-2]
-                items.append((name, label.replace("_", " "), name))
-    except Exception:
-        pass
+    items: list[tuple[str, str, str]] = [("NONE", "No Pattern", "")]
+    for pattern in weapon_assets.bundled().get("patterns", []):
+        items.append((pattern["id"], pattern["label"], ""))
 
-    _PATTERN_ENUM_CACHE["root"] = pioneer
+    _PATTERN_ENUM_CACHE["root"] = revision
     _PATTERN_ENUM_CACHE["items"] = items
     return items

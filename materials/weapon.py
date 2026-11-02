@@ -989,6 +989,9 @@ def _ascended_companion_from_cr(cr_fpath: str, suffix: str, local_folders: list)
 
 
 def _setup_weapon_main_material(mat, mi_path: str, psk_path: str):
+    if any(part in mi_path.replace("\\", "/").casefold() for part in ("/items/firearms/", "/items/launchers/", "/items/weaponmod/")):
+        from . import weapon_surface
+        return weapon_surface.setup(mat, mi_path, psk_path)
     mi = _parse_flat_mi_json(mi_path)
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
@@ -1078,7 +1081,7 @@ def _setup_weapon_main_material(mat, mi_path: str, psk_path: str):
         nm_src = normal_node.outputs["Color"]
         if utils.ensure_node_group("NormalFlipper"):
             flipper = nodes.new("ShaderNodeGroup")
-            flipper.node_tree = bpy.data.node_groups["NormalFlipper"]
+            flipper.node_tree = utils.find_node_group("NormalFlipper")
             flipper.location = (COL_UTIL, Y_N)
             links.new(normal_node.outputs["Color"], flipper.inputs[0])
             nm_src = flipper.outputs[0]
@@ -1264,6 +1267,10 @@ def _setup_weapon_screen_material(mat, mi_path: str):
 
 
 def setup_weapon_material(obj, psk_path: str, skin_json: str = "") -> int:
+    if any(part in psk_path.replace("\\", "/").casefold() for part in ("/items/firearms/", "/items/launchers/", "/items/weaponmod/")):
+        from pathlib import Path
+        from .. import weapon_import
+        return weapon_import._material(obj, Path(psk_path), {}, skin_json)
     """Assign per-slot materials from SK/SM SkeletalMaterials / StaticMaterials.
 
     Used for firearms and hero/character SKs (e.g. Kalika Base Body) whose MIs

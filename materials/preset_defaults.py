@@ -1,27 +1,13 @@
-"""Parent-preset parameter defaults mined from the cooked ``M_Presets`` dumps.
+"""Current-native parent preset facts through a reviewed versioned catalog.
 
-Compact MI dumps only record the overrides an artist changed, so a shader built
-from the MI alone is missing most of the preset's authored behaviour (the
-elevator's ``1. Wear CR`` rusted-metal texture, for instance, lives only in
-``M_TrimMap_01``). ``assets/preset_defaults.json`` is generated offline by
-``map_tools/mine_preset_defaults.py`` and read here.
-
-Table shape::
-
-    {"format": 1, "presets": {"M_TrimMap_01": {
-        "scalars": {name: float}, "vectors": {name: [r,g,b,a]},
-        "switches": {name: bool}, "texture_params": [name],
-        "texture_defaults": {name: "/Game/..."},
-        "referenced_textures": ["/Game/..."]}}}
+The public compatibility API remains, but no historical preset table is read.
+Bare preset keys denote only the declared /Game/.../M_Presets namespace. Exact
+full references never borrow a matching basename from another mount.
 """
 from __future__ import annotations
 
 import json
 import os
-
-_TABLE_PATH = os.path.normpath(os.path.join(
-    os.path.dirname(__file__), "..", "assets", "preset_defaults.json",
-))
 
 # None = not loaded yet, {} = loaded but unavailable/empty (do not retry).
 _TABLE_CACHE: dict | None = None
@@ -38,30 +24,20 @@ _EMPTY_PRESET = {
 
 
 def _load_table() -> dict:
-    global _TABLE_CACHE
-    if _TABLE_CACHE is not None:
-        return _TABLE_CACHE
-    presets = {}
-    try:
-        with open(_TABLE_PATH, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        raw = data.get("presets") if isinstance(data, dict) else None
-        if isinstance(raw, dict):
-            presets = raw
-    except (OSError, ValueError):
-        presets = {}
-    _TABLE_CACHE = presets
-    return presets
+    from ..material_runtime.native_data import current_presets
+    return current_presets()
 
 
 def _alias_index() -> dict:
     """Lowercase preset key/name -> canonical key, for loose parent lookups."""
     global _ALIAS_CACHE
-    if _ALIAS_CACHE is not None:
-        return _ALIAS_CACHE
     index = {}
     for key, preset in _load_table().items():
         index.setdefault(key.lower(), key)
+        full=str((preset or {}).get('package') or '')
+        if full:
+            from ..surface_rebuild.assets import package
+            index.setdefault(full.casefold(),key);index.setdefault(package(full).casefold(),key)
         name = str((preset or {}).get("name") or "")
         if name:
             index.setdefault(name.lower(), key)
@@ -93,6 +69,9 @@ def get_preset(key: str) -> dict:
     if preset is None:
         canon = _alias_index().get(str(key).strip().lower())
         preset = table.get(canon) if canon else None
+    if isinstance(preset,dict) and preset.get('_native_render_limit'):
+        from ..surface_rebuild.native_catalog_bridge import NativeRenderLimitationError
+        raise NativeRenderLimitationError('Current native preset bindings unresolved: '+str(key))
     if not isinstance(preset, dict):
         return _EMPTY_PRESET
     return preset
@@ -151,3 +130,10 @@ def find_referenced_texture(key: str, *tokens: str) -> str:
         if all(tok in stem for tok in want):
             return path
     return ""
+
+
+def source_signature():
+    """Current reviewed bank identity for retained profile cache invalidation."""
+    from ..material_runtime.native_data import reviewed_source
+    source=reviewed_source()
+    return None if source is None else source['provenance']

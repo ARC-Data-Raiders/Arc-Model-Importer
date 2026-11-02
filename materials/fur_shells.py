@@ -9,6 +9,7 @@ import json, os
 import bpy
 import numpy as np
 from .. import textures, utils, uemodel_import
+from ..material_runtime.core import base_property_overrides
 
 SCHEMA = 'native-shells-v1'
 MODIFIER = 'ARC Native Fur Shell Offset'
@@ -68,7 +69,7 @@ def profile(path, seen=None):
         for name,value in (params.get(pkey) or {}).items():
             result[key][name]=tuple(float(value.get(c,1)) for c in 'RGBA') if key=='colors' else float(value)
     result['textures'].update(flat.get('Textures') or {})
-    bpo=props.get('BasePropertyOverrides') or (params.get('Properties') or {}).get('BasePropertyOverrides') or {}
+    bpo=base_property_overrides(props.get('BasePropertyOverrides') or (params.get('Properties') or {}).get('BasePropertyOverrides'),snapshot=True)
     result['clip']=float(bpo.get('OpacityMaskClipValue',.3333))
     result['two_sided']=bool(bpo.get('TwoSided',False))
     return result
@@ -99,7 +100,8 @@ class _Graph:
         path=_asset(self.source,reference,'.png')
         if not path:self.missing.append(str(reference));return {'color':self.color((0,0,0,1)),'r':0.0,'g':0.0}
         image=bpy.data.images.load(path,check_existing=True)
-        space='Non-Color' if data else 'sRGB'
+        # T_FurMask_04_A is DXT1 with SRGB left at default; the sampler decodes it before the cutoff.
+        space='Non-Color' if data and not textures.authored_srgb_sidecar(path) else 'sRGB'
         if image.colorspace_settings.name!=space and image.users:image=image.copy()
         image.colorspace_settings.name=space
         n=self.nodes.new('ShaderNodeTexImage');n.image=image;n.label=label;n.interpolation='Linear';n.extension='REPEAT'

@@ -1,0 +1,2134 @@
+{
+  "version": 2,
+  "weapons": {
+    "HandCannon_SingleAction_01": {
+      "preview": "T_UI_Icon_HandCannon_SingleAction_01_Big_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_HandCannon_SingleAction_01_Ascended_Default_A.json",
+          "label": "Default",
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Ascended/Default/DA_WeaponVisuals_HandCannon_SingleAction_01_Ascended_Default_A",
+          "preview": "T_UI_Icon_HandCannon_SingleAction_01_Ascended_Big_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/DA_WeaponVisuals_HandCannon_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/SK_Handcannon_SingleAction_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Skins/CommonBlue/DA_WeaponVisuals_HandCannon_SingleAction_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Skins/CommonRed/DA_WeaponVisuals_HandCannon_SingleAction_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Skins/CommonYellow/DA_WeaponVisuals_HandCannon_SingleAction_01_CommonYellow"
+        },
+        {
+          "id": "Corto",
+          "label": "Corto",
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Skins/Corto/DA_WeaponVisuals_HandCannon_SingleAction_01_Corto"
+        },
+        {
+          "id": "MuralTree",
+          "label": "Mural Tree",
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Skins/MuralTree/DA_WeaponVisuals_HandCannon_SingleAction_01_MuralTree"
+        },
+        {
+          "id": "StationMaster",
+          "label": "Station Master",
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Skins/StationMaster/DA_WeaponVisuals_HandCannon_SingleAction_01_StationMaster"
+        },
+        {
+          "id": "Tortoiseshell",
+          "label": "Tortoiseshell",
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Skins/Tortoiseshell/DA_WeaponVisuals_HandCannon_SingleAction_01_Tortoiseshell"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/DA_Item_HandCannon_SingleAction_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/BP_Item_HandCannon_SingleAction_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Ascended/DA_Item_HandCannon_SingleAction_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_HandCannon_SingleAction_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Ascended/BP_Item_HandCannon_SingleAction_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/BP_Item_HandCannon_SingleAction_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Ascended/Permutations/DA_Item_HandCannon_SingleAction_01_ProjectileSplitter",
+          "variant": "Ascended/Default/DA_WeaponVisuals_HandCannon_SingleAction_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Ascended/Permutations/BP_Item_HandCannon_SingleAction_01_ProjectileSplitter",
+            "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Ascended/BP_Item_HandCannon_SingleAction_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/BP_Item_HandCannon_SingleAction_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Ascended/Permutations/DA_Item_HandCannon_SingleAction_01_XRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_HandCannon_SingleAction_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Ascended/Permutations/BP_Item_HandCannon_SingleAction_01_XRounds",
+            "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Ascended/BP_Item_HandCannon_SingleAction_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/BP_Item_HandCannon_SingleAction_01"
+          ]
+        }
+      ]
+    },
+    "BattleRifle_EnergyBurst_01": {
+      "preview": "T_UI_Icon_BattleRifle_EnergyBurst_01_BigIcon_T0.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
+          "label": "Default",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A",
+          "preview": "T_UI_Icon_BattleRifle_EnergyBurst_01_Ascended_BigIcon_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/DA_WeaponVisuals_BattleRifle_EnergyBurst_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/SK_BattleRifle_EnergyBurst_01_A_Skeleton",
+      "skins": [],
+      "quality_levels": [
+        0
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/DA_Item_BattleRifle_EnergyBurst_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/BP_Item_BattleRifle_EnergyBurst_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/DA_Item_BattleRifle_EnergyBurst_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/BP_Item_BattleRifle_EnergyBurst_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/BP_Item_BattleRifle_EnergyBurst_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/DA_Item_BattleRifle_EnergyBurst_01_BiggerMag",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/BP_Item_BattleRifle_EnergyBurst_01_BiggerMag",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/BP_Item_BattleRifle_EnergyBurst_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/BP_Item_BattleRifle_EnergyBurst_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/DA_Item_BattleRifle_EnergyBurst_01_BiggerMag_ChargedBurst",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/BP_Item_BattleRifle_EnergyBurst_01_BiggerMag_ChargedBurst",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/UniqueWeapons/BP_Item_BattleRifle_EnergyBurst_ChargedBurst_Base",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/DA_Item_BattleRifle_EnergyBurst_01_BiggerMag_ChargedBurst_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/BP_Item_BattleRifle_EnergyBurst_01_BiggerMag_ChargedBurst_IncendiaryRounds",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/UniqueWeapons/BP_Item_BattleRifle_EnergyBurst_ChargedBurst_Base",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/DA_Item_BattleRifle_EnergyBurst_01_BiggerMag_ChargedBurst_IncreasedBurst",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/BP_Item_BattleRifle_EnergyBurst_01_BiggerMag_ChargedBurst_IncreasedBurst",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/UniqueWeapons/BP_Item_BattleRifle_EnergyBurst_ChargedBurst_Base",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/DA_Item_BattleRifle_EnergyBurst_01_BiggerMag_ChargedBurst_IncreasedBurst_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/BP_Item_BattleRifle_EnergyBurst_01_BiggerMag_ChargedBurst_IncreasedBurst_IncendiaryRounds",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/UniqueWeapons/BP_Item_BattleRifle_EnergyBurst_ChargedBurst_Base",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/DA_Item_BattleRifle_EnergyBurst_01_BiggerMag_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/BP_Item_BattleRifle_EnergyBurst_01_BiggerMag_IncendiaryRounds",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/BP_Item_BattleRifle_EnergyBurst_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/BP_Item_BattleRifle_EnergyBurst_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/DA_Item_BattleRifle_EnergyBurst_01_ChargedBurst",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/BP_Item_BattleRifle_EnergyBurst_01_ChargedBurst",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/UniqueWeapons/BP_Item_BattleRifle_EnergyBurst_ChargedBurst_Base",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/DA_Item_BattleRifle_EnergyBurst_01_ChargedBurst_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/BP_Item_BattleRifle_EnergyBurst_01_ChargedBurst_IncendiaryRounds",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/UniqueWeapons/BP_Item_BattleRifle_EnergyBurst_ChargedBurst_Base",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/DA_Item_BattleRifle_EnergyBurst_01_ChargedBurst_IncreasedBurst",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/BP_Item_BattleRifle_EnergyBurst_01_ChargedBurst_IncreasedBurst",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/UniqueWeapons/BP_Item_BattleRifle_EnergyBurst_ChargedBurst_Base",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/DA_Item_BattleRifle_EnergyBurst_01_ChargedBurst_IncreasedBurst_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/BP_Item_BattleRifle_EnergyBurst_01_ChargedBurst_IncreasedBurst_IncendiaryRounds",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/UniqueWeapons/BP_Item_BattleRifle_EnergyBurst_ChargedBurst_Base",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/DA_Item_BattleRifle_EnergyBurst_01_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Permutations/BP_Item_BattleRifle_EnergyBurst_01_IncendiaryRounds",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/BP_Item_BattleRifle_EnergyBurst_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/BP_Item_BattleRifle_EnergyBurst_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        }
+      ]
+    },
+    "AssaultRifle_Burst_01": {
+      "preview": "T_UI_Icon_AssaultRifle_Burst_01_Big_A_T3.png",
+      "variants": [],
+      "base_visual": "/Game/Pioneer/Items/Firearms/AssaultRifle_Burst_01/DA_WeaponVisuals_AssaultRifle_Burst_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/AssaultRifle_Burst_01/SK_AssaultRifle_Burst_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Burst_01/Skins/CommonBlue/DA_WeaponVisuals_AssaultRifle_Burst_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Burst_01/Skins/CommonRed/DA_WeaponVisuals_AssaultRifle_Burst_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Burst_01/Skins/CommonYellow/DA_WeaponVisuals_AssaultRifle_Burst_01_CommonYellow"
+        },
+        {
+          "id": "MuralTree",
+          "label": "Mural Tree",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Burst_01/Skins/MuralTree/DA_WeaponVisuals_AssaultRifle_Burst_01_MuralTree"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Burst_01/DA_Item_AssaultRifle_Burst_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Burst_01/BP_Item_AssaultRifle_Burst_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_AR_Short_01/DA_Visual_WeaponMod_Mag_Medium_AR_Short_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        }
+      ]
+    },
+    "HandCannon_DoubleAction_Snubnose_01": {
+      "preview": "T_UI_Icon_HandCannon_DoubleAction_Snubnose_01_BigIcon_T3.png",
+      "variants": [],
+      "base_visual": "/Game/Pioneer/Items/Firearms/HandCannon_DoubleAction_Snubnose_01/DA_WeaponVisuals_HandCannon_DoubleAction_Snubnose_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/HandCannon_DoubleAction_Snubnose_01/SK_HandCannon_DoubleAction_Snubnose_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_DoubleAction_Snubnose_01/Skins/CommonBlue/DA_WeaponVisuals_HandCannon_DoubleAction_Snubnose_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_DoubleAction_Snubnose_01/Skins/CommonRed/DA_WeaponVisuals_HandCannon_DoubleAction_Snubnose_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_DoubleAction_Snubnose_01/Skins/CommonYellow/DA_WeaponVisuals_HandCannon_DoubleAction_Snubnose_01_CommonYellow"
+        },
+        {
+          "id": "MuralTree",
+          "label": "Mural Tree",
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_DoubleAction_Snubnose_01/Skins/MuralTree/DA_WeaponVisuals_HandCannon_DoubleAction_Snubnose_01_MuralTree"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/HandCannon_DoubleAction_Snubnose_01/DA_Item_HandCannon_DoubleAction_Snubnose_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/HandCannon_DoubleAction_Snubnose_01/BP_Item_HandCannon_DoubleAction_Snubnose_01"
+          ]
+        }
+      ]
+    },
+    "AssaultRifle_Heavy_01": {
+      "preview": "T_UI_Icon_AssaultRifle_Heavy_01_BigIcon_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_Heavy_01_Ascended_Default_A.json",
+          "label": "Default",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Ascended/Default/DA_WeaponVisuals_AssaultRifle_Heavy_01_Ascended_Default_A",
+          "preview": "T_UI_Icon_AssaultRifle_Heavy_01_Ascended_BigIcon_T3.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/DA_WeaponVisuals_AssaultRifle_Heavy_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/SK_AssaultRifle_Heavy_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Skins/CommonBlue/DA_WeaponVisuals_AssaultRifle_Heavy_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Skins/CommonRed/DA_WeaponVisuals_AssaultRifle_Heavy_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Skins/CommonYellow/DA_WeaponVisuals_AssaultRifle_Heavy_01_CommonYellow"
+        },
+        {
+          "id": "MuralTree",
+          "label": "Mural Tree",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Skins/MuralTree/DA_WeaponVisuals_AssaultRifle_Heavy_01_MuralTree"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/DA_Item_AssaultRifle_Heavy_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/BP_Item_AssaultRifle_Heavy_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Ascended/DA_Item_AssaultRifle_Heavy_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_Heavy_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Ascended/BP_Item_AssaultRifle_Heavy_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/BP_Item_AssaultRifle_Heavy_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Ascended/Permutations/DA_Item_AssaultRifle_Heavy_01_BiggerMag",
+          "variant": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_Heavy_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Ascended/Permutations/BP_Item_AssaultRifle_Heavy_01_BiggerMag",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Ascended/BP_Item_AssaultRifle_Heavy_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/BP_Item_AssaultRifle_Heavy_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Ascended/Permutations/DA_Item_AssaultRifle_Heavy_01_SemiAuto",
+          "variant": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_Heavy_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Ascended/Permutations/BP_Item_AssaultRifle_Heavy_01_SemiAuto",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Ascended/BP_Item_AssaultRifle_Heavy_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/BP_Item_AssaultRifle_Heavy_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Ascended/Permutations/DA_Item_AssaultRifle_Heavy_01_SemiAuto_XRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_Heavy_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Ascended/Permutations/BP_Item_AssaultRifle_Heavy_01_SemiAuto_XRounds",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Ascended/BP_Item_AssaultRifle_Heavy_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/BP_Item_AssaultRifle_Heavy_01"
+          ]
+        }
+      ]
+    },
+    "SMG_01": {
+      "preview": "T_UI_Icon_SMG_01_Big_A_T3.png",
+      "variants": [],
+      "base_visual": "/Game/Pioneer/Items/Firearms/SMG_01/DA_WeaponVisuals_SMG_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/SMG_01/SK_SMG_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_01/Skins/CommonBlue/DA_WeaponVisuals_SMG_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_01/Skins/CommonRed/DA_WeaponVisuals_SMG_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_01/Skins/CommonYellow/DA_WeaponVisuals_SMG_01_CommonYellow"
+        },
+        {
+          "id": "MuralTree",
+          "label": "Mural Tree",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_01/Skins/MuralTree/DA_WeaponVisuals_SMG_01_MuralTree"
+        },
+        {
+          "id": "Yeti",
+          "label": "Yeti",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_01/Skins/Yeti/DA_WeaponVisuals_SMG_01_Yeti"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_01/DA_Item_SMG_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SMG_01/BP_Item_SMG_01"
+          ]
+        }
+      ]
+    },
+    "Pistol_01": {
+      "preview": "T_UI_Icon_Pistol_01_BigIcon_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_Pistol_01_Ascended_Default_A.json",
+          "label": "Default",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Default/DA_WeaponVisuals_Pistol_01_Ascended_Default_A",
+          "preview": "T_UI_Icon_Pistol_01_Ascended_BigIcon_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Firearms/Pistol_01/DA_WeaponVisuals_Pistol_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/Pistol_01/SK_Pistol_01_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Skins/CommonBlue/DA_WeaponVisuals_Pistol_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Skins/CommonRed/DA_WeaponVisuals_Pistol_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Skins/CommonYellow/DA_WeaponVisuals_Pistol_01_CommonYellow"
+        },
+        {
+          "id": "DustStrokeCamo",
+          "label": "Dust Stroke Camo",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Skins/DustStrokeCamo/DA_WeaponVisuals_Pistol_01_DustStrokeCamo"
+        },
+        {
+          "id": "OrganicIsland",
+          "label": "Organic Island",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Skins/OrganicIsland/DA_WeaponVisuals_Pistol_01_OrganicIsland"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/DA_Item_Pistol_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_01/BP_Item_Pistol_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/DA_Item_Pistol_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Pistol_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/BP_Item_Pistol_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/BP_Item_Pistol_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/DA_Item_Pistol_01_Burst",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Pistol_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/BP_Item_Pistol_01_Burst",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/BP_Item_Pistol_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/BP_Item_Pistol_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/DA_Item_Pistol_01_Burst_IncreasedBurst",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Pistol_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/BP_Item_Pistol_01_Burst_IncreasedBurst",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/BP_Item_Pistol_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/BP_Item_Pistol_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/DA_Item_Pistol_01_Burst_IncreasedBurst_SprintShooting",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Pistol_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/BP_Item_Pistol_01_Burst_IncreasedBurst_SprintShooting",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/BP_Item_Pistol_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/BP_Item_Pistol_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/DA_Item_Pistol_01_Burst_SprintShooting",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Pistol_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/BP_Item_Pistol_01_Burst_SprintShooting",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/BP_Item_Pistol_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/BP_Item_Pistol_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/DA_Item_Pistol_01_FullAuto",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Pistol_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/BP_Item_Pistol_01_FullAuto",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/BP_Item_Pistol_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/BP_Item_Pistol_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/DA_Item_Pistol_01_FullAuto_SprintShooting",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Pistol_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/BP_Item_Pistol_01_FullAuto_SprintShooting",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/BP_Item_Pistol_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/BP_Item_Pistol_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/DA_Item_Pistol_01_SprintShooting",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Pistol_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Permutations/BP_Item_Pistol_01_SprintShooting",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/BP_Item_Pistol_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Pistol_01/BP_Item_Pistol_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        }
+      ]
+    },
+    "SMG_Medium_01": {
+      "preview": "T_UI_Icon_SMG_Medium_01_BigIcon_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Carbine/DA_WeaponVisuals_SMG_Medium_01_Ascended_Carbine_A.json",
+          "label": "Carbine",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Carbine/DA_WeaponVisuals_SMG_Medium_01_Ascended_Carbine_A",
+          "preview": "T_UI_Icon_SMG_Medium_01_Carbine_BigIcon_T0.png"
+        },
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_SMG_Medium_01_Ascended_Default_A.json",
+          "label": "Default",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Default/DA_WeaponVisuals_SMG_Medium_01_Ascended_Default_A",
+          "preview": "T_UI_Icon_SMG_Medium_01_Ascended_BigIcon_T0.png"
+        },
+        {
+          "id": "Ascended/SprintShooting/DA_WeaponVisuals_SMG_Medium_01_Ascended_SprintShooting_A.json",
+          "label": "Sprint Shooting",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/SprintShooting/DA_WeaponVisuals_SMG_Medium_01_Ascended_SprintShooting_A",
+          "preview": "T_UI_Icon_SMG_Medium_01_Ascended_BigIcon_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/DA_WeaponVisuals_SMG_Medium_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/SK_SMG_Medium_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Skins/CommonBlue/DA_WeaponVisuals_SMG_Medium_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Skins/CommonRed/DA_WeaponVisuals_SMG_Medium_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Skins/CommonYellow/DA_WeaponVisuals_SMG_Medium_01_CommonYellow"
+        },
+        {
+          "id": "DustStrokeCamo",
+          "label": "Dust Stroke Camo",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Skins/DustStrokeCamo/DA_WeaponVisuals_SMG_Medium_01_DustStrokeCamo"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/DA_Item_SMG_Medium_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SMG_Medium_01/BP_Item_SMG_Medium_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Pistol_01/DA_Visual_WeaponMod_Mag_Medium_Pistol_SMG_01_A"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Permutations/DA_Item_SMG_Medium_01_Carbine",
+          "variant": "Ascended/Carbine/DA_WeaponVisuals_SMG_Medium_01_Ascended_Carbine_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Permutations/BP_Item_SMG_Medium_01_Carbine",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Pistol_01/DA_Visual_WeaponMod_Mag_Medium_Pistol_SMG_01_A"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Permutations/DA_Item_SMG_Medium_01_IncendiaryRounds_Carbine",
+          "variant": "Ascended/Carbine/DA_WeaponVisuals_SMG_Medium_01_Ascended_Carbine_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Permutations/BP_Item_SMG_Medium_01_IncendiaryRounds_Carbine",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Pistol_01/DA_Visual_WeaponMod_Mag_Medium_Pistol_SMG_01_A"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/DA_Item_SMG_Medium_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_SMG_Medium_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/BP_Item_SMG_Medium_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/SMG_Medium_01/BP_Item_SMG_Medium_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Pistol_01/DA_Visual_WeaponMod_Mag_Medium_Pistol_SMG_01_A"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Permutations/DA_Item_SMG_Medium_01_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_SMG_Medium_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Permutations/BP_Item_SMG_Medium_01_IncendiaryRounds",
+            "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/BP_Item_SMG_Medium_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/SMG_Medium_01/BP_Item_SMG_Medium_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Pistol_01/DA_Visual_WeaponMod_Mag_Medium_Pistol_SMG_01_A"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Permutations/DA_Item_SMG_Medium_01_SprintShooting",
+          "variant": "Ascended/SprintShooting/DA_WeaponVisuals_SMG_Medium_01_Ascended_SprintShooting_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Permutations/BP_Item_SMG_Medium_01_SprintShooting",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Pistol_01/DA_Visual_WeaponMod_Mag_Medium_Pistol_SMG_01_A"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Permutations/DA_Item_SMG_Medium_01_IncendiaryRounds_SprintShooting",
+          "variant": "Ascended/SprintShooting/DA_WeaponVisuals_SMG_Medium_01_Ascended_SprintShooting_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Permutations/BP_Item_SMG_Medium_01_IncendiaryRounds_SprintShooting",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Pistol_01/DA_Visual_WeaponMod_Mag_Medium_Pistol_SMG_01_A"
+          ]
+        }
+      ]
+    },
+    "Shotgun_Energy_Adjustable_01": {
+      "preview": "T_UI_Icon_Shotgun_Energy_Adjustable_01_Big_A_T0.png",
+      "variants": [],
+      "base_visual": "/Game/Pioneer/Items/Firearms/Shotgun_Energy_Adjustable_01/DA_WeaponVisuals_Shotgun_Energy_Adjustable_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/Shotgun_Energy_Adjustable_01/SK_Shotgun_Energy_Adjustable_01_A_Skeleton",
+      "skins": [],
+      "quality_levels": [
+        0
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_Energy_Adjustable_01/DA_Item_Shotgun_Energy_Adjustable_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Shotgun_Energy_Adjustable_01/BP_Item_Shotgun_Energy_Adjustable_01"
+          ]
+        }
+      ]
+    },
+    "Special_BeamRifle_01": {
+      "preview": "T_UI_Icon_Special_BeamRifle_01_Big_A_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_Special_BeamRifle_01_Ascended_Default_A.json",
+          "label": "Default",
+          "reference": "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/Default/DA_WeaponVisuals_Special_BeamRifle_01_Ascended_Default_A",
+          "preview": "T_UI_Icon_Special_BeamRifle_01_Ascended_Big_A_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/DA_WeaponVisuals_Special_BeamRifle_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/SK_Special_BeamRifle_01_A_Skeleton",
+      "skins": [],
+      "quality_levels": [
+        0
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/DA_Item_Special_BeamRifle_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/BP_Item_Special_BeamRifle_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/DA_Item_Special_BeamRifle_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Special_BeamRifle_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/BP_Item_Special_BeamRifle_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/BP_Item_Special_BeamRifle_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/Permutations/DA_Item_Special_BeamRifle_01_AntiWeakPoint",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Special_BeamRifle_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/Permutations/BP_Item_Special_BeamRifle_01_AntiWeakPoint",
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/BP_Item_Special_BeamRifle_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/BP_Item_Special_BeamRifle_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/Permutations/DA_Item_Special_BeamRifle_01_AntiWeakPoint_BiggerMag",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Special_BeamRifle_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/Permutations/BP_Item_Special_BeamRifle_01_AntiWeakPoint_BiggerMag",
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/BP_Item_Special_BeamRifle_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/BP_Item_Special_BeamRifle_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/Permutations/DA_Item_Special_BeamRifle_01_BiggerMag",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Special_BeamRifle_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/Permutations/BP_Item_Special_BeamRifle_01_BiggerMag",
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/BP_Item_Special_BeamRifle_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/BP_Item_Special_BeamRifle_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/Permutations/DA_Item_Special_BeamRifle_01_RampingDamage",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Special_BeamRifle_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/Permutations/BP_Item_Special_BeamRifle_01_RampingDamage",
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/BP_Item_Special_BeamRifle_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/BP_Item_Special_BeamRifle_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/Permutations/DA_Item_Special_BeamRifle_01_RampingDamage_BiggerMag",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Special_BeamRifle_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/Permutations/BP_Item_Special_BeamRifle_01_RampingDamage_BiggerMag",
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/BP_Item_Special_BeamRifle_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/BP_Item_Special_BeamRifle_01"
+          ]
+        }
+      ]
+    },
+    "BattleRifle_BreachAction_01": {
+      "preview": "T_UI_Icon_BattleRifle_BreachAction_01_BigIcon_T3.png",
+      "variants": [],
+      "base_visual": "/Game/Pioneer/Items/Firearms/BattleRifle_BreachAction_01/DA_WeaponVisuals_BattleRifle_BreachAction_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/BattleRifle_BreachAction_01/SK_BattleRifle_BreachAction_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_BreachAction_01/Skins/CommonBlue/DA_WeaponVisuals_BattleRifle_BreachAction_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_BreachAction_01/Skins/CommonRed/DA_WeaponVisuals_BattleRifle_BreachAction_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_BreachAction_01/Skins/CommonYellow/DA_WeaponVisuals_BattleRifle_BreachAction_01_CommonYellow"
+        },
+        {
+          "id": "DustStrokeCamo",
+          "label": "Dust Stroke Camo",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_BreachAction_01/Skins/DustStrokeCamo/DA_WeaponVisuals_BattleRifle_BreachAction_01_DustStrokeCamo"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_BreachAction_01/DA_Item_BattleRifle_BreachAction_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_BreachAction_01/BP_Item_BattleRifle_BreachAction_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        }
+      ]
+    },
+    "Pistol_Silenced_01": {
+      "preview": "T_UI_Icon_Pistol_Silenced_01_BigIcon_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_Pistol_Silenced_01_Ascended_Default_A.json",
+          "label": "Default",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/Default/DA_WeaponVisuals_Pistol_Silenced_01_Ascended_Default_A",
+          "preview": "T_UI_Icon_Pistol_Silenced_01_Ascended_BigIcon_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/DA_WeaponVisuals_Pistol_Silenced_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/SK_Pistol_Silenced_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Skins/CommonBlue/DA_WeaponVisuals_Pistol_Silenced_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Skins/CommonRed/DA_WeaponVisuals_Pistol_Silenced_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Skins/CommonYellow/DA_WeaponVisuals_Pistol_Silenced_01_CommonYellow"
+        },
+        {
+          "id": "DustStrokeCamo",
+          "label": "Dust Stroke Camo",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Skins/DustStrokeCamo/DA_WeaponVisuals_Pistol_Silenced_01_DustStrokeCamo"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/DA_Item_Pistol_Silenced_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/BP_Item_Pistol_Silenced_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/DA_Item_Pistol_Silenced_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Pistol_Silenced_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/BP_Item_Pistol_Silenced_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/BP_Item_Pistol_Silenced_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/Permutations/DA_Item_Pistol_Silenced_01_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Pistol_Silenced_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/Permutations/BP_Item_Pistol_Silenced_01_IncendiaryRounds",
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/BP_Item_Pistol_Silenced_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/BP_Item_Pistol_Silenced_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/Permutations/DA_Item_Pistol_Silenced_01_SemiAuto",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Pistol_Silenced_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/Permutations/BP_Item_Pistol_Silenced_01_SemiAuto",
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/BP_Item_Pistol_Silenced_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/BP_Item_Pistol_Silenced_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/Permutations/DA_Item_Pistol_Silenced_01_SemiAuto_SprintShooting",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Pistol_Silenced_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/Permutations/BP_Item_Pistol_Silenced_01_SemiAuto_SprintShooting",
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/BP_Item_Pistol_Silenced_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/BP_Item_Pistol_Silenced_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/Permutations/DA_Item_Pistol_Silenced_01_TrackerRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Pistol_Silenced_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/Permutations/BP_Item_Pistol_Silenced_01_TrackerRounds",
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/BP_Item_Pistol_Silenced_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/BP_Item_Pistol_Silenced_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_Pistol_01/DA_Visual_WeaponMod_Mag_Light_Pistol_01"
+          ]
+        }
+      ]
+    },
+    "Launcher_AntiArc_Medium_01": {
+      "preview": "T_UI_Icon_Launcher_AntiArc_Medium_01_BigIcon_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_Ascended_Default_A.json",
+          "label": "Default",
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_Ascended_Default_A",
+          "preview": "T_UI_Icon_Launcher_AntiArc_Medium_01_Ascended_BigIcon_T0.png"
+        },
+        {
+          "id": "Ascended/MagReload/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_MagReload_A.json",
+          "label": "Mag Reload",
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/MagReload/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_MagReload_A",
+          "preview": "T_UI_Icon_Launcher_AntiArc_Medium_01_Ascended_BigIcon_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_A",
+      "skeleton": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/SK_Launcher_AntiArc_Medium_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "Outlander",
+          "label": "Outlander",
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Skins/Outlander/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_A_Outlander"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/DA_Item_Launcher_AntiArc_Medium_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/BP_Item_Launcher_AntiArc_Medium_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/DA_Item_Launcher_AntiArc_Medium_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/BP_Item_Launcher_AntiArc_Medium_01_Ascended",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/BP_Item_Launcher_AntiArc_Medium_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/Permutations/DA_Item_Launcher_AntiArc_Medium_01_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/Permutations/BP_Item_Launcher_AntiArc_Medium_01_IncendiaryRounds",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/BP_Item_Launcher_AntiArc_Medium_01_Ascended",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/BP_Item_Launcher_AntiArc_Medium_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/Permutations/DA_Item_Launcher_AntiArc_Medium_01_MagReload",
+          "variant": "Ascended/MagReload/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_MagReload_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/Permutations/BP_Item_Launcher_AntiArc_Medium_01_MagReload",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/BP_Item_Launcher_AntiArc_Medium_01_Ascended",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/BP_Item_Launcher_AntiArc_Medium_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/Permutations/DA_Item_Launcher_AntiArc_Medium_01_IncendiaryRounds_MagReload",
+          "variant": "Ascended/MagReload/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_MagReload_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/Permutations/BP_Item_Launcher_AntiArc_Medium_01_IncendiaryRounds_MagReload",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/BP_Item_Launcher_AntiArc_Medium_01_Ascended",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/BP_Item_Launcher_AntiArc_Medium_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        }
+      ]
+    },
+    "Shotgun_PumpAction_01": {
+      "preview": "T_UI_Icon_Shotgun_PumpAction_01_Big_A_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_Shotgun_PumpAction_01_Ascended_Default_A.json",
+          "label": "Default",
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Ascended/Default/DA_WeaponVisuals_Shotgun_PumpAction_01_Ascended_Default_A",
+          "preview": "T_UI_Icon_Shotgun_PumpAction_01_Ascended_Big_A_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/DA_WeaponVisuals_Shotgun_PumpAction_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/SK_Shotgun_PumpAction_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Skins/CommonBlue/DA_WeaponVisuals_Shotgun_PumpAction_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Skins/CommonRed/DA_WeaponVisuals_Shotgun_PumpAction_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Skins/CommonYellow/DA_WeaponVisuals_Shotgun_PumpAction_01_CommonYellow"
+        },
+        {
+          "id": "Corto",
+          "label": "Corto",
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Skins/Corto/DA_WeaponVisuals_Shotgun_PumpAction_01_Corto"
+        },
+        {
+          "id": "OrganicIsland",
+          "label": "Organic Island",
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Skins/OrganicIsland/DA_WeaponVisuals_Shotgun_PumpAction_01_OrganicIsland"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/DA_Item_Shotgun_PumpAction_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/BP_Item_Shotgun_PumpAction_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Ascended/DA_Item_Shotgun_PumpAction_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Shotgun_PumpAction_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Ascended/BP_Item_Shotgun_PumpAction_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/BP_Item_Shotgun_PumpAction_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Ascended/Permutations/DA_Item_Shotgun_PumpAction_01_MoreReload",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Shotgun_PumpAction_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Ascended/Permutations/BP_Item_Shotgun_PumpAction_01_MoreReload",
+            "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Ascended/BP_Item_Shotgun_PumpAction_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/BP_Item_Shotgun_PumpAction_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Ascended/Permutations/DA_Item_Shotgun_PumpAction_01_MoreReload_SlugRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Shotgun_PumpAction_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Ascended/Permutations/BP_Item_Shotgun_PumpAction_01_MoreReload_SlugRounds",
+            "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Ascended/BP_Item_Shotgun_PumpAction_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/BP_Item_Shotgun_PumpAction_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Ascended/Permutations/DA_Item_Shotgun_PumpAction_01_SlugRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Shotgun_PumpAction_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Ascended/Permutations/BP_Item_Shotgun_PumpAction_01_SlugRounds",
+            "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Ascended/BP_Item_Shotgun_PumpAction_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/BP_Item_Shotgun_PumpAction_01"
+          ]
+        }
+      ]
+    },
+    "Launcher_AntiArc_SingleShot_01": {
+      "preview": "T_UI_Icon_Launcher_AntiArc_SingleShot_01_BigIcon_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_Ascended_Default_A_02.json",
+          "label": "Default 02",
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_Ascended_Default_A_02",
+          "preview": "T_UI_Icon_Launcher_AntiArc_SingleShot_01_Ascended_BigIcon_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_A",
+      "skeleton": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/SK_Launcher_AntiArc_SingleShot_01_A_Skeleton",
+      "skins": [],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/DA_Item_Launcher_AntiArc_SingleShot_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/BP_Item_Launcher_AntiArc_SingleShot_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/DA_Item_Launcher_AntiArc_SingleShot_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_Ascended_Default_A_02.json",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/BP_Item_Launcher_AntiArc_SingleShot_01_Ascended",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/BP_Item_Launcher_AntiArc_SingleShot_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/DA_Item_Launcher_AntiArc_SingleShot_01_HighVelocity",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_Ascended_Default_A_02.json",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/BP_Item_Launcher_AntiArc_SingleShot_01_HighVelocity",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/BP_Item_Launcher_AntiArc_SingleShot_01_Ascended",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/BP_Item_Launcher_AntiArc_SingleShot_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/DA_Item_Launcher_AntiArc_SingleShot_01_HighVelocity_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_Ascended_Default_A_02.json",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/BP_Item_Launcher_AntiArc_SingleShot_01_HighVelocity_IncendiaryRounds",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/BP_Item_Launcher_AntiArc_SingleShot_01_Ascended",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/BP_Item_Launcher_AntiArc_SingleShot_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/DA_Item_Launcher_AntiArc_SingleShot_01_HighVelocity_SprintShooting",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_Ascended_Default_A_02.json",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/BP_Item_Launcher_AntiArc_SingleShot_01_HighVelocity_SprintShooting",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/BP_Item_Launcher_AntiArc_SingleShot_01_Ascended",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/BP_Item_Launcher_AntiArc_SingleShot_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/DA_Item_Launcher_AntiArc_SingleShot_01_HighVelocity_SprintShooting_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_Ascended_Default_A_02.json",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/BP_Item_Launcher_AntiArc_SingleShot_01_HighVelocity_SprintShooting_IncendiaryRounds",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/BP_Item_Launcher_AntiArc_SingleShot_01_Ascended",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/BP_Item_Launcher_AntiArc_SingleShot_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/DA_Item_Launcher_AntiArc_SingleShot_01_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_Ascended_Default_A_02.json",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/BP_Item_Launcher_AntiArc_SingleShot_01_IncendiaryRounds",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/BP_Item_Launcher_AntiArc_SingleShot_01_Ascended",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/BP_Item_Launcher_AntiArc_SingleShot_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/DA_Item_Launcher_AntiArc_SingleShot_01_SprintShooting",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_Ascended_Default_A_02.json",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/BP_Item_Launcher_AntiArc_SingleShot_01_SprintShooting",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/BP_Item_Launcher_AntiArc_SingleShot_01_Ascended",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/BP_Item_Launcher_AntiArc_SingleShot_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/DA_Item_Launcher_AntiArc_SingleShot_01_SprintShooting_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_Ascended_Default_A_02.json",
+          "packages": [
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Permutations/BP_Item_Launcher_AntiArc_SingleShot_01_SprintShooting_IncendiaryRounds",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/BP_Item_Launcher_AntiArc_SingleShot_01_Ascended",
+            "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/BP_Item_Launcher_AntiArc_SingleShot_01"
+          ]
+        }
+      ]
+    },
+    "Special_Railgun_01": {
+      "preview": "T_UI_Icon_Special_Railgun_01_Big_A_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Default_A.json",
+          "label": "Default",
+          "reference": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Default/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Default_A",
+          "preview": "T_UI_Icon_Special_Railgun_01_Ascended_Big_A_T0.png"
+        },
+        {
+          "id": "Ascended/Scoped/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Scoped_A.json",
+          "label": "Scoped",
+          "reference": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Scoped/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Scoped_A",
+          "preview": "T_UI_Icon_Special_Railgun_01_Scoped_Big_A_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/DA_WeaponVisuals_Special_Railgun_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/SK_Special_Railgun_01_A_Skeleton",
+      "skins": [],
+      "quality_levels": [
+        0
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/DA_Item_Special_Railgun_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/BP_Item_Special_Railgun_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/DA_Item_Special_Railgun_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/BP_Item_Special_Railgun_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/BP_Item_Special_Railgun_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/DA_Item_Special_Railgun_01_BiggerMag",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/BP_Item_Special_Railgun_01_BiggerMag",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/BP_Item_Special_Railgun_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/BP_Item_Special_Railgun_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/DA_Item_Special_Railgun_01_BiggerMag_StraightBolt",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/BP_Item_Special_Railgun_01_BiggerMag_StraightBolt",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/BP_Item_Special_Railgun_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/BP_Item_Special_Railgun_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/DA_Item_Special_Railgun_01_StraightBolt",
+          "variant": "Ascended/Default/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/BP_Item_Special_Railgun_01_StraightBolt",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/BP_Item_Special_Railgun_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/BP_Item_Special_Railgun_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/DA_Item_Special_Railgun_01_Scoped",
+          "variant": "Ascended/Scoped/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Scoped_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/BP_Item_Special_Railgun_01_Scoped",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/BP_Item_Special_Railgun_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/BP_Item_Special_Railgun_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/DA_Item_Special_Railgun_01_BiggerMag_Scoped",
+          "variant": "Ascended/Scoped/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Scoped_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/BP_Item_Special_Railgun_01_BiggerMag_Scoped",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/BP_Item_Special_Railgun_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/BP_Item_Special_Railgun_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/DA_Item_Special_Railgun_01_BiggerMag_Scoped_StraightBolt",
+          "variant": "Ascended/Scoped/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Scoped_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/BP_Item_Special_Railgun_01_BiggerMag_Scoped_StraightBolt",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/BP_Item_Special_Railgun_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/BP_Item_Special_Railgun_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/DA_Item_Special_Railgun_01_Scoped_StraightBolt",
+          "variant": "Ascended/Scoped/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Scoped_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Permutations/BP_Item_Special_Railgun_01_Scoped_StraightBolt",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/BP_Item_Special_Railgun_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/Special_Railgun_01/BP_Item_Special_Railgun_01"
+          ]
+        }
+      ]
+    },
+    "AssaultRifle_Pneumatic_01": {
+      "preview": "T_UI_Icon_AssaultRifle_Pneumatic_01_Big_A_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_Pneumatic_01_Ascended_Default_A.json",
+          "label": "Default",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/Default/DA_WeaponVisuals_AssaultRifle_Pneumatic_01_Ascended_Default_A",
+          "preview": "T_UI_Icon_AssaultRifle_Pneumatic_01_Ascended_Big_A_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/DA_WeaponVisuals_AssaultRifle_Pneumatic_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/SK_AssaultRifle_Pneumatic_01_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Skins/CommonBlue/DA_WeaponVisuals_AssaultRifle_Pneumatic_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Skins/CommonRed/DA_WeaponVisuals_AssaultRifle_Pneumatic_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Skins/CommonYellow/DA_WeaponVisuals_AssaultRifle_Pneumatic_01_CommonYellow"
+        },
+        {
+          "id": "DustStrokeCamo",
+          "label": "Dust Stroke Camo",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Skins/DustStrokeCamo/DA_WeaponVisuals_AssaultRifle_Pneumatic_01_DustStrokeCamo"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/DA_Item_AssaultRifle_Pneumatic_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/BP_Item_AssaultRifle_Pneumatic_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/DA_Item_AssaultRifle_Pneumatic_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_Pneumatic_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/BP_Item_AssaultRifle_Pneumatic_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/BP_Item_AssaultRifle_Pneumatic_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/Permutations/DA_Item_AssaultRifle_Pneumatic_01_AntiShield",
+          "variant": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_Pneumatic_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/Permutations/BP_Item_AssaultRifle_Pneumatic_01_AntiShield",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/BP_Item_AssaultRifle_Pneumatic_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/BP_Item_AssaultRifle_Pneumatic_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/Permutations/DA_Item_AssaultRifle_Pneumatic_01_AntiShield_FullAuto",
+          "variant": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_Pneumatic_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/Permutations/BP_Item_AssaultRifle_Pneumatic_01_AntiShield_FullAuto",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/BP_Item_AssaultRifle_Pneumatic_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/BP_Item_AssaultRifle_Pneumatic_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/Permutations/DA_Item_AssaultRifle_Pneumatic_01_FullAuto",
+          "variant": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_Pneumatic_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/Permutations/BP_Item_AssaultRifle_Pneumatic_01_FullAuto",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/BP_Item_AssaultRifle_Pneumatic_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/BP_Item_AssaultRifle_Pneumatic_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/Permutations/DA_Item_AssaultRifle_Pneumatic_01_XRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_Pneumatic_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/Permutations/BP_Item_AssaultRifle_Pneumatic_01_XRounds"
+          ]
+        }
+      ]
+    },
+    "SniperRifle_BoltAction_Medium_01": {
+      "preview": "T_UI_Icon_SniperRifle_BoltAction_Medium_01_Big_A_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_Ascended_Default_A_01.json",
+          "label": "Default 01",
+          "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/Default/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_Ascended_Default_A_01",
+          "preview": "T_UI_Icon_SniperRifle_BoltAction_Medium_01_Ascended_Big_A_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/SK_SniperRifle_BoltAction_Medium_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "Banshee",
+          "label": "Banshee",
+          "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Skins/Banshee/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_Banshee"
+        },
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Skins/CommonBlue/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Skins/CommonRed/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Skins/CommonYellow/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_CommonYellow"
+        },
+        {
+          "id": "MuralTree",
+          "label": "Mural Tree",
+          "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Skins/MuralTree/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_MuralTree"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/DA_Item_SniperRifle_BoltAction_Medium_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/BP_Item_SniperRifle_BoltAction_Medium_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Sniper_01/DA_Visual_WeaponMod_Mag_Medium_Sniper_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/DA_Item_SniperRifle_BoltAction_Medium_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_Ascended_Default_A_01.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/BP_Item_SniperRifle_BoltAction_Medium_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/BP_Item_SniperRifle_BoltAction_Medium_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Sniper_01/DA_Visual_WeaponMod_Mag_Medium_Sniper_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/Permutations/DA_Item_SniperRifle_BoltAction_Medium_01_AntiWeakPoint",
+          "variant": "Ascended/Default/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_Ascended_Default_A_01.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/Permutations/BP_Item_SniperRifle_BoltAction_Medium_01_AntiWeakPoint",
+            "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/BP_Item_SniperRifle_BoltAction_Medium_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/BP_Item_SniperRifle_BoltAction_Medium_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Sniper_01/DA_Visual_WeaponMod_Mag_Medium_Sniper_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/Permutations/DA_Item_SniperRifle_BoltAction_Medium_01_StraightBolt",
+          "variant": "Ascended/Default/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_Ascended_Default_A_01.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/Permutations/BP_Item_SniperRifle_BoltAction_Medium_01_StraightBolt",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Sniper_01/DA_Visual_WeaponMod_Mag_Medium_Sniper_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/Permutations/DA_Item_SniperRifle_BoltAction_Medium_01_StraightBolt_AntiWeakPoint",
+          "variant": "Ascended/Default/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_Ascended_Default_A_01.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/Permutations/BP_Item_SniperRifle_BoltAction_Medium_01_StraightBolt_AntiWeakPoint",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Sniper_01/DA_Visual_WeaponMod_Mag_Medium_Sniper_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/Permutations/DA_Item_SniperRifle_BoltAction_Medium_01_TrackerRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_Ascended_Default_A_01.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/Permutations/BP_Item_SniperRifle_BoltAction_Medium_01_TrackerRounds",
+            "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/BP_Item_SniperRifle_BoltAction_Medium_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/BP_Item_SniperRifle_BoltAction_Medium_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Sniper_01/DA_Visual_WeaponMod_Mag_Medium_Sniper_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/Permutations/DA_Item_SniperRifle_BoltAction_Medium_01_TrackerRounds_StraightBolt",
+          "variant": "Ascended/Default/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_Ascended_Default_A_01.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/Permutations/BP_Item_SniperRifle_BoltAction_Medium_01_TrackerRounds_StraightBolt",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Sniper_01/DA_Visual_WeaponMod_Mag_Medium_Sniper_01"
+          ]
+        }
+      ]
+    },
+    "AssaultRifle_LowTier_01": {
+      "preview": "T_UI_Icon_AssaultRifle_LowTier_01_Big_A_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_Default_A.json",
+          "label": "Default",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/Default/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_Default_A",
+          "preview": "T_UI_Icon_AssaultRifle_LowTier_01_Ascended_Big_A_T0.png"
+        },
+        {
+          "id": "Ascended/DrumMag/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_DrumMag_A.json",
+          "label": "Drum Mag",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/DrumMag/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_DrumMag_A",
+          "preview": "T_UI_Icon_AssaultRifle_LowTier_01_MoreReload_DrumMag_Big_A_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/DA_WeaponVisuals_AssaultRifle_LowTier_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/SK_AssaultRifle_LowTier_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Skins/CommonBlue/DA_WeaponVisuals_AssaultRifle_LowTier_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Skins/CommonRed/DA_WeaponVisuals_AssaultRifle_LowTier_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Skins/CommonYellow/DA_WeaponVisuals_AssaultRifle_LowTier_01_CommonYellow"
+        },
+        {
+          "id": "Corto",
+          "label": "Corto",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Skins/Corto/DA_WeaponVisuals_AssaultRifle_LowTier_01_Corto"
+        },
+        {
+          "id": "OrganicIsland",
+          "label": "Organic Island",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Skins/OrganicIsland/DA_WeaponVisuals_AssaultRifle_LowTier_01_OrganicIsland"
+        },
+        {
+          "id": "Tortoiseshell",
+          "label": "Tortoiseshell",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Skins/Tortoiseshell/DA_WeaponVisuals_AssaultRifle_LowTier_01_Tortoiseshell"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/DA_Item_AssaultRifle_LowTier_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/BP_Item_AssaultRifle_LowTier_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/DA_Item_AssaultRifle_LowTier_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/BP_Item_AssaultRifle_LowTier_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/BP_Item_AssaultRifle_LowTier_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/Permutations/DA_Item_AssaultRifle_LowTier_01_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/Permutations/BP_Item_AssaultRifle_LowTier_01_IncendiaryRounds",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/BP_Item_AssaultRifle_LowTier_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/BP_Item_AssaultRifle_LowTier_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/Permutations/DA_Item_AssaultRifle_LowTier_01_MoreReload",
+          "variant": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/Permutations/BP_Item_AssaultRifle_LowTier_01_MoreReload",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/BP_Item_AssaultRifle_LowTier_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/BP_Item_AssaultRifle_LowTier_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/Permutations/DA_Item_AssaultRifle_LowTier_01_MoreReload_IncendiaryRounds",
+          "variant": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/Permutations/BP_Item_AssaultRifle_LowTier_01_MoreReload_IncendiaryRounds",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/BP_Item_AssaultRifle_LowTier_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/BP_Item_AssaultRifle_LowTier_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/Permutations/DA_Item_AssaultRifle_LowTier_01_MoreReload_DrumMag",
+          "variant": "Ascended/DrumMag/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_DrumMag_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/Permutations/BP_Item_AssaultRifle_LowTier_01_MoreReload_DrumMag",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/BP_Item_AssaultRifle_LowTier_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/BP_Item_AssaultRifle_LowTier_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/Permutations/DA_Item_AssaultRifle_LowTier_01_MoreReload_DrumMag_IncendiaryRounds",
+          "variant": "Ascended/DrumMag/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_DrumMag_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/Permutations/BP_Item_AssaultRifle_LowTier_01_MoreReload_DrumMag_IncendiaryRounds",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/BP_Item_AssaultRifle_LowTier_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/BP_Item_AssaultRifle_LowTier_01"
+          ]
+        }
+      ]
+    },
+    "BattleRifle_LeverAction_01": {
+      "preview": "T_UI_Icon_BattleRifle_LeverAction_01_Big_A_T3.png",
+      "variants": [
+        {
+          "id": "Ascended/Default/DA_WeaponVisuals_BattleRifle_LeverAction_01_Ascended_Default_A.json",
+          "label": "Default",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Ascended/Default/DA_WeaponVisuals_BattleRifle_LeverAction_01_Ascended_Default_A",
+          "preview": "T_UI_Icon_BattleRifle_LeverAction_01_Ascended_Big_A_T3.png"
+        },
+        {
+          "id": "Ascended/Scoped/DA_WeaponVisuals_BattleRifle_LeverAction_01_Ascended_Scoped_A.json",
+          "label": "Scoped",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Ascended/Scoped/DA_WeaponVisuals_BattleRifle_LeverAction_01_Ascended_Scoped_A",
+          "preview": "T_UI_Icon_BattleRifle_LeverAction_01_Scoped_Big_A_T0.png"
+        }
+      ],
+      "base_visual": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/DA_WeaponVisuals_BattleRifle_LeverAction_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/SK_BattleRifle_LeverAction_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "Bells",
+          "label": "Bells",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Skins/Bells/DA_WeaponVisuals_BattleRifle_LeverAction_01_Bells"
+        },
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Skins/CommonBlue/DA_WeaponVisuals_BattleRifle_LeverAction_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Skins/CommonRed/DA_WeaponVisuals_BattleRifle_LeverAction_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Skins/CommonYellow/DA_WeaponVisuals_BattleRifle_LeverAction_01_CommonYellow"
+        },
+        {
+          "id": "DustStrokeCamo",
+          "label": "Dust Stroke Camo",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Skins/DustStrokeCamo/DA_WeaponVisuals_BattleRifle_LeverAction_01_DustStrokeCamo"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/DA_Item_BattleRifle_LeverAction_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/BP_Item_BattleRifle_LeverAction_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Ascended/DA_Item_BattleRifle_LeverAction_01_Ascended",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_LeverAction_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Ascended/BP_Item_BattleRifle_LeverAction_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/BP_Item_BattleRifle_LeverAction_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Ascended/Permutations/DA_Item_BattleRifle_LeverAction_01_MoreReload",
+          "variant": "Ascended/Default/DA_WeaponVisuals_BattleRifle_LeverAction_01_Ascended_Default_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Ascended/Permutations/BP_Item_BattleRifle_LeverAction_01_MoreReload",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Ascended/BP_Item_BattleRifle_LeverAction_01_Ascended",
+            "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/BP_Item_BattleRifle_LeverAction_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Ascended/Permutations/DA_Item_BattleRifle_LeverAction_01_Scoped",
+          "variant": "Ascended/Scoped/DA_WeaponVisuals_BattleRifle_LeverAction_01_Ascended_Scoped_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Ascended/Permutations/BP_Item_BattleRifle_LeverAction_01_Scoped",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        },
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Ascended/Permutations/DA_Item_BattleRifle_LeverAction_01_MoreReload_Scoped",
+          "variant": "Ascended/Scoped/DA_WeaponVisuals_BattleRifle_LeverAction_01_Ascended_Scoped_A.json",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Ascended/Permutations/BP_Item_BattleRifle_LeverAction_01_MoreReload_Scoped",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        }
+      ]
+    },
+    "BattleRifle_SemiAuto_Light_01": {
+      "preview": "T_UI_Icon_BattleRifle_SemiAuto_Light_01_BigIcon_T3.png",
+      "variants": [],
+      "base_visual": "/Game/Pioneer/Items/Firearms/BattleRifle_SemiAuto_Light_01/DA_WeaponVisuals_BattleRifle_SemiAuto_Light_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/BattleRifle_SemiAuto_Light_01/SK_BattleRifle_SemiAuto_Light_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_SemiAuto_Light_01/Skins/CommonBlue/DA_WeaponVisuals_BattleRifle_SemiAuto_Light_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_SemiAuto_Light_01/Skins/CommonRed/DA_WeaponVisuals_BattleRifle_SemiAuto_Light_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_SemiAuto_Light_01/Skins/CommonYellow/DA_WeaponVisuals_BattleRifle_SemiAuto_Light_01_CommonYellow"
+        },
+        {
+          "id": "OrganicIsland",
+          "label": "Organic Island",
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_SemiAuto_Light_01/Skins/OrganicIsland/DA_WeaponVisuals_BattleRifle_SemiAuto_Light_01_OrganicIsland"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_SemiAuto_Light_01/DA_Item_BattleRifle_SemiAuto_Light_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/BattleRifle_SemiAuto_Light_01/BP_Item_BattleRifle_SemiAuto_Light_01"
+          ]
+        }
+      ]
+    },
+    "SMG_LowTier_01": {
+      "preview": "T_UI_Icon_SMG_LowTier_01_Big_A_T3.png",
+      "variants": [],
+      "base_visual": "/Game/Pioneer/Items/Firearms/SMG_LowTier_01/DA_WeaponVisuals_SMG_LowTier_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/SMG_LowTier_01/SK_SMG_LowTier_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_LowTier_01/Skins/CommonBlue/DA_WeaponVisuals_SMG_LowTier_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_LowTier_01/Skins/CommonRed/DA_WeaponVisuals_SMG_LowTier_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_LowTier_01/Skins/CommonYellow/DA_WeaponVisuals_SMG_LowTier_01_CommonYellow"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/SMG_LowTier_01/DA_Item_SMG_LowTier_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/SMG_LowTier_01/BP_Item_SMG_LowTier_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Light_SMG_01/DA_Visual_WeaponMod_Mag_Light_SMG_01"
+          ]
+        }
+      ]
+    },
+    "AssaultRifle_Bullpup_01": {
+      "preview": "T_UI_Icon_AssaultRifle_Bullpup_01_Big_A_T3.png",
+      "variants": [],
+      "base_visual": "/Game/Pioneer/Items/Firearms/AssaultRifle_Bullpup_01/DA_WeaponVisuals_AssaultRifle_Bullpup_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/AssaultRifle_Bullpup_01/SK_AssaultRifle_Bullpup_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Bullpup_01/Skins/CommonBlue/DA_WeaponVisuals_AssaultRifle_Bullpup_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Bullpup_01/Skins/CommonRed/DA_WeaponVisuals_AssaultRifle_Bullpup_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Bullpup_01/Skins/CommonYellow/DA_WeaponVisuals_AssaultRifle_Bullpup_01_CommonYellow"
+        },
+        {
+          "id": "OrganicIsland",
+          "label": "Organic Island",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Bullpup_01/Skins/OrganicIsland/DA_WeaponVisuals_AssaultRifle_Bullpup_01_OrganicIsland"
+        },
+        {
+          "id": "Renzo",
+          "label": "Renzo",
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Bullpup_01/Skins/Renzo/DA_WeaponVisuals_AssaultRifle_Bullpup_01_Renzo_A"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Bullpup_01/DA_Item_AssaultRifle_Bullpup_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/AssaultRifle_Bullpup_01/BP_Item_AssaultRifle_Bullpup_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_AR_01/DA_Visual_WeaponMod_Mag_Medium_AR_01"
+          ]
+        }
+      ]
+    },
+    "LMG_Medium_01": {
+      "preview": "T_UI_Icon_LMG_Medium_01_Big_A_T3.png",
+      "variants": [],
+      "base_visual": "/Game/Pioneer/Items/Firearms/LMG_Medium_01/DA_WeaponVisuals_LMG_Medium_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/LMG_Medium_01/SK_LMG_Medium_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/LMG_Medium_01/Skins/CommonBlue/DA_WeaponVisuals_LMG_Medium_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/LMG_Medium_01/Skins/CommonRed/DA_WeaponVisuals_LMG_Medium_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/LMG_Medium_01/Skins/CommonYellow/DA_WeaponVisuals_LMG_Medium_01_CommonYellow"
+        },
+        {
+          "id": "OrganicIsland",
+          "label": "Organic Island",
+          "reference": "/Game/Pioneer/Items/Firearms/LMG_Medium_01/Skins/OrganicIsland/DA_WeaponVisuals_LMG_Medium_01_OrganicIsland"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/LMG_Medium_01/DA_Item_LMG_Medium_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/LMG_Medium_01/BP_Item_LMG_Medium_01",
+            "/Game/Pioneer/Items/Firearms/LMG_Medium_01/DA_Visual_WeaponMod_Mag_LMG_Medium_01",
+            "/Game/Pioneer/Items/WeaponMod/Stock_Default_01/DA_Visual_WeaponMod_Stock_Default_01"
+          ]
+        }
+      ]
+    },
+    "Pistol_HighPower_01": {
+      "preview": "T_UI_Icon_Pistol_HighPower_01_Big_A_T3.png",
+      "variants": [],
+      "base_visual": "/Game/Pioneer/Items/Firearms/Pistol_HighPower_01/DA_WeaponVisuals_Pistol_HighPower_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/Pistol_HighPower_01/SK_Pistol_HighPower_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_HighPower_01/Skins/CommonBlue/DA_WeaponVisuals_Pistol_HighPower_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_HighPower_01/Skins/CommonRed/DA_WeaponVisuals_Pistol_HighPower_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_HighPower_01/Skins/CommonYellow/DA_WeaponVisuals_Pistol_HighPower_01_CommonYellow"
+        },
+        {
+          "id": "MuralTree",
+          "label": "Mural Tree",
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_HighPower_01/Skins/MuralTree/DA_WeaponVisuals_Pistol_HighPower_01_MuralTree"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Pistol_HighPower_01/DA_Item_Pistol_HighPower_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Pistol_HighPower_01/BP_Item_Pistol_HighPower_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Medium_Pistol_01/DA_Visual_WeaponMod_Mag_Medium_Pistol_01"
+          ]
+        }
+      ]
+    },
+    "Shotgun_SemiAuto_01": {
+      "preview": "T_UI_Icon_Shotgun_SemiAuto_01_Big_A_T3.png",
+      "variants": [],
+      "base_visual": "/Game/Pioneer/Items/Firearms/Shotgun_SemiAuto_01/DA_WeaponVisuals_Shotgun_SemiAuto_01",
+      "skeleton": "/Game/Pioneer/Items/Firearms/Shotgun_SemiAuto_01/SK_Shotgun_SemiAuto_01_A_Skeleton",
+      "skins": [
+        {
+          "id": "CommonBlue",
+          "label": "Common Blue",
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_SemiAuto_01/Skins/CommonBlue/DA_WeaponVisuals_Shotgun_SemiAuto_01_CommonBlue"
+        },
+        {
+          "id": "CommonRed",
+          "label": "Common Red",
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_SemiAuto_01/Skins/CommonRed/DA_WeaponVisuals_Shotgun_SemiAuto_01_CommonRed"
+        },
+        {
+          "id": "CommonYellow",
+          "label": "Common Yellow",
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_SemiAuto_01/Skins/CommonYellow/DA_WeaponVisuals_Shotgun_SemiAuto_01_CommonYellow"
+        },
+        {
+          "id": "MuralTree",
+          "label": "Mural Tree",
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_SemiAuto_01/Skins/MuralTree/DA_WeaponVisuals_Shotgun_SemiAuto_01_MuralTree"
+        }
+      ],
+      "quality_levels": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "items": [
+        {
+          "reference": "/Game/Pioneer/Items/Firearms/Shotgun_SemiAuto_01/DA_Item_Shotgun_SemiAuto_01",
+          "variant": "OFF",
+          "packages": [
+            "/Game/Pioneer/Items/Firearms/Shotgun_SemiAuto_01/BP_Item_Shotgun_SemiAuto_01",
+            "/Game/Pioneer/Items/Firearms/Shared/Magazines/Mag_Shotgun_01/DA_Visual_WeaponMod_Mag_Shotgun_01"
+          ]
+        }
+      ]
+    }
+  },
+  "mods": {
+    "UnderBarrel_AngledGrip_01": {
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_AngledGrip_01.png"
+    },
+    "UnderBarrel_AngledGrip_02": {
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_AngledGrip_02.png"
+    },
+    "UnderBarrel_AngledGrip_03": {
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_AngledGrip_03.png"
+    },
+    "Muzzle_Compensator_01": {
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Compensator_01.png"
+    },
+    "Muzzle_Compensator_02": {
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Compensator_02.png"
+    },
+    "Muzzle_Compensator_03": {
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Compensator_03.png"
+    },
+    "Muzzle_ExtendedBarrel_01": {
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_ExtendedBarrel_01.png"
+    },
+    "Muzzle_ExtendedBarrel_02": {
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_ExtendedBarrel_02.png"
+    },
+    "Muzzle_ExtendedBarrel_03": {
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_ExtendedBarrel_03.png"
+    },
+    "MagazineLight_Extended_01": {
+      "preview": "T_UI_Icon_WeaponMod_MagazineLight_Extended_01.png"
+    },
+    "MagazineLight_Extended_02": {
+      "preview": "T_UI_Icon_WeaponMod_MagazineLight_Extended_02.png"
+    },
+    "MagazineLight_Extended_03": {
+      "preview": "T_UI_Icon_WeaponMod_MagazineLight_Extended_03.png"
+    },
+    "MagazineMedium_Extended_01": {
+      "preview": "T_UI_Icon_WeaponMod_MagazineMedium_Extended_01.png"
+    },
+    "MagazineMedium_Extended_02": {
+      "preview": "T_UI_Icon_WeaponMod_MagazineMedium_Extended_02.png"
+    },
+    "MagazineMedium_Extended_03": {
+      "preview": "T_UI_Icon_WeaponMod_MagazineMedium_Extended_03.png"
+    },
+    "MagazineShotgun_Extended_01": {
+      "preview": "T_UI_Icon_WeaponMod_MagazineShotgun_Extended_01.png"
+    },
+    "MagazineShotgun_Extended_02": {
+      "preview": "T_UI_Icon_WeaponMod_MagazineShotgun_Extended_02.png"
+    },
+    "MagazineShotgun_Extended_03": {
+      "preview": "T_UI_Icon_WeaponMod_MagazineShotgun_Extended_03.png"
+    },
+    "UnderBarrel_FoldableGrip_01": {
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_HorizontalGrip_01.png"
+    },
+    "Stock_ActiveStabilizer_01": {
+      "preview": "T_UI_Icon_WeaponMod_Stock_ActiveStabilizer_01.png"
+    },
+    "Stock_Lightweight_01": {
+      "preview": "T_UI_Icon_WeaponMod_Stock_Lightweight_01.png"
+    },
+    "Muzzle_Brake_01": {
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Brake_01.png"
+    },
+    "Muzzle_Brake_02": {
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Brake_02.png"
+    },
+    "Muzzle_Brake_03": {
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Brake_03.png"
+    },
+    "Stock_Padded_01": {
+      "preview": "T_UI_Icon_WeaponMod_Stock_Padded_01.png"
+    },
+    "ShotgunMuzzle_Choke_01": {
+      "preview": "T_UI_Icon_WeaponMod_ShotgunMuzzle_Choke_01.png"
+    },
+    "ShotgunMuzzle_Choke_02": {
+      "preview": "T_UI_Icon_WeaponMod_ShotgunMuzzle_Choke_02.png"
+    },
+    "ShotgunMuzzle_Choke_03": {
+      "preview": "T_UI_Icon_WeaponMod_ShotgunMuzzle_Choke_03.png"
+    },
+    "ShotgunMuzzle_Silencer_01": {
+      "preview": "T_UI_Icon_WeaponMod_ShotgunMuzzle_Silencer_01.png"
+    },
+    "Muzzle_Silencer_01": {
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Silencer_01.png"
+    },
+    "Muzzle_Silencer_02": {
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Silencer_02.png"
+    },
+    "Muzzle_Silencer_03": {
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Silencer_03.png"
+    },
+    "Stock_Stable_01": {
+      "preview": "T_UI_Icon_WeaponMod_Stock_Stable_01.png"
+    },
+    "Stock_Stable_02": {
+      "preview": "T_UI_Icon_WeaponMod_Stock_Stable_02.png"
+    },
+    "Stock_Stable_03": {
+      "preview": "T_UI_Icon_WeaponMod_Stock_Stable_03.png"
+    },
+    "UnderBarrel_VerticalGrip_01": {
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_VerticalGrip_01.png"
+    },
+    "UnderBarrel_VerticalGrip_02": {
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_VerticalGrip_02.png"
+    },
+    "UnderBarrel_VerticalGrip_03": {
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_VerticalGrip_03.png"
+    },
+    "Tech_ProjectileSplitter": {
+      "preview": null
+    }
+  },
+  "patterns": [
+    {
+      "id": "T_Weapons_Pattern_Duststroke_Camouflage_01_C.png",
+      "label": "Duststroke Camouflage 01"
+    },
+    {
+      "id": "T_Weapons_Pattern_MuralTree_01_C.png",
+      "label": "MuralTree 01"
+    },
+    {
+      "id": "T_Weapons_Pattern_OrganicIslands_01_ID.png",
+      "label": "T_Weapons_Pattern_OrganicIslands_01_ID (ID)"
+    }
+  ]
+}

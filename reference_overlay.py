@@ -267,10 +267,7 @@ def _load(_):
 def register():
     global _enabled
     _enabled = True
-    if _load not in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.append(_load)
-    if not bpy.app.timers.is_registered(_timer):
-        bpy.app.timers.register(_timer, first_interval=0.25, persistent=True)
+    # Cards refresh only when the user invokes the overlay operator.
 
 
 def unregister():
@@ -278,7 +275,7 @@ def unregister():
     _enabled = False
     if bpy.app.timers.is_registered(_timer):
         bpy.app.timers.unregister(_timer)
-    if _load in bpy.app.handlers.load_post:
+    while _load in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_load)
     if not hasattr(bpy.data, "objects") or not hasattr(bpy.data, "scenes"):
         _records.clear()

@@ -4,7 +4,7 @@ from pathlib import Path
 import bpy
 import numpy as np
 from .assets import package
-from .records import metadata
+from ..material_runtime.repository import digest
 
 
 def character_masks(g, record, layers):
@@ -16,11 +16,12 @@ def character_masks(g, record, layers):
     if not ref or len(ids) < 8: return {}
     buckets = {}
     source_images = []
-    info = metadata().get('textures', {}).get(package(ref).casefold(), {})
+    info = (g.index.texture_info(ref) or {}) if hasattr(g.index, 'texture_info') else {}
+    if not hasattr(g.index,'texture_info'):g.report.setdefault('warnings',[]).append('Current texture metadata unavailable for custom FModel index; no historical texture bank used')
     for ident in ids:
         path = g.index.texture(ref, ident)
         if path is None: continue  # Normal image resolution records any missing slice.
-        key = str(path).casefold() + '|Non-Color'
+        key = str(path).casefold() + '|' + digest(path) + '|Non-Color'
         image = next((i for i in bpy.data.images if i.get('arc_image_key') == key), None)
         if image is None:
             image = bpy.data.images.load(str(path), check_existing=False)
@@ -33,7 +34,7 @@ def character_masks(g, record, layers):
         for start in range(0, len(entries), 4):
             batch = entries[start:start+4]
             if len(batch) == 1: continue
-            fingerprint = [(str(p), p.stat().st_mtime_ns, p.stat().st_size) for _,p,_ in batch]
+            fingerprint = [(str(p), digest(p)) for _,p,_ in batch]
             key = 'mask-pack:' + hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest()
             image = next((i for i in bpy.data.images if i.get('arc_image_key') == key), None)
             if image is None:

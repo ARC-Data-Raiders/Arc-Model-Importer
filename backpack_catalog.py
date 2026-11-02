@@ -99,17 +99,9 @@ def _default_option(choice, paths):
 
 
 def list_colorways(choice):
-    paths = _paths(choice)
-    variants = []
-    marker = 'DA_OI_BackpackContainer_' + _item(choice) + '_Color_'
-    for path in paths:
-        leaf = path.rsplit('/', 1)[-1]
-        if not leaf.casefold().startswith(marker.casefold()):
-            continue
-        token = leaf[len(marker):]
-        label = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', token).replace('_', ' ')
-        variants.append({'id': token, 'label': label, 'package': path})
-    return [{'id': 'BASE', 'label': 'Game Default', 'package': ''}] + sorted(variants, key=lambda row: row['label'].casefold())
+    from . import appearance
+    variants = appearance._appearance_browse_manifest().get('backpack_colorways', {}).get(_item(choice), [])
+    return [{'id': 'BASE', 'label': 'Game Default', 'package': ''}] + [dict(row) for row in variants]
 
 
 def _material_slots(mesh_path):
@@ -199,34 +191,76 @@ def plan(choice, colorway_id='BASE'):
     return result
 
 
+def _build_binding_material(obj, mesh_path, mi_path):
+    """Build using public import dispatch without committing unrelated slot edits.
+
+    Dispatch operates on the whole object. Even an unresolved target or raised
+    error must leave the prior material assignments and face indices intact.
+    """
+    from .operators import apply_materials_to_object
+    original = [slot.material for slot in obj.material_slots]
+    face_indices = [polygon.material_index for polygon in obj.data.polygons]
+    active_index = obj.active_material_index
+    selection_keys = ("arc_model_type", "arc_asset_domain", "arc_skin_json", "arc_skin_choice",
+                      "arc_manual_skins_folder", "arc_materials_pending", "arc_material_status",
+                      "arc_hair_mi", "arc_hair_color_mi", "arc_body_variant", "arc_source_mesh",
+                      "arc_surface_rebuild", "arc_surface_report", "arc_material_key",
+                      "arc_outfit_color_pipeline", "arc_palette_mode", "arc_palette_resolved",
+                      "arc_native_section_owner", "arc_native_section_owners", "arc_native_section_missing",
+                      "arc_outfit_material_bindings", "arc_outfit_material_preset")
+    original_selection = {key: obj[key] for key in selection_keys if key in obj}
+    try:
+        apply_materials_to_object(obj, mesh_path, skin_json=mi_path,
+                                  manual_skins_folder=os.path.dirname(mi_path), skin_choice=mi_path)
+        normalized = os.path.normcase(os.path.abspath(mi_path))
+        return next((slot.material for slot in obj.material_slots if slot.material and
+                     os.path.normcase(os.path.abspath(str(slot.material.get('arc_mi_path') or
+                      slot.material.get('arc_skin_json') or ''))) == normalized), None)
+    finally:
+        while len(obj.data.materials) < len(original):
+            obj.data.materials.append(None)
+        for index, previous in enumerate(original):
+            obj.material_slots[index].material = previous
+        while len(obj.data.materials) > len(original):
+            obj.data.materials.pop(index=len(obj.data.materials) - 1)
+        for polygon, material_index in zip(obj.data.polygons, face_indices):
+            polygon.material_index = material_index
+        obj.active_material_index = active_index
+        for key in selection_keys:
+            if key in original_selection:
+                obj[key] = original_selection[key]
+            elif key in obj:
+                del obj[key]
+
+
 def apply_material_bindings(obj, part):
     """Build each authored MI with existing shader logic, then target its exact slot."""
-    from .operators import apply_materials_to_object
     applied = 0
     # Unmodified sections keep their own authored shader (e.g. Survival lantern).
     if part['mesh'].casefold().endswith('.uemodel'):
         from . import uemodel_import
-        from .materials.dispatch import _get_or_build_shared_mi_material
+        from .materials.dispatch import (_get_or_build_shared_mi_material,
+                                         _mi_uses_layered_character_profile,
+                                         _dedicated_outfit_material_current)
         _name, _version, lods = uemodel_import.parse_uemodel(part['mesh'])
         for index, (_slot, reference, _first, _faces) in enumerate(lods[0].materials):
             if index in part.get('materials', {}):
                 continue
             source = cached_file(reference)
-            material = _get_or_build_shared_mi_material(os.path.splitext(os.path.basename(source))[0], source, part['mesh']) if source else None
+            material = None
+            if source and _mi_uses_layered_character_profile(source):
+                current = obj.material_slots[index].material if index < len(obj.material_slots) else None
+                material = current if current and _dedicated_outfit_material_current(current, source, obj=obj) else _build_binding_material(obj, part['mesh'], source)
+            elif source:
+                material = _get_or_build_shared_mi_material(os.path.splitext(os.path.basename(source))[0], source, part['mesh'])
             if material is not None:
                 while len(obj.data.materials) <= index:
                     obj.data.materials.append(material)
                 obj.material_slots[index].material = material
     for slot, path in sorted(part.get('materials', {}).items()):
-        original = [material.material for material in obj.material_slots]
-        apply_materials_to_object(obj, part['mesh'], skin_json=path, manual_skins_folder=os.path.dirname(path), skin_choice=path)
-        normalized = os.path.normcase(os.path.abspath(path))
-        material = next((value.material for value in obj.material_slots if value.material and
-                         os.path.normcase(os.path.abspath(str(value.material.get('arc_mi_path') or value.material.get('arc_skin_json') or ''))) == normalized), None)
+        material = _build_binding_material(obj, part['mesh'], path)
         if material is None:
             continue
-        for index, previous in enumerate(original):
-            obj.material_slots[index].material = previous
         while len(obj.data.materials) <= slot:
             obj.data.materials.append(material)
         obj.material_slots[slot].material = material

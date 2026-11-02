@@ -57,3 +57,37 @@ def wire_color_map(nodes, links, image, strand, root, params):
     whiten = 1.0 - float(params.get("ColorMapBlend", 1.0))
     blend.inputs[2].default_value = (whiten, whiten, whiten, 1.0)
     return blend.outputs["Color"]
+
+
+def is_native_colormap_source(sources, unresolved_parent=''):
+    """Require the exact native parent package, not ColorMap-like scalar names."""
+    package='/pioneer/characters/heads/shared/hair/materials/m_hair_metahuman_colormap'
+    for reference in [*sources, unresolved_parent]:
+        name=str(reference or '').replace('\\','/').casefold()
+        for suffix in ('.arc-material.json','.json','.native','.0'):
+            if name.endswith(suffix):name=name[:-len(suffix)]
+        if name.endswith(package):return True
+    return False
+
+
+def wire_dry_specular(nodes, links, attribute_r, attribute_a, params):
+    """Native ColorMap pixel830FAA lines145,179-191; dry snow factor zero.
+
+    q=max(1-abs(Attribute.R-.5)*(2/3),0) uses a literal DXBC coefficient,
+    not a view-angle term or a preshader parameter. This ports material
+    specular control; Principled still approximates the MSM_Hair BRDF.
+    """
+    def m(op,label,a,b=0):
+        node=nodes.new('ShaderNodeMath');node.operation=op
+        node.name='NativeColorMapSpec_'+label;node.label=label
+        for socket,value in zip(node.inputs,(a,b)):
+            if isinstance(value,(int,float)):socket.default_value=value
+            else:links.new(value,socket)
+        return node.outputs[0]
+    def lerp(a,b,f,label):
+        return m('ADD',label,a,m('MULTIPLY',label+' weighted difference',f,m('SUBTRACT',label+' difference',b,a)))
+    strand=m('SUBTRACT','Strand R minus half',attribute_r,.5)
+    q=m('MAXIMUM','Native strand response',m('SUBTRACT','One minus strand response',1,m('MULTIPLY','Literal two thirds',m('ABSOLUTE','Absolute strand',strand),2/3)),0)
+    palette=lerp(float(params.get('Spec1',.75)),float(params.get('Spec0',.45)),attribute_a,'Spec1 to Spec0 by Attribute A')
+    strand_spec=lerp(float(params.get('SpecEdge',.5)),float(params.get('SpecFront',.724)),q,'SpecEdge to SpecFront')
+    return m('MINIMUM','Native dry specular clamp',m('MAXIMUM','Native dry specular nonnegative',m('MULTIPLY','Native dry specular',palette,strand_spec),0),1)

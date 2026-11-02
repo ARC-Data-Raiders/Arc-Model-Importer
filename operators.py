@@ -4,10 +4,13 @@ Processing logic for PSK imports and model texturing
 
 import os
 import re
+import json
+import time
 import bpy
 import bpy_extras
 import mathutils
-from bpy.props import EnumProperty, StringProperty
+from bpy_extras.io_utils import ExportHelper
+from bpy.props import BoolProperty, EnumProperty, StringProperty
 from bpy.types import Operator
 
 from . import utils
@@ -20,6 +23,18 @@ from . import map_placement
 from . import palette_calibration
 
 log = utils.get_logger()
+
+
+def _entry_material_bindings(entry):
+    """Restore audit carried separately across Blender ID-property JSON storage."""
+    payload = entry.get("arc_outfit_material_bindings", "{}")
+    bindings = json.loads(payload) if isinstance(payload, str) else dict(payload)
+    audit = entry.get("arc_unused_outfit_material_bindings")
+    if audit is None:
+        return bindings
+    from .native_material_slots import ResolvedMaterialBindings
+    unused = json.loads(audit) if isinstance(audit, str) else list(audit)
+    return ResolvedMaterialBindings(bindings, unused_native_bindings=unused)
 
 
 def _picked_folder(op) -> str:
@@ -49,11 +64,15 @@ def process_entry(entry, *, psk=None, context=None, skip_materials=False) -> tup
     """
     with utils.timed(f"process_entry:{os.path.basename(getattr(entry, 'psk_path', '') or '')}"):
         psk_path = bpy.path.abspath(entry.psk_path)
-        json_path = "" if entry.skin_choice == 'NONE' else bpy.path.abspath(entry.skin_choice)
+        batch_skin_json = str(getattr(entry, "batch_skin_json", "") or "")
+        json_path = bpy.path.abspath(batch_skin_json) if batch_skin_json else (
+            "" if entry.skin_choice == 'NONE' else bpy.path.abspath(entry.skin_choice)
+        )
         if not json_path:
             json_path = textures.get_base_skin_json(psk_path, entry.manual_skins_folder)
         if json_path:
-            json_path = textures.resolve_clothing_mi_json(json_path) or json_path
+            resolver = textures.resolve_part_mi_json if batch_skin_json else textures.resolve_clothing_mi_json
+            json_path = resolver(json_path) or json_path
         body_variant = entry.body_choice if hasattr(entry, 'body_choice') else 'NONE'
 
         if not os.path.isfile(psk_path):
@@ -68,7 +87,8 @@ def process_entry(entry, *, psk=None, context=None, skip_materials=False) -> tup
                 body_variant=body_variant if body_variant else "NONE",
                 hair_mi=hair_mi if hair_mi else "NONE",
                 skin_json=json_path, manual_skins_folder=entry.manual_skins_folder,
-                skin_choice=entry.skin_choice,
+                skin_choice=batch_skin_json or entry.skin_choice,
+                material_bindings=_entry_material_bindings(entry),
             )
 
         model_type = textures.detect_model_type(psk_path)
@@ -95,6 +115,10 @@ def process_entry(entry, *, psk=None, context=None, skip_materials=False) -> tup
                 obj["arc_materials_pending"] = 1 if skip_materials else 0
                 obj["arc_body_variant"] = body_variant if body_variant else "NONE"
                 obj["arc_hair_mi"] = hair_mi if hair_mi else "NONE"
+                if json_path:
+                    obj["arc_skin_json"] = os.path.abspath(json_path)
+                if batch_skin_json:
+                    obj["arc_skin_choice"] = os.path.abspath(batch_skin_json)
             except Exception:
                 pass
             if skip_materials:
@@ -105,7 +129,8 @@ def process_entry(entry, *, psk=None, context=None, skip_materials=False) -> tup
                 hair_mi=hair_mi,
                 skin_json=json_path,
                 manual_skins_folder=entry.manual_skins_folder,
-                skin_choice=entry.skin_choice,
+                skin_choice=batch_skin_json or entry.skin_choice,
+                material_bindings=_entry_material_bindings(entry),
             )
             try:
                 obj["arc_material_status"] = str(mat_status or "")[:900]
@@ -274,6 +299,114 @@ def snapshot_object_materials(obj) -> list:
     return [slot.material for slot in obj.material_slots]
 
 
+def _recover_saved_material_lookup(obj, source: str, *, stamp_mesh=True) -> str:
+    """Recover exact cached package folders without changing mesh/PSK semantics."""
+    if not source:
+        return source
+    from . import pak_extract
+    registered = list(reversed(getattr(utils, "_pak_cache_roots", [])))
+    roots = list(registered)
+    try:
+        if pak_extract.configured_dir(bpy.context.scene):
+            roots.insert(0, os.path.join(pak_extract._addon_dir(), "ArcPak", "cache"))
+    except Exception:
+        pass
+    normalized = str(source).replace("\\", "/").casefold()
+    native = "/arcpak/cache/" in normalized
+    if hasattr(obj, "get"):
+        native = native or bool(obj.get("arc_pak_package") or obj.get("arc_pak_source"))
+        native = native or any("/arcpak/cache/" in str(obj.get(key) or "").replace("\\", "/").casefold()
+                               for key in ("arc_psk_path", "arc_source_mesh", "arc_original_psk_path", "arc_original_source_mesh"))
+    result = pak_extract.recover_saved_material_source(source, roots, native_pak=native)
+    if not result:
+        package = pak_extract.saved_material_package(source)
+        if native and package and hasattr(obj, "get"):
+            if stamp_mesh:
+                obj["arc_material_source_unresolved"] = package
+            elif not os.path.isfile(source):
+                obj["arc_material_mi_unresolved"] = package
+        return source
+    if stamp_mesh and hasattr(obj, "get") and obj.get("arc_material_source_unresolved"):
+        del obj["arc_material_source_unresolved"]
+    if not stamp_mesh and hasattr(obj, "get") and obj.get("arc_material_mi_unresolved"):
+        del obj["arc_material_mi_unresolved"]
+    path = result["path"]
+    if os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(source)):
+        return source
+    # Keep the first imported source as provenance. Format-changing native
+    # recovery is lookup-only: downstream pose/unit consumers retain PSK stamps.
+    if stamp_mesh and hasattr(obj, "get"):
+        try:
+            if not obj.get("arc_original_source_mesh"):
+                obj["arc_original_source_mesh"] = str(obj.get("arc_source_mesh") or source)
+            if not obj.get("arc_original_psk_path"):
+                obj["arc_original_psk_path"] = str(obj.get("arc_psk_path") or source)
+            obj["arc_material_source_path"] = path
+            obj["arc_material_source_package"] = result["package"]
+            if result["same_format"]:
+                for name in ("arc_psk_path", "arc_source_mesh"):
+                    stamped = str(obj.get(name) or "")
+                    if stamped and os.path.normcase(os.path.abspath(stamped)) == os.path.normcase(os.path.abspath(source)):
+                        obj[name] = path
+        except Exception:
+            log.exception("Could not persist exact material source recovery for %s", obj.name)
+    log.info("Material source exact package recovery: %s -> %s", source, path)
+    return path
+
+
+def _folder_mi_contradicts_sections(psk_path: str, folder_mi: str) -> bool:
+    """True when the section table names other MIs than a guessed folder MI.
+
+    The part-folder route writes one MI into the first slot. On a multi-material
+    mesh that overwrote another shared MI datablock (SM_OutpostModules_01_B slot 0
+    MI_Outpost_CorrugatedMetal_01_A got the cloth awning graph) and left every
+    other slot empty; per-slot resolution reads the exact authored references.
+    """
+    if not folder_mi:
+        return False
+    authored = {
+        path.rsplit("/", 1)[-1].split(".")[0].casefold()
+        for path in materials._uemodel_section_materials(psk_path) if path
+    }
+    return bool(authored) and authored != {os.path.basename(folder_mi).split(".")[0].casefold()}
+
+
+def _authored_layered_part_mi(psk_path: str) -> str:
+    """The one layered character skin MI (``<part>/Skins/<skin>/``) a mesh's sections name.
+
+    SM_Celeste_ToggleRadio_01 lives under Items/Animation, but its only section
+    references MI_Recruit_ToggleRadio_Metal: an 8-zone M_Character_Layered skin
+    whose ColorMask/OCM sit in the Recruit/ToggleRadio part folder.
+    """
+    authored = {path for path in materials._uemodel_section_materials(psk_path)
+                if path and not path.casefold().startswith("/engine/")}
+    if len(authored) != 1:
+        return ""
+    mi_path = textures.find_asset_from_object_path(authored.pop(), ".json")
+    if not mi_path or os.path.basename(os.path.dirname(os.path.dirname(mi_path))).casefold() != "skins":
+        return ""
+    return mi_path if materials.dispatch._mi_uses_layered_character_profile(mi_path) else ""
+
+
+def _isolate_material_controls(obj):
+    copies = {}
+    for slot in getattr(obj, "material_slots", ()):
+        material = slot.material
+        if material is None or not material.use_nodes:
+            continue
+        if not any(node.get("dr_preview_parameter") for node in material.node_tree.nodes):
+            continue
+        if material.get("dr_control_owner") == obj.name_full:
+            continue
+        identity = material.as_pointer()
+        if identity not in copies:
+            copy = material.copy()
+            copy["dr_control_owner"] = obj.name_full
+            copies[identity] = copy
+        slot.link = "OBJECT"
+        slot.material = copies[identity]
+
+
 def apply_materials_to_object(
     obj,
     psk_path: str,
@@ -286,11 +419,45 @@ def apply_materials_to_object(
     mi_data: dict = None,
     main_pngs: list = None,
     base_pngs: list = None,
+    material_bindings=None,
 ) -> str:
     """Apply Arc materials to an existing mesh without importing. Returns a short status."""
+    if material_bindings is not None:
+        unused_native = getattr(material_bindings, "unused_native_bindings", None)
+        if unused_native is not None:
+            obj["arc_unused_outfit_material_bindings"] = json.dumps(unused_native, sort_keys=True)
+        bindings = json.loads(material_bindings) if isinstance(material_bindings, str) else dict(material_bindings)
+        obj["arc_outfit_material_bindings"] = json.dumps(bindings, sort_keys=True)
+    psk_path = _recover_saved_material_lookup(obj, psk_path)
+    if hasattr(obj, "get") and obj.get("arc_material_source_unresolved"):
+        log.warning("Material update skipped: missing exact game package %s", obj.get("arc_material_source_unresolved"))
+        return "unresolved"
+    if hasattr(obj, "get") and obj.get("arc_material_mi_unresolved"):
+        del obj["arc_material_mi_unresolved"]
+    original_skin = skin_json
+    if skin_json:
+        skin_json = _recover_saved_material_lookup(obj, skin_json, stamp_mesh=False)
+        if hasattr(obj, "get") and obj.get("arc_material_mi_unresolved"):
+            log.warning("Material update skipped: missing exact selected MI %s", obj.get("arc_material_mi_unresolved"))
+            return "unresolved"
+        if skin_json != original_skin:
+            if manual_skins_folder and os.path.normcase(os.path.abspath(manual_skins_folder)) == os.path.normcase(os.path.dirname(os.path.abspath(original_skin))):
+                manual_skins_folder = os.path.dirname(skin_json)
+            if skin_choice == original_skin:
+                skin_choice = skin_json
+    if skin_choice and skin_choice != "NONE":
+        skin_choice = _recover_saved_material_lookup(obj, skin_choice, stamp_mesh=False)
+        if hasattr(obj, "get") and obj.get("arc_material_mi_unresolved"):
+            log.warning("Material update skipped: missing exact selected MI %s", obj.get("arc_material_mi_unresolved"))
+            return "unresolved"
+    if hair_mi and hair_mi != "NONE":
+        hair_mi = _recover_saved_material_lookup(obj, hair_mi, stamp_mesh=False)
+        if hasattr(obj, "get") and obj.get("arc_material_mi_unresolved"):
+            log.warning("Material update skipped: missing exact selected MI %s", obj.get("arc_material_mi_unresolved"))
+            return "unresolved"
     label = f"apply_materials:{getattr(obj, 'name', '?')}"
     with utils.timed(label):
-        return _apply_materials_to_object_impl(
+        status = _apply_materials_to_object_impl(
             obj, psk_path,
             body_variant=body_variant,
             hair_mi=hair_mi,
@@ -301,6 +468,8 @@ def apply_materials_to_object(
             main_pngs=main_pngs,
             base_pngs=base_pngs,
         )
+        _isolate_material_controls(obj)
+        return status
 
 
 def _apply_materials_to_object_impl(
@@ -381,6 +550,13 @@ def _apply_materials_to_object_impl(
         model_type = stamped
     else:
         model_type = textures.detect_model_type(psk_path) if psk_path else "unknown"
+    part_mi = _authored_layered_part_mi(psk_path) if domain == _ad.DOMAIN_UNKNOWN and psk_path else ""
+    if part_mi and (not skin_json or os.path.normcase(os.path.abspath(skin_json)) == os.path.normcase(os.path.abspath(part_mi))):
+        # Build it as that outfit part: textures come from the part folder, not the mesh's.
+        model_type, skin_json = "clothing", part_mi
+        manual_skins_folder = os.path.dirname(part_mi)
+        folder = os.path.dirname(os.path.dirname(manual_skins_folder))
+        mi_data = main_pngs = base_pngs = None
     try:
         if model_type:
             obj["arc_model_type"] = model_type
@@ -462,6 +638,17 @@ def _apply_materials_to_object_impl(
                 skin_choice = json_path
             mi_data = None
             base_pngs = None
+        if not json_path and materials._uemodel_section_materials(psk_path):
+            # No colourway, visual-part or folder MI: a pose/preview mesh whose
+            # sections reference hero MIs directly (SM_Avatar_001_Pose ->
+            # Heroes/Celeste/.../Materials). A garment graph with no MI behind it
+            # renders flat white; build each authored slot MI instead.
+            fixed = materials.fix_object_materials_from_mi_slots(
+                obj, folder, context=materials.context_from_model_type(model_type, psk_path),
+            )
+            if fixed:
+                obj["arc_materials_pending"] = 0
+                return f"mi-slots ({fixed})"
         # Only persist real values. Empty/default fallbacks must not erase a prior colorway stamp.
         try:
             if json_path:
@@ -527,6 +714,20 @@ def _apply_materials_to_object_impl(
             # ← Visor (Enable OFF). Glass slots with shell maps never go Visor-only.
             if not applied:
                 materials.setup_visor_material(obj, psk_path, skin_json=glass_json)
+        from .materials.clothing import restore_native_clothing_sections
+        restore_native_clothing_sections(obj, psk_path, json_path)
+        # Clothing shells often have additional named MI slots (CRT displays,
+        # SimplePBR lenses, fringe, fur, etc.). Building the ArcTexturer garment
+        # alone leaves those imported PSK slots on empty Principled fallbacks.
+        slot_context = materials.context_from_model_type(model_type, psk_path)
+        slot_repairs = materials.fix_object_materials_from_mi_slots(
+            obj, folder, context=slot_context,
+        )
+        if slot_repairs:
+            log.info(
+                "Rebuilt %d named outfit MI slot(s) on '%s'",
+                slot_repairs, obj.name,
+            )
         if model_type == "visor":
             return "visor"
         return "clothing"
@@ -576,6 +777,8 @@ def _apply_materials_to_object_impl(
             folder_mi = textures.resolve_part_mi_json(skin_json) or skin_json
         if not folder_mi:
             folder_mi = textures.get_base_skin_json(psk_path, manual_skins_folder)
+            if _folder_mi_contradicts_sections(psk_path, folder_mi):
+                folder_mi = ""
         if folder_mi and textures.is_hair_cards_mi(folder_mi):
             colour_json = ""
             try:
@@ -620,6 +823,8 @@ def _apply_materials_to_object_impl(
             folder_mi = textures.resolve_part_mi_json(skin_json) or skin_json
         if not folder_mi:
             folder_mi = textures.get_base_skin_json(psk_path, manual_skins_folder)
+            if _folder_mi_contradicts_sections(psk_path, folder_mi):
+                folder_mi = ""
         if folder_mi and textures.is_hair_cards_mi(folder_mi):
             colour_json = ""
             try:
@@ -765,20 +970,33 @@ def _link_objects_to_collection(objects: list, coll) -> None:
 
 
 def _snapshot_entry_skin_choices(entries) -> list:
-    """Capture ``(entry, skin_choice)`` so batch IO discovery can restore after dry-runs."""
+    """Capture skin state so batch IO discovery can restore after dry-runs."""
     out = []
     for entry in entries:
         try:
-            out.append((entry, entry.skin_choice))
+            out.append((entry, entry.skin_choice, str(getattr(entry, "batch_skin_json", "") or ""), entry.get("arc_outfit_material_bindings"), entry.get("arc_unused_outfit_material_bindings")))
         except Exception:
-            out.append((entry, "NONE"))
+            out.append((entry, "NONE", ""))
     return out
 
 
 def _restore_entry_skin_choices(snapshot) -> None:
-    for entry, choice in snapshot or ():
+    for item in snapshot or ():
+        entry, choice = item[:2]
         try:
             entry.skin_choice = choice
+        except Exception:
+            pass
+        try:
+            entry.batch_skin_json = item[2] if len(item) > 2 else ""
+            if len(item) > 3 and item[3] is not None:
+                entry["arc_outfit_material_bindings"] = item[3]
+            elif "arc_outfit_material_bindings" in entry:
+                del entry["arc_outfit_material_bindings"]
+            if len(item) > 4 and item[4] is not None:
+                entry["arc_unused_outfit_material_bindings"] = item[4]
+            elif "arc_unused_outfit_material_bindings" in entry:
+                del entry["arc_unused_outfit_material_bindings"]
         except Exception:
             pass
 
@@ -802,9 +1020,9 @@ def _collect_batch_io_jobs(context, entries, selected_presets) -> list:
                     model_type = "clothing"
                 if model_type not in ("clothing", "visor"):
                     continue
-                json_path = (
-                    "" if entry.skin_choice == "NONE"
-                    else bpy.path.abspath(entry.skin_choice)
+                batch_skin_json = str(getattr(entry, "batch_skin_json", "") or "")
+                json_path = bpy.path.abspath(batch_skin_json) if batch_skin_json else (
+                    "" if entry.skin_choice == "NONE" else bpy.path.abspath(entry.skin_choice)
                 )
                 if not json_path:
                     json_path = textures.get_base_skin_json(
@@ -922,7 +1140,10 @@ def _reapply_materials_for_preset(
         entry = by_psk.get(key)
         if entry is None:
             continue
-        json_path = "" if entry.skin_choice == "NONE" else bpy.path.abspath(entry.skin_choice)
+        batch_skin_json = str(getattr(entry, "batch_skin_json", "") or "")
+        json_path = bpy.path.abspath(batch_skin_json) if batch_skin_json else (
+            "" if entry.skin_choice == "NONE" else bpy.path.abspath(entry.skin_choice)
+        )
         if not json_path:
             json_path = textures.get_base_skin_json(psk_path, entry.manual_skins_folder)
         if json_path:
@@ -957,11 +1178,19 @@ def _reapply_materials_for_preset(
             hair_mi=hair_mi,
             skin_json=json_path,
             manual_skins_folder=entry.manual_skins_folder,
-            skin_choice=entry.skin_choice,
+            skin_choice=batch_skin_json or entry.skin_choice,
             mi_data=mi_data,
             main_pngs=(prefetch or {}).get("main_pngs"),
             base_pngs=(prefetch or {}).get("base_pngs"),
+            material_bindings=_entry_material_bindings(entry),
         )
+        if json_path:
+            try:
+                obj["arc_skin_json"] = os.path.abspath(json_path)
+                if batch_skin_json:
+                    obj["arc_skin_choice"] = os.path.abspath(batch_skin_json)
+            except Exception:
+                pass
         applied += 1
     return applied
 
@@ -1733,7 +1962,10 @@ def fix_materials_for_object(obj) -> tuple:
     used_name = ""
     stamped = obj.get("arc_psk_path", "") if hasattr(obj, "get") else ""
     if stamped:
-        stamped = bpy.path.abspath(str(stamped))
+        stamped = _recover_saved_material_lookup(obj, bpy.path.abspath(str(stamped)))
+        missing_package = str(obj.get("arc_material_source_unresolved") or "")
+        if missing_package:
+            return False, f"{obj.name}: missing exact game package '{missing_package}'; materials unchanged"
         folder = os.path.dirname(stamped)
         if os.path.isdir(folder):
             psk_path = stamped
@@ -1774,7 +2006,9 @@ def fix_materials_for_object(obj) -> tuple:
     if psk_path:
         skin_json = str(obj.get("arc_skin_json", "") or "") if hasattr(obj, "get") else ""
         if skin_json:
-            skin_json = bpy.path.abspath(skin_json)
+            skin_json = _recover_saved_material_lookup(obj, bpy.path.abspath(skin_json), stamp_mesh=False)
+            if obj.get("arc_material_mi_unresolved"):
+                return False, f"{obj.name}: missing exact selected MI '{obj.get('arc_material_mi_unresolved')}'; materials unchanged"
             if not os.path.isfile(skin_json):
                 log.warning("Update Materials: stamped skin JSON missing: %s", skin_json)
                 skin_json = ""
@@ -1848,7 +2082,8 @@ def fix_materials_for_object(obj) -> tuple:
                 obj, folder, context=ctx,
             )
         try:
-            obj["arc_psk_path"] = psk_path
+            if os.path.isfile(psk_path):
+                obj["arc_psk_path"] = psk_path
         except Exception:
             pass
         if status not in ("unresolved",):
@@ -2124,13 +2359,18 @@ def _queue_selected_outfit_psks(context):
     if not row:
         return False, None, "", [], "No outfit selected."
     label = row.get("Flavour") or row.get("ST") or choice
+    from . import appearance
+    if not any(appearance._shipped_outfit_preview_path(stem) for stem in appearance._outfit_preview_stems(row)):
+        appearance._queue_missing_outfit_preview(context, row, allow_extract=True)
     from . import pak_extract
     if pak_extract.configured_dir(scene) or not root:
         if not pak_extract.configured_dir(scene):
             return False, row, label, [], "Set the Steam Install root or Paks folder."
         from . import outfit_catalog
         rels = outfit_catalog.resolve_pak_outfit_paths(scene, row)
-        meshes = pak_extract.ensure_rels(scene, rels) if rels else []
+        # A warm cache skips the exporter; apply_outfit_preset still checks each
+        # mesh's material metadata against the game before building materials.
+        meshes = pak_extract.ensure_rels(scene, rels, reuse_current=True) if rels else []
         if not meshes:
             if not rels:
                 message = f"'{label}' has no cooked outfit meshes in this game's Pak index."
@@ -2302,16 +2542,23 @@ class ARC_OUTFITS_OT_UpdateHairColor(Operator):
     bl_label = "Update Hair Color"
     bl_options = {'REGISTER', 'UNDO'}
 
+    part: EnumProperty(
+        name="Part",
+        items=(('HAIR', "Hair", ""), ('FACIAL_HAIR', "Facial Hair", "")),
+        default='HAIR',
+    )
+
     def execute(self, context):
         from . import appearance as _appearance
 
-        cid = getattr(context.scene, "arc_appearance_hair_color", "NONE") or "NONE"
+        role = "FacialHair" if self.part == 'FACIAL_HAIR' else "Hair"
+        cid = _appearance.hair_color_choice(context.scene, role)
         colour_json = _appearance.resolve_hair_color_path(cid, context.scene) if cid != "NONE" else ""
         if cid != "NONE" and (not colour_json or not os.path.isfile(colour_json)):
             self.report({'ERROR'}, f"Hair Color MI not found for '{cid}'")
             return {'CANCELLED'}
 
-        copy_lashes = bool(
+        copy_lashes = role == "Hair" and bool(
             getattr(context.scene, "arc_appearance_eyelash_copy_hair_color", True)
         )
 
@@ -2326,9 +2573,7 @@ class ARC_OUTFITS_OT_UpdateHairColor(Operator):
         for obj in context.selected_objects or []:
             if obj.type != "MESH":
                 continue
-            mtype = str(obj.get("arc_model_type", "") or "").lower()
-            name_l = (obj.name or "").lower()
-            if mtype == "hair" or "hair" in name_l or "facial" in name_l:
+            if _appearance.hair_object_role(obj) == role:
                 targets.append(obj)
             elif _is_head_mesh(obj):
                 head_targets.append(obj)
@@ -2359,6 +2604,7 @@ class ARC_OUTFITS_OT_UpdateHairColor(Operator):
                 obj["arc_hair_mi"] = os.path.abspath(hair_json)
             except Exception:
                 pass
+            _appearance.isolate_appearance_materials(obj)
             materials.setup_hair_material(obj, hair_json, colour_json=colour_json)
             done += 1
 
@@ -2374,9 +2620,17 @@ class ARC_OUTFITS_OT_UpdateHairColor(Operator):
                             continue
                         if slot is not None and other.get("arc_import_slot") != slot:
                             continue
+                        if slot is None:
+                            armature = hair.find_armature()
+                            if armature is not None:
+                                if other.find_armature() != armature:
+                                    continue
+                            elif hair.parent is None or other.parent != hair.parent:
+                                continue
                         if _is_head_mesh(other):
                             head_targets.append(other)
             for head in head_targets:
+                _appearance.isolate_appearance_materials(head)
                 try:
                     if colour_json:
                         head["arc_hair_color_mi"] = os.path.abspath(colour_json)
@@ -2396,13 +2650,16 @@ class ARC_OUTFITS_OT_UpdateHairColor(Operator):
                     ):
                         lash_done += 1
 
-        try:
-            _character.sync_face_shader_hair(
-                "",
-                _character._resolve_scene_hair_color_rgba(colour_json),
-            )
-        except Exception:
-            pass
+        if copy_lashes:
+            for head in head_targets:
+                try:
+                    _character.sync_face_shader_hair(
+                        "",
+                        _character._resolve_scene_hair_color_rgba(colour_json),
+                        head_obj=head,
+                    )
+                except Exception:
+                    pass
 
         if done <= 0 and lash_done <= 0:
             self.report({'ERROR'}, "No hair MI / eyelash mats found on selection")
@@ -2664,6 +2921,555 @@ class ARC_OUTFITS_OT_LoadAllColorways(Operator):
             f"Imported {instances} colourway(s) ({parts} part(s)) for '{label}'.",
         )
         return {'FINISHED'}
+
+
+_ALL_OUTFITS_COLORWAYS_ACTIVE = None
+
+
+def all_outfits_colorways_status():
+    active = _ALL_OUTFITS_COLORWAYS_ACTIVE
+    if active is None or active._closed:
+        return None
+    return {
+        'phase': active._phase,
+        'current': active._current_label,
+        'done': active._position,
+        'total': len(active._jobs),
+        'imported': active._imported,
+        'failed': len(active._failures),
+        'audit_done': active._audit_position,
+        'audit_total': len(active._audit_objects),
+    }
+
+
+def _batch_mesh_material_profile(obj):
+    """Profile reachable shader inputs and identify bare generic materials."""
+    profile = {'materials': [], 'has_texture': False, 'has_group': False,
+               'has_procedural': False, 'generic': False, 'missing': False,
+               'untextured': False, 'missing_image_files': []}
+    slots = list(getattr(obj, 'material_slots', ()))
+    used_indices = {poly.material_index for poly in getattr(obj.data, 'polygons', ())}
+    # Imported meshes can carry trailing empty PSK material slots that no face
+    # references. Treat only face-assigned slots as missing/untextured; keep all
+    # slots for meshes without polygons so malformed empty meshes remain visible.
+    if not used_indices:
+        used_indices = set(range(len(slots)))
+    mats = [slot.material for index, slot in enumerate(slots) if index in used_indices]
+    if not mats or not any(mats):
+        profile['missing'] = True
+        profile['generic'] = True
+        profile['untextured'] = True
+        return profile
+
+    for mat in mats:
+        if mat is None:
+            profile['missing'] = True
+            continue
+        types, groups, images, procedures, links = [], [], [], [], []
+        image_paths, missing_image_files = [], []
+        reachable = {}
+        visited_nodes = set()
+
+        def trace_inputs(tree, node):
+            """Walk only nodes that can feed a material output (including nested groups)."""
+            if not tree or not node:
+                return
+            key = (tree.as_pointer(), node.as_pointer())
+            if key in visited_nodes:
+                return
+            visited_nodes.add(key)
+            reachable.setdefault(tree.as_pointer(), {})[node.as_pointer()] = node
+            if node.type == 'GROUP' and node.node_tree:
+                groups.append(node.node_tree.name)
+                for group_output in node.node_tree.nodes:
+                    if group_output.type == 'GROUP_OUTPUT' and getattr(group_output, 'is_active_output', True):
+                        for socket in group_output.inputs:
+                            for link in socket.links:
+                                trace_inputs(node.node_tree, link.from_node)
+            for socket in node.inputs:
+                for link in socket.links:
+                    links.append((link.from_node.bl_idname, node.bl_idname,
+                                  link.from_socket.name, link.to_socket.name))
+                    trace_inputs(tree, link.from_node)
+
+        if mat.use_nodes and mat.node_tree:
+            output_nodes = [node for node in mat.node_tree.nodes
+                            if node.type == 'OUTPUT_MATERIAL' and getattr(node, 'is_active_output', True)]
+            for output_node in output_nodes:
+                for socket in output_node.inputs:
+                    if socket.name in {'Surface', 'Volume', 'Displacement'}:
+                        for link in socket.links:
+                            trace_inputs(mat.node_tree, link.from_node)
+            for tree_nodes in reachable.values():
+                for node in tree_nodes.values():
+                    types.append(node.bl_idname)
+                    if node.type == 'TEX_IMAGE':
+                        image = node.image
+                        if image:
+                            images.append(image.name)
+                            path = bpy.path.abspath(image.filepath, library=image.library) if image.filepath else ''
+                            image_paths.append(path)
+                            if (path and not image.packed_file and not image.is_dirty
+                                    and not os.path.isfile(path)):
+                                missing_image_files.append({'image': image.name, 'path': path})
+                        else:
+                            missing_image_files.append({'image': node.name, 'path': '', 'reason': 'image node has no image'})
+                    elif (node.type.startswith('TEX_') and node.type not in {'TEX_COORD'}) or node.type in {
+                        'NOISE_TEXTURE', 'VORONOI_TEXTURE', 'MUSGRAVE_TEXTURE',
+                        'WAVE_TEXTURE', 'GRADIENT_TEXTURE', 'WHITE_NOISE_TEXTURE',
+                    }:
+                        procedures.append(node.bl_idname)
+        profile['has_texture'] |= bool(images)
+        profile['has_group'] |= bool(groups)
+        profile['has_procedural'] |= bool(procedures)
+        material_untextured = not bool(images)
+        profile['untextured'] |= material_untextured
+        profile['missing_image_files'].extend(missing_image_files)
+        generic = not images and not groups and not procedures and (
+            'ShaderNodeBsdfPrincipled' in types
+        )
+        profile['generic'] |= generic
+        family = str(mat.get('arc_material_family') or mat.get('arc_shader_family')
+                      or mat.get('arc_mi_family') or '')
+        if family == 'simple':
+            family = 'SimplePBR authored shader'
+        if not family:
+            material_name = mat.name.lower()
+            group_names = [name.lower() for name in set(groups)]
+            if any('crt' in name or 'screen' in name for name in (material_name, *group_names)):
+                family = 'CRT/display'
+            elif any('fur' in name or 'hair' in name for name in (material_name, *group_names)):
+                family = 'fur/hair'
+            elif any('gt_colour' in name or 'arc texturer' in name for name in group_names):
+                family = 'ArcTexturer layered surface'
+            elif groups:
+                family = 'authored node-group shader'
+            elif procedures:
+                family = 'procedural shader'
+            elif images:
+                family = 'image-textured shader'
+            elif generic:
+                family = 'generic Principled fallback'
+            else:
+                family = 'image-less authored shader'
+        profile['materials'].append({
+            'name': mat.name,
+            'images': sorted(set(images)),
+            'image_paths': sorted(set(image_paths)),
+            'missing_image_files': missing_image_files,
+            'groups': sorted(set(groups)),
+            'node_types': sorted(types),
+            'procedural': sorted(set(procedures)),
+            'links': sorted(set(links)),
+            'generic_principled': generic,
+            'untextured': material_untextured,
+            'material_status': str(mat.get('arc_material_status') or ''),
+            'family': family,
+        })
+    return profile
+
+
+class ARC_OUTFITS_OT_LoadAllOutfitsColorways(Operator, ExportHelper):
+    """Import all outfit rows, finishing every colourway of one outfit before the next."""
+    bl_idname = 'arc_outfits.load_all_outfits_colorways'
+    bl_label = 'Load All Outfits & Colorways'
+    bl_description = 'Import every outfit and all its colourways sequentially, checkpointing every five outfits'
+    bl_options = {'REGISTER', 'UNDO'}
+    filename_ext = '.blend'
+    filter_glob: StringProperty(default='*.blend', options={'HIDDEN'})
+    filepath: StringProperty(subtype='FILE_PATH')
+
+    @classmethod
+    def poll(cls, context):
+        return _ALL_OUTFITS_COLORWAYS_ACTIVE is None
+
+    def invoke(self, context, event):
+        if bpy.data.filepath:
+            self.filepath = bpy.data.filepath
+            return self.execute(context)
+        # An unsaved scene must get a real Save As path before the first import.
+        return ExportHelper.invoke(self, context, event)
+
+    def execute(self, context):
+        global _ALL_OUTFITS_COLORWAYS_ACTIVE
+        from . import appearance, importing, properties, pak_extract, utils
+        scene = context.scene
+        game = pak_extract.configured_dir(scene)
+        if not game and not utils.get_pioneer_root():
+            self.report({'ERROR'}, 'Set the Steam Install or FModel Output folder before importing all outfits.')
+            return {'CANCELLED'}
+
+        rows = importing.load_outfit_csv(importing.get_outfit_csv_path(context))
+        by_key = {importing.outfit_row_key(row): row for row in rows if importing.outfit_row_key(row)}
+        jobs = []
+        for item in properties.make_outfit_selector_items(scene, context):
+            key = item[0]
+            row = by_key.get(key)
+            if not row or key == 'NONE':
+                continue
+            jobs.append({'key': key, 'label': item[1], 'row': row})
+        if not jobs:
+            self.report({'ERROR'}, 'No outfit entries were found in the Outfit Selector catalog.')
+            return {'CANCELLED'}
+
+        filepath = bpy.path.abspath(self.filepath or bpy.data.filepath or '')
+        if not filepath or not filepath.lower().endswith('.blend'):
+            self.report({'ERROR'}, 'Choose a .blend checkpoint path before starting the all-outfits import.')
+            return {'CANCELLED'}
+        current = os.path.normcase(os.path.abspath(bpy.data.filepath)) if bpy.data.filepath else ''
+        target = os.path.normcase(os.path.abspath(filepath))
+        if not current and os.path.exists(filepath):
+            self.report({'ERROR'}, 'The selected checkpoint already exists. Choose a new filename to protect existing work.')
+            return {'CANCELLED'}
+        if current and current != target:
+            self.report({'ERROR'}, 'Batch imports save to the current blend. Use Save As first to choose its checkpoint path.')
+            return {'CANCELLED'}
+        os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
+        if not current:
+            result = bpy.ops.wm.save_as_mainfile(filepath=filepath, check_existing=False)
+            if 'FINISHED' not in result:
+                self.report({'ERROR'}, f'Could not create the first checkpoint at {filepath}')
+                return {'CANCELLED'}
+
+        self._scene = scene
+        self._window = context.window
+        self._view_layer = context.view_layer
+        self._source_state = tuple(str(getattr(scene, name, '') or '') for name in (
+            'arc_pak_dir', 'arc_usmap_path', 'arc_pioneer_root', 'arc_outfit_csv_path'))
+        self._filepath = filepath
+        self._report_path = os.path.splitext(filepath)[0] + '.all-outfits-progress.json'
+        self._original_outfit = str(getattr(scene, 'arc_selected_outfit', '') or '')
+        self._original_browse = str(getattr(scene, 'arc_selected_outfit_browse', '') or '')
+        self._saved_entries = [
+            {name: getattr(entry, name, '') for name in (
+                'psk_path', 'display_name', 'skin_choice', 'manual_skins_folder',
+                'body_choice', 'hair_mi')}
+            for entry in scene.arc_psk_entries
+        ]
+        self._saved_selections = [
+            {name: getattr(entry, name, '') for name in ('preset_name', 'json_path', 'selected')}
+            for entry in scene.arc_outfit_selections
+        ]
+        already = {str(obj.get('arc_batch_outfit_key') or '') for obj in scene.objects}
+        self._skipped_existing = [job['label'] for job in jobs if job['key'] in already]
+        self._jobs = [job for job in jobs if job['key'] not in already]
+        self._position = 0
+        self._imported = 0
+        self._failures = []
+        self._records = []
+        self._current_label = 'Starting'
+        self._phase = 'Importing outfits' if self._jobs else 'Auditing and repairing materials'
+        self._audit_objects = []
+        self._audit_position = 0
+        self._audit_before = []
+        self._audit_after = []
+        self._material_setups = {}
+        self._cancel_requested = False
+        self._closed = False
+        self._timer = None
+        self._wm = context.window_manager
+        self._origin_filepath = current
+        _ALL_OUTFITS_COLORWAYS_ACTIVE = self
+        self._wm.progress_begin(0, max(1, len(self._jobs)))
+        if self._jobs:
+            self._persist_report('running')
+        else:
+            self._begin_audit()
+
+        if bpy.app.background:
+            while self._phase == 'Importing outfits' and self._position < len(self._jobs):
+                self._import_one(context)
+            self._begin_audit()
+            while self._phase == 'Auditing and repairing materials' and self._audit_position < len(self._audit_objects):
+                self._audit_one()
+            self._finish(context)
+            return {'FINISHED'}
+
+        self._timer = self._wm.event_timer_add(0.1, window=context.window)
+        self._wm.modal_handler_add(self)
+        self._redraw()
+        return {'RUNNING_MODAL'}
+
+    def _write_json(self, payload):
+        temp = self._report_path + '.tmp'
+        with open(temp, 'w', encoding='utf-8') as stream:
+            json.dump(payload, stream, ensure_ascii=False, indent=2)
+        os.replace(temp, self._report_path)
+
+    def _persist_report(self, status):
+        report = {
+            'status': status, 'phase': self._phase, 'processed_outfits': self._position,
+            'updated_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+            'total_outfits': len(self._jobs), 'imported_outfits': self._imported,
+            'skipped_existing': list(self._skipped_existing), 'failures': list(self._failures),
+            'items': list(self._records), 'untextured_before_repair': list(self._audit_before),
+            'untextured_after_repair': list(self._audit_after),
+            'unique_material_setups': list(self._material_setups.values()),
+            'audit_done': self._audit_position,
+            'audit_total': len(self._audit_objects),
+            'audit_current': self._current_label if self._phase == 'Auditing and repairing materials' else '',
+            'blend': self._filepath, 'report': self._report_path,
+            'current': self._current_label,
+        }
+        summary = {
+            'status': status, 'phase': self._phase, 'processed_outfits': self._position,
+            'total_outfits': len(self._jobs), 'imported_outfits': self._imported,
+            'failed_outfits': len(self._failures), 'current': self._current_label,
+            'unresolved_materials': len(self._audit_after),
+            'unique_material_setups': len(self._material_setups),
+            'audit_done': self._audit_position,
+            'audit_total': len(self._audit_objects),
+            'report': self._report_path,
+        }
+        self._scene['arc_all_outfits_colorways_progress'] = json.dumps(summary, ensure_ascii=False)
+        self._write_json(report)
+
+    def _persist_audit_progress(self):
+        """Write a compact heartbeat without serializing the full material inventory."""
+        summary = {
+            'status': 'auditing',
+            'phase': self._phase,
+            'audit_done': self._audit_position,
+            'audit_total': len(self._audit_objects),
+            'current': self._current_label,
+            'updated_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+            'blend': self._filepath,
+        }
+        self._scene['arc_all_outfits_colorways_progress'] = json.dumps(summary, ensure_ascii=False)
+        progress_path = os.path.splitext(self._report_path)[0] + '.audit-progress.json'
+        temp = progress_path + '.tmp'
+        with open(temp, 'w', encoding='utf-8') as stream:
+            json.dump(summary, stream, ensure_ascii=False)
+        os.replace(temp, progress_path)
+
+    def _save_checkpoint(self, reason):
+        self._scene['arc_all_outfits_colorways_checkpoint'] = reason
+        result = bpy.ops.wm.save_as_mainfile(filepath=self._filepath, check_existing=False)
+        if 'FINISHED' not in result:
+            raise RuntimeError(f'Blender did not save the checkpoint ({result})')
+        print(f"Arc Raiders all outfits: checkpoint saved after {self._position} outfit(s): {self._filepath}")
+
+    def _redraw(self):
+        self._wm.progress_update(min(self._position, len(self._jobs)))
+        if self._window:
+            for area in self._window.screen.areas:
+                if area.type in {'VIEW_3D', 'PROPERTIES'}:
+                    area.tag_redraw()
+
+    def _import_one(self, context):
+        from . import importing, utils
+        from . import appearance
+        job = self._jobs[self._position]
+        self._current_label = job['label']
+        self._phase = f"Importing outfit {self._position + 1}/{len(self._jobs)}"
+        started_at = time.strftime('%Y-%m-%dT%H:%M:%S%z')
+        started_clock = time.monotonic()
+        self._persist_report('running')
+        scene = self._scene
+        scene.arc_selected_outfit = job['key']
+        try:
+            ok, row, label, missing, error = _queue_selected_outfit_psks(context)
+            if not ok:
+                raise RuntimeError(error)
+            root = utils.get_pioneer_root()
+            presets = importing.colorways_for_outfit_row(root, row)
+            if not presets:
+                importing.populate_outfit_selections(context)
+                presets = [(sel.preset_name, bpy.path.abspath(sel.json_path))
+                           for sel in scene.arc_outfit_selections if sel.json_path]
+            base_only = not bool(presets)
+            if base_only:
+                presets = [(f"{label} - Base", "")]
+            before = set(bpy.data.objects)
+            instances, parts, perf = batch_import_instances(context, presets)
+            created = [obj for obj in bpy.data.objects if obj not in before]
+            if instances <= 0:
+                raise RuntimeError('No colourway instances completed; ' + (perf or 'import returned zero instances'))
+            preset_names = [str(name) for name, _path in presets]
+            for obj in created:
+                obj['arc_batch_outfit_key'] = job['key']
+                obj['arc_batch_outfit_label'] = job['label']
+                colors = [coll.name for coll in obj.users_collection
+                          if any(coll.name == name or coll.name.startswith(name + '.') for name in preset_names)]
+                if colors:
+                    obj['arc_batch_colorway'] = colors[0]
+            self._imported += 1
+            record = {'key': job['key'], 'label': job['label'], 'ok': True,
+                      'started_at': started_at,
+                      'completed_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+                      'duration_seconds': round(time.monotonic() - started_clock, 2),
+                      'colorways_requested': len(presets), 'instances_imported': instances,
+                      'parts_textured': parts, 'base_only': base_only,
+                      'missing_parts': list(missing), 'objects': len(created), 'perf': perf}
+            self._records.append(record)
+            print(f"Arc Raiders all outfits: {job['label']} — {instances}/{len(presets)} colorway instances")
+        except Exception as exc:
+            failure = {'key': job['key'], 'label': job['label'], 'error': str(exc)}
+            failure.update({'started_at': started_at,
+                            'completed_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+                            'duration_seconds': round(time.monotonic() - started_clock, 2)})
+            self._failures.append(failure)
+            self._records.append({**failure, 'ok': False})
+            print(f"Arc Raiders all outfits FAILED: {job['label']}: {exc}")
+        finally:
+            scene.arc_psk_entries.clear()
+            scene.arc_outfit_selections.clear()
+            self._position += 1
+            self._current_label = ''
+            self._persist_report('running')
+            if self._position and self._position % 5 == 0:
+                self._save_checkpoint('five-outfit-checkpoint')
+            self._redraw()
+        if self._position >= len(self._jobs):
+            self._begin_audit()
+
+    def _begin_audit(self):
+        self._phase = 'Auditing and repairing materials'
+        self._audit_objects = [obj for obj in self._scene.objects
+                               if obj.type == 'MESH' and obj.get('arc_batch_outfit_key')]
+        self._audit_position = 0
+        # Make all imported outfits durable before applying any audit repairs.
+        self._save_checkpoint('post-import-pre-audit')
+        self._persist_report('auditing')
+        print(f"Arc Raiders all outfits: auditing {len(self._audit_objects)} outfit meshes")
+
+    def _audit_one(self):
+        from . import operators as _self, materials
+        obj = self._audit_objects[self._audit_position]
+        before = _batch_mesh_material_profile(obj)
+        item = {'name': obj.name, 'outfit': str(obj.get('arc_batch_outfit_label') or ''),
+                'colorway': str(obj.get('arc_batch_colorway') or ''),
+                'source': str(obj.get('arc_psk_path') or obj.get('arc_source_mesh') or ''),
+                'generic_before': before['generic'], 'missing_materials_before': before['missing'],
+                'untextured_before': before['untextured'],
+                'missing_image_files_before': list(before['missing_image_files']),
+                'materials': before['materials'], 'repair': ''}
+        if before['generic'] or before['missing'] or before['untextured'] or before['missing_image_files']:
+            self._audit_before.append(item)
+            source = bpy.path.abspath(item['source']) if item['source'] else ''
+            if (before['generic'] or before['missing'] or before['missing_image_files']) and source and os.path.isfile(source):
+                skin_json = str(obj.get('arc_skin_json') or obj.get('arc_skin_choice') or '')
+                skin_json = bpy.path.abspath(skin_json) if skin_json and skin_json != 'NONE' else ''
+                try:
+                    item['repair'] = _self.apply_materials_to_object(
+                        obj, source, skin_json=skin_json,
+                        skin_choice=skin_json or 'NONE',
+                        manual_skins_folder=str(obj.get('arc_manual_skins_folder') or ''),
+                    )
+                except Exception as exc:
+                    item['repair'] = f'error: {exc}'
+            elif before['generic'] or before['missing'] or before['missing_image_files']:
+                item['repair'] = 'source mesh path missing; automatic material rebuild unavailable'
+            else:
+                item['repair'] = 'no image textures found; authored shader nodes left intact for family-specific review'
+            after = _batch_mesh_material_profile(obj)
+            item['materials_after'] = after['materials']
+            item['missing_image_files_after'] = list(after['missing_image_files'])
+            item['resolved'] = not (after['generic'] or after['missing'] or after['untextured']
+                                    or after['missing_image_files'])
+            if not item['resolved']:
+                self._audit_after.append(item)
+        for material in before['materials']:
+            signature = json.dumps({key: material.get(key) for key in (
+                'images', 'image_paths', 'missing_image_files', 'groups', 'node_types', 'procedural', 'links',
+                'generic_principled', 'untextured', 'material_status', 'family')},
+                sort_keys=True, ensure_ascii=False)
+            setup = self._material_setups.setdefault(signature, {
+                'signature': signature, 'material_names': [], 'mesh_names': [],
+                'generic_principled': material.get('generic_principled', False),
+                'untextured': material.get('untextured', False),
+                'family': material.get('family', ''), 'node_types': material.get('node_types', []),
+                'images': material.get('images', []), 'image_paths': material.get('image_paths', []),
+                'missing_image_files': material.get('missing_image_files', []),
+                'groups': material.get('groups', []),
+                'procedural': material.get('procedural', []), 'links': material.get('links', []),
+            })
+            if material['name'] not in setup['material_names']:
+                setup['material_names'].append(material['name'])
+            if obj.name not in setup['mesh_names']:
+                setup['mesh_names'].append(obj.name)
+        self._audit_position += 1
+        self._current_label = obj.name
+        # Keep external progress visible without rewriting a potentially large JSON
+        # report after every mesh; the active UI still shows per-mesh progress.
+        if self._audit_position % 25 == 0 or self._audit_position == len(self._audit_objects):
+            self._persist_audit_progress()
+        self._redraw()
+
+    def _finish(self, context, error=''):
+        global _ALL_OUTFITS_COLORWAYS_ACTIVE
+        if self._closed:
+            return
+        self._closed = True
+        if self._timer:
+            self._wm.event_timer_remove(self._timer)
+        self._wm.progress_end()
+        scene = self._scene
+        try:
+            scene.arc_selected_outfit = self._original_outfit
+            if self._original_browse:
+                scene.arc_selected_outfit_browse = self._original_browse
+            scene.arc_psk_entries.clear()
+            for saved in self._saved_entries:
+                entry = scene.arc_psk_entries.add()
+                for name, value in saved.items():
+                    if hasattr(entry, name):
+                        setattr(entry, name, value)
+            scene.arc_outfit_selections.clear()
+            for saved in self._saved_selections:
+                entry = scene.arc_outfit_selections.add()
+                for name, value in saved.items():
+                    if hasattr(entry, name):
+                        setattr(entry, name, value)
+        except (ReferenceError, RuntimeError, TypeError):
+            pass
+        self._phase = 'Finished'
+        self._current_label = ''
+        try:
+            self._persist_report('failed' if error else ('cancelled' if self._cancel_requested else 'complete'))
+            self._save_checkpoint('final-material-audit' if self._audit_position else 'final-batch-checkpoint')
+        except Exception as exc:
+            error = error or f'Final checkpoint failed: {exc}'
+        _ALL_OUTFITS_COLORWAYS_ACTIVE = None
+        self._redraw()
+        failed = len(self._failures)
+        message = f"Imported {self._imported} outfit(s); {failed} failed. Final material audit: {len(self._audit_after)} unresolved generic/untextured mesh(es)."
+        if error:
+            message += ' ' + error
+        self.report({'WARNING'} if error or failed or self._audit_after else {'INFO'}, message)
+
+    def modal(self, context, event):
+        if self._closed:
+            return {'CANCELLED'}
+        if event.type == 'ESC':
+            self._cancel_requested = True
+        if context.scene != self._scene:
+            self._cancel_requested = True
+        current = tuple(str(getattr(self._scene, name, '') or '') for name in (
+            'arc_pak_dir', 'arc_usmap_path', 'arc_pioneer_root', 'arc_outfit_csv_path'))
+        if current != self._source_state:
+            self._cancel_requested = True
+        if event.type == 'TIMER':
+            if self._cancel_requested:
+                self._finish(context)
+                return {'CANCELLED'}
+            try:
+                if self._phase.startswith('Importing outfit'):
+                    self._import_one(context)
+                elif self._phase == 'Auditing and repairing materials':
+                    if self._audit_position < len(self._audit_objects):
+                        self._audit_one()
+                    else:
+                        self._finish(context)
+                elif self._phase == 'Finished':
+                    self._finish(context)
+            except Exception as exc:
+                self._failures.append({'label': self._current_label, 'error': str(exc)})
+                self._finish(context, error=str(exc))
+        return {'RUNNING_MODAL'}
+
+    def cancel(self, context):
+        self._cancel_requested = True
 
 
 class ARC_OUTFITS_OT_SelectOutfit(Operator):
@@ -3788,67 +4594,8 @@ class ARC_OUTFITS_OT_ImportWeapon(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        from . import weapon_catalog as wcat
-
-        scene = context.scene
-        key = getattr(scene, "arc_weapon_key", "NONE") or "NONE"
-        if key == "NONE":
-            self.report({"ERROR"}, "Select a weapon from the ST catalog first")
-            return {"CANCELLED"}
-        entry = wcat.weapon_by_key(key)
-        if not entry:
-            self.report({"ERROR"}, f"Unknown weapon key: {key}")
-            return {"CANCELLED"}
-        pioneer = utils.get_pioneer_root() or getattr(scene, "arc_pioneer_root", "") or ""
-        folder = wcat.resolve_weapon_folder(pioneer, entry)
-        if not folder:
-            from . import pak_extract
-
-            stem = entry.get("stem") or ""
-            kind = entry.get("kind") or "Firearms"
-            meshes = pak_extract.ensure_rels(scene, [f"Items/{kind}/{stem}"]) if stem else []
-            if not meshes:
-                root_hint = pioneer or "paks"
-                self.report(
-                    {"ERROR"},
-                    f"Content folder missing: Items/{kind}/{stem} ({root_hint}). "
-                    f"Set PioneerGame Folder or the Paks folder in Settings.",
-                )
-                return {"CANCELLED"}
-            n = _queue_mesh_paths(context, meshes)
-            if not n:
-                self.report({"ERROR"}, f"No mesh extracted for {entry.get('name') or stem}")
-                return {"CANCELLED"}
-            bpy.ops.arc_outfits.confirm_psk_import("INVOKE_DEFAULT")
-            self.report({"INFO"}, f"Imported {entry.get('name')} ({n} mesh(es)) from paks")
-            return {"FINISHED"}
-        before_arms = {o.name for o in bpy.data.objects if o.type == "ARMATURE"}
-        n, _skipped = _queue_folder_psks(context, folder)
-        if not n:
-            self.report({"ERROR"}, f"No .psk/.pskx in {folder}")
-            return {"CANCELLED"}
-        # Stamp Weapons-panel skin onto import entries (Skins/<Colourway>/MI_*.json).
-        skin_name = getattr(scene, "arc_weapon_skin", "NONE") or "NONE"
-        skin_mi = wcat.resolve_weapon_skin_mi(pioneer, entry, skin_name)
-        if skin_mi:
-            for ent in scene.arc_psk_entries:
-                try:
-                    ent.skin_choice = skin_mi
-                except Exception:
-                    pass
-        bpy.ops.arc_outfits.confirm_psk_import("INVOKE_DEFAULT")
-        new_arms = [
-            o
-            for o in bpy.data.objects
-            if o.type == "ARMATURE" and o.name not in before_arms
-        ]
-        for arm in new_arms:
-            arm["arc_model_type"] = "weapon"
-        if new_arms:
-            scene.arc_last_weapon_armature = new_arms[-1].name
-        skin_note = f", skin {skin_name}" if skin_mi else ""
-        self.report({"INFO"}, f"Imported {entry.get('name')} ({n} mesh(es){skin_note})")
-        return {"FINISHED"}
+        from . import weapon_import
+        return weapon_import.selected_import(self, context)
 
 
 class ARC_OUTFITS_OT_ImportWeaponMod(Operator):
@@ -3860,6 +4607,9 @@ class ARC_OUTFITS_OT_ImportWeaponMod(Operator):
     mod_type: StringProperty(name="Mod Type", default="Muzzle")
 
     def execute(self, context):
+        from . import weapon_position, weapon_import
+        if weapon_position.roots_for_selection(context):
+            return weapon_import.import_mod(self, context)
         from . import weapon_catalog as wcat
         from . import rig
 
@@ -3962,6 +4712,11 @@ class ARC_OUTFITS_OT_ApplyWeaponSkin(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
+        from . import weapon_import
+        result = weapon_import.apply_skin(self, context)
+        if result is not None:
+            return result
+
         from . import weapon_catalog as wcat
         from .materials import weapon as weapon_mats
         from .materials import common as mat_common
@@ -4298,13 +5053,13 @@ class ARC_OUTFITS_OT_PickAnimationCache(Operator, bpy_extras.io_utils.ImportHelp
 
 
 class ARC_OUTFITS_OT_ApplyLightingLook(Operator):
-    """Apply Kodak LUT + paired HDRI from Pioneer/Lighting for the selected look."""
+    """Apply the selected map scenario's color grade, sky and sun."""
 
     bl_idname = "arc_outfits.apply_lighting_look"
     bl_label = "Apply Lighting Look"
     bl_description = (
-        "Set World HDRI and compositor Kodak RGBTable16x1 LUT from the selected "
-        "Lighting Look (requires PioneerGame Folder)"
+        "Run the game's tonemapper and color grade in the compositor and build the scenario's "
+        "sky and sun (LUT strips and cloud textures are fetched from the game files)"
     )
     bl_options = {"REGISTER", "UNDO"}
 
@@ -4378,17 +5133,12 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
 
     filepath: StringProperty(subtype='FILE_PATH')
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+    use_selected: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
 
     def invoke(self, context, event):
-        from . import niagara_catalog as ncat
-
         scene = context.scene
         selected = getattr(scene, "arc_ns_selected", "") or ""
-        entry = ncat.get_entry(
-            selected, getattr(scene, "arc_ns_catalog_root", "") or ""
-        )
-        if entry and entry.get("path") and os.path.isfile(entry["path"]):
-            self.filepath = entry["path"]
+        if self.use_selected and selected and selected != "NONE":
             return self.execute(context)
 
         existing = bpy.path.abspath(scene.arc_ns_json_path or "")
@@ -4403,6 +5153,12 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
         from . import niagara_fx
 
         scene = context.scene
+        if self.use_selected and not self.filepath:
+            entry = ncat.get_entry(scene.arc_ns_selected or "", scene.arc_ns_catalog_root or "")
+            self.filepath = ncat.resolve_entry_path(entry, scene=scene)
+            if scene.arc_ns_selected not in ('', 'NONE') and not self.filepath:
+                self.report({'ERROR'}, f"NS json not found: {scene.arc_ns_selected}")
+                return {'CANCELLED'}
         path = bpy.path.abspath(self.filepath or scene.arc_ns_json_path or "")
         if not os.path.isfile(path):
             self.report({'ERROR'}, f"NS json not found: {path}")
@@ -4435,6 +5191,8 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
             f"{root.name}: {stats.get('emitters', 0)} emitters, "
             f"{stats.get('renderers', 0)} renderers"
         ]
+        if stats.get("vmProgramsRetained"):
+            lines.append(f"{stats['vmProgramsRetained']} compiled CPU programs retained; playback not executed")
         if stats.get("curves"):
             lines.append(
                 f"{stats['curves']} curves, {stats.get('curveKeys', 0)} keyframes"
@@ -4456,6 +5214,7 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
 
 
 from .appearance_queue import ARC_OUTFITS_OT_AddAllAppearance, ARC_OUTFITS_OT_CancelAppearanceQueue
+from .niagara_playback import ARC_OUTFITS_OT_PlayNiagaraFX
 from .asset_organization import ARC_OUTFITS_OT_GroupByAssetType, ARC_OUTFITS_OT_GroupByOutfitSlot
 
 
@@ -4463,6 +5222,7 @@ _outfit_classes = (
     ARC_OUTFITS_OT_SelectNS,
     ARC_OUTFITS_OT_ClearNSSearch,
     ARC_OUTFITS_OT_ImportNiagaraFX,
+    ARC_OUTFITS_OT_PlayNiagaraFX,
     ARC_OUTFITS_OT_SelectHairMI,
     ARC_OUTFITS_OT_ImportSinglePSK,
     ARC_OUTFITS_OT_ImportOutfitFolder,
@@ -4483,6 +5243,7 @@ _outfit_classes = (
     ARC_OUTFITS_OT_UpdateHairColor,
     ARC_OUTFITS_OT_ImportColorBenchmark,
     ARC_OUTFITS_OT_LoadAllColorways,
+    ARC_OUTFITS_OT_LoadAllOutfitsColorways,
     ARC_OUTFITS_OT_SelectOutfit,
     ARC_OUTFITS_OT_ClearOutfitSearch,
     ARC_OUTFITS_OT_MergeSelectedArmatures,

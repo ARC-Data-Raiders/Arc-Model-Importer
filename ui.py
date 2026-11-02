@@ -49,18 +49,16 @@ def _draw_import_section(layout, context):
     box = layout.box()
     scene = context.scene
     box.prop(scene, "arc_import_source", text="Import:")
-    if getattr(scene, "arc_import_source", "PAK") == "PAK":
-        _draw_pak_folder_picker(box, context)
-        if not getattr(scene, "arc_pak_dir", ""):
-            return
-        op = box.operator("arc_outfits.import_from_pak", text="Import Single Model", icon="FILE")
-        op.select_folder = False
-        op = box.operator("arc_outfits.import_from_pak", text="Import Folder", icon="FILE_FOLDER")
-        op.select_folder = True
-    else:
+    if getattr(scene, "arc_import_source", "PAK") != "PAK":
         _draw_fmodel_folder_picker(box, context)
-        box.operator("arc_outfits.import_single_psk", text="Import Single Model", icon="FILE")
-        box.operator("arc_outfits.import_outfit_folder", text="Import Folder", icon="FILE_FOLDER")
+    if getattr(scene, "arc_import_source", "PAK") == "PAK":
+        row = box.row(align=True)
+        row.operator("arc_outfits.import_from_pak", text="Import Single Model", icon="FILE").select_folder = False
+        row.operator("arc_outfits.import_from_pak", text="Import Folder", icon="FILE_FOLDER").select_folder = True
+    else:
+        row = box.row(align=True)
+        row.operator("arc_outfits.import_single_psk", text="Import Single Model", icon="FILE")
+        row.operator("arc_outfits.import_outfit_folder", text="Import Folder", icon="FILE_FOLDER")
 
 
 def _draw_offset_settings(layout, context):
@@ -79,7 +77,9 @@ def _draw_offset_settings(layout, context):
     if hasattr(scene, "arc_inherit_shape_key"):
         layout.prop(scene, "arc_inherit_shape_key", text="Inherit Shape Key")
     if hasattr(scene, "arc_pose_preset"):
-        layout.prop(scene, "arc_pose_preset", text="Pose")
+        row = layout.row(align=True)
+        row.prop(scene, "arc_pose_preset", text="Pose")
+        row.operator("arc_outfits.apply_pose_preset", text="", icon="CHECKMARK")
 
 
 # Layout sizes are in UI-scaled pixels (including N-panel zoom).
@@ -155,13 +155,14 @@ def _draw_outfit_selector_preview(layout, context, icon_id):
             icon = "RADIOBUT_ON" if key == scene.arc_selected_outfit else "RADIOBUT_OFF"
             op = results.operator("arc_outfits.select_outfit", text=label, icon=icon)
             op.outfit_key = key
-        if len(filtered) > 3:
-            results.label(text=f"... and {len(filtered) - 3} more (refine search)")
     else:
         controls.label(text="No matching outfits", icon="INFO")
-    controls.prop(scene, "arc_selected_outfit_browse", text="Browse:")
-    controls.operator("arc_outfits.load_outfit", text="Load Outfit", icon="IMPORT")
-    controls.operator("arc_outfits.load_all_colorways", text="Load All Colorways", icon="DUPLICATE")
+    controls.menu("ARC_OUTFITS_MT_outfit_browse", text="Browse:")
+    controls.separator(factor=1.5)
+    actions = controls.box()
+    actions.operator("arc_outfits.load_outfit", text="Load Outfit", icon="IMPORT")
+    actions.operator("arc_outfits.load_all_colorways", text="Load All Colorways", icon="DUPLICATE")
+    actions.operator("arc_outfits.load_all_outfits_colorways", text="Load All Outfits & Colorways", icon="IMPORT")
     _draw_preview_icon(preview, icon_id)
 
 
@@ -201,6 +202,7 @@ def _draw_hair_section(layout, context, *, facial=False):
     prop = "arc_appearance_facial_hair" if facial else "arc_appearance_hair"
     label = "Facial Hair" if facial else "Hair"
     part = "FACIAL_HAIR" if facial else "HAIR"
+    color_prop = "arc_appearance_facial_hair_color" if facial else "arc_appearance_hair_color"
     choice_id = getattr(scene, prop, "NONE")
     if not choice_id or choice_id == "NONE":
         try:
@@ -213,16 +215,17 @@ def _draw_hair_section(layout, context, *, facial=False):
         icon_id = _appearance_preview_icon_id(choice_id)
     left, right = _split_controls_preview(
         layout, context, icon_id,
-        rows=5 if hasattr(scene, "arc_appearance_hair_color") else 3,
+        rows=5 if hasattr(scene, color_prop) else 3,
     )
     left.prop(scene, prop, text=label)
-    if hasattr(scene, "arc_appearance_hair_color"):
-        left.prop(scene, "arc_appearance_hair_color", text="Hair Color")
-        left.operator(
+    if hasattr(scene, color_prop):
+        left.prop(scene, color_prop, text="Hair Color")
+        color_action = left.operator(
             "arc_outfits.update_hair_color",
             text="Update Hair Color",
             icon="COLOR",
         )
+        color_action.part = part
     op = left.operator(
         "arc_outfits.add_appearance_part", text=f"Add {label}", icon="PARTICLE_DATA",
     )
@@ -260,6 +263,28 @@ def _draw_gear_section(layout, context, *, prop: str, part: str, label: str, ico
 def _draw_queue_report(layout, context):
     scene = context.scene
     from . import appearance_queue
+    from . import operators as outfit_operators
+    batch = outfit_operators.all_outfits_colorways_status()
+    if batch:
+        box = layout.box()
+        box.label(text=f"All Outfits: {batch['done']}/{batch['total']} · Imported {batch['imported']} · Failed {batch['failed']}")
+        box.label(text=f"{batch['phase']}: {batch['current'][:55]}")
+        if batch['phase'].startswith('Auditing'):
+            box.label(text=f"Material audit: {batch['audit_done']}/{batch['audit_total']}")
+    elif scene.get("arc_all_outfits_colorways_progress"):
+        import json
+        try:
+            last = json.loads(scene["arc_all_outfits_colorways_progress"])
+            box = layout.box()
+            failed = last.get('failed_outfits', len(last.get('failures', [])))
+            unresolved = last.get('unresolved_materials', len(last.get('untextured_after_repair', [])))
+            setup_count = last.get('unique_material_setups', [])
+            setup_count = setup_count if isinstance(setup_count, int) else len(setup_count)
+            box.label(text=f"All Outfits: {last['imported_outfits']}/{last['total_outfits']} imported · {failed} failed")
+            box.label(text=f"Material audit unresolved: {unresolved} · {setup_count} shader setups")
+            box.label(text=f"Report: {os.path.basename(last['report'])}")
+        except (ValueError, KeyError, TypeError):
+            pass
     status = appearance_queue.queue_status()
     if status:
         box = layout.box()
@@ -372,176 +397,57 @@ def _draw_appearance_section(layout, context):
 
 
 def _draw_weapons_content(layout, context):
-    scene = context.scene
+    from . import weapon_ui
+    weapon_ui.draw(layout, context)
 
-    if hasattr(scene, "arc_weapon_key"):
-        layout.prop(scene, "arc_weapon_key", text="Gun")
-        layout.operator("arc_outfits.import_weapon", text="Import Weapon", icon="IMPORT")
-    else:
-        layout.label(text="Weapon props missing — re-enable addon", icon="ERROR")
-        return
 
-    layout.separator()
-    layout.label(text="Mods", icon="MODIFIER")
-    for mod_type, prop_name in (
-        ("Muzzle", "arc_weapon_mod_muzzle"),
-        ("Stock", "arc_weapon_mod_stock"),
-        ("Magazine", "arc_weapon_mod_magazine"),
-        ("UnderBarrel", "arc_weapon_mod_underbarrel"),
-        ("Tech", "arc_weapon_mod_tech"),
-    ):
-        if not hasattr(scene, prop_name):
-            continue
-        row = layout.row(align=True)
-        row.prop(scene, prop_name, text=mod_type)
-        op = row.operator("arc_outfits.import_weapon_mod", text="", icon="IMPORT")
-        op.mod_type = mod_type
-
-    layout.separator()
-    layout.label(text="Skin", icon="TEXTURE")
-    if hasattr(scene, "arc_weapon_skin"):
-        layout.prop(scene, "arc_weapon_skin", text="Colourway")
-    row = layout.row(align=True)
-    row.operator("arc_outfits.apply_weapon_skin", text="Apply Skin", icon="CHECKMARK")
-    row.operator("arc_outfits.clear_weapon_skin", text="Base", icon="X")
-    layout.label(text="From Items/Firearms/<gun>/Skins (CommonBlue, MuralTree, …)", icon="INFO")
-
-    layout.separator()
-    box = layout.box()
-    box.label(text="Paintjob Pattern (advanced)", icon="NODE_TEXTURE")
-    if hasattr(scene, "arc_weapon_pattern"):
-        box.prop(scene, "arc_weapon_pattern", text="Pattern PNG")
-    row = box.row(align=True)
-    row.operator("arc_outfits.apply_weapon_pattern", text="Apply Pattern", icon="CHECKMARK")
-    row.operator("arc_outfits.clear_weapon_pattern", text="Clear", icon="X")
-    box.label(text="MaterialLibrary Patterns PNGs · optional overlay", icon="INFO")
+def _draw_arc_content(layout, context):
+    from . import arc_ui
+    arc_ui.draw(layout, context)
 
 
 def _draw_animations_content(layout, context):
     from . import animation_catalog as acat
     from . import animation_import as aimp
-    from . import fmdex
 
     scene = context.scene
     if hasattr(scene, "arc_pose_preset"):
-        layout.prop(scene, "arc_pose_preset", text="Pose")
-        layout.label(text="Still frame. Search below for full clips", icon="INFO")
+        row = layout.row(align=True)
+        row.prop(scene, "arc_pose_preset", text="Pose")
+        row.operator("arc_outfits.apply_pose_preset", text="", icon="CHECKMARK")
     if not hasattr(scene, "arc_anim_search"):
-        layout.label(text="Scene properties missing — re-enable addon", icon="ERROR")
         return
-
     cache_dir = getattr(scene, "arc_animation_cache", "") or ""
-    cache_row = layout.row(align=True)
-    root = acat.resolved_cache_dir(cache_dir)
-    if cache_dir:
-        cache_row.label(
-            text="Cache: " + os.path.basename(cache_dir.rstrip("/\\")),
-            icon="CHECKMARK",
-        )
-        cache_row.operator("arc_outfits.clear_animation_cache", text="", icon="X")
-    elif root:
-        cache_row.label(
-            text="Cache: Pioneer root (default)",
-            icon="FILE_FOLDER",
-        )
-    else:
-        cache_row.label(text="Content root (Pioneer or FModel export)", icon="FILE_FOLDER")
-    cache_row.operator("arc_outfits.pick_animation_cache", text="", icon="FILEBROWSER")
-
-    fmdex.ensure_loaded()
-    stats = acat.catalog_stats(cache_dir)
-    total_clips = int(stats.get("total") or 0)
-    # PSA files alone populate the catalog; FMDex only adds names/tags.
-    if total_clips:
-        layout.label(
-            text="Catalog: {total} clips  ·  {tagged} tagged  ·  {named} by path  ·  {psa} PSA".format(
-                total=total_clips,
-                tagged=int(stats.get("fmdex_tagged") or 0),
-                named=int(stats.get("fmdex_named") or 0),
-                psa=int(stats.get("psa_files") or 0),
-            )
-        )
-    if not stats.get("fmdex_loaded") and total_clips:
-        layout.label(text="No FMDex tags — searching PSA filenames", icon="INFO")
-
-    if hasattr(scene, "arc_anim_kind_filter"):
-        layout.prop(scene, "arc_anim_kind_filter", text="Kind")
-
-    search_row = layout.row(align=True)
-    search_row.prop(scene, "arc_anim_search", text="", icon="VIEWZOOM")
+    layout.prop(scene, "arc_anim_kind_filter", text="Kind")
+    row = layout.row(align=True)
+    row.prop(scene, "arc_anim_search", text="", icon="VIEWZOOM")
     if scene.arc_anim_search:
-        search_row.operator("arc_outfits.clear_anim_search", text="", icon="X")
-
+        row.operator("arc_outfits.clear_anim_search", text="", icon="X")
     query = scene.arc_anim_search or ""
     kind = getattr(scene, "arc_anim_kind_filter", "ALL") or "ALL"
     selected = getattr(scene, "arc_selected_anim", "") or ""
-    if len(query.strip()) < 2:
-        matches = []
-        total = 0
-        layout.label(text="Type 2+ characters to search — nothing is imported until Apply", icon="INFO")
-    else:
-        matches = acat.filter_entries(query, kind=kind, cache_dir=cache_dir, limit=8)
-        total = acat.count_entries(query, kind=kind, cache_dir=cache_dir) if matches else 0
-
-    if matches:
-        list_box = layout.box()
-        for entry in matches:
-            key = entry.get("key") or ""
-            label = acat.display_label(entry)
-            row = list_box.row()
-            icon = "RADIOBUT_ON" if key == selected else "RADIOBUT_OFF"
-            op = row.operator("arc_outfits.select_anim", text=label[:60], icon=icon)
-            op.anim_key = key
-        if total > len(matches):
-            list_box.label(text=f"... and {total - len(matches)} more (refine search)")
-    elif query.strip():
-        if total_clips == 0:
-            layout.label(
-                text="Catalog is empty — FMDex has no Animation folders / AS_ names, and no .psa in cache",
-                icon="ERROR",
-            )
-        else:
-            layout.label(
-                text=f"No name match in {total_clips} clips — try stem or folder (idle, emote, celeste)",
-                icon="INFO",
-            )
-
-    if selected:
-        entry = acat.get_entry(selected, cache_dir)
-        if entry:
-            acat.enrich_entry(entry, cache_dir)
-            psa = acat.resolve_psa_path(entry, cache_dir)
-            bits = [entry.get("kind") or ""]
-            if entry.get("skeleton"):
-                bits.append(entry["skeleton"])
-            if entry.get("length"):
-                bits.append(f"{entry['length']:.2f}s")
-            if entry.get("notify_count"):
-                bits.append(f"{entry['notify_count']} notifies")
-            layout.label(text=" · ".join(b for b in bits if b)[:70])
-            if psa:
-                layout.label(text="PSA ready: " + os.path.basename(psa), icon="CHECKMARK")
-            else:
-                layout.label(
-                    text="No PSA yet — Send from FModel or set cache folder",
-                    icon="ERROR",
-                )
-
-    if hasattr(scene, "arc_anim_spawn_notifies"):
-        layout.prop(scene, "arc_anim_spawn_notifies", text="Spawn notify props / FX")
-    if hasattr(scene, "arc_anim_replace_action"):
-        layout.prop(scene, "arc_anim_replace_action", text="Replace previous Action")
-
+    results = layout.box()
+    for entry in acat.filter_entries(query, kind=kind, cache_dir=cache_dir, limit=3):
+        key = entry.get("key") or ""
+        row = results.row()
+        icon = "RADIOBUT_ON" if key == selected else "RADIOBUT_OFF"
+        row.operator("arc_outfits.select_anim", text=acat.display_label(entry)[:60], icon=icon).anim_key = key
     arm = aimp.resolve_target_armature(context)
-    if arm is None:
-        layout.label(text="Select a character armature to apply onto", icon="INFO")
-    else:
-        layout.label(text="Target: " + arm.name, icon="ARMATURE_DATA")
-
-    apply_row = layout.row(align=True)
-    apply_row.operator("arc_outfits.apply_anim", text="Apply Animation", icon="PLAY")
-    apply_row.operator("arc_outfits.clear_anim_props", text="", icon="X")
-    layout.operator("arc_outfits.refresh_anim_catalog", text="Refresh Catalog", icon="FILE_REFRESH")
+    if arm is not None:
+        layout.label(text=arm.name, icon="ARMATURE_DATA")
+    layout.separator(factor=1.5)
+    row = layout.box().row(align=True)
+    row.operator("arc_outfits.apply_anim", text="Apply Animation", icon="PLAY")
+    row.operator("arc_outfits.clear_anim_props", text="", icon="X")
+    advanced = _collapsible(layout, "arc_anim_advanced", "Advanced", default_closed=True)
+    if advanced is not None:
+        advanced.prop(scene, "arc_anim_spawn_notifies", text="Spawn notify props / FX")
+        advanced.prop(scene, "arc_anim_replace_action", text="Replace previous Action")
+        advanced.operator("arc_outfits.pick_animation_cache", icon="FILEBROWSER")
+        if cache_dir:
+            advanced.label(text=os.path.basename(cache_dir.rstrip("/\\")), icon="FILE_FOLDER")
+            advanced.operator("arc_outfits.clear_animation_cache", text="", icon="X")
+        advanced.operator("arc_outfits.refresh_anim_catalog", text="Refresh Catalog", icon="FILE_REFRESH")
 
 
 def _draw_mask_debug(layout, scene):
@@ -597,72 +503,43 @@ def _draw_outfit_tools_content(layout, context):
                 outfit_icon = 0
             _draw_outfit_selector_preview(outfit_sec, context, outfit_icon)
 
-    _draw_mask_debug(layout, scene)
     _draw_appearance_section(layout, context)
 
 def _draw_settings_content(layout, context):
-    from . import importing
     from .map_tools import fmodel_bridge as bridge
 
     scene = context.scene
-
-    _draw_offset_settings(layout, context)
-    layout.separator()
-
-    group_row = layout.row(align=True)
-    group_split = group_row.split(factor=0.5, align=True)
-    group_split.column(align=True).operator(
-        "arc_outfits.group_by_asset_type", text="Group by Asset Type", icon="OUTLINER_COLLECTION"
-    )
-    group_split.column(align=True).operator(
-        "arc_outfits.group_by_outfit_slot", text="Group by Outfit Slot", icon="OUTLINER_COLLECTION"
-    )
-
-    _draw_fmodel_folder_picker(layout, context)
-
     _draw_pak_folder_picker(layout, context)
-
-    usmap_row = layout.row(align=True)
-    usmap = getattr(scene, "arc_usmap_path", "") or ""
-    if usmap:
-        usmap_row.label(text="Usmap: " + os.path.basename(usmap), icon="FILE")
-    else:
-        usmap_row.label(text="Usmap: bundled", icon="FILE")
-    usmap_row.operator("arc_outfits.pick_usmap", text="", icon="FILEBROWSER")
-    if usmap:
-        usmap_row.operator("arc_outfits.clear_usmap", text="", icon="X")
-
-    csv_path = importing.get_outfit_csv_path(context)
-    csv_row = layout.row(align=True)
-    outfit_csv = getattr(scene, "arc_outfit_csv_path", "") or ""
-    if outfit_csv:
-        csv_row.label(text=f"CSV: {os.path.basename(outfit_csv)}", icon="FILE")
-        csv_row.operator("arc_outfits.clear_outfit_csv", text="", icon="LOOP_BACK")
-    else:
-        name = os.path.basename(csv_path) if csv_path else "(not found)"
-        csv_row.label(text=f"CSV: {name}", icon="FILE")
-    csv_row.operator("arc_outfits.pick_outfit_csv", text="", icon="FILEBROWSER")
-
+    _draw_offset_settings(layout, context)
     advanced = _collapsible(layout, "arc_fmodel_bridge", "Advanced", default_closed=True)
-    if advanced is not None:
-        advanced.label(text="FModel Bridge", icon="WORLD")
-        advanced.label(text="Single models / outfits from FModel", icon="INFO")
+    if advanced is None:
+        return
+    _draw_fmodel_folder_picker(advanced, context)
+    _draw_mask_debug(advanced, scene)
+    advanced.prop(scene, "arc_usmap_path")
+    advanced.prop(scene, "arc_outfit_csv_path")
+    row = advanced.row(align=True)
+    row.operator("arc_outfits.group_by_asset_type", text="Group by Asset Type", icon="OUTLINER_COLLECTION")
+    row.operator("arc_outfits.group_by_outfit_slot", text="Group by Outfit Slot", icon="OUTLINER_COLLECTION")
+    fx = _collapsible(advanced, "arc_fx_settings", "Niagara FX", default_closed=True)
+    if fx is not None:
+        for name in ("arc_ns_play_cache_dir", "arc_ns_play_shim", "arc_ns_play_vector_fields"):
+            if hasattr(scene, name):
+                fx.prop(scene, name)
+    parity = _collapsible(advanced, "arc_parity_settings", "Shader Parity", default_closed=True)
+    if parity is not None:
+        from .material_runtime.shader_parity.ui import draw_settings
+        draw_settings(parity, context)
+    listener = _collapsible(advanced, "arc_listener_settings", "FModel Bridge", default_closed=True)
+    if listener is not None:
         if hasattr(scene, "arc_auto_listen"):
-            advanced.prop(scene, "arc_auto_listen", text="Auto-start Listener")
-        listen_row = advanced.row(align=True)
+            listener.prop(scene, "arc_auto_listen", text="Auto-start Listener")
         if bridge.is_listening():
-            listen_row.operator("arc_outfits.stop_placement_listener", text="Stop Listener", icon="PAUSE")
-            listen_row.label(text=f":{bridge.listen_port()} · {bridge.last_status()}")
+            listener.operator("arc_outfits.stop_placement_listener", text="Stop Listener", icon="PAUSE")
         else:
-            listen_row.operator("arc_outfits.start_placement_listener", text="Start Listener", icon="PLAY")
-            listen_row.label(text=bridge.last_status() or "idle")
-        if bridge.last_error():
-            advanced.label(text=bridge.last_error()[:60], icon="ERROR")
-        last = bridge.last_import_path()
-        if last:
-            advanced.label(text=f"Last: {bridge.last_map_name()} · {os.path.basename(last)}", icon="FILE")
+            listener.operator("arc_outfits.start_placement_listener", text="Start Listener", icon="PLAY")
         if hasattr(scene, "arc_placement_listen_port"):
-            advanced.prop(scene, "arc_placement_listen_port", text="TCP Port")
+            listener.prop(scene, "arc_placement_listen_port", text="TCP Port")
 
 
 def _panel_name():
@@ -712,6 +589,14 @@ class ARC_OUTFITS_PT_MainPanel(bpy.types.Panel):
             print(f"Arc Raiders: Weapons draw failed: {exc}")
 
         try:
+            arc_body = _collapsible(layout, "arc_enemies", "ARCs", default_closed=True)
+            if arc_body is not None:
+                _draw_arc_content(arc_body, context)
+        except Exception as exc:
+            layout.label(text=f"ARCs failed: {exc}", icon="ERROR")
+            print(f"Arc Raiders: ARCs draw failed: {exc}")
+
+        try:
             anim_body = _collapsible(layout, "arc_animations", "Animations", default_closed=True)
             if anim_body is not None:
                 _draw_animations_content(anim_body, context)
@@ -755,6 +640,22 @@ class ARC_OUTFITS_PT_MainPanel(bpy.types.Panel):
             layout.label(text=f"Map UI unavailable: {exc}", icon="ERROR")
 
 
+class ARC_OUTFITS_MT_outfit_browse(bpy.types.Menu):
+    bl_label = "Browse"
+
+    def draw(self, context):
+        from . import properties
+
+        scene = context.scene
+        columns = self.layout.column_flow(columns=2)
+        for key, label, *_ in properties.make_outfit_selector_items(scene, context):
+            if key == "NONE":
+                continue
+            icon = "RADIOBUT_ON" if key == scene.arc_selected_outfit else "RADIOBUT_OFF"
+            columns.operator("arc_outfits.select_outfit", text=label, icon=icon).outfit_key = key
+
+
 classes = (
+    ARC_OUTFITS_MT_outfit_browse,
     ARC_OUTFITS_PT_MainPanel,
 )

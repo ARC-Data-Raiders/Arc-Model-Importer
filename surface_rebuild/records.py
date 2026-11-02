@@ -1,7 +1,8 @@
 """Unreal material inheritance, current-pak defaults, and skin candidates."""
 from pathlib import Path
-import gzip, json, re
+import json, re
 from .assets import package, relative_package, ResolutionError
+from ..material_runtime.core import base_property_overrides
 
 
 def rgba(v, default=(1, 1, 1, 1)):
@@ -23,6 +24,35 @@ def scoped_key(info):
     return scope + '.' + info['Name']
 
 
+def cached_parameter_infos(cached, values_name, parameter_type):
+    """Match typed cached values to the serializer's runtime entry layout.
+
+    SparseVolumeTexture precedes StaticSwitch in current UE dumps (index 8),
+    whereas older dumps put StaticSwitch at 7. Never zip switch values to an
+    unrelated/empty entry set merely because its historical index was 7.
+    """
+    values = cached.get(values_name) or []
+    if not values:
+        return []
+    runtime = cached.get('RuntimeEntries')
+    if isinstance(runtime, dict):
+        named = runtime.get(parameter_type)
+        if isinstance(named, dict):
+            entries = named.get('ParameterInfoSet') or []
+            if len(entries) == len(values):
+                return entries
+    # EMaterialParameterType in the exporter, validated against typed value count.
+    indices = {'Scalar': (0,), 'Vector': (1,), 'Texture': (3,),
+               'StaticSwitch': (8, 7)}[parameter_type]
+    for index in indices:
+        entry = (runtime[index] if isinstance(runtime, list) and index < len(runtime)
+                 else cached.get('RuntimeEntries' + (f'[{index}]' if index else ''), {}))
+        entries = entry.get('ParameterInfoSet') or [] if isinstance(entry, dict) else []
+        if len(entries) == len(values):
+            return entries
+    return []
+
+
 def raw_record(data, key=''):
     import_map = []
     if isinstance(data, dict):
@@ -41,7 +71,9 @@ def raw_record(data, key=''):
                  scalars=dict(p.get('Scalars', {})), colors={k: rgba(v) for k, v in p.get('Colors', {}).items()},
                  switches=dict(p.get('Switches', {})))
         r['settings'] = {k: p[k] for k in ['BlendMode', 'ShadingModel', 'IsNull', 'IsTranslucent'] if k in p}
-        r['settings'].update(p.get('Properties', {}).get('BasePropertyOverrides', {}))
+        r['settings'].update(base_property_overrides(p.get('Properties', {}).get('BasePropertyOverrides')))
+        if 'DitherOpacityMask' in p.get('Properties', {}):
+            r['settings']['DitherOpacityMask'] = p['Properties']['DitherOpacityMask']
         r['parent'] = package(data.get('Parent') or p.get('Properties', {}).get('Parent'))
         return r
     r = empty(key or data.get('Package', ''))
@@ -49,10 +81,10 @@ def raw_record(data, key=''):
     cached = data.get('cached', data.get('CachedExpressionData', {})) or {}
     r['name'] = data.get('name', data.get('Name', r['name']))
     r['parent'] = package(p.get('Parent'))
-    # FModel serializes cached typed arrays in a fixed order.
-    for i, values, target in [(0, 'ScalarValues', 'scalars'), (1, 'VectorValues', 'colors'),
-                              (3, 'TextureValues', 'textures'), (7, 'StaticSwitchValues', 'switches')]:
-        entries = cached.get('RuntimeEntries' + (f'[{i}]' if i else ''), {}).get('ParameterInfoSet', [])
+    for parameter_type, values, target in [('Scalar', 'ScalarValues', 'scalars'),
+            ('Vector', 'VectorValues', 'colors'), ('Texture', 'TextureValues', 'textures'),
+            ('StaticSwitch', 'StaticSwitchValues', 'switches')]:
+        entries = cached_parameter_infos(cached, values, parameter_type)
         for info, value in zip(entries, cached.get(values, [])):
             r[target][info['Name']] = rgba(value) if target == 'colors' else package(value) if target == 'textures' else value
             r[target][scoped_key(info)] = r[target][info['Name']]
@@ -66,13 +98,11 @@ def raw_record(data, key=''):
     for entry in p.get('StaticParametersRuntime', p.get('StaticParameters', {})).get('StaticSwitchParameters', []):
         if entry.get('bOverride', True):
             r['switches'][entry['ParameterInfo']['Name']] = bool(entry.get('Value'))
-    for k in ['BlendMode', 'ShadingModel', 'TwoSided', 'bTwoSided', 'OpacityMaskClipValue']:
+    for k in ['BlendMode', 'ShadingModel', 'TwoSided', 'bTwoSided', 'OpacityMaskClipValue', 'DitherOpacityMask']:
         if k in p:
             r['settings'][k] = p[k]
-    overrides = p.get('BasePropertyOverrides', {})
-    for k, v in overrides.items():
-        if not k.startswith('bOverride') and overrides.get('bOverride_' + k, True):
-            r['settings'][k] = v
+    # Enabled overrides only (the parent merge supplies the rest); bOverride_TwoSided with no TwoSided is one-sided.
+    r['settings'].update(base_property_overrides(p.get('BasePropertyOverrides')))
     # Masters such as M_Flag_01 keep their maps in TextureStreamingData, not
     # TextureParameterValues. The channel suffix (CA, NOH) is the parameter.
     if not r['textures']:
@@ -109,57 +139,103 @@ _DATA = None
 
 
 def metadata():
-    global _DATA
-    if _DATA is None:
-        path = Path(__file__).parent / 'data' / 'materials_142.json.gz'
-        _DATA = json.loads(gzip.decompress(path.read_bytes())) if path.is_file() else {'materials': {}, 'textures': {}}
-        supplemental = path.parent / 'character_materials_142.json.gz'
-        if supplemental.is_file():
-            for key, record in json.loads(gzip.decompress(supplemental.read_bytes())).items():
-                _DATA['materials'].setdefault(key, record)
-        scopes = Path(__file__).parent / 'data' / 'parameter_scopes_142.json.gz'
-        if scopes.is_file():
-            for key, record in json.loads(gzip.decompress(scopes.read_bytes())).items():
-                for category, values in record.items():
-                    _DATA['materials'][key][category].update(values)
-    return _DATA
+    """Current reviewed native facts only; historical flattened banks are retired."""
+    from ..material_runtime.native_data import current_metadata
+    return current_metadata()
 
 
 class MaterialLibrary:
     def __init__(self, index):
         self.index = index
-        self.data = metadata()['materials']
+        from .native_catalog_bridge import session
+        self.native = session(index)
+        self._data = None if self.native is None else {package(entry['facts']['package']).casefold(): {'package':package(entry['facts']['package'])} for entry in self.native.catalog.payload['records'].values()}
         self.memo = {}
         self.anchor_memo = {}
 
+    @property
+    def data(self):
+        if self.native is None:
+            manifest=getattr(self.index,'native_catalog_activation',None)
+            if manifest is not None:
+                from ..material_runtime.native_data import current_metadata,reviewed_source
+                source=reviewed_source(manifest)
+                if source is not None:return current_metadata(source)['materials']
+            return metadata()['materials']
+        return self._data
+
     def load(self, key, stack=()):
+        from .native_catalog_bridge import session
+        current=session(self.index)
+        if current is not self.native:
+            self.native=current
+            self._data=None if current is None else {package(entry['facts']['package']).casefold():{'package':package(entry['facts']['package'])} for entry in current.catalog.payload['records'].values()}
+        if self.native is None:
+            from .native_catalog_bridge import raw_session
+            owner=None if getattr(self.index,'compatibility_mode',False) else raw_session(self.index)
+            record=owner.legacy_record_if_authoritative(key) if owner is not None else None
+            if record is not None:
+                record['family']=classify(record)
+                from .head_records import augment
+                return augment(record)
+        if self.native is not None:
+            # Reload current source association; do not reuse flattened memo values.
+            record = self.native.legacy_record(key)
+            record['family'] = classify(record)
+            from .head_records import augment
+            return augment(record)
         key = package(key)
         low = key.casefold()
-        if low in self.memo:
-            return self.memo[low]
         if low in stack:
             raise ResolutionError('Material inheritance cycle: ' + key)
         cached = self.data.get(low)
+        if cached and cached.get('_native_render_limit'):
+            from .native_catalog_bridge import NativeRenderLimitationError
+            raise NativeRenderLimitationError('Current native preset/hierarchy has deferred expression bindings: '+key)
         path = self.index.resolve(key, '.json')
         if not cached and not path:
             raise ResolutionError('Material metadata missing: ' + key)
-        record = dict(cached) if cached else raw_record(json.loads(path.read_text(encoding='utf-8-sig')), key)
-        if record.get('parent'):
-            record = merge(self.load(record['parent'], stack + (low,)), record)
-        # Current local exports take precedence over the packaged 1.42 snapshot.
+        local = raw_record(json.loads(path.read_text(encoding='utf-8-sig')), key) if path else None
+        record = dict(cached) if cached else empty(key)
+        if local is not None:
+            cached_parent = package(record.get('parent', ''))
+            local_parent = package(local.get('parent', ''))
+            if local_parent and local_parent.casefold() != cached_parent.casefold():
+                # A changed current parent invalidates the old child's inherited
+                # snapshot too: do not carry values across unrelated masters.
+                record = dict(local)
+            else:
+                local['parent'] = local_parent or cached_parent
+                record = merge(record, local)
+        # Resolve inheritance only after the current export selects its parent.
+        own_sources=list(record.get('native_fact_sources',()))
         if path:
-            local = raw_record(json.loads(path.read_text(encoding='utf-8-sig')), key)
-            local['parent'] = local.get('parent') or record.get('parent', '')
-            record = merge(record, local)
+            from ..material_runtime.repository import digest
+            own_sources.append({'kind':'local-fmodel-json-observation','path':str(path),'sha256':digest(path),'namespace_association':'unverified selected-root compatibility'})
+        parent_record=self.load(record['parent'], stack+(low,)) if record.get('parent') else None
+        if parent_record is not None:record=merge(parent_record,record)
+        record['compatibility_sources']=list(parent_record.get('compatibility_sources',()))+own_sources if parent_record else own_sources
         record['source_json'] = str(path) if path else ''
-        record['master'] = self.load(record['parent'], stack + (low,)).get('master', record['parent']) if record.get('parent') else key
+        record['master'] = parent_record.get('master', record['parent']) if parent_record is not None else key
         record['family'] = classify(record)
+        record['native_source_mode']='fmodel-compatibility'
+        record['native_source_diagnostics']=['FModel compatibility: local JSON observations and reviewed current-native defaults; export build/namespace association is uncertain, never native exact']
         from .head_records import augment
         record=augment(record)
         self.memo[low] = record
         return record
 
     def slot(self, name, mesh_path=None):
+        if self.native is None:
+            from .native_catalog_bridge import raw_session
+            owner=None if getattr(self.index,'compatibility_mode',False) else raw_session(self.index)
+            if owner is not None:
+                if mesh_path:
+                    try: nearby=relative_package(Path(mesh_path).parent / (package(name).rsplit('/',1)[-1]+'.json'),self.index.root)
+                    except ValueError: nearby=None
+                    if nearby and owner.legacy_record_if_authoritative(nearby) is not None:return self.load(nearby)
+                # A fully qualified slot also works when only raw sidecars exist.
+                if '/' in str(name).replace('\\','/') and owner.legacy_record_if_authoritative(name) is not None:return self.load(name)
         if mesh_path:
             try:
                 nearby = relative_package(Path(mesh_path).parent / (package(name).rsplit('/', 1)[-1]+'.json'), self.index.root)
@@ -182,18 +258,33 @@ class MaterialLibrary:
             return []
         candidates = []
         # Colour-only descendants can inherit their mesh anchor from a skin parent.
-        keys=set(self.data)
-        keys.update(key for key,ext in self.index.paths if ext=='.json' and '/skins/' in key)
+        raw_only=preview.get('native_source_mode')=='raw-complete'
+        keys=set() if raw_only else set(self.data)
+        keys.update(key for key,ext in self.index.paths if ext=='.json' and '/skins/' in key.casefold())
         for key in sorted(keys):
-            if '/skins/' not in key:
+            if '/skins/' not in key.casefold():
                 continue
-            if anchor.casefold() == self.skin_anchor(key).casefold():
+            if raw_only:
+                from .native_catalog_bridge import raw_session
+                owner=None if getattr(self.index,'compatibility_mode',False) else raw_session(self.index)
+                current=owner.legacy_record_if_authoritative(key)
+                if current is None:continue
+                current_anchor=current['textures'].get('Normal') or current['textures'].get('BaseColor') or ''
+                if anchor.casefold()==current_anchor.casefold():candidates.append(current['package'])
+            elif anchor.casefold() == self.skin_anchor(key).casefold():
                 candidates.append(self.data.get(key,{}).get('package',key))
         return sorted(candidates)
 
     def skin_anchor(self, key, stack=()):
+        if self.native is None:
+            from .native_catalog_bridge import raw_session
+            owner=None if getattr(self.index,'compatibility_mode',False) else raw_session(self.index)
+            current=owner.legacy_record_if_authoritative(key) if owner is not None else None
+            if current is not None:return current['textures'].get('Normal') or current['textures'].get('BaseColor') or ''
+        if self.native is not None:
+            rec = self.load(key)
+            return rec['textures'].get('Normal') or rec['textures'].get('BaseColor') or ''
         key = package(key).casefold()
-        if key in self.anchor_memo: return self.anchor_memo[key]
         if key in stack: return ''
         rec = self.data.get(key, {})
         local=self.index.resolve(key,'.json')
@@ -239,10 +330,32 @@ def classify(r):
         return 'enemy_tile'
     if base == 'm_vehiclestack':
         return 'vehicle'
+    if base == 'm_fx_meshradialblur':
+        return 'fx_invisible'
+    if base == 'm_fx_cloud_lightvector':
+        return 'fx_cloud'
+    if base == 'm_backgrounddecal':
+        return 'background_decal'
+    if base == 'm_glassopaque_nx_01':
+        return 'glass_opaque'
+    if base == 'm_sanddune':
+        return 'sand_dune'
+    if base == 'm_fzt_snowpiles_01':
+        return 'snow_pile'
+    if base == 'm_fzt_snow_01':
+        return 'fzt_snow'
+    if base == 'm_masterlight_lightbulb_01':
+        return 'lightbulb'
+    if base == 'm_fx_lightbeam_master_01':
+        return 'fx_lightbeam'
+    if base == 'm_fx_fogsheet_master_01':
+        return 'fx_fogsheet'
     if 'decalpreset' in base:
         return 'decal'
     if 'windowpane' in base:
         return 'window'
+    if base == 'm_proppreset_translucent+reflection+detail':
+        return 'translucent_glass'
     if base.startswith('m_flag'):
         return 'surface'
     if base in {'m_proptrimpreset_cr+nom+ao','m_enemytrimpreset_01'}:

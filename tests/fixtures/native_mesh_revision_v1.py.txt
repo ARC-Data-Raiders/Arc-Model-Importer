@@ -1,0 +1,25 @@
+def _extraction_revision(scene=None) -> str:
+    if scene is None:
+        scene = bpy.context.scene
+    mapping = resolve_usmap(scene)
+    if not mapping or not os.path.isfile(mapping):
+        return ''
+    from .pak_catalog import filesystem_path, display_path
+    mapping = filesystem_path(os.path.abspath(mapping))
+    stat = os.stat(mapping)
+    game = configured_dir(scene)
+    if not game:
+        return ''
+    build, depot = _installed_material_provenance(game)
+    containers = []
+    with os.scandir(game) as entries:
+        for entry in entries:
+            if entry.name.casefold().endswith(('.utoc', '.ucas', '.pak')) and entry.is_file():
+                file_stat = entry.stat()
+                containers.append((entry.name.casefold(), file_stat.st_size, file_stat.st_mtime_ns))
+    if not containers:
+        return ''
+    record = {'game': os.path.normcase(os.path.abspath(display_path(game))),
+              'build': build, 'depot': depot, 'containers': sorted(containers),
+              'usmap': _mapping_sha256(mapping, stat.st_mtime_ns, stat.st_size)}
+    return 'native-source-v1:' + hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()

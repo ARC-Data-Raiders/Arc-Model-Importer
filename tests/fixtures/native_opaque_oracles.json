@@ -1,0 +1,294 @@
+{
+  "status": "Analytical reference cases only; no renderer validation",
+  "cases": [
+    {
+      "name": "clean-front",
+      "uv_native": [
+        0.1,
+        0.9
+      ],
+      "normal_dot_view_after_dirt": 1,
+      "dirt_sample_r": 0,
+      "rough_sample_r": 0.3,
+      "expected": {
+        "circle": 0,
+        "dirt": 0,
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "view_factor": 0.8427434811743395,
+        "color": [
+          0.05247788847184888,
+          0.10056954973910467,
+          0.05556833382684602
+        ],
+        "roughness": 0.476,
+        "metallic": 0.309122,
+        "specular": 0.5,
+        "alpha": 1,
+        "transmission": 0,
+        "coat": 0,
+        "sheen": 0
+      }
+    },
+    {
+      "name": "clean-angle",
+      "uv_native": [
+        0.1,
+        0.9
+      ],
+      "normal_dot_view_after_dirt": 0.8,
+      "dirt_sample_r": 0,
+      "rough_sample_r": 0.3,
+      "expected": {
+        "circle": 0,
+        "dirt": 0,
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "view_factor": 0.2575049525810484,
+        "color": [
+          0.03717097316639827,
+          0.0734540963612542,
+          0.05671830052209184
+        ],
+        "roughness": 0.476,
+        "metallic": 0.309122,
+        "specular": 0.5,
+        "alpha": 1,
+        "transmission": 0,
+        "coat": 0,
+        "sheen": 0
+      }
+    },
+    {
+      "name": "clean-edge",
+      "uv_native": [
+        0.1,
+        0.9
+      ],
+      "normal_dot_view_after_dirt": 0,
+      "dirt_sample_r": 0,
+      "rough_sample_r": 0.3,
+      "expected": {
+        "circle": 0,
+        "dirt": 0,
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "view_factor": 0,
+        "color": [
+          0.030435930431999998,
+          0.061523296874999994,
+          0.057224285868
+        ],
+        "roughness": 0.476,
+        "metallic": 0.309122,
+        "specular": 0.5,
+        "alpha": 1,
+        "transmission": 0,
+        "coat": 0,
+        "sheen": 0
+      }
+    },
+    {
+      "name": "vertical-zero",
+      "uv_native": [
+        0.1,
+        0.5
+      ],
+      "normal_dot_view_after_dirt": 1,
+      "dirt_sample_r": 0,
+      "rough_sample_r": 0.3,
+      "expected": {
+        "circle": 0.7061728250017445,
+        "dirt": 0,
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "view_factor": 0.0,
+        "color": [
+          0.030435930431999998,
+          0.061523296874999994,
+          0.057224285868
+        ],
+        "roughness": 0.476,
+        "metallic": 0.309122,
+        "specular": 0.5,
+        "alpha": 1,
+        "transmission": 0,
+        "coat": 0,
+        "sheen": 0
+      }
+    },
+    {
+      "name": "center-soft-dirt",
+      "uv_native": [
+        0.5,
+        0.5546
+      ],
+      "normal_dot_view_after_dirt": 1,
+      "dirt_sample_r": 0.7,
+      "rough_sample_r": 0.3,
+      "expected": {
+        "circle": 1,
+        "dirt": 0.5032341584158413,
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "view_factor": 0.0,
+        "color": [
+          0.043950821999409764,
+          0.04733999595656714,
+          0.041791460073319
+        ],
+        "roughness": 0.5608820152024752,
+        "metallic": 0.309122,
+        "specular": 0.5,
+        "alpha": 1,
+        "transmission": 0,
+        "coat": 0,
+        "sheen": 0
+      }
+    },
+    {
+      "name": "outside-full-dirt",
+      "uv_native": [
+        0.1,
+        0.9
+      ],
+      "normal_dot_view_after_dirt": 1,
+      "dirt_sample_r": 0.7,
+      "rough_sample_r": 0.3,
+      "expected": {
+        "circle": 0,
+        "dirt": 1,
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "view_factor": 0.8427434811743395,
+        "color": [
+          0.057292,
+          0.033339,
+          0.026557
+        ],
+        "roughness": 0.644673,
+        "metallic": 0.309122,
+        "specular": 0.5,
+        "alpha": 1,
+        "transmission": 0,
+        "coat": 0,
+        "sheen": 0
+      }
+    },
+    {
+      "name": "clean-high-rough",
+      "uv_native": [
+        0.1,
+        0.9
+      ],
+      "normal_dot_view_after_dirt": 1,
+      "dirt_sample_r": 0,
+      "rough_sample_r": 0.95,
+      "expected": {
+        "circle": 0,
+        "dirt": 0,
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "view_factor": 0.8427434811743395,
+        "color": [
+          0.05247788847184888,
+          0.10056954973910467,
+          0.05556833382684602
+        ],
+        "roughness": 1,
+        "metallic": 0.309122,
+        "specular": 0.5,
+        "alpha": 1,
+        "transmission": 0,
+        "coat": 0,
+        "sheen": 0
+      }
+    },
+    {
+      "name": "clean-zero-rough",
+      "uv_native": [
+        0.1,
+        0.9
+      ],
+      "normal_dot_view_after_dirt": 1,
+      "dirt_sample_r": 0,
+      "rough_sample_r": 0,
+      "expected": {
+        "circle": 0,
+        "dirt": 0,
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "view_factor": 0.8427434811743395,
+        "color": [
+          0.05247788847184888,
+          0.10056954973910467,
+          0.05556833382684602
+        ],
+        "roughness": 0.176,
+        "metallic": 0.309122,
+        "specular": 0.5,
+        "alpha": 1,
+        "transmission": 0,
+        "coat": 0,
+        "sheen": 0
+      }
+    },
+    {
+      "name": "center-dirt-normal",
+      "uv_native": [
+        0.5,
+        0.5546
+      ],
+      "normal_dot_view_after_dirt": 0.8,
+      "dirt_sample_r": 0.7,
+      "rough_sample_r": 0.3,
+      "expected": {
+        "circle": 1,
+        "dirt": 0.5032341584158413,
+        "normal": [
+          0.20682623961133828,
+          -0.10341311980566914,
+          0.9728970311704582
+        ],
+        "view_factor": 0.0,
+        "color": [
+          0.043950821999409764,
+          0.04733999595656714,
+          0.041791460073319
+        ],
+        "roughness": 0.5608820152024752,
+        "metallic": 0.309122,
+        "specular": 0.5,
+        "alpha": 1,
+        "transmission": 0,
+        "coat": 0,
+        "sheen": 0
+      }
+    }
+  ],
+  "metallic_evidence": "Dry sat(authored Metallic); current SM5 r1.w and SM6 snow SSA prove dirt does not attenuate metal. Actual SM6 DXIL dry equation proof includes nonzero/full dirt."
+}

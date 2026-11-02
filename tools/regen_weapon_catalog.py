@@ -227,6 +227,27 @@ def _esc(s: str) -> str:
     return (s or "").replace("\\", "\\\\").replace("'", "\\'")
 
 
+def refresh_browser_catalog(pioneer, mods, catalog_path=None):
+    catalog_path = Path(catalog_path) if catalog_path else REPO_ROOT / "assets/weapon_browser/catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    for entry in mods:
+        catalog.setdefault("mods", {}).setdefault(entry["stem"], {"preview": None})
+    patterns = {pattern["id"]: pattern for pattern in catalog.get("patterns", [])}
+    pattern_dir = Path(pioneer) / "MaterialLibrary/Textures/Weapons/Patterns"
+    for path in sorted(pattern_dir.glob("*.png")):
+        lower = path.name.lower()
+        if lower.endswith("_c.png"):
+            label = path.stem
+            if label.lower().startswith("t_weapons_pattern_"):
+                label = label[len("T_Weapons_Pattern_"):]
+            patterns[path.name] = {"id": path.name, "label": label[:-2].replace("_", " ")}
+        elif lower.endswith("_id.png"):
+            patterns[path.name] = {"id": path.name, "label": path.stem + " (ID)"}
+    catalog["patterns"] = [patterns[key] for key in sorted(patterns)]
+    catalog_path.write_text(json.dumps(catalog, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return catalog
+
+
 def main() -> int:
     pioneer = _resolve_pioneer()
     loc = _resolve_localization(pioneer)
@@ -363,6 +384,7 @@ def main() -> int:
     lines.append("]")
     lines.append("")
     OUT_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    refresh_browser_catalog(pioneer, mods)
     print(f"Wrote {OUT_PATH.relative_to(REPO_ROOT)} guns={len(guns)} mods={len(mods)}")
     print(f"  pioneer={pioneer}")
     print(f"  localization={loc}")

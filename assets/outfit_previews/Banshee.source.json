@@ -1,0 +1,11 @@
+{
+  "build": "2.3.0 metadata; retained ArcPak PNG cache",
+  "outfit": "ID_PLAYERSKIN_BANSHEE",
+  "image_reference": "/Game/Pioneer/Items/Characters/Skins/Outfit/Banshee/T_UI_Icon_Outfit_Banshee.T_UI_Icon_Outfit_Banshee",
+  "metadata": "Z:\\Datamining\\Arc Raiders\\2.3.0\\Jsons_2.3.0\\PioneerGame\\Content\\Pioneer\\Items\\Characters\\Skins\\Outfit\\Banshee\\DA_UIMetaData_Outfit_Banshee.json",
+  "metadata_sha256": "d71ec30957e187cae0ebc47791ffbd83aa8bd94c8cc4fa9af315f5122e5471a2",
+  "icon": "C:\\Users\\Silarious\\Documents\\GitHub\\DataRaiders-BlenderImporter\\ArcPak\\cache\\PioneerGame\\Content\\Pioneer\\Items\\Characters\\Skins\\Outfit\\Banshee\\T_UI_Icon_Outfit_Banshee.png",
+  "icon_sha256": "c47778b1fbfbfb9ee234aff1f0f05bd231f32d70761117aeeefee8575465955c",
+  "output": "Banshee.png",
+  "output_sha256": "89f9719c39c0cb305db8c9c0a069545af2ab5d1f749b8034be9d9402950d8df9"
+}

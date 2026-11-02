@@ -13,6 +13,21 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="Tests/**/*.cs" />
+    <InternalsVisibleTo Include="ArcPak.MapExport.Tests" />
+    <Compile Include="../../FModel-Vibe/FModel/Exporters/MapPlacement/MapTraversalObject.cs" Link="MapTraversal/MapTraversalObject.cs" />
+    <Compile Include="../../FModel-Vibe/FModel/Exporters/MapPlacement/MapPlacementExtractor.cs" Link="MapTraversal/MapPlacementExtractor.cs" />
+    <Compile Include="../../FModel-Vibe/FModel/Exporters/MapPlacement/MapPlacementExtractorOptions.cs" Link="MapTraversal/MapPlacementExtractorOptions.cs" />
+    <Compile Include="../../FModel-Vibe/FModel/Exporters/MapPlacement/MapPlacementExtractionResult.cs" Link="MapTraversal/MapPlacementExtractionResult.cs" />
+    <Compile Include="../../FModel-Vibe/FModel/Exporters/MapPlacement/MapPlacementMetrics.cs" Link="MapTraversal/MapPlacementMetrics.cs" />
+    <Compile Include="../../FModel-Vibe/FModel/Exporters/MapPlacement/MapPlacementSplineBakeJob.cs" Link="MapTraversal/MapPlacementSplineBakeJob.cs" />
+    <Compile Include="../../FModel-Vibe/FModel/Exporters/MapPlacement/MapPlacementSplineNotes.cs" Link="MapTraversal/MapPlacementSplineNotes.cs" />
+    <Compile Include="../../FModel-Vibe/FModel/Exporters/MapPlacement/MapTransformResolver.cs" Link="MapTraversal/MapTransformResolver.cs" />
+    <Compile Include="../../FModel-Vibe/FModel/Exporters/MapPlacement/MapGameplayExporter.cs" Link="MapTraversal/MapGameplayExporter.cs" />
+    <Compile Include="../../FModel-Vibe/FModel/Views/Snooper/MapPlacement/MapPlacementRecord.cs" Link="MapTraversal/MapPlacementRecord.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="CUE4Parse-Conversion.Arc.csproj" />
     <ProjectReference Include="CUE4Parse.Arc.csproj" />
   </ItemGroup>

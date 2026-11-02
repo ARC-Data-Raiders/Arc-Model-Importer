@@ -1,4 +1,4 @@
-"""Searchable animation index — FMDex names plus on-disk PSA / notify sidecars.
+"""Searchable packaged animation metadata with action-time PSA / notify resolution.
 
 The blend never holds every sequence. The catalog is a list of names; Apply
 imports one PSA onto the selected armature and optionally spawns notify props.
@@ -231,8 +231,9 @@ def _index_psa_dir(root: str, out: Dict[str, Dict[str, str]], max_psa: int = 500
 
 
 def _psa_index(cache_dir: str) -> Dict[str, Dict[str, str]]:
+    fingerprint = (cache_dir, utils.get_pioneer_root() or "")
     cached = _cache.get("psa_index")
-    if cached is not None:
+    if cached is not None and _cache.get("fingerprint") == fingerprint:
         return cached
     out: Dict[str, Dict[str, str]] = {}
     root = resolved_cache_dir(cache_dir)
@@ -245,133 +246,20 @@ def _psa_index(cache_dir: str) -> Dict[str, Dict[str, str]]:
         _index_psa_dir(os.path.join(pioneer, "animations"), out)
         _index_psa_dir(os.path.join(pioneer, "Animations"), out)
     _cache["psa_index"] = out
+    _cache["fingerprint"] = fingerprint
     return out
 
 
-def _fingerprint(cache_dir: str) -> tuple:
-    fmdex.ensure_loaded()
-    st = fmdex.status()
-    return (
-        st.get("index_path") or "",
-        os.path.normpath(resolved_cache_dir(cache_dir) or ""),
-        utils.get_pioneer_root() or "",
-    )
-
-
-def _entry_from_fmdex(stem: str, package_key: str, tags: List[str], psa_idx: Dict[str, Dict[str, str]]) -> dict:
-    disk = psa_idx.get(stem.lower()) or {}
-    kind = _kind_from_tags(tags)
-    game_path = fmdex.package_to_game_path(package_key)
-    return {
-        "key": stem,
-        "stem": stem,
-        "kind": kind,
-        "package": package_key,
-        "game_path": game_path,
-        "folder": _folder_from_package(package_key) or _folder_from_package(game_path),
-        "psa_path": disk.get("psa") or "",
-        "notify_path": disk.get("notifies") or "",
-        "json_path": "",
-        "skeleton": "",
-        "length": None,
-        "notify_count": None,
-        "has_props": False,
-        "has_fx": False,
-        "enriched": False,
-    }
-
-
-def _put_entry(by_key: Dict[str, dict], entry: dict) -> None:
-    key = (entry.get("key") or "").lower()
-    if not key:
-        return
-    existing = by_key.get(key)
-    if existing is None:
-        by_key[key] = entry
-        return
-    # Prefer a tagged clip over a path-heuristic row; keep any PSA we already found.
-    if existing.get("psa_path") and not entry.get("psa_path"):
-        entry["psa_path"] = existing["psa_path"]
-    if existing.get("notify_path") and not entry.get("notify_path"):
-        entry["notify_path"] = existing["notify_path"]
-    if existing.get("kind") != "AnimSequence" and entry.get("kind") == "AnimSequence":
-        by_key[key] = entry
-        return
-    if entry.get("psa_path") and not existing.get("psa_path"):
-        existing["psa_path"] = entry["psa_path"]
-    if entry.get("notify_path") and not existing.get("notify_path"):
-        existing["notify_path"] = entry["notify_path"]
-
-
 def ensure_loaded(cache_dir: str = "") -> List[dict]:
-    """Return animation catalog entries from FMDex tags/paths plus on-disk PSA."""
-    fp = _fingerprint(cache_dir)
-    if _cache.get("fingerprint") == fp and _cache.get("entries") is not None:
+    """Return packaged clip metadata without examining user exports or game files."""
+    if _cache.get("entries") is not None:
         return _cache["entries"]
-
-    _cache["psa_index"] = None
-    psa_idx = _psa_index(cache_dir)
-
-    by_key: Dict[str, dict] = {}
-    tagged = 0
-    named = 0
-    for stem, package_key, tags in fmdex.iter_all_assets():
-        if not _looks_like_anim(stem, package_key, tags):
-            continue
-        entry = _entry_from_fmdex(stem, package_key, tags, psa_idx)
-        if _tags_look_like_clip(tags) is True:
-            tagged += 1
-        else:
-            named += 1
-        _put_entry(by_key, entry)
-
-    for stem_l, disk in psa_idx.items():
-        if stem_l in by_key:
-            if disk.get("psa"):
-                by_key[stem_l]["psa_path"] = by_key[stem_l].get("psa_path") or disk["psa"]
-            if disk.get("notifies"):
-                by_key[stem_l]["notify_path"] = by_key[stem_l].get("notify_path") or disk["notifies"]
-            if disk.get("json"):
-                by_key[stem_l]["json_path"] = by_key[stem_l].get("json_path") or disk["json"]
-            continue
-        stem = os.path.splitext(
-            os.path.basename(disk.get("psa") or disk.get("json") or disk.get("notifies") or stem_l)
-        )[0]
-        _put_entry(
-            by_key,
-            {
-                "key": stem,
-                "stem": stem,
-                "kind": "AnimSequence",
-                "package": "",
-                "game_path": "",
-                "folder": "",
-                "psa_path": disk.get("psa") or "",
-                "notify_path": disk.get("notifies") or "",
-                "json_path": disk.get("json") or "",
-                "skeleton": "",
-                "length": None,
-                "notify_count": None,
-                "has_props": False,
-                "has_fx": False,
-                "enriched": False,
-            },
-        )
-
-    entries = sorted(by_key.values(), key=lambda e: (e.get("folder") or "", e.get("stem") or "").lower())
-    _cache["fingerprint"] = fp
+    entries, stats = fmdex.packaged_browser("animations")
+    for entry in entries:
+        entry.update(psa_path="", notify_path="", json_path="", enriched=False)
     _cache["entries"] = entries
-    _cache["by_key"] = {e["key"].lower(): e for e in entries}
-    _cache["stats"] = {
-        "total": len(entries),
-        "fmdex_tagged": tagged,
-        "fmdex_named": named,
-        "psa_files": sum(1 for e in entries if e.get("psa_path")),
-        "cache_dir": resolved_cache_dir(cache_dir),
-        "fmdex_loaded": bool(fmdex.status().get("loaded")),
-        "fmdex_entries": int(fmdex.status().get("entry_count") or 0),
-        "fmdex_error": fmdex.last_error(),
-    }
+    _cache["by_key"] = {entry["key"].lower(): entry for entry in entries}
+    _cache["stats"] = stats
     return entries
 
 
@@ -384,7 +272,8 @@ def get_entry(key: str, cache_dir: str = "") -> Optional[dict]:
     if not key or key == "NONE":
         return None
     ensure_loaded(cache_dir)
-    return (_cache.get("by_key") or {}).get(key.strip().lower())
+    entry = (_cache.get("by_key") or {}).get(key.strip().lower())
+    return dict(entry) if entry is not None else None
 
 
 def _query_match(entry: dict, query: str) -> bool:
@@ -444,7 +333,13 @@ def resolve_psa_path(entry: dict, cache_dir: str = "") -> str:
     existing = entry.get("psa_path") or ""
     if existing and os.path.isfile(existing):
         return existing
+    found = fmdex.resolve_catalog_file(entry, ".psa", cache_dir)
+    if found:
+        entry["psa_path"] = found
+        return found
     stem = entry.get("stem") or entry.get("key") or ""
+    if (entry.get("key") or stem) != stem:
+        return ""
     idx = _psa_index(cache_dir)
     hit = (idx.get(stem.lower()) or {}).get("psa") or ""
     if hit and os.path.isfile(hit):
@@ -463,6 +358,10 @@ def resolve_notify_path(entry: dict, cache_dir: str = "") -> str:
     existing = entry.get("notify_path") or ""
     if existing and os.path.isfile(existing):
         return existing
+    found = fmdex.resolve_catalog_file(entry, ".notifies.json", cache_dir)
+    if found:
+        entry["notify_path"] = found
+        return found
     psa = resolve_psa_path(entry, cache_dir)
     if psa:
         sibling = os.path.splitext(psa)[0] + ".notifies.json"
@@ -470,6 +369,8 @@ def resolve_notify_path(entry: dict, cache_dir: str = "") -> str:
             entry["notify_path"] = sibling
             return sibling
     stem = entry.get("stem") or ""
+    if (entry.get("key") or stem) != stem:
+        return ""
     idx = _psa_index(cache_dir)
     hit = (idx.get(stem.lower()) or {}).get("notifies") or ""
     if hit and os.path.isfile(hit):
@@ -703,7 +604,9 @@ def enrich_entry(entry: dict, cache_dir: str = "") -> dict:
     notify_path = resolve_notify_path(entry, cache_dir)
     json_path = entry.get("json_path") or ""
     if not json_path:
-        json_path = fmdex.resolve_export_file(entry.get("stem") or "", ".json", allow_basename_walk=False) or ""
+        json_path = fmdex.resolve_catalog_file(entry, ".json", cache_dir)
+        if not json_path and (entry.get("key") or entry.get("stem")) == entry.get("stem"):
+            json_path = fmdex.resolve_export_file(entry.get("stem") or "", ".json", allow_basename_walk=False) or ""
         entry["json_path"] = json_path
     meta = {"skeleton": "", "length": None, "notifies": []}
     if notify_path:

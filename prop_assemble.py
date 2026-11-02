@@ -8,7 +8,8 @@ Ground truth for the Extraction Elevator:
 
 Imports every ``.psk``/``.pskx`` in the prop folder, duplicates shared meshes
 (engines, doors, barriers), parents children to the owning socket mesh, and
-applies transforms in Unreal centimetres (same space as single-model import).
+applies transforms in Unreal centimetres, Y-mirrored like the imported points
+(same space as single-model import).
 """
 from __future__ import annotations
 
@@ -85,6 +86,11 @@ def _scale(d: Any) -> tuple[float, float, float]:
 def unreal_to_blender_xyz_radians(pitch: float, yaw: float, roll: float) -> tuple[float, float, float]:
     """Match map_placement pass-through: (-roll, -pitch, yaw)."""
     return (math.radians(-roll), math.radians(-pitch), math.radians(yaw))
+
+
+def mirrored_xyz_radians(pitch: float, yaw: float, roll: float) -> tuple[float, float, float]:
+    """UE rotator for Y-negated mesh data: S R S with S = diag(1, -1, 1), as XYZ (roll, -pitch, -yaw)."""
+    return (math.radians(roll), math.radians(-pitch), math.radians(-yaw))
 
 
 def parse_static_mesh_sockets(sm_json_path: str) -> dict[str, dict]:
@@ -284,8 +290,10 @@ def _compose_child_pose(
         loc = cl
         pyr = cr
         scale = cs
-    euler = unreal_to_blender_xyz_radians(pyr[0], pyr[1], pyr[2])
-    return loc, euler, scale
+    # Imported PSK points are the UE positions with Y negated (every vertex of the
+    # SM_ExtractionElevator_01 meshes), so socket and component poses are conjugated by
+    # that mirror; pass-through put Tower_A and Barrier_02 on the mirrored side.
+    return (loc[0], -loc[1], loc[2]), mirrored_xyz_radians(pyr[0], pyr[1], pyr[2]), scale
 
 
 def _set_parent_local(obj, parent_obj, loc, euler, scale) -> None:
@@ -749,6 +757,11 @@ def assemble_extraction_elevator_folder(
         return stats
 
     # Reset previous assembly so re-run is idempotent (keep one template per stem).
+    # The PSK importer puts the UE->Blender unit scale on the armature parent that
+    # detaching drops; resetting meshes to 1 made the assembled elevator 2400 m wide.
+    from .importing import ue_import_unit_scale
+
+    unit = ue_import_unit_scale(bpy.context.scene)
     folder_norm = folder.replace("\\", "/").lower()
     by_stem: dict[str, list] = {}
     for obj in list(bpy.data.objects):
@@ -763,7 +776,7 @@ def assemble_extraction_elevator_folder(
             obj.parent = None
             obj.location = (0.0, 0.0, 0.0)
             obj.rotation_euler = (0.0, 0.0, 0.0)
-            obj.scale = (1.0, 1.0, 1.0)
+            obj.scale = (unit, unit, unit)
             for key in (
                 "arc_prop_attach_socket",
                 "arc_prop_attach_mesh",
@@ -789,7 +802,8 @@ def assemble_extraction_elevator_folder(
     root_obj.parent = None
     root_obj.location = (0.0, 0.0, 0.0)
     root_obj.rotation_euler = (0.0, 0.0, 0.0)
-    root_obj.scale = (1.0, 1.0, 1.0)
+    # Children are posed in the root's centimetre frame and inherit this scale.
+    root_obj.scale = (unit, unit, unit)
 
     placed, duplicated, skipped = apply_attachment_poses(
         root_obj=root_obj,
@@ -806,6 +820,13 @@ def assemble_extraction_elevator_folder(
         root_obj["arc_prop_bp"] = os.path.basename(bp) if bp else ""
     except Exception:
         pass
+    if bp:
+        try:
+            from . import prop_fx
+
+            stats["fx"] = prop_fx.build_prop_fx(root_obj, bp, pioneer_root=pioneer_root)
+        except Exception as exc:  # FX are additive; never fail the mesh assembly
+            stats["fx"] = {"error": f"{type(exc).__name__}: {exc}"}
     return stats
 
 

@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "fixture": "velocity_update_compaction_five_lanes",
+  "scope": "Fixed authored program measured in actual UE5.3.2 legacy VectorVM::Exec; not game data or whole-VM equivalence.",
+  "provenance": {
+    "engineVersion": "5.3.2-29314046+++UE5+Release-5.3",
+    "engineExitCode": 0,
+    "engineReportSha256": "1f16d58916da813c72ad9e69ac2f1b4470266257e31fff1875a0ad848120cc79",
+    "helperSourceSha256": "bcf3a1b82ce34a4f10f5ac6c5d14c06d54415f515b1bb413f7222b4c7a282858",
+    "captureDate": "2026-10-16",
+    "platform": "Windows x64 Development Editor, NullRHI",
+    "compiler": "MSVC 14.44.35207, Windows SDK10.0.22621.0, UBT-generated module compile/link response files",
+    "validation": "Engine outputs compared as binary32 words against offline execution; exact match on this fixture.",
+    "nativeContext": "FDataSetMeta uses explicit valid MaxUsedID=-1 bookkeeping pointer even though the program has no ID operations.",
+    "lifecycle": "Run-only analytics disabled; helper requests exit on first core ticker tick; clean process exit0."
+  },
+  "bytecodeProfile": "ue5.3-legacy",
+  "bytecodeHex": "4d0000000000004d0000010001004e0000000002000302010000000300010000000300040056000000020005005300000005000400000000",
+  "bytecodeSha256": "cf02303b25ee397554f432a36f4a47386e746afd219948ad9f7c17b92138123a",
+  "numInstances": 5,
+  "constantTablesHex": [
+    "0000803e"
+  ],
+  "datasets": [
+    {
+      "index": 0,
+      "instanceOffset": 0,
+      "accessIndex": -1,
+      "inputs": [
+        {
+          "kind": "float",
+          "attribute": 0,
+          "values": [
+            10,
+            20,
+            30,
+            40,
+            50
+          ]
+        },
+        {
+          "kind": "float",
+          "attribute": 1,
+          "values": [
+            2,
+            -4,
+            6,
+            8,
+            -10
+          ]
+        },
+        {
+          "kind": "int32",
+          "attribute": 0,
+          "values": [
+            -1,
+            0,
+            -1,
+            -1,
+            0
+          ]
+        }
+      ],
+      "outputCapacities": [
+        {
+          "kind": "float",
+          "attribute": 0,
+          "capacity": 5
+        }
+      ]
+    }
+  ],
+  "engineAllocation": "Native input/output buffers padded to8 lanes; only5 instances are valid.",
+  "expected": {
+    "dataset": 0,
+    "kind": "float",
+    "attribute": 0,
+    "unwrittenSentinel": -999,
+    "engineOutput": [
+      10.5,
+      31.5,
+      42,
+      -999,
+      -999
+    ],
+    "engineBinary32": [
+      "00002841",
+      "0000fc41",
+      "00002842",
+      "00c079c4",
+      "00c079c4"
+    ],
+    "accessIndex": 2
+  },
+  "verifiedSemantics": [
+    "mixed float/int dataset input register offsets",
+    "five lanes, including SIMD tail",
+    "constant byte offset",
+    "float multiplication and addition",
+    "acquireindex compaction",
+    "indexed float output"
+  ],
+  "unverified": [
+    "other operations",
+    "FMA precision",
+    "external functions",
+    "Niagara scheduling",
+    "rendering",
+    "Arc Raiders fidelity"
+  ]
+}

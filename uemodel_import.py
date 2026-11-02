@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import gzip
 import io
+import json
+import hashlib
 import os
 import struct
 from dataclasses import dataclass, field
@@ -99,6 +101,7 @@ class UeMorphTarget:
     name: str
     indices: np.ndarray
     position_deltas: np.ndarray
+    normal_deltas: np.ndarray | None = None
 
 
 @dataclass
@@ -183,10 +186,14 @@ def _parse_morph_targets(payload: bytes, *, scale: float, flip_y: bool) -> list[
         size = _read_array_header(buf)
         values = np.frombuffer(_read_exact(buf, size * record.itemsize), dtype=record)
         positions = values["position"].copy()
+        normals = values["normal"].copy()
+        if not np.isfinite(positions).all() or not np.isfinite(normals).all():
+            raise UeModelError("nonfinite authored morph delta")
         positions *= scale
         if flip_y:
             positions[:, 1] *= -1.0
-        morphs.append(UeMorphTarget(name, values["index"].copy(), positions))
+            normals[:, 1] *= -1.0
+        morphs.append(UeMorphTarget(name, values["index"].copy(), positions, normals))
     return morphs
 
 
@@ -635,6 +642,90 @@ def _assign_materials(obj: bpy.types.Object, lod: _Lod) -> None:
     mesh.polygons.foreach_set("material_index", poly_mat)
 
 
+def _preserve_lod_normal_targets(obj, lod):
+    """Persist native dimensionless deltas and pristine floats with the mesh."""
+    targets = [m for m in lod.morph_targets if m.normal_deltas is not None]
+    if not targets:
+        return
+    mesh = obj.data
+    if mesh.get("arc_native_normal_targets"):
+        return
+    from .material_runtime.deformation import preserve_normal_source, NORMAL_SOURCE_VERSION
+    current = mesh.attributes.get("custom_normal")
+    if (lod.normals is None or len(lod.normals) != len(mesh.vertices)
+            or current is None or current.data_type != "FLOAT_VECTOR"):
+        obj["arc_normal_delta_note"] = "Native float normal source unavailable; reimport this mesh with the current UEModel reader"
+        return
+    for target in targets:
+        if target.normal_deltas.shape != (len(target.indices), 3):
+            raise UeModelError("morph normal layout differs from source indices")
+    if not mesh.get(NORMAL_SOURCE_VERSION):
+        preserve_normal_source(mesh, lod.normals.tolist(), tuple(range(len(mesh.vertices))),
+                               source_vertex_count=len(mesh.vertices))
+    names = {}
+    for target in targets:
+        name = "DR.MorphNormal." + hashlib.sha256(target.name.encode("utf-8")).hexdigest()[:20]
+        if mesh.attributes.get(name):
+            raise UeModelError("native normal delta attribute collision")
+        values = np.zeros((len(mesh.vertices), 3), dtype=np.float32)
+        np.add.at(values, target.indices, target.normal_deltas)
+        attr = mesh.attributes.new(name, "FLOAT_VECTOR", "POINT")
+        attr.data.foreach_set("vector", values.ravel())
+        names[target.name] = name
+    mesh["arc_native_normal_targets"] = json.dumps(names, sort_keys=True)
+    mesh["arc_native_normal_weights"] = ""
+
+
+def apply_uemodel_morph_normals(obj):
+    """Apply current authored relative-key normals during explicit fit actions.
+
+    No idle scene scan or depsgraph watcher is installed. Deltas remain saved
+    as mesh attributes so reopening a blend does not require a source file.
+    """
+    if obj is None or obj.type != "MESH":
+        return False
+    mesh = obj.data
+    encoded = mesh.get("arc_native_normal_targets")
+    if not encoded or not mesh.shape_keys:
+        return False
+    if not mesh.shape_keys.use_relative:
+        obj["arc_normal_delta_note"] = "Absolute shape-key timing has no authored normal mapping"
+        return False
+    names = json.loads(encoded)
+    keys = mesh.shape_keys.key_blocks
+    weights = {}
+    for name in names:
+        key = keys.get(name)
+        if key is None:
+            continue
+        if key.vertex_group or key.relative_key != mesh.shape_keys.reference_key:
+            obj["arc_normal_delta_note"] = "Edited key masks or relative bases require an explicit native normal mapping"
+            return False
+        weights[name] = 0.0 if key.mute else float(key.value)
+    signature = json.dumps(weights, sort_keys=True)
+    if mesh.get("arc_native_normal_weights") == signature:
+        return False
+    from .material_runtime.deformation import MorphDelta, MorphTarget, apply_normal_deltas
+    targets = []
+    for name, attr_name in names.items():
+        if not weights.get(name, 0.0):
+            continue
+        attr = mesh.attributes.get(attr_name)
+        if attr is None or attr.data_type != "FLOAT_VECTOR" or attr.domain != "POINT":
+            raise UeModelError("saved native normal delta attribute is unavailable")
+        values = np.empty((len(mesh.vertices), 3), dtype=np.float32)
+        attr.data.foreach_get("vector", values.ravel())
+        indices = np.flatnonzero(np.any(values != 0.0, axis=1))
+        targets.append(MorphTarget(name, tuple(MorphDelta((0.0, 0.0, 0.0),
+                       tuple(float(v) for v in values[index]), int(index)) for index in indices)))
+    active_weights = {name: value for name, value in weights.items() if value != 0.0}
+    apply_normal_deltas(mesh, targets, active_weights)
+    mesh["arc_native_normal_weights"] = signature
+    if "arc_normal_delta_note" in obj:
+        del obj["arc_normal_delta_note"]
+    return True
+
+
 def _apply_lod_shape_keys(obj, lod: _Lod) -> list[str]:
     """Add missing authored keys without changing geometry, key values or edits."""
     if not lod.morph_targets:
@@ -659,6 +750,8 @@ def _apply_lod_shape_keys(obj, lod: _Lod) -> list[str]:
         key.data.foreach_set("co", coords.ravel())
         key.value = 0.0
         added.append(key.name)
+    _preserve_lod_normal_targets(obj, lod)
+    apply_uemodel_morph_normals(obj)
     return added
 
 
@@ -774,7 +867,8 @@ def import_uemodel_v10(path: str, *, scale: float = 0.01, import_lods: bool = Fa
         mesh.update()
         if lod.normals is not None and len(lod.normals) == len(mesh.vertices):
             mesh.polygons.foreach_set("use_smooth", [True] * len(mesh.polygons))
-            mesh.normals_split_custom_set_from_vertices(lod.normals.tolist())
+            from .material_runtime.deformation import write_corner_normals
+            write_corner_normals(mesh, (lod.normals[loop.vertex_index] for loop in mesh.loops))
         mesh["arc_uemodel_lod"] = lod.name
         mesh["arc_uemodel_scale"] = float(scale)
         obj = bpy.data.objects.new(mesh_name, mesh)
@@ -803,3 +897,4 @@ def try_import_uemodel_v10(path: str, *, scale: float = 0.01, import_lods: bool 
     except Exception as exc:
         print(f"[arc-uemodel] v10 import failed ({path}): {exc}")
         return []
+

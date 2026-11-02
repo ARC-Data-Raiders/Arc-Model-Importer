@@ -363,56 +363,112 @@ def _coverage_group():
     return group
 
 
+def _surface_outputs(material):
+    outputs=[node for node in material.node_tree.nodes if node.type=='OUTPUT_MATERIAL' and getattr(node,'is_active_output',True)]
+    return [node for node in outputs if node.inputs.get('Surface') is not None and node.inputs['Surface'].links]
+
+
+def _coverage_mode(material):
+    outputs=_surface_outputs(material)
+    if not outputs:return '',outputs
+    # Direct flat Principled roots retain the historical alpha multiplication.
+    # Any private/combined shader closure is covered externally as one response.
+    mode='alpha' if all(output.inputs['Surface'].links[0].from_node.type=='BSDF_PRINCIPLED' for output in outputs) else 'surface'
+    return mode,outputs
+
+
+def _coverage_connected(material,coverage):
+    mode,outputs=_coverage_mode(material)
+    if not mode:return False
+    if mode=='alpha':
+        for output in outputs:
+            alpha=output.inputs['Surface'].links[0].from_node.inputs.get('Alpha')
+            if alpha is None or not alpha.links:return False
+            multiply=alpha.links[0].from_node
+            if multiply.type!='MATH' or multiply.operation!='MULTIPLY':return False
+            if not multiply.inputs[1].links or multiply.inputs[1].links[0].from_node!=coverage:return False
+        return True
+    for output in outputs:
+        mix=output.inputs['Surface'].links[0].from_node
+        if not mix.get('dr_body_coverage_wrapper') or mix.type!='MIX_SHADER':return False
+        if not mix.inputs[0].links or mix.inputs[0].links[0].from_node!=coverage:return False
+        if not mix.inputs[1].links or not mix.inputs[1].links[0].from_node.get('dr_body_coverage_transparent'):return False
+        if not mix.inputs[2].links:return False
+        if mix.inputs[2].links[0].from_node.get('dr_body_coverage_wrapper'):return False
+    return True
+
+
+def _external_surface_coverage(material,coverage,outputs):
+    nodes,links=material.node_tree.nodes,material.node_tree.links
+    transparent=next((node for node in nodes if node.get('dr_body_coverage_transparent')),None)
+    if transparent is None:
+        transparent=nodes.new('ShaderNodeBsdfTransparent');transparent.name='DR.BodyCoverage.Transparent';transparent.label='Outfit-hidden body';transparent['dr_body_coverage_transparent']=True
+    transparent.inputs[0].default_value=(1.,1.,1.,1.);transparent.location=(180,-580)
+    for output in outputs:
+        source=output.inputs['Surface'].links[0].from_socket;seen=set()
+        # Collapse only our own wrappers; never unwrap the native shader closure.
+        while source.node.get('dr_body_coverage_wrapper'):
+            if source.node.as_pointer() in seen:raise ValueError('Body coverage wrapper cycle')
+            seen.add(source.node.as_pointer())
+            if not source.node.inputs[2].links:raise ValueError('Body coverage wrapper lost its native response')
+            source=source.node.inputs[2].links[0].from_socket
+        mix=next((node for node in nodes if node.get('dr_body_coverage_wrapper') and node.get('dr_body_coverage_output')==output.name),None)
+        if mix is None:
+            mix=nodes.new('ShaderNodeMixShader');mix.name='DR.BodyCoverage.Surface.'+output.name;mix.label='Native body response × outfit coverage';mix['dr_body_coverage_wrapper']=True;mix['dr_body_coverage_output']=output.name
+        mix.location=(420,-300);links.new(coverage.outputs['Visible'],mix.inputs[0]);links.new(transparent.outputs[0],mix.inputs[1]);links.new(source,mix.inputs[2]);links.new(mix.outputs[0],output.inputs['Surface'])
+
+
+def _flat_alpha_coverage(material,coverage,outputs):
+    nodes,links=material.node_tree.nodes,material.node_tree.links;seen=set()
+    for output in outputs:
+        bsdf=output.inputs['Surface'].links[0].from_node
+        if bsdf.as_pointer() in seen:continue
+        seen.add(bsdf.as_pointer());alpha=bsdf.inputs.get('Alpha')
+        if alpha is None:raise ValueError('Body Principled response lacks Alpha input')
+        name='ArcBodyCoverageAlpha_'+bsdf.name;multiply=nodes.get(name)
+        if multiply is None:
+            multiply=nodes.new('ShaderNodeMath');multiply.name=name;multiply.label='Skin Alpha × Outfit Coverage';multiply.operation='MULTIPLY';multiply.location=(80,-350)
+        # Preserve an original alpha link/default, including a user's replacement.
+        if not alpha.links or alpha.links[0].from_node!=multiply:
+            for link in list(multiply.inputs[0].links):links.remove(link)
+            if alpha.links:links.new(alpha.links[0].from_socket,multiply.inputs[0])
+            else:multiply.inputs[0].default_value=alpha.default_value
+        links.new(coverage.outputs['Visible'],multiply.inputs[1]);links.new(multiply.outputs[0],alpha)
+
+
 def apply_body_masks(body, scene=None, *, state=None):
-    if not _is_body(body):
-        return False
-    scene = scene or bpy.context.scene
-    state = state or body_mask_state(body, scene)
-    uv_name = body.data.uv_layers[1].name if len(body.data.uv_layers) > 1 else ''
-    body['arc_body_mask_sources'] = json.dumps(state['sources'])
-    body['arc_body_masks'] = json.dumps(state['masks'], sort_keys=True)
-    body['arc_body_hidden'] = state['hidden']
-    body['arc_body_mask_warnings'] = json.dumps(state['warnings'])
+    if not _is_body(body):return False
+    scene=scene or bpy.context.scene;state=state or body_mask_state(body,scene)
+    uv_name=body.data.uv_layers[1].name if len(body.data.uv_layers)>1 else ''
+    body['arc_body_mask_sources']=json.dumps(state['sources']);body['arc_body_masks']=json.dumps(state['masks'],sort_keys=True);body['arc_body_hidden']=state['hidden'];body['arc_body_mask_warnings']=json.dumps(state['warnings'])
     if not uv_name and not state['hidden']:
-        body['arc_body_mask_warnings'] = json.dumps(state['warnings'] + ['UV1 unavailable; region coverage not applied'])
-        return False
-    signature = json.dumps([state['masks'], state['hidden'], uv_name], sort_keys=True)
-    changed = False
+        body['arc_body_mask_warnings']=json.dumps(state['warnings']+['UV1 unavailable; region coverage not applied']);return False
+    signature=json.dumps([state['masks'],state['hidden'],uv_name],sort_keys=True);changed=False;warnings=list(state['warnings'])
     for slot in body.material_slots:
-        material = slot.material
-        if not material or not material.use_nodes:
-            continue
-        if material.get('arc_body_mask_signature') == signature and material.node_tree.nodes.get('ArcBodyCoverage'):
-            continue
-        if material.users > 1:
-            material = material.copy(); slot.material = material
-        nodes, links = material.node_tree.nodes, material.node_tree.links
-        coverage = nodes.get('ArcBodyCoverage') or nodes.new('ShaderNodeGroup')
-        coverage.name = 'ArcBodyCoverage'; coverage.label = 'Authored Body Coverage (UV1)'; coverage.node_tree = _coverage_group(); coverage.location = (-220, -520)
-        uv = nodes.get('ArcBodyCoverageUV') or nodes.new('ShaderNodeUVMap')
-        uv.name = 'ArcBodyCoverageUV'; uv.uv_map = uv_name; uv.location = (-460, -520)
-        links.new(uv.outputs['UV'], coverage.inputs['UV1'])
-        coverage.inputs['Hidden'].default_value = float(state['hidden'])
-        for name in REGION_NAMES:
-            coverage.inputs[name].default_value = state['masks'][name]
-        for bsdf in [node for node in nodes if node.type == 'BSDF_PRINCIPLED']:
-            alpha = bsdf.inputs.get('Alpha')
-            if alpha is None:
-                continue
-            name = 'ArcBodyCoverageAlpha_' + bsdf.name
-            multiply = nodes.get(name)
-            if multiply is None:
-                multiply = nodes.new('ShaderNodeMath'); multiply.name = name; multiply.label = 'Skin Alpha × Outfit Coverage'; multiply.operation = 'MULTIPLY'; multiply.location = (80, -350)
-                if alpha.links:
-                    links.new(alpha.links[0].from_socket, multiply.inputs[0])
-                else:
-                    multiply.inputs[0].default_value = alpha.default_value
-            links.new(coverage.outputs['Visible'], multiply.inputs[1]); links.new(multiply.outputs[0], alpha)
-        if hasattr(material, 'surface_render_method'):
-            material.surface_render_method = 'DITHERED'
-        material['arc_body_mask_signature'] = signature
-        material['arc_body_mask_sources'] = json.dumps(state['sources'])
-        changed = True
+        material=slot.material
+        if not material or not material.use_nodes:continue
+        coverage=material.node_tree.nodes.get('ArcBodyCoverage')
+        if material.get('arc_body_mask_signature')==signature and coverage is not None and _coverage_connected(material,coverage):continue
+        mode,outputs=_coverage_mode(material)
+        if not mode:
+            warnings.append('Body coverage surface unavailable: '+material.name);continue
+        # Mesh DATA slots may be shared even when Material.users is only1.
+        shared_mesh=getattr(slot,'link','DATA')!='OBJECT' and getattr(body.data,'users',1)>1
+        if material.users>1 or shared_mesh:
+            material=material.copy()
+            if shared_mesh:slot.link='OBJECT'
+            slot.material=material;mode,outputs=_coverage_mode(material)
+        nodes,links=material.node_tree.nodes,material.node_tree.links
+        coverage=nodes.get('ArcBodyCoverage') or nodes.new('ShaderNodeGroup');coverage.name='ArcBodyCoverage';coverage.label='Authored Body Coverage (UV1)';coverage.node_tree=_coverage_group();coverage.location=(-220,-520)
+        uv=nodes.get('ArcBodyCoverageUV') or nodes.new('ShaderNodeUVMap');uv.name='ArcBodyCoverageUV';uv.uv_map=uv_name;uv.location=(-460,-520);links.new(uv.outputs['UV'],coverage.inputs['UV1'])
+        coverage.inputs['Hidden'].default_value=float(state['hidden'])
+        for name in REGION_NAMES:coverage.inputs[name].default_value=state['masks'][name]
+        if mode=='surface':_external_surface_coverage(material,coverage,outputs)
+        else:_flat_alpha_coverage(material,coverage,outputs)
+        if not _coverage_connected(material,coverage):raise ValueError('Body coverage did not reach active surface')
+        if hasattr(material,'surface_render_method'):material.surface_render_method='DITHERED'
+        material['arc_body_mask_signature']=signature;material['arc_body_mask_sources']=json.dumps(state['sources']);material['dr_body_mask_response_mode']=mode;changed=True
+    body['arc_body_mask_warnings']=json.dumps(warnings)
     return changed
 
 

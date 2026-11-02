@@ -1,0 +1,62 @@
+{
+  "scalars": {
+    "DirtTiling": 2.550928,
+    "CircularPositionU": 0.5,
+    "CircularPositionV": 0.5546,
+    "CircularScaleU": 0.864,
+    "CircularScaleV": 0.854356,
+    "CircularSize": 0.408,
+    "DirtSoftness": 0.202,
+    "MaskDirt": 0.614781,
+    "DirtAmount": 0.832,
+    "SnowMaskTiling": 10.0,
+    "Snow_Overspray": 0.2,
+    "MaxSnowAmount": 0.0,
+    "FresnelLow": 0.712,
+    "FresnelHigh": 1.053741,
+    "VerticalEnd": 0.647424,
+    "VerticalStart": 0.84,
+    "MaxWetAmount": 0.2,
+    "WetTint": 0.8,
+    "Metallic": 0.309122,
+    "RoughnessTiling": 0.823616,
+    "RoughnessModifier": 0.176,
+    "DirtRoughness": 0.644673,
+    "WetGloss": 0.7,
+    "WetGlossCloth": 0.5,
+    "Opacity": 0.288,
+    "RefractionDepthBias": 0.0
+  },
+  "colors": {
+    "SelectionColor": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "ColorMultiply": [
+      0.145833,
+      0.145833,
+      0.145833
+    ],
+    "ColorA": [
+      0.208704,
+      0.421875,
+      0.392396
+    ],
+    "ColorB": [
+      0.388053,
+      0.739583,
+      0.378922
+    ],
+    "DirtColor": [
+      0.057292,
+      0.033339,
+      0.026557
+    ],
+    "SnowColor": [
+      0.8125,
+      0.8125,
+      0.8125
+    ]
+  }
+}

@@ -157,12 +157,15 @@ def _all_param_names(mi: dict) -> set:
 def infer_preset_key(mi: dict, mi_path: str = "") -> str:
     """Preset key for *mi*, from its Parent when present, else its signature."""
     parent = str((mi or {}).get("parent") or "").strip()
-    if parent:
-        alias = _PARENT_ALIASES.get(parent.lower())
+    # An intermediate colourway instance as Parent says nothing; its resolved root master does.
+    for candidate in (parent, str((mi or {}).get("root_master") or "").strip()):
+        if not candidate:
+            continue
+        alias = _PARENT_ALIASES.get(candidate.lower())
         if alias:
             return alias
-        if preset_defaults.has_preset(parent):
-            return parent
+        if preset_defaults.has_preset(candidate):
+            return candidate
 
     # XEM props carry generic overlay controls also present on trim presets.
     # Their exact texture packing is stronger evidence than those shared names;
@@ -220,6 +223,8 @@ def merge_preset_defaults(mi: dict, mi_path: str = "") -> dict:
 
     merged = dict(mi)
     merged["preset_key"] = key
+    merged["preset_source_provenance"] = preset.get("source_provenance")
+    merged["preset_source_uncertainty"] = "Current-native preset facts; selected export build association remains unverified"
     # Once defaults are folded in there is no way to tell an artist override
     # from a preset default, and some parameter pairs are mutually exclusive.
     merged["authored"] = _all_param_names(mi)

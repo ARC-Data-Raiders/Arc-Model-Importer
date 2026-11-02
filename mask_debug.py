@@ -12,6 +12,8 @@ import bpy
 
 from . import palette_calibration
 from .materials import clothing as _clothing
+from .materials.dr_primary_graph.public import candidate as _dr_stage_candidate
+from .materials import dr_primary_operations as _dr_ops
 
 _ZONE_COUNT = 8
 _BANDS = tuple(palette_calibration.BANDS)
@@ -202,15 +204,15 @@ def _tag(nodes, before_names):
     real clothing nodes. Names are unique per tree and stable.
     """
     for n in list(nodes):
-        if (getattr(n, "name", "") or "") in before_names:
+        if (_dr_ops.legacy_name(n) or "") in before_names:
             continue
         if _is_structural_node(n):
             continue
         try:
-            if not (n.name or "").startswith(_NODE_PFX):
-                n.name = f"{_NODE_PFX}{n.name}"[:63]
-            if not (n.label or "").startswith(_NODE_PFX):
-                n.label = f"{_NODE_PFX}{n.label or n.name}"
+            if not (_dr_ops.legacy_name(n) or "").startswith(_NODE_PFX):
+                n.name = f"{_NODE_PFX}{_dr_ops.legacy_name(n)}"[:63]
+            if not (_dr_ops.legacy_label(n) or "").startswith(_NODE_PFX):
+                n.label = f"{_NODE_PFX}{_dr_ops.legacy_label(n) or _dr_ops.legacy_name(n)}"
         except Exception:
             pass
 
@@ -280,7 +282,7 @@ def discover_mask_maps(mat) -> dict:
     for node in nodes:
         if node.type != "TEX_IMAGE" or node.image is None:
             continue
-        blob = f"{node.image.name} {node.label or ''}".lower().replace(" ", "")
+        blob = f"{node.image.name} {_dr_ops.legacy_label(node) or ''}".lower().replace(" ", "")
         if out["ocm"] is None and (
             "occlusioncurvaturematerialid" in blob
             or ("occlusion" in blob and "curvature" in blob)
@@ -1027,8 +1029,8 @@ def _find_output(nodes):
 
 
 def _is_inject_node(n) -> bool:
-    name = getattr(n, "name", "") or ""
-    lab = getattr(n, "label", "") or ""
+    name = _dr_ops.legacy_name(n) or ""
+    lab = _dr_ops.legacy_label(n) or ""
     return (
         name.startswith(_NODE_PFX)
         or lab.startswith(_NODE_PFX)
@@ -1059,7 +1061,7 @@ def _resolve_base_shader(mat, nodes, out, *, exclude=None):
     if raw:
         try:
             info = json.loads(raw)
-            node = nodes.get(info.get("node") or "")
+            node = _dr_stage_candidate.lookup(nodes).get(info.get("node") or "")
             if node is not None and node not in exclude and not _is_inject_node(node):
                 sock = _shader_sock_from_node(node, info.get("socket") or "")
                 if sock is not None:
@@ -1087,9 +1089,9 @@ def _find_any_surface_shader(nodes):
                 return sock
     for n in nodes:
         if n.type in ("BSDF_PRINCIPLED", "EMISSION", "BSDF_DIFFUSE", "GROUP", "MIX_SHADER", "ADD_SHADER"):
-            if (n.name or "").startswith(_NODE_PFX) or (n.label or "").startswith(_NODE_PFX):
+            if (_dr_ops.legacy_name(n) or "").startswith(_NODE_PFX) or (_dr_ops.legacy_label(n) or "").startswith(_NODE_PFX):
                 continue
-            if (n.name or "").startswith(_LEGACY_INJECT_PFX) or (n.label or "").startswith(
+            if (_dr_ops.legacy_name(n) or "").startswith(_LEGACY_INJECT_PFX) or (_dr_ops.legacy_label(n) or "").startswith(
                 _LEGACY_INJECT_PFX
             ):
                 continue
@@ -1168,8 +1170,8 @@ def _soft_update_color_n(mat, color_n: int) -> bool:
             return False
 
     for n in nodes:
-        name = n.name or ""
-        lab = n.label or ""
+        name = _dr_ops.legacy_name(n) or ""
+        lab = _dr_ops.legacy_label(n) or ""
         ntype = getattr(n, "type", "") or ""
         blob = f"{name} {lab}"
         if "ColorNWant" not in blob and name != _COLOR_N_WANT_NAME and lab != _COLOR_N_WANT_NAME:
@@ -1184,8 +1186,8 @@ def _soft_update_color_n(mat, color_n: int) -> bool:
         for n in nodes:
             if getattr(n, "type", "") != "MATH":
                 continue
-            lab = n.label or ""
-            name = n.name or ""
+            lab = _dr_ops.legacy_label(n) or ""
+            name = _dr_ops.legacy_name(n) or ""
             if "z-cn" not in lab and "z-cn" not in name:
                 continue
             if _set_math_b(n):
@@ -1267,8 +1269,8 @@ def _soft_update_opacities(
     for n in mat.node_tree.nodes:
         if getattr(n, "type", "") != "VALUE":
             continue
-        name = n.name or ""
-        lab = n.label or ""
+        name = _dr_ops.legacy_name(n) or ""
+        lab = _dr_ops.legacy_label(n) or ""
         for key, val in targets.items():
             if key in name or key in lab or key.replace("Opacity", " Opacity") in lab:
                 try:
@@ -1295,8 +1297,8 @@ def _soft_update_grid_scale(mat, grid_scale: float, extent: float = 0.0) -> bool
     for n in mat.node_tree.nodes:
         if getattr(n, "type", "") != "MAPPING":
             continue
-        name = (n.name or "")
-        lab = (n.label or "")
+        name = (_dr_ops.legacy_name(n) or "")
+        lab = (_dr_ops.legacy_label(n) or "")
         if not (
             name.startswith(_NODE_PFX)
             or lab.startswith(_NODE_PFX)
@@ -1411,7 +1413,7 @@ def _strip_inject(mat) -> bool:
         if raw:
             try:
                 info = json.loads(raw)
-                from_node = nodes.get(info.get("node") or "")
+                from_node = _dr_stage_candidate.lookup(nodes).get(info.get("node") or "")
                 sock_name = info.get("socket") or ""
                 if from_node is not None and from_node not in tagged:
                     cand = from_node.outputs.get(sock_name) if sock_name else None
@@ -1512,9 +1514,9 @@ def _node_world_xy(n):
 
 def _debug_cluster_origin(nodes):
     """Shirt 002: debug stack sits left/below Principled, not at (+2400, +400)."""
-    nd = nodes.get("GT_Principled")
+    nd = _dr_stage_candidate.lookup(nodes).get("GT_Principled")
     if nd is None:
-        nd = nodes.get("GT_MaterialOutput")
+        nd = _dr_stage_candidate.lookup(nodes).get("GT_MaterialOutput")
     if nd is None:
         for n in nodes:
             if getattr(n, "type", "") == "BSDF_PRINCIPLED" and not _is_inject_node(n):
@@ -1558,7 +1560,7 @@ def _inject_mask_debug(
     orig_shader = _resolve_base_shader(mat, nodes, out, exclude=tagged)
     if orig_shader is None or orig_shader.type != "SHADER":
         return "no surface"
-    orig_node_name = getattr(orig_shader.node, "name", "") or ""
+    orig_node_name = _dr_ops.legacy_name(orig_shader.node) or ""
     orig_sock_name = getattr(orig_shader, "name", "") or ""
     surface_meta = json.dumps({"node": orig_node_name, "socket": orig_sock_name})
 
@@ -1572,11 +1574,11 @@ def _inject_mask_debug(
     # Re-bind after strip (JSON was cleared); prefer live Surface, else saved names.
     orig_shader = _resolve_base_shader(mat, nodes, out)
     if orig_shader is None or orig_shader.type != "SHADER":
-        node = nodes.get(orig_node_name)
+        node = _dr_stage_candidate.lookup(nodes).get(orig_node_name)
         orig_shader = _shader_sock_from_node(node, orig_sock_name)
     if orig_shader is None or orig_shader.type != "SHADER":
         return "no surface"
-    orig_node_name = getattr(orig_shader.node, "name", "") or ""
+    orig_node_name = _dr_ops.legacy_name(orig_shader.node) or ""
     orig_sock_name = getattr(orig_shader, "name", "") or ""
     surface_meta = json.dumps({"node": orig_node_name, "socket": orig_sock_name})
 
@@ -1602,7 +1604,7 @@ def _inject_mask_debug(
     if out.inputs["Surface"].is_linked:
         links.remove(out.inputs["Surface"].links[0])
 
-    before_names = {(n.name or "") for n in nodes}
+    before_names = {(_dr_ops.legacy_name(n) or "") for n in nodes}
     status = "ok"
     built_ok = False
     try:
@@ -1972,10 +1974,10 @@ def read_tuned_bands(mat) -> list[float] | None:
     """Optional: read BandRamp stop positions from an injected material."""
     if mat is None or not getattr(mat, "use_nodes", False) or mat.node_tree is None:
         return None
-    ramp = mat.node_tree.nodes.get(f"{_NODE_PFX}BandRamp")
+    ramp = _dr_stage_candidate.lookup(mat.node_tree.nodes).get(f"{_NODE_PFX}BandRamp")
     if ramp is None:
         for n in mat.node_tree.nodes:
-            if (n.label or "") == f"{_NODE_PFX}BandRamp" or (n.name or "").endswith("BandRamp"):
+            if (_dr_ops.legacy_label(n) or "") == f"{_NODE_PFX}BandRamp" or (_dr_ops.legacy_name(n) or "").endswith("BandRamp"):
                 ramp = n
                 break
     if ramp is None or not hasattr(ramp, "color_ramp"):

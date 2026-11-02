@@ -2,12 +2,14 @@ using System.Diagnostics;
 using System.Text;
 using CUE4Parse.Encryption.Aes;
 using CUE4Parse.FileProvider;
+using CUE4Parse.FileProvider.Objects;
 using CUE4Parse.FileProvider.Vfs;
 using CUE4Parse.GameTypes.Theia.Encryption;
 using CUE4Parse.GameTypes.Theia.FileProvider;
 using CUE4Parse.MappingsProvider.Usmap;
 using CUE4Parse.UE4.Assets;
 using CUE4Parse.UE4.Assets.Exports;
+using CUE4Parse.UE4.Assets.Exports.Animation;
 using CUE4Parse.UE4.Assets.Exports.Engine;
 using CUE4Parse.UE4.Assets.Exports.Material;
 using CUE4Parse.UE4.Assets.Exports.StaticMesh;
@@ -52,12 +54,28 @@ internal static class Program
                 return args.Length == 0 ? 1 : 0;
             }
 
+            if (string.Equals(args[0], "material-metadata", StringComparison.OrdinalIgnoreCase))
+                return Extract(args.Skip(1).ToArray(), materialMetadataOnly: true);
+            if (string.Equals(args[0], "mesh-metadata", StringComparison.OrdinalIgnoreCase))
+                return Extract(args.Skip(1).ToArray(), metadataOnly: true);
             if (string.Equals(args[0], "extract", StringComparison.OrdinalIgnoreCase))
                 return Extract(args.Skip(1).ToArray());
             if (string.Equals(args[0], "index", StringComparison.OrdinalIgnoreCase))
                 return BuildIndex(args.Skip(1).ToArray());
             if (string.Equals(args[0], "reindex", StringComparison.OrdinalIgnoreCase))
                 return ReindexCommand(args.Skip(1).ToArray());
+            if (string.Equals(args[0], "shader-records", StringComparison.OrdinalIgnoreCase))
+                return ShaderRecordExport.Run(args.Skip(1).ToArray());
+            if (string.Equals(args[0], "material-shadermaps", StringComparison.OrdinalIgnoreCase))
+                return MaterialShaderMapExport.Run(args.Skip(1).ToArray());
+            if (string.Equals(args[0], "texture-raw", StringComparison.OrdinalIgnoreCase))
+                return TextureRawExport.Run(args.Skip(1).ToArray());
+            if (string.Equals(args[0], "level-inputs", StringComparison.OrdinalIgnoreCase))
+                return LevelInputsExport.Run(args.Skip(1).ToArray());
+            if (string.Equals(args[0], "map-export", StringComparison.OrdinalIgnoreCase))
+                return MapBundleExport.Run(args.Skip(1).ToArray());
+            if (string.Equals(args[0], "map-catalog", StringComparison.OrdinalIgnoreCase))
+                return MapCatalogExport.Run(args.Skip(1).ToArray());
 
             Log.Error("Unknown command '{Cmd}'. Expected: extract, index, reindex", args[0]);
             PrintHelp();
@@ -173,13 +191,15 @@ internal static class Program
         return 0;
     }
 
-    private static int Extract(string[] args)
+    private static int Extract(string[] args, bool metadataOnly = false, bool materialMetadataOnly = false)
     {
         string gameDir = "";
         string usmap = "";
         string outDir = "";
         var paths = new List<string>();
         var indexPaths = new List<string>();
+        var modelFiles = new List<string>();
+        var materialFiles = new List<string>();
         string indexDir = "";
 
         for (var i = 0; i < args.Length; i++)
@@ -206,6 +226,12 @@ internal static class Program
                 case "--path":
                     paths.Add(Next().Replace('\\', '/'));
                     break;
+                case "--material-file":
+                    materialFiles.Add(Next());
+                    break;
+                case "--model-file":
+                    modelFiles.Add(Next());
+                    break;
                 case "--index":
                     indexPaths.Add(Next());
                     break;
@@ -226,20 +252,65 @@ internal static class Program
         if (paths.Count == 0)
             throw new ArgumentException("Pass at least one --path");
 
+        if (modelFiles.Count > 0 && (!metadataOnly || modelFiles.Count != paths.Count))
+            throw new ArgumentException("--model-file requires one exact file per mesh-metadata --path");
+        if (materialFiles.Count > 0 && (!materialMetadataOnly || materialFiles.Count != paths.Count))
+            throw new ArgumentException("--material-file requires one exact file per material-metadata --path");
         Directory.CreateDirectory(outDir);
         if (string.IsNullOrWhiteSpace(indexDir))
             indexDir = outDir;
         Directory.CreateDirectory(indexDir);
         PrepareCompression(gameDir);
-        var provider = OpenProvider(gameDir, usmap, paths, indexPaths, indexDir, outDir);
+        var provider = (metadataOnly || materialMetadataOnly) ? OpenMetadataProvider(gameDir, usmap, paths, indexPaths, indexDir, materialTextureClosure: materialMetadataOnly)
+            : OpenProvider(gameDir, usmap, paths, indexPaths, indexDir, outDir);
         try
         {
-            return ExportQueued(provider, paths, outDir);
+            if (materialMetadataOnly) return ExportMaterialMetadata(provider, paths, outDir, GameBuild.Read(gameDir), materialFiles, usmap);
+            return metadataOnly ? ExportMeshMetadata(provider, paths, outDir, GameBuild.Read(gameDir), modelFiles)
+                : ExportQueued(provider, paths, outDir, GameBuild.Read(gameDir), usmap);
         }
         finally
         {
             provider.Dispose();
         }
+    }
+
+    private static AbstractVfsFileProvider OpenMetadataProvider(
+        string gameDir, string usmap, List<string> paths, List<string> indexPaths, string indexDir, bool materialTextureClosure = false)
+    {
+        if (materialTextureClosure)
+        {
+            // Inherited textures can live outside the root MI's selective
+            // container set. Full mount is read-only and metadata-only here;
+            // no browser/index/preview writes and no image encoder runs.
+            var all = CreateShell(gameDir);
+            all.ReadShaderMaps = false;
+            all.MappingsContainer = new FileUsmapTypeMappingsProvider(usmap);
+            MountEverything(all);
+            Log.Information("Material/texture metadata full dependency mount; no mesh/image encoding or preview/index writes");
+            return all;
+        }
+
+        // Metadata warmup never generates previews, faux browser paths or new indexes.
+        var index = SelectIndex(gameDir, indexDir, indexPaths, GameBuild.Read(gameDir));
+        if (index is not null && index.TryPrepare(paths, out var prepared, out var hits))
+        {
+            // Only provider mount selection uses prepared aliases. Keep caller
+            // request/model-file pairs in their original exact order.
+            var selective = TrySelective(gameDir, usmap, prepared, index, hits);
+            if (selective is not null)
+            {
+                selective.ReadShaderMaps = false;
+                Log.Information("Metadata-only selective mount; no preview/index writes");
+                return selective;
+            }
+        }
+        var full = CreateShell(gameDir);
+        full.ReadShaderMaps = false;
+        full.MappingsContainer = new FileUsmapTypeMappingsProvider(usmap);
+        MountEverything(full);
+        Log.Information("Metadata-only full mount; no preview/index writes");
+        return full;
     }
 
     private static AbstractVfsFileProvider OpenProvider(
@@ -731,13 +802,12 @@ internal static class Program
         {
             if (FindPackage(provider, path) != null)
             {
-                if (seen.Add(path))
+                if (seen.Add(PakIndex.PackageIdentity(path)))
                     next.Add(path);
                 continue;
             }
 
             var prefixes = PakIndex.Candidates(path).ToList();
-            var added = 0;
             foreach (var key in provider.Files.Keys)
             {
                 if (!key.EndsWith(".uasset", StringComparison.OrdinalIgnoreCase))
@@ -756,11 +826,9 @@ internal static class Program
                     }
                 }
 
-                if (!match || !seen.Add(without))
+                if (!match || !seen.Add(PakIndex.PackageIdentity(without)))
                     continue;
                 next.Add(without.Replace('\\', '/'));
-                if (++added >= 128)
-                    break;
             }
         }
 
@@ -793,6 +861,35 @@ internal static class Program
         if (leaf.Contains("CardsAtlas", StringComparison.OrdinalIgnoreCase))
             return true;
         return false;
+    }
+
+    internal static Func<int> AttachTextureMetadataWriter(
+        ExportSession session, AbstractVfsFileProvider provider, string outDir,
+        GameBuild.Info build, string? usmap)
+    {
+        var mappingHash = TextureMetadataDocument.MappingHash(usmap);
+        var failures = 0;
+        // Session hooks cover explicit textures AND textures dynamically queued
+        // by material/mesh dependencies. Run before any exporter/cache shortcut.
+        session.OnExportBegin += objectPath =>
+        {
+            try
+            {
+                var dot = objectPath.LastIndexOf('.');
+                var name = dot < 0 ? objectPath[(objectPath.LastIndexOf('/') + 1)..] : objectPath[(dot + 1)..];
+                var texture = FindPackage(provider, objectPath)?.GetExports().OfType<UTexture>()
+                    .SingleOrDefault(value => value.Name.Equals(name, StringComparison.Ordinal));
+                if (texture is null) return;
+                if (TextureMetadataExport.Write(texture, outDir, build.BuildId, build.DepotManifest, mappingHash))
+                    Log.Information("native texture metadata {Path}", objectPath);
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Increment(ref failures);
+                Log.Error(ex, "native texture metadata failed {Path}", objectPath);
+            }
+        };
+        return () => Volatile.Read(ref failures);
     }
 
     private static int QueueSiblingTextures(
@@ -868,10 +965,11 @@ internal static class Program
         }
     }
 
-    private static int QueueMasterMaterialTextures(
+    internal static int QueueMasterMaterialTextures(
         UMaterialInterface material,
         ExportSession session,
-        HashSet<string> visitedMaterials)
+        HashSet<string> visitedMaterials,
+        string outDir)
     {
         // AllLayersNoRef preserves the authored MI parameter names. Master
         // materials can also reference textures directly in their expressions,
@@ -882,6 +980,16 @@ internal static class Program
              cursor is not null && visitedMaterials.Add(cursor.GetPathName());
              cursor = (cursor as UMaterialInstance)?.Parent)
         {
+            // The conversion JSON flattens parameters and drops Parent/default
+            // sampler names. Keep authoritative named data beside it so enemy
+            // presets can inherit NMR/Detail without suffix-based guesses.
+            var rel = CanonicalGamePackagePath(cursor.GetPathName());
+            var sourceFile = Path.Combine(outDir, rel.Replace('/', Path.DirectorySeparatorChar) + ".arc-material.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(sourceFile)!);
+            var source = JObject.FromObject(cursor);
+            source.Remove("LoadedMaterialResources");
+            source.Remove("CachedData");
+            File.WriteAllText(sourceFile, new JObject { ["Exports"] = new JArray(source) }.ToString(Formatting.Indented));
             if (cursor is not UMaterial master) continue;
             foreach (var texture in master.ReferencedTextures)
             {
@@ -902,10 +1010,11 @@ internal static class Program
         return queued;
     }
 
-    private static int QueueMeshMasterTextures(
+    internal static int QueueMeshMasterTextures(
         UObject mesh,
         ExportSession session,
-        HashSet<string> visitedMaterials)
+        HashSet<string> visitedMaterials,
+        string outDir)
     {
         var materials = mesh switch
         {
@@ -919,7 +1028,7 @@ internal static class Program
             try
             {
                 if (reference?.Load<UMaterialInterface>() is { } material)
-                    queued += QueueMasterMaterialTextures(material, session, visitedMaterials);
+                    queued += QueueMasterMaterialTextures(material, session, visitedMaterials, outDir);
             }
             catch (Exception ex)
             {
@@ -929,7 +1038,48 @@ internal static class Program
         return queued;
     }
 
-    private static int ExportQueued(AbstractVfsFileProvider provider, List<string> paths, string outDir)
+    private static int ExportMaterialMetadata(AbstractVfsFileProvider provider, List<string> paths, string outDir, GameBuild.Info build, List<string> files, string usmap)
+    {
+        if (paths.Count > 4096) throw new ArgumentException("Material metadata request budget exceeded");
+        var count = 0;
+        var textureFacts = 0;
+        var mappingHash = TextureMetadataDocument.MappingHash(usmap);
+        for (var index = 0; index < paths.Count; index++)
+        {
+            var package = FindPackage(provider, paths[index]);
+            var materials = package?.GetExports().OfType<UMaterialInterface>().ToArray() ?? [];
+            var selected = MaterialMetadataExport.SelectIndex(materials.Select(value => value.Name).ToArray(),
+                materials.Select(value => value.GetPathName()).ToArray(), paths[index]);
+            var material = materials[selected];
+            count += MaterialMetadataExport.Write(material, paths[index], outDir, files.Count > 0 ? files[index] : null, build);
+            var cachedFile = files.Count > 0 ? files[index] : null;
+            var sidecar = cachedFile is null
+                ? Path.Combine(outDir,CanonicalGamePackagePath(paths[index]).Replace('/',Path.DirectorySeparatorChar)+".arc-material.json")
+                : cachedFile.EndsWith(".arc-material.json",StringComparison.OrdinalIgnoreCase) ? cachedFile : Path.ChangeExtension(cachedFile,".arc-material.json");
+            textureFacts += MaterialTextureMetadataExport.Write(material,
+                TextureMetadataExport.LogicalPackage(CanonicalGamePackagePath(paths[index])),outDir,sidecar,build,mappingHash);
+
+        }
+        Log.Information("Material metadata finished roots={Roots} nodes={Nodes} compact_textures={TextureFacts}; no mesh/image encoding or preview exports", paths.Count, count, textureFacts);
+        return 0;
+    }
+
+    private static int ExportMeshMetadata(AbstractVfsFileProvider provider, List<string> paths, string outDir, GameBuild.Info build, List<string> modelFiles)
+    {
+        var ok = true;
+        for (var index = 0; index < paths.Count; index++)
+        {
+            var path = paths[index];
+            var package = FindPackage(provider, path);
+            var mesh = package?.GetExports().OfType<USkinnedAsset>().FirstOrDefault();
+            if (mesh is null) { Log.Error("Native skinned mesh not found {Path}", path); ok = false; continue; }
+            var snapshot = MeshMaterialSlotsExport.Capture(mesh, CookedMountPath(NormalizePackagePath(path)).Trim('/'), build);
+            ok &= MeshMaterialSlotsExport.Write(snapshot, outDir, modelFiles.Count > 0 ? modelFiles[index] : null);
+        }
+        return ok ? 0 : 1;
+    }
+
+    private static int ExportQueued(AbstractVfsFileProvider provider, List<string> paths, string outDir, GameBuild.Info build, string usmap)
     {
         var options = new ExportOptions(
             meshFormat: EMeshFormat.UEFormat,
@@ -939,8 +1089,13 @@ internal static class Program
             exportMaterials: true,
             exportMorphTargets: true);
         var session = new ExportSession { MaxDegreeOfParallelism = Workers };
+        var animSession = new ExportSession { MaxDegreeOfParallelism = Workers };
+        var textureMetadataFailures = AttachTextureMetadataWriter(session, provider, outDir, build, usmap);
         var queued = 0;
+        var requiredExports = new RequiredExportStatus();
         var clothMetadataFailed = false;
+        var materialSlotSnapshots = new List<JObject>();
+        var materialModelFiles = new Dictionary<JObject, string>();
         var jsonPackages = new List<(IPackage Package, string Path)>();
         var visitedMaterials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         ExpandFromFiles(provider, paths);
@@ -950,10 +1105,21 @@ internal static class Program
             var package = FindPackage(provider, path);
             if (package is null)
             {
+                requiredExports.Observe(false);
                 Log.Error(
                     "load failed {Path} project={Project}",
                     NormalizePackagePath(path),
                     provider.ProjectName);
+                continue;
+            }
+
+            var anim = package.GetExports().OfType<UAnimSequence>().FirstOrDefault();
+            if (anim is not null)
+            {
+                // Poses for Blender: ActorX .psa (the UEFormat mesh session cannot write PSA)
+                animSession.Add(anim);
+                queued++;
+                Log.Information("queue anim {Name}", anim.Name);
                 continue;
             }
 
@@ -965,11 +1131,12 @@ internal static class Program
                 queued++;
                 Log.Information("queue {Type} {Name}", mesh.ExportType, mesh.Name);
                 queued += QueueSiblingTextures(provider, path, session);
-                queued += QueueMeshMasterTextures(mesh, session, visitedMaterials);
+                queued += QueueMeshMasterTextures(mesh, session, visitedMaterials, outDir);
                 var metadataStart = jsonPackages.Count;
                 QueueVisualParts(provider, path, jsonPackages);
                 if (mesh is USkinnedAsset skinned)
                 {
+                    materialSlotSnapshots.Add(MeshMaterialSlotsExport.Capture(skinned, CookedMountPath(NormalizePackagePath(path)).Trim('/'), build));
                     var wrapPath = ClothWrapExport.WrapMesh(jsonPackages.Skip(metadataStart).Select(value => value.Package), path);
                     if (!ClothWrapExport.Write(package, skinned, CookedMountPath(NormalizePackagePath(path)).Trim('/'), outDir, wrapPath))
                         clothMetadataFailed = true;
@@ -977,6 +1144,7 @@ internal static class Program
                         wrapPackage.GetExports().OfType<USkinnedAsset>().FirstOrDefault() is { } wrapMesh)
                     {
                         session.Add(wrapMesh);
+                        materialSlotSnapshots.Add(MeshMaterialSlotsExport.Capture(wrapMesh, CookedMountPath(NormalizePackagePath(wrapPath)).Trim('/'), build));
                         queued++;
                         if (!ClothWrapExport.Write(wrapPackage, wrapMesh, CookedMountPath(NormalizePackagePath(wrapPath)).Trim('/'), outDir))
                             clothMetadataFailed = true;
@@ -992,7 +1160,7 @@ internal static class Program
                 {
                     session.Add(material);
                     queued++;
-                    queued += QueueMasterMaterialTextures(material, session, visitedMaterials);
+                    queued += QueueMasterMaterialTextures(material, session, visitedMaterials, outDir);
                     Log.Information("queue {Type} {Name}", material.ExportType, material.Name);
                     continue;
                 }
@@ -1034,36 +1202,61 @@ internal static class Program
                 if (material is not null)
                 {
                     session.Add(material);
-                    queued += QueueMasterMaterialTextures(material, session, visitedMaterials);
+                    queued += QueueMasterMaterialTextures(material, session, visitedMaterials, outDir);
                 }
                 else Log.Warning("Authored material not mounted {Path}", reference);
             }
         }
 
         var wrote = false;
+        if (animSession.HasQueuedItems)
+        {
+            var animOptions = new ExportOptions(meshFormat: EMeshFormat.ActorX);
+            foreach (var result in animSession.RunAsync(outDir, animOptions).GetAwaiter().GetResult())
+            {
+                requiredExports.Observe(result.Success);
+                if (result.Success) { wrote = true; Log.Information("ok {Path}", result.ObjectPath); }
+                else Log.Error(result.Error, "export error {Path}", result.ObjectPath);
+            }
+        }
         if (session.HasQueuedItems)
         {
             var results = session.RunAsync(outDir, options).GetAwaiter().GetResult();
             foreach (var result in results)
             {
+                requiredExports.Observe(result.Success);
                 if (result.Success)
                 {
                     wrote = true;
                     Log.Information("ok {Path}", result.ObjectPath);
+                    foreach (var snapshot in materialSlotSnapshots.Where(snapshot => MeshMaterialSlotsExport.SameSource(snapshot, result.ObjectPath)))
+                    {
+                        var models = result.DiskFilePaths?.Where(file => file.EndsWith(".uemodel", StringComparison.OrdinalIgnoreCase)).ToArray() ?? [];
+                        if (models.Length == 1) materialModelFiles[snapshot] = models[0];
+                        else Log.Error("Expected one exact UEModel export result for {Path}", result.ObjectPath);
+                    }
                 }
                 else
                     Log.Error(result.Error, "export error {Path}", result.ObjectPath);
             }
         }
 
+        foreach (var snapshot in materialSlotSnapshots)
+        {
+            if (!materialModelFiles.TryGetValue(snapshot, out var exportedModel))
+            { Log.Error("Native slot metadata has no successful exact UEModel export result"); clothMetadataFailed = true; continue; }
+            if (!MeshMaterialSlotsExport.Write(snapshot, outDir, exportedModel)) clothMetadataFailed = true;
+        }
+
         foreach (var (package, path) in jsonPackages)
         {
             if (WritePackageJson(package, path, outDir))
                 wrote = true;
+            else requiredExports.Observe(false);
         }
 
-        Log.Information("Done queued={Queued} json={Json}", queued, jsonPackages.Count);
-        return wrote && !clothMetadataFailed ? 0 : 1;
+        Log.Information("Done queued={Queued} json={Json} required_failed={RequiredFailed}", queued, jsonPackages.Count, requiredExports.Failures);
+        return requiredExports.ExitCode(wrote, !clothMetadataFailed && textureMetadataFailures() == 0);
     }
 
     private static bool WritePackageJson(IPackage package, string packagePath, string outDir)
@@ -1090,7 +1283,7 @@ internal static class Program
         }
     }
 
-    private static CUE4Parse.UE4.Assets.IPackage? FindPackage(AbstractVfsFileProvider provider, string path)
+    internal static CUE4Parse.UE4.Assets.IPackage? FindPackage(AbstractVfsFileProvider provider, string path)
     {
         var pkgPath = NormalizePackagePath(path);
         if (provider.TryLoadPackage(pkgPath, out var package) && package is not null)
@@ -1109,6 +1302,15 @@ internal static class Program
             var remapped = "RemappedPlugins/Content/" + cooked[prefix.Length..];
             if (provider.TryLoadPackage(remapped, out package) && package is not null) return package;
         }
+        // A mounted plugin package (EmbarkScript/ClothingAssetTemplates/M_Character_ClothMaterial) is cooked
+        // under RemappedPlugins/<Plugin>/Content; its logical /<Plugin>/ form also resolves.
+        var parts = cooked.Split('/', 2);
+        if (parts.Length == 2 && !parts[1].StartsWith("Content/", StringComparison.OrdinalIgnoreCase) &&
+            !new[] { "PioneerGame", "RemappedPlugins", "Engine", "Game" }.Contains(parts[0], StringComparer.OrdinalIgnoreCase))
+        {
+            if (provider.TryLoadPackage("/" + cooked, out package) && package is not null) return package;
+            if (provider.TryLoadPackage("RemappedPlugins/" + parts[0] + "/Content/" + parts[1], out package) && package is not null) return package;
+        }
         var aliases = new HashSet<string>(PakIndex.Candidates(pkgPath), StringComparer.OrdinalIgnoreCase);
         foreach (var key in provider.Files.Keys)
         {
@@ -1118,13 +1320,23 @@ internal static class Program
         return null;
     }
 
-    private static TheiaFileProvider CreateShell(string gameDir)
+    internal static TheiaFileProvider CreateShell(string gameDir)
     {
         var version = new VersionContainer(EGame.GAME_ArcRaiders);
-        return new TheiaFileProvider(gameDir, SearchOption.AllDirectories, version);
+        var provider = new TheiaFileProvider(gameDir, SearchOption.AllDirectories, version, StringComparer.OrdinalIgnoreCase);
+        // CUE4Parse maps /Game to <ProjectName>/Content and names the project after
+        // a .uproject, else the first non-Engine path in parallel mount order. The paks
+        // carry no .uproject and pakchunk0 starts with RemappedPlugins/AIScript/, so
+        // some runs wrote /Game under RemappedPlugins/Content and lost soft texture paths.
+        const string projectFile = "PioneerGame/PioneerGame.uproject";
+        provider.Files.AddFiles(new Dictionary<string, GameFile>(provider.PathComparer)
+        {
+            [projectFile] = new StreamedGameFile(projectFile, Stream.Null, version),
+        });
+        return provider;
     }
 
-    private static int MountEverything(TheiaFileProvider provider)
+    internal static int MountEverything(TheiaFileProvider provider)
     {
         provider.Initialize();
         SubmitArcKey(provider);
@@ -1160,7 +1372,7 @@ internal static class Program
         provider.SubmitKey(new FGuid(), new FAesKey(keyBytes));
     }
 
-    private static void PrepareCompression(string gameDir)
+    internal static void PrepareCompression(string gameDir)
     {
         if (_compressionReady)
             return;
@@ -1265,6 +1477,10 @@ internal static class Program
     private static void PrintHelp()
     {
         var text = """
+            ArcPak.Export map-export --game-dir <Paks> --usmap <file.usmap> --path </Game/Maps/Map> --out <revision directory> [--traversal-only]
+            ArcPak.Export map-catalog --game-dir <Paks> --out <catalog.json> [--usmap <file.usmap>] [--index <index.json>]
+            ArcPak.Export material-metadata --game-dir <Paks> --usmap <file.usmap> --out <cache> --path <exact MI package> [--material-file <exact cached MI.json>]
+            ArcPak.Export mesh-metadata --game-dir <Paks> --usmap <file.usmap> --out <existing cache> --path <exact mesh package>
             ArcPak.Export extract --game-dir <Paks> --usmap <file.usmap> --out <cache> --path </Game/...> [--index <pak-index.bin>] [--index-dir <dir>]
             ArcPak.Export reindex --game-dir <Paks> --index-dir <dir> [--out <cache>] [--usmap <file.usmap>]
             ArcPak.Export index --game-dir <Paks> --out <pak-index.bin>

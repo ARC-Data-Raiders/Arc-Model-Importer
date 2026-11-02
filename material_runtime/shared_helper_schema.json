@@ -1,0 +1,709 @@
+{
+  "NormalFlipper": {
+    "inputs": [
+      {
+        "index": 0,
+        "name": "Color",
+        "identifier": "Socket_0",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.800000011920929,
+          0.800000011920929,
+          0.800000011920929,
+          1.0
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "name": "Color",
+        "identifier": "Socket_1",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.800000011920929,
+          0.800000011920929,
+          0.800000011920929,
+          1.0
+        ]
+      }
+    ]
+  },
+  "ColorMask_XYZ": {
+    "inputs": [
+      {
+        "index": 0,
+        "name": "ColorMask",
+        "identifier": "Socket_0",
+        "type": "NodeSocketColor",
+        "default_value": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "index": 1,
+        "name": "X_Green",
+        "identifier": "Socket_1",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.0,
+          1.0,
+          0.02132107876241207,
+          1.0
+        ]
+      },
+      {
+        "index": 2,
+        "name": "Roughness_X",
+        "identifier": "Socket_6",
+        "type": "NodeSocketFloat",
+        "default_value": 1.0
+      },
+      {
+        "index": 3,
+        "name": "Metal_X",
+        "identifier": "Socket_15",
+        "type": "NodeSocketBool",
+        "default_value": false
+      },
+      {
+        "index": 4,
+        "name": "Y_Blue",
+        "identifier": "Socket_2",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.0025575661566108465,
+          0.34985727071762085,
+          0.9021239280700684,
+          1.0
+        ]
+      },
+      {
+        "index": 5,
+        "name": "Roughness_Y",
+        "identifier": "Socket_7",
+        "type": "NodeSocketFloat",
+        "default_value": 1.0
+      },
+      {
+        "index": 6,
+        "name": "Metal_Y",
+        "identifier": "Socket_16",
+        "type": "NodeSocketBool",
+        "default_value": false
+      },
+      {
+        "index": 7,
+        "name": "Z_Pink",
+        "identifier": "Socket_3",
+        "type": "NodeSocketColor",
+        "default_value": [
+          1.0,
+          0.0,
+          0.9013116955757141,
+          1.0
+        ]
+      },
+      {
+        "index": 8,
+        "name": "Roughness_Z",
+        "identifier": "Socket_8",
+        "type": "NodeSocketFloat",
+        "default_value": 1.0
+      },
+      {
+        "index": 9,
+        "name": "Metal_Z",
+        "identifier": "Socket_17",
+        "type": "NodeSocketBool",
+        "default_value": false
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "name": "Mask_Color",
+        "identifier": "Socket_4",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.800000011920929,
+          0.800000011920929,
+          0.800000011920929,
+          1.0
+        ]
+      },
+      {
+        "index": 1,
+        "name": "Mask_Roughness",
+        "identifier": "Socket_5",
+        "type": "NodeSocketFloat",
+        "default_value": 0.0
+      },
+      {
+        "index": 2,
+        "name": "Mask_Metal",
+        "identifier": "Socket_18",
+        "type": "NodeSocketFloat",
+        "default_value": 0.0
+      }
+    ]
+  },
+  "CurvatureID_Override": {
+    "inputs": [
+      {
+        "index": 0,
+        "name": "Shader",
+        "identifier": "Socket_0",
+        "type": "NodeSocketShader"
+      },
+      {
+        "index": 1,
+        "name": "Override",
+        "identifier": "Socket_1",
+        "type": "NodeSocketShader"
+      },
+      {
+        "index": 2,
+        "name": "Material ID Map",
+        "identifier": "Socket_2",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      {
+        "index": 3,
+        "name": "Color N",
+        "identifier": "Socket_3",
+        "type": "NodeSocketInt",
+        "default_value": 6
+      },
+      {
+        "index": 4,
+        "name": "Softness",
+        "identifier": "Socket_4",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.0
+      },
+      {
+        "index": 5,
+        "name": "Enable",
+        "identifier": "Socket_5",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.0
+      },
+      {
+        "index": 6,
+        "name": "Debug",
+        "identifier": "Socket_6",
+        "type": "NodeSocketInt",
+        "default_value": 0
+      },
+      {
+        "index": 7,
+        "name": "Grid Scale",
+        "identifier": "Socket_7",
+        "type": "NodeSocketFloat",
+        "default_value": 8.0
+      },
+      {
+        "index": 8,
+        "name": "ColorMask",
+        "identifier": "Socket_8",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.5,
+          0.5,
+          0.5,
+          1.0
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "name": "Shader",
+        "identifier": "Socket_9",
+        "type": "NodeSocketShader"
+      }
+    ]
+  },
+  "Visor": {
+    "inputs": [
+      {
+        "index": 0,
+        "name": "ColorA",
+        "identifier": "Socket_0",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.3499999940395355,
+          0.3499999940395355,
+          0.3799999952316284,
+          1.0
+        ]
+      },
+      {
+        "index": 1,
+        "name": "ColorB",
+        "identifier": "Socket_1",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.550000011920929,
+          0.550000011920929,
+          0.5799999833106995,
+          1.0
+        ]
+      },
+      {
+        "index": 2,
+        "name": "ColorC",
+        "identifier": "Socket_2",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.75,
+          0.75,
+          0.7799999713897705,
+          1.0
+        ]
+      },
+      {
+        "index": 3,
+        "name": "DirtColor",
+        "identifier": "Socket_3",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.05729199945926666,
+          0.0333390012383461,
+          0.02655700035393238,
+          1.0
+        ]
+      },
+      {
+        "index": 4,
+        "name": "FresnelLow",
+        "identifier": "Socket_4",
+        "type": "NodeSocketFloat",
+        "default_value": 0.46399998664855957
+      },
+      {
+        "index": 5,
+        "name": "FresnelHigh",
+        "identifier": "Socket_5",
+        "type": "NodeSocketFloat",
+        "default_value": 1.2380000352859497
+      },
+      {
+        "index": 6,
+        "name": "Metallic",
+        "identifier": "Socket_6",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.3499999940395355
+      },
+      {
+        "index": 7,
+        "name": "Opacity",
+        "identifier": "Socket_7",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 1.0
+      },
+      {
+        "index": 8,
+        "name": "Alpha",
+        "identifier": "Socket_8",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.6499999761581421
+      },
+      {
+        "index": 9,
+        "name": "RoughnessModifier",
+        "identifier": "Socket_9",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.17599999904632568
+      },
+      {
+        "index": 10,
+        "name": "DirtAmount",
+        "identifier": "Socket_10",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.7519999742507935
+      },
+      {
+        "index": 11,
+        "name": "DirtSoftness",
+        "identifier": "Socket_11",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.20200000703334808
+      },
+      {
+        "index": 12,
+        "name": "DirtRoughness",
+        "identifier": "Socket_12",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.6449999809265137
+      },
+      {
+        "index": 13,
+        "name": "MaskDirt",
+        "identifier": "Socket_13",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 1.0
+      },
+      {
+        "index": 14,
+        "name": "VerticalStart",
+        "identifier": "Socket_14",
+        "type": "NodeSocketFloat",
+        "default_value": 1.0
+      },
+      {
+        "index": 15,
+        "name": "VerticalEnd",
+        "identifier": "Socket_15",
+        "type": "NodeSocketFloat",
+        "default_value": 0.0
+      },
+      {
+        "index": 16,
+        "name": "CircularPositionU",
+        "identifier": "Socket_16",
+        "type": "NodeSocketFloat",
+        "default_value": 0.5
+      },
+      {
+        "index": 17,
+        "name": "CircularPositionV",
+        "identifier": "Socket_17",
+        "type": "NodeSocketFloat",
+        "default_value": 0.5
+      },
+      {
+        "index": 18,
+        "name": "CircularScaleU",
+        "identifier": "Socket_18",
+        "type": "NodeSocketFloat",
+        "default_value": 1.0
+      },
+      {
+        "index": 19,
+        "name": "CircularScaleV",
+        "identifier": "Socket_19",
+        "type": "NodeSocketFloat",
+        "default_value": 1.0
+      },
+      {
+        "index": 20,
+        "name": "CircularSize",
+        "identifier": "Socket_20",
+        "type": "NodeSocketFloat",
+        "default_value": 1.0
+      },
+      {
+        "index": 21,
+        "name": "IOR",
+        "identifier": "Socket_21",
+        "type": "NodeSocketFloat",
+        "default_value": 1.0
+      },
+      {
+        "index": 22,
+        "name": "Transmission",
+        "identifier": "Socket_22",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 1.0
+      },
+      {
+        "index": 23,
+        "name": "Coat Weight",
+        "identifier": "Socket_23",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 1.0
+      },
+      {
+        "index": 24,
+        "name": "Coat Roughness",
+        "identifier": "Socket_24",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.10000000149011612
+      },
+      {
+        "index": 25,
+        "name": "Coat IOR",
+        "identifier": "Socket_25",
+        "type": "NodeSocketFloat",
+        "default_value": 1.5
+      },
+      {
+        "index": 26,
+        "name": "Sheen Weight",
+        "identifier": "Socket_26",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.5
+      },
+      {
+        "index": 27,
+        "name": "Sheen Roughness",
+        "identifier": "Socket_27",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.5
+      },
+      {
+        "index": 28,
+        "name": "Dirt Mask",
+        "identifier": "Socket_28",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.0
+      },
+      {
+        "index": 29,
+        "name": "Smudge",
+        "identifier": "Socket_29",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.0
+      },
+      {
+        "index": 30,
+        "name": "Dirt Normal",
+        "identifier": "Socket_30",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.5,
+          0.5,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "index": 31,
+        "name": "Use Dirt",
+        "identifier": "Socket_31",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.0
+      },
+      {
+        "index": 32,
+        "name": "Use Smudge",
+        "identifier": "Socket_32",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.0
+      },
+      {
+        "index": 33,
+        "name": "Use Dirt Normal",
+        "identifier": "Socket_33",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.0
+      },
+      {
+        "index": 34,
+        "name": "Base Color",
+        "identifier": "Socket_34",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      {
+        "index": 35,
+        "name": "Normal",
+        "identifier": "Socket_35",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.5,
+          0.5,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "index": 36,
+        "name": "Curvature ID",
+        "identifier": "Socket_36",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      {
+        "index": 37,
+        "name": "Use Base Color",
+        "identifier": "Socket_37",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.0
+      },
+      {
+        "index": 38,
+        "name": "Use Normal",
+        "identifier": "Socket_38",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.0
+      },
+      {
+        "index": 39,
+        "name": "Use Curvature",
+        "identifier": "Socket_39",
+        "type": "NodeSocketFloatFactor",
+        "default_value": 0.0
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "name": "BSDF",
+        "identifier": "Socket_40",
+        "type": "NodeSocketShader"
+      }
+    ]
+  },
+  "Decal LayerMask Gate": {
+    "inputs": [
+      {
+        "index": 0,
+        "name": "Material ID",
+        "identifier": "Socket_0",
+        "type": "NodeSocketFloat",
+        "default_value": 0.0
+      },
+      {
+        "index": 1,
+        "name": "LayerMask",
+        "identifier": "Socket_1",
+        "type": "NodeSocketFloat",
+        "default_value": 255.0
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "name": "Gate",
+        "identifier": "Socket_2",
+        "type": "NodeSocketFloat",
+        "default_value": 1.0
+      }
+    ]
+  },
+  "Decal LayerMask": {
+    "inputs": [
+      {
+        "index": 0,
+        "name": "Material ID",
+        "identifier": "Socket_0",
+        "type": "NodeSocketFloat",
+        "default_value": 0.0
+      },
+      {
+        "index": 1,
+        "name": "LayerMask",
+        "identifier": "Socket_1",
+        "type": "NodeSocketFloat",
+        "default_value": 255.0
+      },
+      {
+        "index": 2,
+        "name": "Alpha",
+        "identifier": "Socket_2",
+        "type": "NodeSocketFloat",
+        "default_value": 0.0
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "name": "Alpha",
+        "identifier": "Socket_3",
+        "type": "NodeSocketFloat",
+        "default_value": 0.0
+      }
+    ]
+  },
+  "Decal Data": {
+    "inputs": [
+      {
+        "index": 0,
+        "name": "Color",
+        "identifier": "Socket_0",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.5,
+          0.5,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "index": 1,
+        "name": "Alpha",
+        "identifier": "Socket_1",
+        "type": "NodeSocketFloat",
+        "default_value": 0.0
+      },
+      {
+        "index": 2,
+        "name": "Mask",
+        "identifier": "Socket_8",
+        "type": "NodeSocketFloat",
+        "default_value": 0.0
+      }
+    ],
+    "outputs": [
+      {
+        "index": 0,
+        "name": "Normal",
+        "identifier": "Socket_2",
+        "type": "NodeSocketColor",
+        "default_value": [
+          0.5,
+          0.5,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "index": 1,
+        "name": "Roughness",
+        "identifier": "Socket_3",
+        "type": "NodeSocketFloat",
+        "default_value": 0.5
+      },
+      {
+        "index": 2,
+        "name": "Metallic",
+        "identifier": "Socket_4",
+        "type": "NodeSocketFloat",
+        "default_value": 0.0
+      },
+      {
+        "index": 3,
+        "name": "Nx",
+        "identifier": "Socket_5",
+        "type": "NodeSocketFloat",
+        "default_value": 0.0
+      },
+      {
+        "index": 4,
+        "name": "Ny",
+        "identifier": "Socket_6",
+        "type": "NodeSocketFloat",
+        "default_value": 0.0
+      },
+      {
+        "index": 5,
+        "name": "Nz",
+        "identifier": "Socket_7",
+        "type": "NodeSocketFloat",
+        "default_value": 1.0
+      }
+    ]
+  }
+}

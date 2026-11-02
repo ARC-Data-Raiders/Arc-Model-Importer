@@ -7,9 +7,9 @@ custom property.
 
 Two things are deliberately different from a Niagara playback:
 
-*   **No invented motion.** Module inputs (spawn rate, lifetime, velocity) are
-    compiled into VectorVM / DXBC and are absent from the cook, so particle
-    movement cannot be recovered from JSON and is not guessed.
+*   **No invented motion.** Particle motion is not executed here. Compiled
+    VectorVM evidence is retained for offline recovery; GPU programs require
+    shader extraction.
 *   **Real curves.** Curve data interfaces carry the baked ``ShaderLUT`` the GPU
     sampled, so those become genuine F-curves (see ``niagara_curves``).
 
@@ -32,6 +32,7 @@ from pathlib import Path
 import bpy
 
 from . import niagara_curves
+from . import niagara_ir
 
 RENDERER_TYPES = {
     "NiagaraSpriteRendererProperties": "sprite",
@@ -212,7 +213,8 @@ def di_ir(export):
 def emitter_ir(export, renderers_by_outer):
     props = export.get("Properties") or {}
     versions = props.get("VersionData") or []
-    version = versions[0] if isinstance(versions, list) and versions else {}
+    selected, selection = niagara_ir.select_emitter_version(props)
+    version = versions[selected] if selected is not None else {}
 
     stages = [leaf for leaf in
               (ref_leaf(s) for s in version.get("SimulationStages") or []) if leaf]
@@ -220,7 +222,9 @@ def emitter_ir(export, renderers_by_outer):
     return {
         "name": props.get("UniqueEmitterName") or export.get("Name"),
         "export": export.get("Name"),
-        "simTarget": SIM_TARGET.get(version.get("SimTarget"), version.get("SimTarget")),
+        "simTarget": niagara_ir.normalize_enum(version.get("SimTarget"), SIM_TARGET),
+        "selectedVersionIndex": selected,
+        "versionSelection": selection,
         "localSpace": version.get("bLocalSpace", False),
         "determinism": version.get("bDeterminism", False),
         "randomSeed": version.get("RandomSeed"),
@@ -280,6 +284,7 @@ def user_params(system_props):
 
 def system_ir(json_path):
     """Binding-level description of one cooked Niagara system."""
+    evidence = niagara_ir.extract_file(json_path)
     exports = load_exports(json_path)
     if not exports:
         raise ValueError(f"no exports in {Path(json_path).name}")
@@ -321,6 +326,7 @@ def system_ir(json_path):
     return {
         "system": Path(json_path).stem,
         "sourceJson": str(json_path),
+        "compiledEvidence": evidence,
         "emitters": emitters,
         "orphanRenderers": orphans,
         "userParams": user_params((system_export or {}).get("Properties") or {}),
@@ -386,7 +392,7 @@ def bake_curves(obj, payloads, stats):
     Interpolation is LINEAR: the LUT is already a dense resample of the source
     curve, so Bezier smoothing would invent overshoot the GPU never produced.
     """
-    fps = bpy.context.scene.render.fps or 24
+    fps = (bpy.context.scene.render.fps or 24) / (bpy.context.scene.render.fps_base or 1.0)
     baked = 0
 
     for index, payload in enumerate(payloads or ()):
@@ -513,9 +519,9 @@ def build_renderer(rend, emitter_obj, asset_root, cache, stats):
                 extra.parent = emitter_obj
             scale = entry.get("scale") or {}
             if isinstance(scale, dict):
-                obj.scale = (scale.get("X", 1.0) or 1.0,
-                             scale.get("Y", 1.0) or 1.0,
-                             scale.get("Z", 1.0) or 1.0)
+                obj.scale = (scale.get("X", 1.0),
+                             scale.get("Y", 1.0),
+                             scale.get("Z", 1.0))
             pivot = entry.get("pivotOffset") or {}
             if isinstance(pivot, dict):
                 obj.location = (pivot.get("X", 0.0) * UE_TO_M,
@@ -602,6 +608,9 @@ def build_system(ir, asset_root=None, bake=True, stats=None):
         "sourceJson": ir.get("sourceJson"),
         "userParamDefaults": defaults,
         "userParamNames": [p["name"] for p in ir.get("userParams") or []],
+        "sourceSha256": (ir.get("compiledEvidence", {}).get("source") or {}).get("sha256"),
+        "scriptCount": len(ir.get("compiledEvidence", {}).get("scripts", [])),
+        "simulationStatus": "not-executed",
     })
 
     for emitter in ir["emitters"]:
@@ -628,8 +637,10 @@ def build_system(ir, asset_root=None, bake=True, stats=None):
         build_renderer(rend, root, asset_root, cache, stats)
         stats["renderers"] = stats.get("renderers", 0) + 1
 
-    missing = ["module inputs: spawn rate / lifetime / velocity "
-               "(compiled into VectorVM / DXBC, absent from the cook)"]
+    scripts = ir.get("compiledEvidence", {}).get("scripts", [])
+    stats["scriptsRetained"] = len(scripts)
+    stats["vmProgramsRetained"] = sum(s["bytecode"]["state"] == "present" for s in scripts)
+    missing = ["particle simulation not executed (compiled evidence retained for offline recovery)"]
     if not defaults:
         missing.append("no decoded User.* defaults")
     if any(e.get("simulationStages") for e in ir["emitters"]):
@@ -653,112 +664,31 @@ def import_ns_json(json_path, asset_root=None, bake=True):
 
 def draw_niagara_fx_box(layout, context) -> None:
     from . import niagara_catalog as ncat
+    from .ui import _collapsible
 
     scene = context.scene
-    col = layout.column(align=True)
-
-    # --- paths ---------------------------------------------------------------
-    col.prop(scene, "arc_ns_catalog_root", text="Catalog Folder")
-    col.prop(scene, "arc_ns_asset_root", text="Asset Root")
-    if hasattr(scene, "arc_ns_bake_curves"):
-        col.prop(scene, "arc_ns_bake_curves")
-
     catalog_root = getattr(scene, "arc_ns_catalog_root", "") or ""
-    stats = ncat.catalog_stats(catalog_root)
-    root = stats.get("catalog_root") or ""
-    total = int(stats.get("total") or 0)
-    with_lut = int(stats.get("with_lut") or 0)
-
-    if root:
-        col.label(
-            text="Catalog: {total} NS  ·  {lut} with ShaderLUT  ·  {folder}".format(
-                total=total,
-                lut=with_lut,
-                folder=os.path.basename(root.rstrip("/\\")) or root,
-            ),
-            icon="CHECKMARK" if total else "INFO",
-        )
-    else:
-        col.label(
-            text="Set Catalog Folder or PioneerGame Folder (…/Effects)",
-            icon="INFO",
-        )
-    if total and with_lut == 0:
-        col.label(
-            text="No ShaderLUT in these files — use niagara-ns-dump for curves",
-            icon="ERROR",
-        )
-
-    # --- searchable list -----------------------------------------------------
-    if hasattr(scene, "arc_ns_lut_only"):
-        col.prop(scene, "arc_ns_lut_only", text="LUT dumps only")
-
-    search_row = col.row(align=True)
-    if hasattr(scene, "arc_ns_search"):
-        search_row.prop(scene, "arc_ns_search", text="", icon="VIEWZOOM")
-        if scene.arc_ns_search:
-            search_row.operator("arc_outfits.clear_ns_search", text="", icon="X")
-
-    query = getattr(scene, "arc_ns_search", "") or ""
-    lut_only = bool(getattr(scene, "arc_ns_lut_only", False))
     selected = getattr(scene, "arc_ns_selected", "") or ""
-
-    if len(query.strip()) < 2:
-        col.label(text="Type 2+ characters to search (shield, breakable, …)", icon="INFO")
-        matches = []
-        match_total = 0
-    else:
-        matches = ncat.filter_entries(
-            query, catalog_root=catalog_root, lut_only=lut_only, limit=10
-        )
-        match_total = ncat.count_entries(
-            query, catalog_root=catalog_root, lut_only=lut_only
-        )
-
-    if matches:
-        list_box = col.box()
-        for entry in matches:
-            key = entry.get("key") or ""
-            label = ncat.display_label(entry)
-            row = list_box.row()
-            icon = "RADIOBUT_ON" if key == selected else "RADIOBUT_OFF"
-            op = row.operator("arc_outfits.select_ns", text=label[:64], icon=icon)
-            op.ns_key = key
-        if match_total > len(matches):
-            list_box.label(text=f"... and {match_total - len(matches)} more (refine search)")
-    elif query.strip():
-        if total == 0:
-            col.label(text="Catalog empty — set Catalog Folder to a dump of NS_*.json", icon="ERROR")
-        else:
-            col.label(text=f"No match in {total} systems", icon="INFO")
-
-    entry = ncat.get_entry(selected, catalog_root) if selected else None
-    if entry:
-        bits = [entry.get("stem") or selected]
-        if entry.get("folder"):
-            bits.append(entry["folder"])
-        bits.append("ShaderLUT" if entry.get("has_lut") else "no ShaderLUT")
-        col.label(text=" · ".join(bits)[:72])
-        col.operator(
-            "arc_outfits.import_niagara_fx",
-            text="Import Selected",
-            icon="PARTICLES",
-        )
-    else:
-        col.separator()
-        col.prop(scene, "arc_ns_json_path", text="Or NS JSON file")
-        col.operator(
-            "arc_outfits.import_niagara_fx",
-            text="Import NS File",
-            icon="FILEBROWSER",
-        )
-
-    if not psk_available():
-        col.label(text="PSK reader unavailable — meshes become placeholders", icon="INFO")
-
-    info = scene.get("arc_ns_last_report")
-    if info:
-        box = layout.box()
-        box.label(text="Last import", icon="INFO")
-        for line in str(info).splitlines():
-            box.label(text=line)
+    query = getattr(scene, "arc_ns_search", "") or ""
+    row = layout.row(align=True)
+    row.prop(scene, "arc_ns_search", text="", icon="VIEWZOOM")
+    if query:
+        row.operator("arc_outfits.clear_ns_search", text="", icon="X")
+    lut_only = bool(getattr(scene, "arc_ns_lut_only", False))
+    results = layout.box()
+    for entry in ncat.filter_entries(query, catalog_root=catalog_root, lut_only=lut_only, limit=3):
+        key = entry.get("key") or ""
+        icon = "RADIOBUT_ON" if key == selected else "RADIOBUT_OFF"
+        results.operator("arc_outfits.select_ns", text=ncat.display_label(entry)[:64], icon=icon).ns_key = key
+    layout.separator(factor=1.5)
+    layout.box().row().operator("arc_outfits.import_niagara_fx", text="Import Selected", icon="PARTICLES")
+    advanced = _collapsible(layout, "arc_ns_advanced", "Advanced", default_closed=True)
+    if advanced is not None:
+        advanced.prop(scene, "arc_ns_lut_only", text="LUT dumps only")
+        advanced.prop(scene, "arc_ns_bake_curves")
+        advanced.prop(scene, "arc_ns_json_path", text="Or NS JSON file")
+        advanced.operator("arc_outfits.import_niagara_fx", text="Import NS File", icon="FILEBROWSER").use_selected = False
+        advanced.prop(scene, "arc_ns_catalog_root", text="Catalog Folder")
+        advanced.prop(scene, "arc_ns_asset_root", text="Asset Root")
+        from . import niagara_playback
+        niagara_playback.draw_playback_box(advanced, context)

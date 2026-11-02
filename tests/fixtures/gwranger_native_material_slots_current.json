@@ -1,0 +1,125 @@
+{
+  "target": "PioneerGame/Content/Pioneer/Characters/Assets/GWRanger/UpperBody/SK_GWRanger_UpperBody",
+  "materialSlots": [
+    {
+      "index": 0,
+      "slot": "UpperBody",
+      "imported": null,
+      "material": "/Game/Pioneer/Characters/Assets/GWRanger/UpperBody/MI_UpperBody_UpperBody.MI_UpperBody_UpperBody"
+    },
+    {
+      "index": 1,
+      "slot": "UpperBody_Fur",
+      "imported": null,
+      "material": "/Game/Pioneer/Characters/Assets/GWRanger/UpperBody/MI_UpperBody_Fur.MI_UpperBody_Fur"
+    },
+    {
+      "index": 2,
+      "slot": "Fur",
+      "imported": null,
+      "material": "/Game/Pioneer/Characters/Assets/GWRanger/UpperBody/MI_UpperBody_Fur.MI_UpperBody_Fur"
+    },
+    {
+      "index": 3,
+      "slot": "UpperBody_FurLOD",
+      "imported": null,
+      "material": "/Game/Pioneer/Characters/Assets/GWRanger/UpperBody/MI_UpperBody_FurLOD.MI_UpperBody_FurLOD"
+    }
+  ],
+  "lods": [
+    {
+      "lod": 0,
+      "sections": [
+        {
+          "section": 0,
+          "materialIndex": 0,
+          "BaseIndex": 0,
+          "NumTriangles": 12095
+        },
+        {
+          "section": 1,
+          "materialIndex": 1,
+          "BaseIndex": 36285,
+          "NumTriangles": 166
+        },
+        {
+          "section": 2,
+          "materialIndex": 2,
+          "BaseIndex": 36783,
+          "NumTriangles": 996
+        }
+      ]
+    },
+    {
+      "lod": 1,
+      "sections": [
+        {
+          "section": 0,
+          "materialIndex": 0,
+          "BaseIndex": 0,
+          "NumTriangles": 5965
+        },
+        {
+          "section": 1,
+          "materialIndex": 1,
+          "BaseIndex": 17895,
+          "NumTriangles": 164
+        }
+      ]
+    },
+    {
+      "lod": 2,
+      "sections": [
+        {
+          "section": 0,
+          "materialIndex": 0,
+          "BaseIndex": 0,
+          "NumTriangles": 2948
+        },
+        {
+          "section": 1,
+          "materialIndex": 1,
+          "BaseIndex": 8844,
+          "NumTriangles": 116
+        }
+      ]
+    },
+    {
+      "lod": 3,
+      "sections": [
+        {
+          "section": 0,
+          "materialIndex": 0,
+          "BaseIndex": 0,
+          "NumTriangles": 1467
+        },
+        {
+          "section": 1,
+          "materialIndex": 1,
+          "BaseIndex": 4401,
+          "NumTriangles": 64
+        }
+      ]
+    },
+    {
+      "lod": 4,
+      "sections": [
+        {
+          "section": 0,
+          "materialIndex": 0,
+          "BaseIndex": 0,
+          "NumTriangles": 696
+        },
+        {
+          "section": 1,
+          "materialIndex": 1,
+          "BaseIndex": 2088,
+          "NumTriangles": 39
+        }
+      ]
+    }
+  ],
+  "lodInfo": null,
+  "source": "Current installed native USkeletalMesh directly, no conversion or Blender",
+  "limits": "UEModel source drops MaterialIndex when serializing per-render-section MATERIALS; all native section indices captured separately here."
+}

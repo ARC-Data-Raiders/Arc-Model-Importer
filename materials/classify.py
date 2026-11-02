@@ -111,6 +111,9 @@ def _is_weapon_emissive_light_mi(mi_stem_lower: str) -> bool:
     """
     if not mi_stem_lower:
         return False
+    # MI_WinExt_03_Glass_A_NoEmissive and M_CraftingStation_Lamp_02_NonEmissive are the unlit variants.
+    if re.search(r"(^|_)non?_?emissive", mi_stem_lower):
+        return False
     if "emissive" in mi_stem_lower:
         return True
     # Token-boundary "light": _light_ / _light / light_ at stem edges — not "lightdrone"
@@ -218,9 +221,15 @@ FAMILY_EMISSIVE = "emissive"
 
 FAMILY_SCAN = "scan_display"
 
+FAMILY_CRT = "crt_display"
+
 FAMILY_FLIPBOOK = "flipbook_display"
 
 FAMILY_DECAL = "decal"
+
+# Enemy presets have their own authored material behavior. Keep this separate
+# from the firearm preset graph and from prop/environment surface families.
+FAMILY_ENEMY = "enemy"
 
 # Stamp on map-mask / branding / CA+NOH decal graphs after UseAlphaForMask fix.
 _MAP_DECAL_MASK_SETUP_V = "v2"
@@ -822,6 +831,7 @@ def classify_mi_family(mi: dict, mi_stem_lower: str = "", slot_lower: str = "") 
     from .enemy import _is_enemy_scan_display_mi
     stem = (mi_stem_lower or "").lower()
     slot = (slot_lower or "").lower()
+    parent_l = str(mi.get("parent") or "").lower()
 
     # Texture-backed displays use their authored atlas, not the unrelated
     # procedural enemy ScanDisplay LED grid selected by a "screen" name.
@@ -831,8 +841,16 @@ def classify_mi_family(mi: dict, mi_stem_lower: str = "", slot_lower: str = "") 
         return FAMILY_EMISSIVE
     if _is_enemy_scan_display_mi(mi, stem, slot):
         return FAMILY_SCAN
+    # CRT surface instances have animated screen parameters and authored display
+    # textures. Keep them separate from the enemy scanner's procedural LED grid.
+    if "crt_screen" in stem or "m_crt_screen" in parent_l:
+        return FAMILY_CRT
     if "screen" in stem and "sunscreen" not in stem:
         return FAMILY_SCAN
+    # EnemyPreset parents are a distinct game shader family. In particular,
+    # OX-only enemy MIs must not fall through the generic simple/prop routes.
+    if "enemypreset" in parent_l:
+        return FAMILY_ENEMY
     # Glass slots first (BrokenGlass / WindowPane) — before Decal name checks.
     if _is_glass_env_mi(mi, stem, slot):
         return FAMILY_GLASS

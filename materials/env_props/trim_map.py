@@ -171,7 +171,7 @@ def setup_trim_map_material(mat, mi_path: str, psk_path: str = ""):
 
     if base_noh is not None:
         noh_node = _new_tex_image(
-            nodes, base_noh, "Painted NOH", (COL_TEX, y_n), non_color=True,
+            nodes, base_noh, "Painted NOH", (COL_TEX, y_n), non_color=True, normal=True,
         )
         links.new(
             _tiled_vector(nodes, links, base_tile, (COL_TEX - 350, y_n), f"Base ×{base_tile:g}"),
@@ -250,7 +250,7 @@ def setup_trim_map_material(mat, mi_path: str, psk_path: str = ""):
             )
         if wear_noh is not None and normal_sock is not None:
             wn_node = _new_tex_image(
-                nodes, wear_noh, "Wear NOH", (COL_TEX, y_wear - 620), non_color=True,
+                nodes, wear_noh, "Wear NOH", (COL_TEX, y_wear - 620), non_color=True, normal=True,
             )
             links.new(
                 _tiled_vector(
