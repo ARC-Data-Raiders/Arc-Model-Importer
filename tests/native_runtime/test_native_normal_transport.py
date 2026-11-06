@@ -32,6 +32,13 @@ class Mesh(dict):
             start=len(self.loops)
             self.loops.extend(SimpleNamespace(vertex_index=v) for v in face)
             self.polygons.append(SimpleNamespace(loop_start=start,loop_total=len(face),material_index=7,use_smooth=True))
+    def normals_split_custom_set(self,values):
+        values=[tuple(v) for v in values]
+        if len(values)!=len(self.loops):raise ValueError('wrong corner count')
+        old=self.attributes.get('custom_normal')
+        if old is not None:self.attributes.remove(old)
+        attr=self.attributes.new('custom_normal','INT16_2D','CORNER')
+        for item,v in zip(attr.data,values):item.vector=v
     def update(self):
         if self.fail_updates:self.fail_updates-=1;raise RuntimeError('simulated Blender update failure')
     @property
@@ -52,16 +59,26 @@ class TestFloatNormalTransport(unittest.TestCase):
     def test_direct_float_write_preserves_geometry_flags_and_unrelated_data(self):
         m=mesh();m.attributes.new('Color','FLOAT_VECTOR','POINT');before=[v.co for v in m.vertices]
         result=write_corner_normals(m,[(0,0,2),(0,3,4),(3,0,4)],bpy_module=self.host)
-        self.assertEqual(result['storage'],'custom_normal:CORNER:FLOAT_VECTOR');self.assertFalse(result['legacy_fallback'])
+        self.assertEqual(result['storage'],'custom_normal:CORNER:INT16_2D');self.assertFalse(result['legacy_fallback'])
         self.assertEqual(m.corner_normals[1].vector,(0.,.6,.8));self.assertEqual([v.co for v in m.vertices],before)
         self.assertEqual(m.polygons[0].material_index,7);self.assertIn('Color',m.attributes);self.assertEqual(self.host.data.meshes.active,[])
-    def test_unsupported_host_and_legacy_data_fail_before_mutating_original(self):
+    def test_unsupported_host_fails_before_mutating_original(self):
         m=mesh()
         with self.assertRaises(NormalTransportUnavailable):write_corner_normals(m,[(0,0,1)]*3,bpy_module=host((4,5,0)))
         self.assertNotIn('custom_normal',m.attributes)
-        old=m.attributes.new('custom_normal','INT16_2D','CORNER')
-        with self.assertRaises(NormalTransportUnavailable):write_corner_normals(m,[(0,0,1)]*3,bpy_module=self.host)
-        self.assertIs(m.attributes['custom_normal'],old)
+    def test_free_float_layer_is_replaced_by_fan_space_storage(self):
+        m=mesh();old=m.attributes.new('custom_normal','FLOAT_VECTOR','CORNER')
+        write_corner_normals(m,[(1,0,0)]*3,bpy_module=self.host)
+        self.assertIsNot(m.attributes['custom_normal'],old);self.assertEqual(m.attributes['custom_normal'].data_type,'INT16_2D')
+        self.assertEqual([v.vector for v in m.corner_normals],[(1.,0.,0.)]*3)
+    def test_zero_area_faces_are_skipped_by_readback(self):
+        m=mesh();m.polygons[0].area=0.
+        m.normals_split_custom_set_orig=m.normals_split_custom_set
+        m.normals_split_custom_set=lambda values:m.normals_split_custom_set_orig([(0.,1.,0.)]*len(values))
+        result=write_corner_normals(m,[(1,0,0)]*3,bpy_module=self.host)
+        self.assertEqual(result['unchecked_degenerate_corners'],3)
+        m.polygons[0].area=1.
+        with self.assertRaises(NormalTransportUnavailable):write_corner_normals(m,[(1,0,0)]*3,bpy_module=self.host)
     def test_invalid_input_and_update_failure_are_atomic(self):
         m=mesh();write_corner_normals(m,[(0,0,1)]*3,bpy_module=self.host)
         for invalid in ([(0,0,1)],[(0,0,0)]*3,[(math.nan,0,1)]*3):

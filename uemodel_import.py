@@ -653,7 +653,7 @@ def _preserve_lod_normal_targets(obj, lod):
     from .material_runtime.deformation import preserve_normal_source, NORMAL_SOURCE_VERSION
     current = mesh.attributes.get("custom_normal")
     if (lod.normals is None or len(lod.normals) != len(mesh.vertices)
-            or current is None or current.data_type != "FLOAT_VECTOR"):
+            or current is None or current.domain != "CORNER"):
         obj["arc_normal_delta_note"] = "Native float normal source unavailable; reimport this mesh with the current UEModel reader"
         return
     for target in targets:

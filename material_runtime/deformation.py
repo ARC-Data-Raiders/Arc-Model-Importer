@@ -264,34 +264,62 @@ def _require_float_normal_capability(bpy_module):
     return host
 
 
-def write_corner_normals(mesh,normals,*,bpy_module=None):
-    """Write direct CORNER/FLOAT_VECTOR normals, with no legacy codec fallback.
+CORNER_NORMAL_TOLERANCE_DEGREES=1.
+# Faces smaller than this fraction of the mesh's mean face area have no stable
+# smooth frame (measured: Cosmonaut straps, 118 bad corners, all area <= 8.5e-12
+# against a 3e-05 median); their corners are excluded from the readback check.
+DEGENERATE_FACE_AREA_RATIO=1e-6
 
-    Validate before mutation; refuse legacy-layer migration without native reimport.
-    Existing float data is restored if a write/readback check fails. Geometry,
-    polygon material indices, smooth flags, UVs and unrelated attributes are intact.
+
+def _corner_errors(expected,actual):
+    out=[]
+    for x,y in zip(expected,actual):
+        lx=math.hypot(*x);ly=math.hypot(*y)
+        if min(lx,ly)<1e-12:out.append(180.);continue
+        out.append(math.degrees(math.acos(max(-1.,min(1.,sum(i*j for i,j in zip(x,y))/(lx*ly))))))
+    return out
+
+
+def write_corner_normals(mesh,normals,*,bpy_module=None):
+    """Write display corner normals in Blender's fan-space custom normal storage.
+
+    Fan-space normals (mesh.normals_split_custom_set, an INT16_2D custom_normal
+    layer) are stored relative to each corner's smooth frame, so the Armature
+    modifier rotates them with the surface. Free FLOAT_VECTOR custom_normal
+    layers stay in rest space under deformation and shade posed meshes faceted.
+    Pristine float normals for morph recompute live in the DR.NativeBase*
+    attributes (preserve_normal_source), not in this display layer.
+
+    An existing free float layer is replaced. Corners of zero-area faces have no
+    smooth frame and are excluded from the readback check. Previous normals are
+    restored if the write or readback fails. Geometry, polygon material indices,
+    smooth flags, UVs and unrelated attributes are untouched.
     """
+    # Corners of near-zero-area faces (below DEGENERATE_FACE_AREA_RATIO of the mean) are not checked.
     values=_vectors(normals,'corner normals')
     if len(values)!=len(mesh.loops):raise ValueError('normal count differs from mesh corners')
     if any(math.hypot(*v)<1e-12 for v in values):raise ValueError('native corner normal cannot be zero')
     values=tuple(tuple(x/math.hypot(*v) for x in v) for v in values)
     _require_float_normal_capability(bpy_module)
     old=mesh.attributes.get('custom_normal')
-    if old and (old.data_type!='FLOAT_VECTOR' or old.domain!='CORNER'):
-        raise NormalTransportUnavailable('existing legacy custom_normal layer requires native reimport; refusing lossy migration')
-    previous=tuple(tuple(v.vector) for v in old.data) if old else None
-    created=None
+    previous=tuple(tuple(v.vector) for v in mesh.corner_normals) if old else None
     try:
-        if old:old.data.foreach_set('vector',[x for row in values for x in row]);mesh.update()
-        else:created=_float_corner_attribute(mesh,values)
-        actual=tuple(tuple(v.vector) for v in mesh.corner_normals)
-        error=normal_direction_error(values,actual)
-        if error>.05:raise NormalTransportUnavailable('direct float corner normal readback exceeds0.05degree: '+str(error))
+        if old is not None and old.data_type=='FLOAT_VECTOR':mesh.attributes.remove(old)
+        mesh.normals_split_custom_set(values);mesh.update()
+        stored=mesh.attributes.get('custom_normal')
+        if stored is None or stored.data_type=='FLOAT_VECTOR':raise NormalTransportUnavailable('Blender did not store fan-space custom normals')
+        errors=_corner_errors(values,tuple(tuple(v.vector) for v in mesh.corner_normals))
+        areas=[getattr(face,'area',1.) for face in mesh.polygons]
+        floor=DEGENERATE_FACE_AREA_RATIO*sum(areas)/max(len(areas),1)
+        checked=[e for face,area in zip(mesh.polygons,areas) if area>floor for e in errors[face.loop_start:face.loop_start+face.loop_total]]
+        error=max(checked,default=0.)
+        if error>CORNER_NORMAL_TOLERANCE_DEGREES:raise NormalTransportUnavailable('fan-space corner normal readback exceeds %.1f degree: %s'%(CORNER_NORMAL_TOLERANCE_DEGREES,error))
     except Exception:
-        if previous is not None:old.data.foreach_set('vector',[x for row in previous for x in row]);mesh.update()
-        elif created is not None:mesh.attributes.remove(created);mesh.update()
-        raise
-    return {'storage':'custom_normal:CORNER:FLOAT_VECTOR','corner_count':len(values),'max_normal_angle_degrees':error,'legacy_fallback':False}
+        current=mesh.attributes.get('custom_normal')
+        if current is not None:mesh.attributes.remove(current)
+        if previous is not None:mesh.normals_split_custom_set(previous)
+        mesh.update();raise
+    return {'storage':'custom_normal:CORNER:'+stored.data_type,'corner_count':len(values),'max_normal_angle_degrees':error,'unchecked_degenerate_corners':len(errors)-len(checked),'legacy_fallback':False}
 
 
 def _normal_topology(mesh,indices):
