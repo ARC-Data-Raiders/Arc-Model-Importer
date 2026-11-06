@@ -882,6 +882,11 @@ internal static class Program
                 if (texture is null) return;
                 if (TextureMetadataExport.Write(texture, outDir, build.BuildId, build.DepotManifest, mappingHash))
                     Log.Information("native texture metadata {Path}", objectPath);
+                if (TextureMipGuard.TopMipMissing(texture) is { } missing)
+                {
+                    Interlocked.Increment(ref failures);
+                    Log.Error("texture top mip unavailable {Path}: {Reason}", objectPath, missing);
+                }
             }
             catch (Exception ex)
             {
