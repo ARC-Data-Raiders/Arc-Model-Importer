@@ -401,7 +401,77 @@ def _parse_lods_v9(payload: bytes, *, scale: float, flip_y: bool) -> list[_Lod]:
     return lods
 
 
+# One outfit import reads each mesh file ~19 times (import, skin, slots, shader
+# parity, colour sets). Parsed results are kept per (path, mtime, size, scale);
+# arrays are read-only and every call gets fresh _Lod/list wrappers, so a caller
+# that reassigns a field or appends to a list cannot change the cached result.
+_PARSE_CACHE: dict = {}
+_ROOT_CACHE: dict = {}
+_PARSE_CACHE_SIZE = 16
+
+
+def _file_key(path: str):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (os.path.normcase(os.path.abspath(path)), st.st_mtime_ns, st.st_size)
+
+
+def _cache_get(cache: dict, key):
+    if key is None or os.environ.get("DR_UEMODEL_CACHE") == "0":
+        return None
+    hit = cache.pop(key, None)
+    if hit is not None:
+        cache[key] = hit
+    return hit
+
+
+def _cache_put(cache: dict, key, value) -> None:
+    if key is None or os.environ.get("DR_UEMODEL_CACHE") == "0":
+        return
+    cache[key] = value
+    while len(cache) > _PARSE_CACHE_SIZE:
+        cache.pop(next(iter(cache)))
+
+
+def _freeze(value):
+    if isinstance(value, np.ndarray):
+        value.flags.writeable = False
+    return value
+
+
+def _lod_copy(lod: _Lod) -> _Lod:
+    from dataclasses import replace
+    return replace(lod, uvs=list(lod.uvs), materials=list(lod.materials),
+                   morph_targets=list(lod.morph_targets), vertex_colors=list(lod.vertex_colors))
+
+
+def clear_uemodel_cache() -> None:
+    _PARSE_CACHE.clear()
+    _ROOT_CACHE.clear()
+
+
 def parse_uemodel(path: str, *, scale: float = 0.01) -> tuple[str, int, list[_Lod]]:
+    key = _file_key(path)
+    key = None if key is None else key + (float(scale),)
+    hit = _cache_get(_PARSE_CACHE, key)
+    if hit is None:
+        name, version, lods = _parse_uemodel_uncached(path, scale=scale)
+        for lod in lods:
+            for arr in (lod.vertices, lod.indices, lod.normals, lod.weights, *lod.uvs):
+                _freeze(arr)
+            for morph in lod.morph_targets:
+                for arr in vars(morph).values():
+                    _freeze(arr)
+            for _cname, arr in lod.vertex_colors:
+                _freeze(arr)
+        hit = (name, version, lods)
+        _cache_put(_PARSE_CACHE, key, hit)
+    return hit[0], hit[1], [_lod_copy(lod) for lod in hit[2]]
+
+
+def _parse_uemodel_uncached(path: str, *, scale: float = 0.01) -> tuple[str, int, list[_Lod]]:
     with open(path, "rb") as fh:
         data = fh.read()
     buf = io.BytesIO(data)
@@ -438,7 +508,16 @@ def parse_uemodel(path: str, *, scale: float = 0.01) -> tuple[str, int, list[_Lo
 
 
 def _read_uemodel_root(path: str) -> tuple[str, int, bool, list[tuple[str, bytes]]]:
-    """Return name, version, flip_y, and the root attribute list."""
+    """Return name, version, flip_y, and the root attribute list (payloads are immutable bytes)."""
+    key = _file_key(path)
+    hit = _cache_get(_ROOT_CACHE, key)
+    if hit is None:
+        hit = _read_uemodel_root_uncached(path)
+        _cache_put(_ROOT_CACHE, key, hit)
+    return hit[0], hit[1], hit[2], list(hit[3])
+
+
+def _read_uemodel_root_uncached(path: str) -> tuple[str, int, bool, list[tuple[str, bytes]]]:
     with open(path, "rb") as fh:
         data = fh.read()
     buf = io.BytesIO(data)
@@ -656,23 +735,44 @@ def import_uemodel_skinned(path: str, *, scale: float = 0.01) -> list:
     return [arm_obj, *meshes]
 
 
+def _build_triangle_mesh(mesh, vertices, indices) -> None:
+    """Same result as from_pydata(verts, [], tris) + update(), from arrays without tuple lists."""
+    verts = np.ascontiguousarray(vertices, dtype=np.float32).reshape(-1)
+    tris = np.ascontiguousarray(indices, dtype=np.int32).reshape(-1)
+    n_verts, n_faces = len(verts) // 3, len(tris) // 3
+    mesh.vertices.add(n_verts)
+    mesh.loops.add(n_faces * 3)
+    mesh.polygons.add(n_faces)
+    mesh.vertices.foreach_set("co", verts)
+    mesh.polygons.foreach_set("loop_start", np.arange(0, n_faces * 3, 3, dtype=np.int32))
+    mesh.polygons.foreach_set("vertices", tris[:n_faces * 3])
+    mesh.shade_flat()
+    if n_faces:
+        mesh.update(calc_edges=True, calc_edges_loose=False)
+    mesh.update()
+
+
 def _assign_uvs(mesh: bpy.types.Mesh, lod: _Lod) -> None:
     n_verts = len(lod.vertices)
+    corner_vi = None
     for i, uvs in enumerate(lod.uvs):
         if len(uvs) != n_verts:
             continue
         layer_name = "UV0" if i == 0 else f"UV{i}"
         uv_layer = mesh.uv_layers.new(name=layer_name) if not mesh.uv_layers.get(layer_name) else mesh.uv_layers[layer_name]
-        loops = mesh.loops
-        if not loops:
+        if not mesh.loops:
             continue
-        data = uv_layer.data
-        # Per-loop UV from vertex index.
-        coords = uvs
-        for li, loop in enumerate(loops):
-            vi = loop.vertex_index
-            if 0 <= vi < len(coords):
-                data[li].uv = (float(coords[vi, 0]), float(coords[vi, 1]))
+        if corner_vi is None:
+            corner_vi = np.empty(len(mesh.loops), dtype=np.int32)
+            mesh.loops.foreach_get("vertex_index", corner_vi)
+        coords = np.asarray(uvs, dtype=np.float32)[:, :2]
+        valid = (corner_vi >= 0) & (corner_vi < len(coords))
+        # Per-loop UV from vertex index; corners with an invalid index keep their current value.
+        out = np.empty(len(mesh.loops) * 2, dtype=np.float32)
+        uv_layer.data.foreach_get("uv", out)
+        out = out.reshape(-1, 2)
+        out[valid] = coords[corner_vi[valid]]
+        uv_layer.data.foreach_set("uv", out.ravel())
 
 
 def apply_uemodel_section_slots(mesh, path: str) -> int:
@@ -751,7 +851,7 @@ def _preserve_lod_normal_targets(obj, lod):
         if target.normal_deltas.shape != (len(target.indices), 3):
             raise UeModelError("morph normal layout differs from source indices")
     if not mesh.get(NORMAL_SOURCE_VERSION):
-        preserve_normal_source(mesh, lod.normals.tolist(), tuple(range(len(mesh.vertices))),
+        preserve_normal_source(mesh, lod.normals, np.arange(len(mesh.vertices)),
                                source_vertex_count=len(mesh.vertices))
     names = {}
     for target in targets:
@@ -767,11 +867,13 @@ def _preserve_lod_normal_targets(obj, lod):
     mesh["arc_native_normal_weights"] = ""
 
 
-def apply_uemodel_morph_normals(obj):
+def apply_uemodel_morph_normals(obj, *, assume_base: bool = False):
     """Apply current authored relative-key normals during explicit fit actions.
 
     No idle scene scan or depsgraph watcher is installed. Deltas remain saved
     as mesh attributes so reopening a blend does not require a source file.
+    assume_base: the corner normals already equal the native base normals (fresh
+    import); when every key weight is zero only the weight signature is stored.
     """
     if obj is None or obj.type != "MESH":
         return False
@@ -796,6 +898,9 @@ def apply_uemodel_morph_normals(obj):
     signature = json.dumps(weights, sort_keys=True)
     if mesh.get("arc_native_normal_weights") == signature:
         return False
+    if assume_base and not any(weights.values()):
+        mesh["arc_native_normal_weights"] = signature
+        return False
     from .materials.native.deformation import MorphDelta, MorphTarget, apply_normal_deltas
     targets = []
     for name, attr_name in names.items():
@@ -817,8 +922,12 @@ def apply_uemodel_morph_normals(obj):
     return True
 
 
-def _apply_lod_shape_keys(obj, lod: _Lod) -> list[str]:
-    """Add missing authored keys without changing geometry, key values or edits."""
+def _apply_lod_shape_keys(obj, lod: _Lod, *, fresh: bool = False) -> list[str]:
+    """Add missing authored keys without changing geometry, key values or edits.
+
+    fresh: the mesh was just built from this LOD and its corner normals are the
+    base normals, so zero key weights need no normal recompute.
+    """
     if not lod.morph_targets:
         return []
     if obj is None or obj.type != "MESH" or len(obj.data.vertices) != len(lod.vertices):
@@ -842,7 +951,7 @@ def _apply_lod_shape_keys(obj, lod: _Lod) -> list[str]:
         key.value = 0.0
         added.append(key.name)
     _preserve_lod_normal_targets(obj, lod)
-    apply_uemodel_morph_normals(obj)
+    apply_uemodel_morph_normals(obj, assume_base=fresh)
     return added
 
 
@@ -952,19 +1061,18 @@ def import_uemodel_v10(path: str, *, scale: float = 0.01, import_lods: bool = Fa
             continue
         mesh_name = f"{name}_{lod.name}" if import_lods and len(chosen) > 1 else name
         mesh = bpy.data.meshes.new(mesh_name)
-        verts = [tuple(map(float, v)) for v in lod.vertices]
-        faces = [tuple(int(i) for i in tri) for tri in lod.indices]
-        mesh.from_pydata(verts, [], faces)
-        mesh.update()
+        _build_triangle_mesh(mesh, lod.vertices, lod.indices)
         if lod.normals is not None and len(lod.normals) == len(mesh.vertices):
-            mesh.polygons.foreach_set("use_smooth", [True] * len(mesh.polygons))
+            mesh.polygons.foreach_set("use_smooth", np.ones(len(mesh.polygons), dtype=bool))
             from .materials.native.deformation import write_corner_normals
-            write_corner_normals(mesh, (lod.normals[loop.vertex_index] for loop in mesh.loops))
+            corner_vi = np.empty(len(mesh.loops), dtype=np.int32)
+            mesh.loops.foreach_get("vertex_index", corner_vi)
+            write_corner_normals(mesh, np.asarray(lod.normals, dtype=np.float64)[corner_vi])
         mesh["arc_uemodel_lod"] = lod.name
         mesh["arc_uemodel_scale"] = float(scale)
         obj = bpy.data.objects.new(mesh_name, mesh)
         bpy.context.collection.objects.link(obj)
-        _apply_lod_shape_keys(obj, lod)
+        _apply_lod_shape_keys(obj, lod, fresh=True)
         _assign_vertex_colors(mesh, lod)
         try:
             _assign_uvs(mesh, lod)

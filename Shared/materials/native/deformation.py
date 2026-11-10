@@ -306,23 +306,31 @@ def write_corner_normals(mesh,normals,*,bpy_module=None):
     smooth flags, UVs and unrelated attributes are untouched.
     """
     # Corners of near-zero-area faces (below DEGENERATE_FACE_AREA_RATIO of the mean) are not checked.
-    values=_vectors(normals,'corner normals')
-    if len(values)!=len(mesh.loops):raise ValueError('normal count differs from mesh corners')
-    if any(math.hypot(*v)<1e-12 for v in values):raise ValueError('native corner normal cannot be zero')
-    values=tuple(tuple(x/math.hypot(*v) for x in v) for v in values)
+    import numpy as np
+    values=_vector_array(normals,'corner normals')
+    nl=len(mesh.loops)
+    if len(values)!=nl:raise ValueError('normal count differs from mesh corners')
+    lengths=np.sqrt((values*values).sum(axis=1))
+    if len(lengths) and float(lengths.min())<1e-12:raise ValueError('native corner normal cannot be zero')
+    values=values/lengths[:,None]
     _require_float_normal_capability(bpy_module)
     old=mesh.attributes.get('custom_normal')
-    previous=tuple(tuple(v.vector) for v in mesh.corner_normals) if old else None
+    previous=_corner_normal_array(mesh) if old else None
     try:
         if old is not None and old.data_type=='FLOAT_VECTOR':mesh.attributes.remove(old)
         mesh.normals_split_custom_set(values);mesh.update()
         stored=mesh.attributes.get('custom_normal')
         if stored is None or stored.data_type=='FLOAT_VECTOR':raise NormalTransportUnavailable('Blender did not store fan-space custom normals')
-        errors=_corner_errors(values,tuple(tuple(v.vector) for v in mesh.corner_normals))
-        areas=[getattr(face,'area',1.) for face in mesh.polygons]
-        floor=DEGENERATE_FACE_AREA_RATIO*sum(areas)/max(len(areas),1)
-        checked=[e for face,area in zip(mesh.polygons,areas) if area>floor for e in errors[face.loop_start:face.loop_start+face.loop_total]]
-        error=max(checked,default=0.)
+        errors=_corner_error_array(values,_corner_normal_array(mesh).astype(np.float64))
+        nf=len(mesh.polygons)
+        areas=np.empty(nf,np.float32);mesh.polygons.foreach_get('area',areas);areas=areas.astype(np.float64)
+        starts=np.empty(nf,np.int32);mesh.polygons.foreach_get('loop_start',starts)
+        totals=np.empty(nf,np.int32);mesh.polygons.foreach_get('loop_total',totals)
+        floor=DEGENERATE_FACE_AREA_RATIO*float(areas.sum())/max(nf,1)
+        keep=areas>floor
+        corner=np.repeat(starts[keep],totals[keep])+(np.arange(int(totals[keep].sum()))-np.repeat(np.cumsum(totals[keep])-totals[keep],totals[keep]))
+        checked=errors[corner]
+        error=float(checked.max()) if len(checked) else 0.
         if error>CORNER_NORMAL_TOLERANCE_DEGREES:raise NormalTransportUnavailable('fan-space corner normal readback exceeds %.1f degree: %s'%(CORNER_NORMAL_TOLERANCE_DEGREES,error))
     except Exception:
         current=mesh.attributes.get('custom_normal')
@@ -332,11 +340,44 @@ def write_corner_normals(mesh,normals,*,bpy_module=None):
     return {'storage':'custom_normal:CORNER:'+stored.data_type,'corner_count':len(values),'max_normal_angle_degrees':error,'unchecked_degenerate_corners':len(errors)-len(checked),'legacy_fallback':False}
 
 
+def _vector_array(values,name):
+    """Finite (N,3) float64 array; same contract as _vectors without per-element Python work."""
+    import numpy as np
+    if not hasattr(values,'__len__'):values=list(values)
+    try:arr=np.asarray(values,dtype=np.float64)
+    except (TypeError,ValueError) as error:raise ValueError(name+' must contain finite 3-vectors') from error
+    if arr.size==0:return arr.reshape(0,3)
+    if arr.ndim!=2 or arr.shape[1]!=3 or not bool(np.isfinite(arr).all()):raise ValueError(name+' must contain finite 3-vectors')
+    return arr
+
+
+def _corner_normal_array(mesh):
+    import numpy as np
+    out=np.empty(len(mesh.loops)*3,np.float32);mesh.corner_normals.foreach_get('vector',out)
+    return out.reshape(-1,3)
+
+
+def _corner_error_array(expected,actual):
+    """Per-corner angle in degrees; 180 where either vector is zero (as _corner_errors)."""
+    import numpy as np
+    lx=np.sqrt((expected*expected).sum(axis=1));ly=np.sqrt((actual*actual).sum(axis=1))
+    small=np.minimum(lx,ly)<1e-12
+    denom=np.where(small,1.,lx*ly)
+    cosine=np.clip((expected*actual).sum(axis=1)/denom,-1.,1.)
+    return np.where(small,180.,np.degrees(np.arccos(cosine)))
+
+
 def _normal_topology(mesh,indices):
     import hashlib,json
-    corners=tuple(int(loop.vertex_index) for loop in mesh.loops)
-    faces=tuple((int(face.loop_start),int(face.loop_total)) for face in mesh.polygons)
-    return hashlib.sha256(json.dumps((len(mesh.vertices),corners,faces,tuple(indices)),separators=(',',':')).encode()).hexdigest()
+    import numpy as np
+    corners=np.empty(len(mesh.loops),np.int32);mesh.loops.foreach_get('vertex_index',corners)
+    nf=len(mesh.polygons)
+    starts=np.empty(nf,np.int32);mesh.polygons.foreach_get('loop_start',starts)
+    totals=np.empty(nf,np.int32);mesh.polygons.foreach_get('loop_total',totals)
+    faces=np.stack((starts,totals),axis=1).tolist() if nf else []
+    indices=indices.tolist() if hasattr(indices,'tolist') else [int(i) for i in indices]
+    # Same JSON text as the tuple form: tuples and lists both encode as arrays.
+    return hashlib.sha256(json.dumps((len(mesh.vertices),corners.tolist(),faces,indices),separators=(',',':')).encode()).hexdigest()
 
 
 def preserve_normal_source(mesh,source_normals,render_source_indices,*,source_vertex_count=None,corner_normals=None,bpy_module=None):
@@ -347,23 +388,32 @@ def preserve_normal_source(mesh,source_normals,render_source_indices,*,source_ve
     otherwise the native source normal expands through vertex/corner maps.
     Never recapture this source from a posed or compressed Blender normal layer.
     """
-    source=_vectors(source_normals,'pristine native source normals');count=len(source) if source_vertex_count is None else source_vertex_count
-    indices=tuple(render_source_indices)
+    import numpy as np
+    source=_vector_array(source_normals,'pristine native source normals');count=len(source) if source_vertex_count is None else source_vertex_count
+    raw=render_source_indices if hasattr(render_source_indices,'dtype') else tuple(render_source_indices)
     if not isinstance(count,int) or count!=len(source):raise ValueError('native source normal count differs')
-    if len(indices)!=len(mesh.vertices) or any(not isinstance(i,int) or i<0 or i>=count for i in indices):raise ValueError('invalid original render/source vertex map')
-    vertices=tuple(source[i] for i in indices);corners=tuple(int(loop.vertex_index) for loop in mesh.loops)
-    if any(i<0 or i>=len(vertices) for i in corners):raise ValueError('corner vertex mapping out of bounds')
-    base=tuple(vertices[i] for i in corners) if corner_normals is None else _vectors(corner_normals,'pristine corner normals')
-    if len(base)!=len(corners) or any(math.hypot(*v)<1e-12 for v in vertices+base):raise ValueError('invalid pristine float normal data')
+    if hasattr(raw,'dtype'):
+        if raw.dtype.kind not in 'iu':raise ValueError('invalid original render/source vertex map')
+        indices=np.asarray(raw,dtype=np.int64).ravel()
+    else:
+        if any(not isinstance(i,int) for i in raw):raise ValueError('invalid original render/source vertex map')
+        indices=np.asarray(raw,dtype=np.int64).ravel()
+    if len(indices)!=len(mesh.vertices) or (len(indices) and (int(indices.min())<0 or int(indices.max())>=count)):raise ValueError('invalid original render/source vertex map')
+    vertices=source[indices]
+    corners=np.empty(len(mesh.loops),np.int32);mesh.loops.foreach_get('vertex_index',corners)
+    if len(corners) and (int(corners.min())<0 or int(corners.max())>=len(vertices)):raise ValueError('corner vertex mapping out of bounds')
+    base=vertices[corners] if corner_normals is None else _vector_array(corner_normals,'pristine corner normals')
+    def _short(rows):return len(rows) and float(np.sqrt((rows*rows).sum(axis=1)).min())<1e-12
+    if len(base)!=len(corners) or _short(vertices) or _short(base):raise ValueError('invalid pristine float normal data')
     names=(NORMAL_SOURCE_VERTEX,NORMAL_BASE_VERTEX,NORMAL_BASE_CORNER)
     if any(mesh.attributes.get(name) for name in names) or mesh.get(NORMAL_SOURCE_VERSION):raise ValueError('pristine native normal source already preserved; refusing posed recapture')
     _require_float_normal_capability(bpy_module)
     created=[]
     try:
-        for name,kind,domain,values in ((NORMAL_SOURCE_VERTEX,'INT','POINT',indices),(NORMAL_BASE_VERTEX,'FLOAT_VECTOR','POINT',vertices),(NORMAL_BASE_CORNER,'FLOAT_VECTOR','CORNER',base)):
+        for name,kind,domain,values in ((NORMAL_SOURCE_VERTEX,'INT','POINT',indices.astype(np.int32)),(NORMAL_BASE_VERTEX,'FLOAT_VECTOR','POINT',vertices.astype(np.float32).ravel()),(NORMAL_BASE_CORNER,'FLOAT_VECTOR','CORNER',base.astype(np.float32).ravel())):
             attr=mesh.attributes.new(name,kind,domain);created.append(attr)
             if attr.name!=name:raise ValueError('native normal source attribute collision')
-            attr.data.foreach_set('value' if kind=='INT' else 'vector',values if kind=='INT' else [x for row in values for x in row])
+            attr.data.foreach_set('value' if kind=='INT' else 'vector',values)
         mesh[NORMAL_SOURCE_COUNT]=count;mesh[NORMAL_TOPOLOGY]=_normal_topology(mesh,indices);mesh[NORMAL_SOURCE_VERSION]=1;mesh.update()
     except Exception:
         for attr in created:mesh.attributes.remove(attr)
