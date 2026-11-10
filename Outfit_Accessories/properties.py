@@ -4,6 +4,7 @@ Property definitions for the Arc Raiders Importer
 
 import bpy
 import os
+import time
 import zlib
 from types import SimpleNamespace
 from bpy.app.handlers import persistent
@@ -275,25 +276,6 @@ def skin_choice_for_json(context, entry, json_path: str):
     return None
 
 
-def _on_outfit_selection_toggled(self, context):
-    """Show the ticked colourway's per-part MIs in the confirm dialog's dropdowns."""
-    if context is None or get_confirm_dialog_cache(context) is None:
-        return  # dialog not open (populate / restore / batch runs)
-    scene = context.scene
-    if self.selected:
-        target = self.json_path
-    else:
-        ticked = [s.json_path for s in scene.arc_outfit_selections if s.selected]
-        target = ticked[0] if len(ticked) == 1 else ""
-    if not target:
-        return
-    from ..Shared import importing
-    try:
-        importing.preview_outfit_preset_skins(context, bpy.path.abspath(target))
-    except Exception as exc:
-        utils.get_logger().warning("Colourway per-part sync failed: %s", exc)
-
-
 def make_outfit_preset_items(self, context):
     """Dynamic EnumProperty items callback for outfit preset dropdown."""
     if not context:
@@ -301,11 +283,23 @@ def make_outfit_preset_items(self, context):
     cache = get_confirm_dialog_cache(context)
     if cache is not None:
         return list(cache["outfit_preset_items"])
+    # Outside the dialog this runs on every redraw of any region that shows the property.
+    # Keep the scan result for the same queue for a few seconds so a redraw costs nothing.
+    global _PRESET_ITEMS_IDLE
+    key = confirm_dialog_fingerprint(context)
+    now = time.monotonic()
+    held = _PRESET_ITEMS_IDLE
+    if held is not None and held[0] == key and now - held[1] < _PRESET_ITEMS_IDLE_S:
+        return held[2]
     from ..Shared.importing import queue_supports_outfit_batch
-    return _build_outfit_preset_items(
+    items = _build_outfit_preset_items(
         context, is_outfit_queue=queue_supports_outfit_batch(context)
     )
+    _PRESET_ITEMS_IDLE = (key, now, items)
+    return items
 
+_PRESET_ITEMS_IDLE = None
+_PRESET_ITEMS_IDLE_S = 5.0
 _OUTFIT_SELECTION_UPDATING = False
 _DEFAULT_OUTFIT_KEY = 'ID_PLAYERSKIN_ABYSS'
 
@@ -578,7 +572,9 @@ class ArcOutfitsSelection(PropertyGroup):
     """One selectable outfit colourway for batch import."""
     preset_name: StringProperty(name="Preset")
     json_path: StringProperty(name="JSON Path")
-    selected: BoolProperty(name="Import", default=False, update=_on_outfit_selection_toggled)
+    # No update callback: a tick only marks the colourway. The preset is resolved on OK
+    # (batch import) or by the Apply button; resolving here froze the dialog for seconds.
+    selected: BoolProperty(name="Import", default=False)
 
 # ---------------------------------------------------------------------------
 # Registration

@@ -36,33 +36,53 @@ def load_groups(rec=None):
     rec = rec or recipe()
     if rec in _LOADED:
         return []
-    have = {g.name for g in bpy.data.node_groups}
+    try:
+        from .graph_blocks import RECIPE as _blocks_rec, TEMPLATE_TAG as _ttag
+    except Exception:
+        _blocks_rec, _ttag = None, None
+    out = []
+    # Shipped templates first, then the user cache: both are read (the shipped file
+    # used to end the loop, so a user cache was never loaded once graphs.blend existed).
     for path in (SHIPPED, user_cache_path(rec)):
-        if not os.path.isfile(path):
+        if not os.path.isfile(path) or (path == SHIPPED and os.environ.get("DR_SHIPPED_GRAPHS") == "0"):
             continue
+        have = {g.name for g in bpy.data.node_groups}
+        g0 = set(bpy.data.node_groups)
         try:
             with bpy.data.libraries.load(path, link=False) as (src, dst):
                 dst.node_groups = [n for n in src.node_groups if n not in have]
         except Exception as exc:
             print("DataRaiders graph_cache: load failed", path, exc)
             continue
-        got = [g for g in dst.node_groups if g is not None]
-        bad = [g for g in got if g.get("dr.group.recipe") not in (None, rec)]
-        try:
-            from .graph_blocks import RECIPE as _blocks_rec, TEMPLATE_TAG as _ttag
-        except Exception:
-            _blocks_rec, _ttag = None, None
+        got = [g for g in bpy.data.node_groups if g not in g0]     # requested + nested
+        bad = {g for g in got if g.get("dr.group.recipe") not in (None, rec)}
+        tmpls = [g for g in got if _ttag and g.get(_ttag) is not None]
+        for g in tmpls:
+            if g.get("dr.blocks.recipe") != _blocks_rec:
+                bad.add(g)       # wrapper template from another layout recipe
+        # A template whose nested group is dropped would keep an empty group node.
+        changed = True
+        while changed:
+            changed = False
+            for g in got:
+                if g not in bad and any(getattr(n, "node_tree", None) in bad for n in g.nodes):
+                    bad.add(g)
+                    changed = True
+        for g in tmpls:
+            if g not in bad:
+                g.use_fake_user = False
+        # Shipped copies of per-file shared groups (DR.UserControls) yield to the file's own.
         for g in got:
-            if _ttag and g.get(_ttag) is not None:
-                if g.get("dr.blocks.recipe") != _blocks_rec:
-                    bad.append(g)       # wrapper template from another layout recipe
-                else:
-                    g.use_fake_user = False
-        for g in bad:
-            bpy.data.node_groups.remove(g)
+            m = _DUP.match(g.name) if g.get("dr.ship.per_file") and g not in bad else None
+            base = bpy.data.node_groups.get(m.group(1)) if m else None
+            if base is not None:
+                g.user_remap(base)
+                bad.add(g)
+        out += [g.name for g in got if g not in bad]
+        if bad:
+            bpy.data.batch_remove(list(bad))
         _LOADED.add(rec)
-        return [g.name for g in got if g not in bad]
-    return []
+    return out
 
 
 def save_groups(rec=None, path=None):

@@ -56,19 +56,19 @@ def main():
     props.skin_choice_for_json = real_lookup
     check('no mirror outside dialog (batch runs)', lookups == [])
 
+    # A tick only marks the colourway; the preset is resolved on OK or by the Apply button.
     calls = []
-    importing.preview_outfit_preset_skins = lambda ctx, path: calls.append(path) or 1
+    real_apply = importing._apply_outfit_preset
+    importing._apply_outfit_preset = lambda ctx, path: calls.append(path) or 1
     sel_a = scene.arc_outfit_selections.add(); sel_a.preset_name = 'A'; sel_a.json_path = str(tmp / 'DA_OI_A.json')
     sel_b = scene.arc_outfit_selections.add(); sel_b.preset_name = 'B'; sel_b.json_path = str(tmp / 'DA_OI_B.json')
-    sel_a.selected = True
-    check('tick ignored while dialog closed', calls == [])
-    sel_a.selected = False
     open_dialog()
     sel_a.selected = True
     sel_b.selected = True
     sel_b.selected = False
-    check('tick applies ticked colourway; untick falls back to sole remaining',
-          [os.path.basename(p) for p in calls] == ['DA_OI_A.json', 'DA_OI_B.json', 'DA_OI_A.json'])
+    importing._apply_outfit_preset = real_apply
+    check('tick does no preset work while the dialog is open', calls == [])
+    check('tick state kept', sel_a.selected and not sel_b.selected)
     props.clear_confirm_dialog_cache()
     addon.unregister()
     sys.exit(1 if failures else 0)

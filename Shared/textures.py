@@ -503,6 +503,25 @@ def authored_linear_sidecar(path: str) -> bool:
         return False
     return isinstance(data, dict) and (data.get('Properties') or {}).get('SRGB', True) is False
 
+_TWO_CHANNEL = {}
+
+def two_channel_sidecar(path: str) -> bool:
+    """True when a PNG's .arc-texture.json stores a two-channel format (PF_BC5).
+
+    The GPU samples those as (r, g, 0, 1). The exported PNG carries a rebuilt normal Z in blue, so a
+    shader that reads blue as data (layered decal roughness, T_Decal_DiamondQuilt_01_M) must read 0.
+    """
+    key = os.path.normcase(path or '')
+    hit = _TWO_CHANNEL.get(key)
+    if hit is None:
+        try:
+            with open(os.path.splitext(path)[0] + '.arc-texture.json', encoding='utf8') as fh:
+                hit = '"PF_BC5"' in fh.read()
+        except OSError:
+            hit = False
+        _TWO_CHANNEL[key] = hit
+    return hit
+
 def _fs_abspath(path: str) -> str:
     """Resolve Blender-relative paths and preserve native absolute Windows paths."""
     from ..Outfit_Accessories.pak_catalog import filesystem_path

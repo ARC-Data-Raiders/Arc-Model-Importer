@@ -2934,16 +2934,25 @@ def import_appearance_parts(
         except (OSError, ValueError, RuntimeError) as exc:
             msgs.append(f"Authored head fit skipped: {exc}")
 
-    # Hide new armatures that were not merged away (standalone import).
-    if attach_to is None:
-        for obj in new_objects:
-            if not _object_alive(obj) or obj.type != "ARMATURE":
-                continue
-            try:
+    # Bone shapes on the rig that now holds the new bones. A head brings the
+    # face bones, so its rig stays visible; other standalone rigs are hidden.
+    has_head = "Head" in placed_roles
+    rig_objs = [attach_to] if attach_to is not None else [
+        o for o in new_objects if _object_alive(o) and o.type == "ARMATURE"
+    ]
+    for obj in rig_objs:
+        if not _object_alive(obj) or obj.type != "ARMATURE":
+            continue
+        try:
+            rig.apply_bone_display(obj)
+            if has_head:
+                obj.hide_viewport = False
+                obj.hide_set(False)
+            elif attach_to is None:
                 obj.hide_set(True)
                 obj.hide_viewport = True
-            except Exception:
-                pass
+        except Exception:
+            pass
 
     if defer_materials is None and any(role in {"BackpackFrame", "BackpackStrap"} for role in placed_roles):
         # Staged path shares after the last material step (iter_appearance_parts).

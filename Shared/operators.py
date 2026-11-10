@@ -1695,10 +1695,15 @@ def iter_batch_import_instances(context, selected_presets, *, staged: bool = Fal
                 character_name = importing.get_character_name(bpy.path.abspath(entry.psk_path))
                 if character_name:
                     break
-            group_label = importing.outfit_group_label_for_character(character_name, context)
-
             scene = context.scene
-            parent_coll = _ensure_child_collection(scene.collection, group_label)
+            # One collection scheme: each colourway is linked straight into the
+            # collection asset_organization keeps it in, on the slot it is placed on.
+            from ..Outfit_Accessories import asset_organization as _asset_org
+            from ..Outfit_Accessories import import_layout as _layout
+            _slot_taken = _layout.discover_slots(scene) if _layout.offset_enabled(scene) else None
+            _slot_next = 0
+            preset_slots = {}
+            preset_colls = {}
 
             # --- Kick IO prefetch (overlap with PSK import) ---
             try:
@@ -1749,8 +1754,17 @@ def iter_batch_import_instances(context, selected_presets, *, staged: bool = Fal
 
             for preset_idx, (preset_name, preset_path) in enumerate(selected_presets):
                 importing.apply_outfit_preset(context, preset_path)
-                # Each mesh goes into its colourway collection as soon as it exists.
-                color_coll = _ensure_child_collection(parent_coll, str(preset_name))
+                # Each mesh goes into its final collection as soon as it exists.
+                if _slot_taken is None:
+                    slot = 0
+                else:
+                    while "Outfit" in _slot_taken.get(_slot_next, ()):
+                        _slot_next += 1
+                    slot = _slot_next
+                    _slot_next += 1
+                preset_slots[preset_idx] = slot
+                color_coll = _asset_org.collection_for_role("Outfit", scene, slot)
+                preset_colls[preset_idx] = color_coll
 
                 if preset_idx == 0 or template_objs is None:
                     inst_objs = []
@@ -1894,6 +1908,8 @@ def iter_batch_import_instances(context, selected_presets, *, staged: bool = Fal
             # Later colourways of a mesh slot start from the first colourway's flat graph.
             from .materials import cw_replay as _cw_replay
             _cw_replay.STASH_ON[0] = len(pending) > 1
+            # Every mesh of the import starts from the flat graph of an earlier mesh.
+            _cw_replay.SHARE_ON[0] = True
             try:
                 mat_total = sum(len(p[3]) for p in pending)
                 mat_done = 0
@@ -1919,8 +1935,7 @@ def iter_batch_import_instances(context, selected_presets, *, staged: bool = Fal
                     print(
                         f"    [{preset_name}] Applied materials on {n_mat} mesh(es)"
                     )
-                    color_coll = _ensure_child_collection(parent_coll, str(preset_name))
-                    pending_links.append((inst_objs, color_coll))
+                    pending_links.append((inst_objs, preset_colls[preset_idx]))
                 pass  # lazy bind off: rebind cost 45 s (L2)
                 materials.set_batch_material_mode(False)
                 # Time-sliced bind pass: one material per step.
@@ -1935,6 +1950,7 @@ def iter_batch_import_instances(context, selected_presets, *, staged: bool = Fal
                 _lazy.bind_all()
                 materials.set_batch_material_mode(False)
                 _cw_replay.STASH_ON[0] = False
+                _cw_replay.SHARE_ON[0] = False
                 _cw_replay.clear_stashes()
                 _staged_mod.restore_viewports(_view_saved)
 
@@ -1973,6 +1989,7 @@ def iter_batch_import_instances(context, selected_presets, *, staged: bool = Fal
                             pass
                     slot = _layout.place_imported(
                         alive, "Outfit", scene=context.scene,
+                        prefer_slot=preset_slots.get(_preset_idx),
                     )
                     instances += 1
                     instance_groups.append(alive)

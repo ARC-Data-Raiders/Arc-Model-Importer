@@ -169,6 +169,15 @@ def root_collection(scene):
     return _child(scene.collection, 'ROOT', 'Arc Assets')
 
 
+def collection_for_role(role, scene=None, slot=None):
+    """Destination for a role before its objects exist; same rule as collection_for_object."""
+    scene=scene or bpy.context.scene;root=root_collection(scene)
+    if scene.get(MODE_KEY,'TYPE')=='SLOT':
+        if slot is None:return _child(root,'SLOT:UNASSIGNED','Unassigned Assets')
+        return _child(root,'SLOT:'+str(int(slot)),f'Outfit Slot {int(slot)+1:03d}')
+    return _child(root,'TYPE:'+role,LABELS.get(role,role))
+
+
 def collection_for_object(obj, scene=None):
     scene=scene or bpy.context.scene;role=role_for(obj)
     if not role:return None

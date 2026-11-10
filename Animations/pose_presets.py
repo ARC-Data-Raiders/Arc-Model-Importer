@@ -75,15 +75,36 @@ def resolve_psa(pose_id: str) -> str:
     rel = preset_relpath(pose_id)
     if not rel:
         return ""
+    sub = rel.replace("/", os.sep)
     root = utils.get_pioneer_root() or ""
-    if not root:
+    if root:
+        # Export layouts sometimes drop Content/Pioneer.
+        for path in (os.path.join(root, "Content", "Pioneer", sub), os.path.join(root, sub)):
+            if os.path.isfile(path):
+                return path
+    return _psa_from_paks(rel)
+
+
+def _psa_from_paks(rel: str) -> str:
+    """Pose PSA from the pak cache; extracted from the game paks on first use."""
+    from ..Shared import pak_extract
+    cached = os.path.join(pak_extract.cache_dir(), "PioneerGame", "Content", "Pioneer", rel.replace("/", os.sep))
+    if os.path.isfile(cached):
+        return cached
+    scene = bpy.context.scene
+    game = pak_extract.configured_dir(scene)
+    usmap = pak_extract.resolve_usmap(scene) if game else ""
+    if not game or not usmap:
         return ""
-    path = os.path.join(root, "Content", "Pioneer", rel.replace("/", os.sep))
-    if os.path.isfile(path):
-        return path
-    # Export layouts sometimes drop Content/Pioneer.
-    alt = os.path.join(root, rel.replace("/", os.sep))
-    return alt if os.path.isfile(alt) else path
+    try:
+        code, log, _meshes = pak_extract.extract_paths(game, usmap, [pak_extract.game_path(rel)])
+    except Exception as exc:
+        print(f"Arc Raiders: pose PSA extract failed ({rel}): {exc}")
+        return ""
+    if not os.path.isfile(cached):
+        print(f"Arc Raiders: pose PSA extract rc={code} gave no {rel}: {(log or '')[-300:]}")
+        return ""
+    return cached
 
 
 def _slot_of(obj) -> int | None:
@@ -189,7 +210,7 @@ def apply_preset(context, pose_id: str) -> tuple[bool, str]:
 
     psa = resolve_psa(pose_id)
     if not psa or not os.path.isfile(psa):
-        return False, "Pose PSA not found under PioneerGame Root"
+        return False, "Pose PSA not found in the PioneerGame folder or the game paks"
     stem = os.path.splitext(os.path.basename(psa))[0]
     action = None
     # One import per armature: Blender 5 keeps the curves on that object's action slot.

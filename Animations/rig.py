@@ -200,6 +200,90 @@ def fix_bone_orientations(arm):
             pass
 
 
+_SHAPE_BONE = "ArcBoneShape"
+_SHAPE_MARKER = "ArcBoneMarker"
+
+
+def _shape_object(name: str, verts, faces):
+    obj = bpy.data.objects.get(name)
+    if obj is not None and obj.type == 'MESH':
+        return obj
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)  # never linked to a scene
+    return obj
+
+
+def _bone_shapes():
+    r = 0.1
+    bone = _shape_object(
+        _SHAPE_BONE,
+        [(0, 0, 0), (r, r, r), (r, r, -r), (-r, r, -r), (-r, r, r), (0, 1, 0)],
+        [(0, 1, 2), (0, 2, 3), (0, 3, 4), (0, 4, 1), (5, 2, 1), (5, 3, 2), (5, 4, 3), (5, 1, 4)],
+    )
+    marker = _shape_object(
+        _SHAPE_MARKER,
+        [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)],
+        [(0, 2, 4), (2, 1, 4), (1, 3, 4), (3, 0, 4), (2, 0, 5), (1, 2, 5), (3, 1, 5), (0, 3, 5)],
+    )
+    return bone, marker
+
+
+def _bone_collection(arm_data, name: str):
+    coll = arm_data.collections.get(name)
+    return coll if coll is not None else arm_data.collections.new(name)
+
+
+def apply_bone_display(arm) -> int:
+    """Octahedral bones aimed at the next joint, markers on leaves and face bones.
+
+    Display only: pose-bone custom shapes. Rest matrices stay in the UE frames
+    the PSA importer reads, so poses and animations are unaffected.
+    """
+    if arm is None or getattr(arm, "type", "") != 'ARMATURE':
+        return 0
+    bone_shape, marker_shape = _bone_shapes()
+    bones = arm.data.bones
+    heads = {b.name: b.head_local.copy() for b in bones}
+    y_axis = Vector((0.0, 1.0, 0.0))
+    body = _bone_collection(arm.data, "Body")
+    face = _bone_collection(arm.data, "Face")
+    shaped = 0
+    for pb in arm.pose.bones:
+        b = pb.bone
+        low = b.name.lower()
+        is_face = low.startswith("facial")
+        (face if is_face else body).assign(b)
+        target = None
+        if not is_face and not _is_helper_bone(b.name) and "root" not in low:
+            target = find_joint_target(b, heads, b.x_axis)
+            if target is None:
+                kids = [
+                    c for c in b.children
+                    if not _is_helper_bone(c.name) and (heads[c.name] - heads[b.name]).length > 0.005
+                ]
+                if kids:
+                    target = min(kids, key=lambda c: (heads[c.name] - heads[b.name]).length)
+        pb.use_custom_shape_bone_size = False
+        pb.custom_shape_translation = (0.0, 0.0, 0.0)
+        if target is not None:
+            d = b.matrix_local.inverted() @ heads[target.name]
+            length = d.length
+            pb.custom_shape = bone_shape
+            pb.custom_shape_rotation_euler = y_axis.rotation_difference(d).to_euler()
+            pb.custom_shape_scale_xyz = (length, length, length)
+        else:
+            size = 0.0025 if is_face else (0.03 if "root" in low else 0.01)
+            pb.custom_shape = marker_shape
+            pb.custom_shape_rotation_euler = (0.0, 0.0, 0.0)
+            pb.custom_shape_scale_xyz = (size, size, size)
+        shaped += 1
+    arm.data.display_type = 'OCTAHEDRAL'
+    arm.show_in_front = True
+    return shaped
+
+
 # Attachment / socket leaves under weapon_root — never aim these at siblings.
 _WEAPON_ATTACHMENT_NAMES = {
     "muzzle", "shelleject", "stock", "weapon_mag", "weapon_magazine",
@@ -431,6 +515,14 @@ def fix_rig_all(all_new_objects: list, merge: bool = True, model_type: str = "")
     created = recenter_imported_mesh_origins(mesh_objects)
     if created:
         all_new_objects.extend(created)
+
+    if model_type != "weapon":
+        for arm in armatures:
+            try:
+                if arm.name in bpy.data.objects:
+                    apply_bone_display(arm)
+            except ReferenceError:
+                pass  # merged away
 
 
 # ---------------------------------------------------------------------------

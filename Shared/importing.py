@@ -1167,20 +1167,6 @@ def _show_skin_in_dropdown(context, entry, skin_json: str) -> None:
         print(f"Arc Asset Importer: Could not show colourway skin in dropdown: {exc}")
 
 
-def preview_outfit_preset_skins(context, preset_json_path: str) -> int:
-    """Per-part skin assignment only (confirm dialog colourway ticks).
-
-    Skips apply_outfit_preset's scene visibility and material swaps, which act
-    on already imported objects.
-    """
-    from . import pak_extract
-    scene = context.scene
-    with pak_extract.batched_material_hierarchy(scene):
-        meshes = [textures._fs_abspath(bpy.path.abspath(entry.psk_path)) for entry in scene.arc_psk_entries]
-        pak_extract.ensure_cached_mesh_material_metadata(scene, meshes)
-        return _apply_outfit_preset(context, preset_json_path)
-
-
 def _apply_outfit_preset(context, preset_json_path: str) -> int:
     # Do not route authored batch choices through ``skin_choice``. It is a
     # dynamic EnumProperty whose IDs are the scanned filenames; ArcPak may expose

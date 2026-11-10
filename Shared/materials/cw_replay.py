@@ -694,7 +694,29 @@ class Replay:
                 r = by.get(stash_log[i][1])
                 if r is not None and r.bl_idname == p._k:
                     pair[id(p)] = r
+            # Where creation order diverges (another mesh of the outfit), the left-over
+            # stash nodes still serve: same type, same name first, else any of that type.
             keep = {r.as_pointer() for r in pair.values()}
+            pools = {}
+            for r in rnodes:
+                if r.as_pointer() not in keep:
+                    pools.setdefault(r.bl_idname, []).append(r)
+            if pools:
+                for pool in pools.values():
+                    pool.reverse()
+                for p in alive:
+                    if id(p) in pair:
+                        continue
+                    pool = pools.get(p._k)
+                    if not pool:
+                        continue
+                    r = by.get(p._nm)
+                    if r is not None and r.bl_idname == p._k and r.as_pointer() not in keep:
+                        pool.remove(r)
+                    else:
+                        r = pool.pop()
+                    keep.add(r.as_pointer())
+                    pair[id(p)] = r
             for r in list(rnodes):
                 if r.as_pointer() not in keep:
                     rnodes.remove(r)
@@ -1000,6 +1022,15 @@ def _sync_node(t, r):
 _ACTIVE = {}  # real tree pointer -> Replay
 _STASH = {}  # key -> (material copy, log)
 STASH_ON = [False]
+# One flat graph shared by every mesh of an import: a material with no stash of its own
+# starts from the last committed graph of a similar shape instead of an empty tree.
+SHARE_ON = [False]
+_SHARED = [None]  # (material copy, log)
+_SHARE_REPLACE = 0.25  # share of nodes created fresh that makes the newer graph the shared one
+
+
+def _share() -> bool:
+    return SHARE_ON[0] and os.environ.get("DR_CW_SHARE", "1") != "0"
 
 
 def begin(mat, stash_key=None):
@@ -1007,12 +1038,8 @@ def begin(mat, stash_key=None):
     tree = mat.node_tree
     if not enabled():
         return tree.nodes, tree.links
-    st = _STASH.get(stash_key) if stash_key is not None else None
-    log = None
     src = _FROM.pop(tree.as_pointer(), None)
-    if st is not None and src is not None and src == st[0].name:
-        log = st[1]
-    rp = Replay(tree, (log, st[0].name) if log else None)
+    rp = Replay(tree, (src[1], src[0]) if src is not None and src[1] else None)
     rp.key = stash_key
     rp.mat = mat
     _ACTIVE[rp.real_ptr] = rp
@@ -1031,6 +1058,7 @@ def commit(nodes, links):
         return nodes, links
     if rp.done:
         return rp.real.nodes, rp.real.links
+    made0 = STATS["created"]
     try:
         rp.commit()
     except Exception:
@@ -1039,6 +1067,15 @@ def commit(nodes, links):
         rp.abort()
         raise
     key = getattr(rp, "key", None)
+    if _share() and key is not None:
+        fresh = STATS["created"] - made0
+        if _SHARED[0] is None or fresh > _SHARE_REPLACE * max(1, len(rp.log)):
+            if _SHARED[0] is not None:
+                _free_mat(_SHARED[0][0])
+            cp = rp.mat.copy()
+            cp.name = "~DR.CwShared"
+            cp.use_fake_user = False
+            _SHARED[0] = (cp, rp.log)
     if STASH_ON[0] and key is not None:
         old = _STASH.pop(key, None)
         if old is not None:
@@ -1080,13 +1117,19 @@ def material_from_stash(stash_key, fresh):
     if not enabled() or stash_key is None:
         return None
     st = _STASH.get(stash_key)
+    shared = st is None and _share()
+    if shared:
+        st = _SHARED[0]
     if st is None:
         return None
     src = st[0]
     try:
         src.name
     except ReferenceError:
-        _STASH.pop(stash_key, None)
+        if shared:
+            _SHARED[0] = None
+        else:
+            _STASH.pop(stash_key, None)
         return None
     mat = src.copy()
     try:
@@ -1101,11 +1144,11 @@ def material_from_stash(stash_key, fresh):
     except Exception:
         bpy.data.materials.remove(mat)
         raise
-    _FROM[mat.node_tree.as_pointer()] = src.name
+    _FROM[mat.node_tree.as_pointer()] = (src.name, st[1])
     return mat
 
 
-_FROM = {}  # real tree pointer -> stash material name it was copied from
+_FROM = {}  # real tree pointer -> (stash material name it was copied from, its log)
 
 
 _MAT_SKIP = frozenset(("rna_type", "name", "name_full", "node_tree", "use_nodes", "original",
@@ -1129,6 +1172,9 @@ def clear_stashes():
     for cp, _log in list(_STASH.values()):
         _free_mat(cp)
     _STASH.clear()
+    if _SHARED[0] is not None:
+        _free_mat(_SHARED[0][0])
+        _SHARED[0] = None
 
 
 def clear_all():

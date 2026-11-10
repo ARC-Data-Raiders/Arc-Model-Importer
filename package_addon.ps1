@@ -624,6 +624,14 @@ try {
         $precomputeMB = ((Get-ChildItem -LiteralPath $precomputeDir -Recurse -Force -File | Measure-Object Length -Sum).Sum) / 1MB
         Write-Host ("precompute {0:N2} MB / 20 MB (+5 weapons)" -f $precomputeMB)
         if ($precomputeMB -gt 25) { Write-Warning ("precompute over budget: {0:N2} MB" -f $precomputeMB) }
+        # Shipped wrapper templates (graphs.blend) match only the graph_blocks.py they were built with.
+        $graphsJson = Join-Path $precomputeDir "graphs.json"
+        if (Test-Path -LiteralPath $graphsJson) {
+            $built = (Get-Content -Raw -LiteralPath $graphsJson | ConvertFrom-Json).blocks_recipe
+            $now = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $staged.AddonDir "Shared\materials\graph_blocks.py")).Hash.ToLower().Substring(0, 12)
+            if ($built -ne $now) { Write-Warning ("graphs.blend is stale (built for graph_blocks {0}, now {1}); templates ignored until rebuilt (X:/Agents/DataRaiders-BlenderImporter/outfit-speed/tools/build_shipped_graphs.py)" -f $built, $now) }
+            else { Write-Host ("graphs.blend templates match graph_blocks {0}" -f $now) }
+        }
     }
     else { Write-Warning "precompute folder missing from stage (assets\precompute); live fallback only" }
 

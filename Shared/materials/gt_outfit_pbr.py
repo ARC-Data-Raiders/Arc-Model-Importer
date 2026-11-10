@@ -3143,7 +3143,13 @@ def _build_gt_decals(
             d_n = comb_n.outputs[0]
             d_rough = dsep.outputs[2]
             d_metal = data_tex.outputs["Alpha"]
-        controls = {key: _pb.bind(nodes, f"{idx}_{native}", 0.0) for key, native in (
+        if d_rough is not None:
+            # A BC5 data texture samples blue as 0 in the game; its PNG holds a rebuilt normal Z there.
+            blue = _math(nodes, "MULTIPLY", f"GT_decal{idx}_dataB", main_x, _decal_row_y(origin_y, "unpack"), hide=True)
+            links.new(d_rough, blue.inputs[0])
+            links.new(_pb.bind(nodes, f"{idx}_DataBlue", 1.0), blue.inputs[1])
+            d_rough = blue.outputs[0]
+        controls ={key: _pb.bind(nodes, f"{idx}_{native}", 0.0) for key, native in (
             ('surface', 'SurfaceOverride'), ('wear', 'WearOverride'),
             ('base_normal', 'BaseNormalOverride'), ('detail_normal', 'DetailNormalOverride'))}
         rotation = _pb.bind(nodes, f"{idx}_DecalPlacement.A", 0.0)
@@ -3202,6 +3208,7 @@ def decal_slot_values(C, decal, df, dirs, method):
         "enabled": True,
         "texture": tex_fpath,
         "data": data_fpath,
+        "data_blue": 0.0 if data_fpath and textures.two_channel_sidecar(data_fpath) else 1.0,
         # Native sampler wraps; explicit domain/tiling controls coverage.
         "extension": "REPEAT",
         **{key: float(decal.get(key, 0.0)) for key in (
@@ -3270,6 +3277,7 @@ def write_decal_slot(C, nodes, idx, decal, df, dirs, method) -> bool:
         ('base_normal_override', 'BaseNormalOverride'), ('detail_normal_override', 'DetailNormalOverride'),
         ('tiling', 'Tiling'), ('rotation', 'DecalPlacement.A')):
         _pb.bind(nodes, f"{idx}_{native}", vals[key])
+    _pb.bind(nodes, f"{idx}_DataBlue", vals["data_blue"])
     _pb.bind(nodes, f"{idx}_ColorA", vals["color_a"])
     _pb.bind(nodes, f"{idx}_ColorB", vals["color_b"])
     _pb.bind(nodes, f"{idx}_ColorOverride", vals["override"])
