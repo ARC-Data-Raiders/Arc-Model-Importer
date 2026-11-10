@@ -392,6 +392,94 @@ def owned_nodes(mat, match, own=False):
     return out
 
 
+# Live sliders and hover ask for the same targets on every tick. Found paths are kept by
+# material name as node-name chains and re-resolved on each call (no stored RNA pointers,
+# so undo or a rebuilt tree cannot hand back a stale socket). bump_targets() drops them;
+# shader_control_ops calls it on foreign graph edits, file load and undo/redo.
+_TARGET_PATHS = {}
+
+
+def bump_targets():
+    _TARGET_PATHS.clear()
+
+
+def _resolve_chain(mat, chain, own):
+    tree = getattr(mat, "node_tree", None)
+    for gname in chain[:-1]:
+        node = tree.nodes.get(gname) if tree is not None else None
+        sub = getattr(node, "node_tree", None)
+        if sub is None or (own and sub.users > 1):
+            return None
+        tree = sub
+    return tree.nodes.get(chain[-1]) if tree is not None else None
+
+
+def cached_material_targets(mat, own=False):
+    """material_targets(), served from name chains while the graph is unchanged."""
+    if mat is None or getattr(mat, "node_tree", None) is None:
+        return []
+    key = (mat.name, bool(own))
+    rows = _TARGET_PATHS.get(key)
+    if rows is not None:
+        found = []
+        for prop, chain, out_name, is_output in rows:
+            node = _resolve_chain(mat, chain, own)
+            if node is None:
+                found = None
+                break
+            if is_output:
+                sock = node.outputs[0] if len(node.outputs) else None
+            else:
+                sock = node.inputs.get(out_name)
+            if sock is None or (not is_output and sock.is_linked):
+                found = None
+                break
+            found.append((prop, sock))
+        if found is not None:
+            return found
+    found, rows = [], []
+    for n, path in _find_paths_owned(mat, own):
+        chain = tuple(g.name for g in path) + (n.name,)
+        if _is_uc(n):
+            for sock in SOCKETS:
+                s = n.inputs.get(sock)
+                if s is not None and not s.is_linked:
+                    found.append((BY_SOCKET[sock][1], s))
+                    rows.append((BY_SOCKET[sock][1], chain, sock, False))
+        else:
+            prop = WEAPON_PROP.get(n.name[len("DR.Control."):])
+            if prop:
+                found.append((prop, n.outputs[0]))
+                rows.append((prop, chain, 0, True))
+    _TARGET_PATHS[key] = rows
+    return found
+
+
+def _find_paths_owned(mat, own):
+    """(node, path) like _find_paths; with own the chain is made private first and the
+    returned node/path are the owned copies."""
+    match = lambda n: _is_uc(n) or _is_weapon_value(n)
+    hits = _find_paths(mat, match)
+    if not own:
+        return hits
+    out = []
+    for n, path in hits:
+        if not path:
+            out.append((n, path))
+            continue
+        tree = _own_path(mat, path)
+        hit = tree.nodes.get(n.name) if tree is not None else None
+        if hit is None:
+            continue
+        owned, t = [], mat.node_tree
+        for g in path:
+            g2 = t.nodes.get(g.name)
+            owned.append(g2)
+            t = g2.node_tree
+        out.append((hit, owned))
+    return out
+
+
 def material_targets(mat, own=False):
     """(prop, socket) pairs that hold the User Controls values for one material.
 
@@ -422,10 +510,12 @@ def apply(materials, values):
     except Exception as exc:
         print("Arc Raiders: User Controls upgrade failed:", exc)
     for mat in materials:
-        for prop, sock in material_targets(mat, own=True):
+        for prop, sock in cached_material_targets(mat, own=True):
             if prop in values:
                 v = float(values[prop])
-                if sock.default_value != v:
+                # Sockets hold float32: an exact compare with the float64 value is almost never
+                # equal, which rewrote (and recompiled) every control on every tick.
+                if abs(sock.default_value - v) > 1e-6 * max(1.0, abs(v)):
                     sock.default_value = v
                 count += 1
     return count

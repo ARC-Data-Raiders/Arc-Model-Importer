@@ -380,6 +380,7 @@ def _on_depsgraph(scene, depsgraph=None):
         if hit and not _STATE.get("self_edit"):
             _STATE["updates"] += 1
             clear_zone_caches()
+            user_controls.bump_targets()
     _STATE["self_edit"] = False
     try:
         _refresh(bpy.context)
@@ -1160,8 +1161,17 @@ def _subscribe():
 
 
 @bpy.app.handlers.persistent
+def _on_undo_redo(*_args):
+    """Undo/redo rebuilds every datablock: drop cached control targets and zone caches."""
+    _CACHE.clear()
+    user_controls.bump_targets()
+    clear_zone_caches()
+
+
+@bpy.app.handlers.persistent
 def _on_load_post(*_args):
     _CACHE.clear()
+    user_controls.bump_targets()
     clear_zone_caches()
     _subscribe()
     _safe_refresh()
@@ -1718,6 +1728,9 @@ def register():
         bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph)
     if _on_load_post not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(_on_load_post)
+    for _h in (bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
+        if not any(getattr(f, "__name__", "") == "_on_undo_redo" for f in _h):
+            _h.append(_on_undo_redo)
     _subscribe()
     if not bpy.app.timers.is_registered(_safe_refresh):
         bpy.app.timers.register(_safe_refresh, first_interval=0.0)
@@ -1730,6 +1743,9 @@ def unregister():
         bpy.app.timers.unregister(_safe_refresh)
     if _on_load_post in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_load_post)
+    for _h in (bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
+        for f in [f for f in _h if getattr(f, "__name__", "") == "_on_undo_redo"]:
+            _h.remove(f)
     if _on_depsgraph in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph)
     for attr in ("arc_shader_select_mode", "arc_shader_pick_decal", "arc_shader_pick_zone", "arc_shader_pick_zone_kind", "arc_shader_pick_material", "arc_shader_search", "arc_shader_edited_only", "arc_shader_collapsed", "arc_colourways", "arc_colourway_index", "arc_colourway_name", "arc_shader_items", "arc_shader_mode", "arc_shader_scope"):

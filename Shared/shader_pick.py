@@ -603,7 +603,7 @@ class HoverColour:
         self.key = None
 
 
-def hover_writes(context, obj, material, zone):
+def hover_writes(context, obj, material, zone, current_key=None):
     """(key, [(socket, value)]) for the current selection mode, or (None, []) when nothing can be shown.
 
     Zone/Decal: no material change; the hovered zone of the hovered part is drawn as a checker
@@ -616,14 +616,17 @@ def hover_writes(context, obj, material, zone):
         if not zone or material is None or find_zone_mask(material) is None:
             return None, []
         return ("ZONE", obj.name, material.name, int(zone)), []
+    key = (mode, obj.name if mode == "PART" else root.name)
+    if current_key is not None and key == current_key:
+        return key, []      # HoverColour.show() keeps what it already shows
     objects = [obj] if mode == "PART" else sco._objects(obj, True)
     from .materials import user_controls
     writes = []
     for mat in sco._materials(objects):
-        for prop, sock in user_controls.material_targets(mat):
+        for prop, sock in user_controls.cached_material_targets(mat):
             if prop in HOVER_TINT:
                 writes.append((sock, HOVER_TINT[prop]))
-    return (mode, obj.name if mode == "PART" else root.name), writes
+    return key, writes
 
 
 def pick_commit(context, obj, hit, cur=None):
@@ -671,7 +674,7 @@ class ARC_OT_pick_shader_zone(bpy.types.Operator):
         self._cur = cur
         self._zone_mode = zone_mode
         self._hit = hit[1] if (hit is not None and cur) else None
-        key, writes = hover_writes(context, cur[0], cur[1], cur[2]) if cur else (None, [])
+        key, writes = hover_writes(context, cur[0], cur[1], cur[2], self._hover.key) if cur else (None, [])
         self._shown = self._hover.show(key, writes) if key is not None else (self._hover.clear() or 0)
         what = ""
         if cur:
