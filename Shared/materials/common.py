@@ -2524,7 +2524,20 @@ def _image_alpha_usable(img, clip: float = 0.3333, step: int = 32) -> bool:
     if not w or not h or not px:
         return False
     thr = max(0.0, min(1.0, float(clip)))
-    # Sample a coarse grid — enough to catch real masks without a full scan.
+    st = max(1, int(step))
+    # Sample a coarse grid — enough to catch real masks without a full scan. One foreach_get:
+    # an indexed pixels[i] read copies the whole image buffer every time.
+    try:
+        import numpy as np
+
+        n = len(px)
+        buf = np.empty(n, dtype=np.float32)
+        px.foreach_get(buf)
+        if n >= w * h * 4:
+            a = buf[: w * h * 4].reshape(h, w, 4)[::st, ::st, 3]
+            return bool((a > thr).any())
+    except Exception:
+        pass
     for y in range(0, h, max(1, int(step))):
         row = y * w
         for x in range(0, w, max(1, int(step))):
