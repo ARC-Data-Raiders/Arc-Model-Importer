@@ -103,10 +103,49 @@ class ShaderPickTests(unittest.TestCase):
         self.assertEqual((z, name), (3, "Colour 3"))
         mat, z, name = sp.get_zone_at(ob, {"face_index": 0, "location": (5.5, 0.5, 0)})
         self.assertEqual((z, name), (1, "Colour 1"))
-        self.assertEqual(list(sp.face_zone_map(ob)), [1, 3])
-        tris = sp.zone_triangles(ob, 3)
-        self.assertEqual(tris.shape, (6, 3))
-        self.assertTrue((tris[:, 0] >= 1.0).all())
+        mat = ob.material_slots[0].material
+        od = sp.overlay_data(ob, mat)
+        self.assertEqual((od["pos"].shape, od["uv"].shape), ((12, 3), (12, 2)))
+        self.assertIs(od["image"], img)
+        ids = sp.overlay_zone_ids(img, "outfit")
+        self.assertEqual((int(ids[0, 0]), int(ids[0, -1])), (1, 3))
+        np.testing.assert_allclose(od["uv"][:, 0], od["pos"][:, 0] / 2.0, atol=1e-6)
+
+    def test_mask_through_groups(self):
+        # x8 sits in a wrapper group and takes blue from a shared block that also gets a base colour texture.
+        ocm = _mask("m_ocm", (0, 0, 2 / 8, 1), (0, 0, 5 / 8, 1))
+        base = _mask("m_base", (0, 0, 1, 1), (0, 0, 1, 1))
+        block = bpy.data.node_groups.new("FakeLayerInputs", "ShaderNodeTree")
+        block.interface.new_socket("Base", in_out="INPUT", socket_type="NodeSocketColor")
+        block.interface.new_socket("OCM", in_out="INPUT", socket_type="NodeSocketColor")
+        block.interface.new_socket("Blue", in_out="OUTPUT", socket_type="NodeSocketFloat")
+        gi = block.nodes.new("NodeGroupInput"); go = block.nodes.new("NodeGroupOutput")
+        sep = block.nodes.new("ShaderNodeSeparateColor")
+        block.links.new(gi.outputs["OCM"], sep.inputs[0])
+        block.links.new(sep.outputs["Blue"], go.inputs["Blue"])
+        wrap = bpy.data.node_groups.new("FakeWrapper", "ShaderNodeTree")
+        wrap.interface.new_socket("Base", in_out="INPUT", socket_type="NodeSocketColor")
+        wrap.interface.new_socket("OCM", in_out="INPUT", socket_type="NodeSocketColor")
+        wi = wrap.nodes.new("NodeGroupInput")
+        bn = wrap.nodes.new("ShaderNodeGroup"); bn.node_tree = block
+        wrap.links.new(wi.outputs["Base"], bn.inputs["Base"])
+        wrap.links.new(wi.outputs["OCM"], bn.inputs["OCM"])
+        mul = wrap.nodes.new("ShaderNodeMath"); mul.name = "DR.LayerInputs.mid.x8"; mul.operation = "MULTIPLY"
+        wrap.links.new(bn.outputs["Blue"], mul.inputs[0])
+        m = bpy.data.materials.new("PickWrapped"); m.use_nodes = True
+        nt = m.node_tree
+        wn = nt.nodes.new("ShaderNodeGroup"); wn.node_tree = wrap
+        for name, img in (("Base", base), ("OCM", ocm)):
+            tex = nt.nodes.new("ShaderNodeTexImage"); tex.image = img
+            nt.links.new(tex.outputs[0], wn.inputs[name])
+        old = sp.wrapper_tree.graph_tree
+        sp.wrapper_tree.graph_tree = lambda _t: wrap
+        try:
+            info = sp.find_zone_mask(m)
+        finally:
+            sp.wrapper_tree.graph_tree = old
+        self.assertIsNotNone(info)
+        self.assertEqual(info.image.name, "m_ocm")
 
     def test_raycast_path(self):
         img = _mask("m_out2", (0, 0, 1 / 8, 1), (0, 0, 6 / 8, 1))
@@ -122,14 +161,14 @@ class ShaderPickTests(unittest.TestCase):
         ob = _plane(_weapon_mat(img))
         info = sp.find_zone_mask(ob.material_slots[0].material)
         self.assertEqual(info.kind, "weapon")
-        self.assertEqual(list(sp.face_zone_map(ob)), [1, 3])
+        self.assertEqual(sp.overlay_data(ob, ob.material_slots[0].material)["kind"], "weapon")
         self.assertEqual(sp.get_zone_at(ob, {"face_index": 1, "location": (6.5, 0.5, 0)})[2], "Blue")
 
     def test_no_mask(self):
         m = bpy.data.materials.new("Plain"); m.use_nodes = True
         ob = _plane(m)
         self.assertIsNone(sp.find_zone_mask(m))
-        self.assertEqual(list(sp.face_zone_map(ob)), [-1, -1])
+        self.assertIsNone(sp.overlay_data(ob, m))
 
 def _decal_mat():
     m = bpy.data.materials.new("PickDecal"); m.use_nodes = True

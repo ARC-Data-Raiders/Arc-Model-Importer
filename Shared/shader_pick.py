@@ -28,8 +28,9 @@ WEAPON_ZONE_NAMES = {1: "Red", 2: "Green", 3: "Blue", 4: "Alpha"}
 
 _IMAGE_CACHE: dict = {}   # image name -> (pointer, w, h, float32 (h, w, 4))
 _MASK_CACHE: dict = {}    # material name -> MaskInfo | None
-_FACE_ZONE_CACHE: dict = {}  # (obj name, npoly) -> int16 per-polygon zone (-1 = none)
-_BATCH_CACHE: dict = {}   # (obj name, npoly, zone) -> gpu batch | None
+_OVERLAY_CACHE: dict = {}  # (obj name, material name) -> overlay geometry dict | None
+_ZONE_TEX_CACHE: dict = {}  # image name -> (pointer, kind, GPUTexture of zone ids)
+_OVERLAY_SHADER: list = []  # [GPUShader] once compiled
 
 
 class MaskInfo:
@@ -44,40 +45,63 @@ class MaskInfo:
 
 
 def clear_caches():
-    for c in (_IMAGE_CACHE, _MASK_CACHE, _FACE_ZONE_CACHE, _BATCH_CACHE):
+    for c in (_IMAGE_CACHE, _MASK_CACHE, _OVERLAY_CACHE, _ZONE_TEX_CACHE):
         c.clear()
+    del _OVERLAY_SHADER[:]
 
 
 # ---------------------------------------------------------------- mask locate
-def _upstream_image(tree, sock, depth=0, seen=None):
-    """First TEX_IMAGE feeding ``sock`` (walks reroutes, groups, any node)."""
+def _same_socket(sockets, sock):
+    """The socket of ``sockets`` that is the same group interface item as ``sock``."""
+    for s in sockets:
+        if s.identifier == sock.identifier:
+            return s
+    return sockets.get(sock.name)
+
+
+def _upstream_image(sock, parents=(), depth=0, seen=None):
+    """First TEX_IMAGE feeding ``sock``.
+
+    Group borders are crossed on the one socket the link uses: a group node is
+    entered through the matching input of its Group Output, and a Group Input is
+    left through the matching input of the enclosing group node (``parents`` is
+    the chain of enclosing group nodes, outermost first). Walking every input of
+    a group node would return an unrelated texture such as the base colour.
+    """
     if seen is None:
         seen = set()
-    if depth > 24 or not sock.is_linked:
+    if depth > 64 or not sock.is_linked:
         return None
     for link in sock.links:
-        nd = link.from_node
-        if nd.as_pointer() in seen:
+        nd, out = link.from_node, link.from_socket
+        key = (nd.as_pointer(), out.identifier, tuple(p.as_pointer() for p in parents))
+        if key in seen:
             continue
-        seen.add(nd.as_pointer())
-        if nd.type == "TEX_IMAGE" and nd.image is not None:
-            return nd
-        if nd.type == "GROUP" and nd.node_tree is not None:
-            # Look inside the group: output socket -> group output node input.
+        seen.add(key)
+        if nd.type == "TEX_IMAGE":
+            if nd.image is not None:
+                return nd
+            continue
+        hit = None
+        if nd.type == "GROUP":
             sub = nd.node_tree
-            for out in sub.nodes:
-                if out.type == "GROUP_OUTPUT":
-                    s = out.inputs.get(link.from_socket.name)
-                    if s is not None:
-                        hit = _upstream_image(sub, s, depth + 1, seen)
-                        if hit is not None:
-                            return hit
-        if nd.type == "GROUP_INPUT":
-            continue
-        for s in nd.inputs:
-            hit = _upstream_image(tree, s, depth + 1, seen)
-            if hit is not None:
-                return hit
+            for go in (sub.nodes if sub is not None else ()):
+                if go.type == "GROUP_OUTPUT":
+                    s = _same_socket(go.inputs, out)
+                    hit = _upstream_image(s, parents + (nd,), depth + 1, seen) if s is not None else None
+                    if hit is not None:
+                        break
+        elif nd.type == "GROUP_INPUT":
+            if parents:
+                s = _same_socket(parents[-1].inputs, out)
+                hit = _upstream_image(s, parents[:-1], depth + 1, seen) if s is not None else None
+        else:
+            for s in nd.inputs:
+                hit = _upstream_image(s, parents, depth + 1, seen)
+                if hit is not None:
+                    break
+        if hit is not None:
+            return hit
     return None
 
 
@@ -111,23 +135,19 @@ def find_zone_mask(material):
     tree = wrapper_tree.graph_tree(material.node_tree)   # setup nodes live in the DR Outfit wrapper
     info = None
     nodes = list(tree.nodes)
+    # Group node chain from the material down to ``tree`` (the wrapper node, when there is one).
+    base = ()
+    if tree is not material.node_tree:
+        base = tuple(n for n in material.node_tree.nodes if n.type == "GROUP" and n.node_tree is tree)[:1]
     # Outfit: search top level and one group level for GT_mid_x8.
-    stack = [(tree, nodes)]
+    stack = [(tree, nodes, base)]
     for nd in nodes:
         if nd.type == "GROUP" and nd.node_tree is not None:
-            stack.append((nd.node_tree, list(nd.node_tree.nodes)))
-    for t, ns in stack:
+            stack.append((nd.node_tree, list(nd.node_tree.nodes), base + (nd,)))
+    for _t, ns, parents in stack:
         for nd in ns:
             if (nd.name.startswith("GT_mid_x8") and not nd.name.startswith("GT_mid_x8_half")) or nd.name == "DR.LayerInputs.mid.x8" or nd.get("dr.legacy_name") == "GT_mid_x8":
-                img = _upstream_image(t, nd.inputs[0])
-                if img is None and t is not tree:
-                    # mask comes in through the group interface: resolve at top level
-                    for gn in nodes:
-                        if gn.type == "GROUP" and gn.node_tree is t:
-                            for s in gn.inputs:
-                                img = _upstream_image(tree, s)
-                                if img is not None:
-                                    break
+                img = _upstream_image(nd.inputs[0], parents)
                 if img is not None:
                     info = MaskInfo(img.image, "outfit", _uv_map_of(img), material)
                     break
@@ -137,7 +157,7 @@ def find_zone_mask(material):
         for nd in nodes:
             s = nd.inputs.get("Weapon ID") if hasattr(nd, "inputs") else None
             if s is not None and s.is_linked:
-                img = _upstream_image(tree, s)
+                img = _upstream_image(s, base)
                 if img is not None:
                     info = MaskInfo(img.image, "weapon", _uv_map_of(img), material)
                     break
@@ -147,7 +167,7 @@ def find_zone_mask(material):
             from .materials.user_controls import weapon_id_node
         except ImportError:             # loaded standalone (tests)
             weapon_id_node = lambda _t: None    # noqa: E731
-        for t, _ns in stack:
+        for t, _ns, _parents in stack:
             img = weapon_id_node(t)
             if img is not None:
                 info = MaskInfo(img.image, "weapon", _uv_map_of(img), material)
@@ -228,89 +248,148 @@ def get_zone_at(obj, hit):
     return mat, z, info.zone_name(z)
 
 
-# ---------------------------------------------------------------- face zones
-def face_zone_map(obj):
-    """Per-polygon majority zone of the evaluated mesh (corners + 2x centroid)."""
-    dg = bpy.context.evaluated_depsgraph_get()
-    me = obj.evaluated_get(dg).data
-    n = len(me.polygons)
-    key = (obj.name, n)
-    got = _FACE_ZONE_CACHE.get(key)
-    if got is not None:
-        return got
-    out = np.full(n, -1, dtype=np.int16)
-    if n == 0:
-        _FACE_ZONE_CACHE[key] = out
-        return out
-    mi = np.empty(n, np.int32); me.polygons.foreach_get("material_index", mi)
-    ls = np.empty(n, np.int32); me.polygons.foreach_get("loop_start", ls)
-    lt = np.empty(n, np.int32); me.polygons.foreach_get("loop_total", lt)
-    nl = len(me.loops)
-    loop_poly = np.repeat(np.arange(n), lt)
-    for slot_i, slot in enumerate(obj.material_slots):
-        info = find_zone_mask(slot.material)
-        if info is None:
-            continue
+# ---------------------------------------------------------------- zone overlay
+# The zone highlight is a viewport overlay, not a material change: the hovered
+# part is drawn again with a shader that reads the zone id per texel and paints
+# a screen-space checker where the id equals the hovered zone.
+OVERLAY_COLOURS = ((1.0, 0.85, 0.0, 0.9), (0.02, 0.02, 0.02, 0.8))
+OVERLAY_CELL_PX = 9.0       # checker square size in pixels at UI scale 1
+OVERLAY_DEPTH_BIAS = 1e-4   # towards the camera, so the overlay wins over the surface it lies on
+
+_OVERLAY_VERT = """
+void main()
+{
+  uvi = uv;
+  gl_Position = mvp * vec4(pos, 1.0);
+  gl_Position.z -= bias * gl_Position.w;
+}
+"""
+
+_OVERLAY_FRAG = """
+void main()
+{
+  ivec2 size = textureSize(mask, 0);
+  ivec2 tc = clamp(ivec2(floor(fract(uvi) * vec2(size))), ivec2(0), size - ivec2(1));
+  float id = floor(texelFetch(mask, tc, 0).r * 255.0 + 0.5);
+  if (abs(id - zone) > 0.5) {
+    discard;
+  }
+  vec2 c = floor(gl_FragCoord.xy / cell);
+  fragColor = mix(colA, colB, mod(c.x + c.y, 2.0));
+}
+"""
+
+
+def overlay_data(obj, material):
+    """Triangles of ``material`` on ``obj`` (evaluated mesh, local space) with their mask UVs.
+
+    Returns {"pos": (T*3, 3), "uv": (T*3, 2), "image", "kind", "batch"} or None when the
+    material has no zone mask. Cached; :func:`clear_overlay_cache` drops it."""
+    if obj is None or material is None:
+        return None
+    key = (obj.name, material.name)
+    if key in _OVERLAY_CACHE:
+        return _OVERLAY_CACHE[key]
+    out = None
+    info = find_zone_mask(material)
+    slots = [i for i, s in enumerate(obj.material_slots) if s.material == material]
+    if info is not None and slots:
+        me = obj.evaluated_get(bpy.context.evaluated_depsgraph_get()).data
         uvl = _uv_layer(me, info)
-        if uvl is None:
-            continue
-        uv = np.empty(nl * 2, np.float32); uvl.uv.foreach_get("vector", uv)
-        uv = uv.reshape(nl, 2)
-        sel = mi == slot_i
-        if not sel.any():
-            continue
-        lsel = sel[loop_poly]
-        lz = sample_zones(info, uv[lsel])
-        lp = loop_poly[lsel]
-        cen = np.add.reduceat(uv, ls, axis=0)[sel] / lt[sel, None] if n else uv[:0]
-        cz = sample_zones(info, cen)
-        polys = np.nonzero(sel)[0]
-        counts = np.zeros((n, 16), np.int32)
-        np.add.at(counts, (lp, np.clip(lz, 0, 15)), 1)
-        np.add.at(counts, (polys, np.clip(cz, 0, 15)), 2)
-        out[polys] = np.argmax(counts[polys], axis=1)
-    _FACE_ZONE_CACHE[key] = out
+        me.calc_loop_triangles()
+        nt = len(me.loop_triangles)
+        if uvl is not None and nt:
+            tm = np.empty(nt, np.int32); me.loop_triangles.foreach_get("material_index", tm)
+            tv = np.empty(nt * 3, np.int32); me.loop_triangles.foreach_get("vertices", tv)
+            tl = np.empty(nt * 3, np.int32); me.loop_triangles.foreach_get("loops", tl)
+            co = np.empty(len(me.vertices) * 3, np.float32); me.vertices.foreach_get("co", co)
+            uv = np.empty(len(me.loops) * 2, np.float32); uvl.uv.foreach_get("vector", uv)
+            keep = np.isin(tm, slots)
+            if keep.any():
+                out = {
+                    "pos": np.ascontiguousarray(co.reshape(-1, 3)[tv.reshape(nt, 3)[keep].ravel()]),
+                    "uv": np.ascontiguousarray(uv.reshape(-1, 2)[tl.reshape(nt, 3)[keep].ravel()]),
+                    "image": info.image, "kind": info.kind, "batch": None,
+                }
+    _OVERLAY_CACHE[key] = out
     return out
 
 
-def zone_triangles(obj, zone, material=None):
-    """Local-space triangle vertex array (T*3, 3) for polygons in ``zone``
-    (optionally restricted to ``material``'s slot)."""
-    dg = bpy.context.evaluated_depsgraph_get()
-    me = obj.evaluated_get(dg).data
-    fz = face_zone_map(obj)
-    keep = fz == zone
-    if material is not None:
-        mi = np.empty(len(me.polygons), np.int32); me.polygons.foreach_get("material_index", mi)
-        idx = [i for i, s in enumerate(obj.material_slots) if s.material == material]
-        keep &= np.isin(mi, idx)
-    me.calc_loop_triangles()
-    nt = len(me.loop_triangles)
-    tp = np.empty(nt, np.int32); me.loop_triangles.foreach_get("polygon_index", tp)
-    tv = np.empty(nt * 3, np.int32); me.loop_triangles.foreach_get("vertices", tv)
-    co = np.empty(len(me.vertices) * 3, np.float32); me.vertices.foreach_get("co", co)
-    co = co.reshape(-1, 3)
-    tv = tv.reshape(nt, 3)[keep[tp]]
-    return co[tv.ravel()]
+def clear_overlay_cache():
+    """Drop cached overlay geometry (the mesh may have been posed or edited since)."""
+    _OVERLAY_CACHE.clear()
 
 
-def zone_batch(obj, zone, material=None):
-    """Cached gpu batch of the zone's triangles (None when gpu unavailable)."""
-    n = len(obj.evaluated_get(bpy.context.evaluated_depsgraph_get()).data.polygons)
-    key = (obj.name, n, zone, material.name if material else None)
-    if key in _BATCH_CACHE:
-        return _BATCH_CACHE[key]
-    pos = zone_triangles(obj, zone, material)
-    batch = None
+def overlay_zone_ids(image, kind):
+    """uint8 (h, w) zone id per texel: the same numbers :func:`sample_zones` returns."""
+    return np.clip(zones_from_pixels(image_pixels(image), kind), 0, 255).astype(np.uint8)
+
+
+def _zone_texture(image, kind):
+    ent = _ZONE_TEX_CACHE.get(image.name)
+    if ent is not None and ent[0] == image.as_pointer() and ent[1] == kind:
+        return ent[2]
+    import gpu
+    ids = overlay_zone_ids(image, kind)
+    h, w = ids.shape
+    data = (ids.astype(np.float32) / 255.0).ravel()
+    tex = gpu.types.GPUTexture((w, h), format="R8", data=gpu.types.Buffer("FLOAT", len(data), data))
+    _ZONE_TEX_CACHE[image.name] = (image.as_pointer(), kind, tex)
+    return tex
+
+
+def _overlay_shader():
+    if _OVERLAY_SHADER:
+        return _OVERLAY_SHADER[0]
+    import gpu
+    info = gpu.types.GPUShaderCreateInfo()
+    info.push_constant("MAT4", "mvp")
+    info.push_constant("VEC4", "colA")
+    info.push_constant("VEC4", "colB")
+    info.push_constant("FLOAT", "zone")
+    info.push_constant("FLOAT", "cell")
+    info.push_constant("FLOAT", "bias")
+    info.sampler(0, "FLOAT_2D", "mask")
+    info.vertex_in(0, "VEC3", "pos")
+    info.vertex_in(1, "VEC2", "uv")
+    iface = gpu.types.GPUStageInterfaceInfo("arc_zone_overlay_iface")
+    iface.smooth("VEC2", "uvi")
+    info.vertex_out(iface)
+    info.fragment_out(0, "VEC4", "fragColor")
+    info.vertex_source(_OVERLAY_VERT)
+    info.fragment_source(_OVERLAY_FRAG)
+    _OVERLAY_SHADER.append(gpu.shader.create_from_info(info))
+    return _OVERLAY_SHADER[0]
+
+
+def draw_zone_overlay(obj, material, zone, view_projection, world, cell=OVERLAY_CELL_PX):
+    """Draw the checker on the texels of ``zone`` on ``obj``'s ``material``. False when there is nothing to draw."""
+    od = overlay_data(obj, material)
+    if od is None or not zone:
+        return False
+    import gpu
+    from gpu_extras.batch import batch_for_shader
+    sh = _overlay_shader()
+    if od["batch"] is None:
+        od["batch"] = batch_for_shader(sh, "TRIS", {"pos": od["pos"], "uv": od["uv"]})
+    tex = _zone_texture(od["image"], od["kind"])
+    gpu.state.blend_set("ALPHA")
+    gpu.state.depth_test_set("LESS_EQUAL")
+    gpu.state.depth_mask_set(False)
     try:
-        import gpu
-        from gpu_extras.batch import batch_for_shader
-        sh = gpu.shader.from_builtin("UNIFORM_COLOR")
-        batch = batch_for_shader(sh, "TRIS", {"pos": pos})
-    except Exception:
-        batch = None
-    _BATCH_CACHE[key] = batch if batch is not None else pos
-    return _BATCH_CACHE[key]
+        sh.bind()
+        sh.uniform_float("mvp", view_projection @ world)
+        sh.uniform_float("colA", OVERLAY_COLOURS[0])
+        sh.uniform_float("colB", OVERLAY_COLOURS[1])
+        sh.uniform_float("zone", float(zone))
+        sh.uniform_float("cell", max(float(cell), 2.0))
+        sh.uniform_float("bias", OVERLAY_DEPTH_BIAS)
+        sh.uniform_sampler("mask", tex)
+        od["batch"].draw(sh)
+    finally:
+        gpu.state.depth_test_set("NONE")
+        gpu.state.blend_set("NONE")
+    return True
 
 
 # ---------------------------------------------------------------- colour hook
@@ -479,8 +558,6 @@ class ARC_OT_set_zone_colour(bpy.types.Operator):
             self.layout.prop(context.scene, "arc_shader_scope", expand=True)
 
 
-HOVER_COLOUR = (1.0, 0.22, 0.0, 1.0)
-HOVER_COLOUR_ALT = (0.0, 0.75, 1.0, 1.0)     # used when the zone is already close to HOVER_COLOUR
 HOVER_TINT = {"arc_uc_tint_h": 0.06, "arc_uc_tint_a": 0.85}
 
 
@@ -526,31 +603,19 @@ class HoverColour:
         self.key = None
 
 
-def _far(a, b):
-    return sum(abs(float(x) - float(y)) for x, y in zip(a[:3], b[:3])) > 0.6
-
-
 def hover_writes(context, obj, material, zone):
     """(key, [(socket, value)]) for the current selection mode, or (None, []) when nothing can be shown.
 
-    Zone/Decal: the hovered colour zone on the whole asset. Part: a tint on the hovered part.
+    Zone/Decal: no material change; the hovered zone of the hovered part is drawn as a checker
+    overlay (:func:`draw_zone_overlay`). Part: a tint on the hovered part.
     Whole Outfit: a tint on every part of the hovered asset."""
     sco = _control_ops()
     mode = sco.select_mode(context.scene)
     root = sco.asset_root(obj)
     if mode == "ZONE":
-        if not zone:
+        if not zone or material is None or find_zone_mask(material) is None:
             return None, []
-        info = find_zone_mask(material)
-        name = zone_param(int(zone) - 1, info.kind if info else "outfit")
-        if name is None:
-            return None, []
-        writes = []
-        for sock in sco.param_sockets(sco._objects(obj, True), name):
-            if sock.type != "RGBA":
-                continue
-            writes.append((sock, HOVER_COLOUR if _far(sock.default_value, HOVER_COLOUR) else HOVER_COLOUR_ALT))
-        return ("ZONE", root.name, name), writes
+        return ("ZONE", obj.name, material.name, int(zone)), []
     objects = [obj] if mode == "PART" else sco._objects(obj, True)
     from .materials import user_controls
     writes = []
@@ -603,9 +668,8 @@ class ARC_OT_pick_shader_zone(bpy.types.Operator):
             mat, z, name = get_zone_at(obj, h)
             if z is not None or (not zone_mode and mat is not None):
                 cur = (obj, mat, z, name)
-            if z is not None and zone_mode:
-                zone_batch(obj, z, mat)
         self._cur = cur
+        self._zone_mode = zone_mode
         self._hit = hit[1] if (hit is not None and cur) else None
         key, writes = hover_writes(context, cur[0], cur[1], cur[2]) if cur else (None, [])
         self._shown = self._hover.show(key, writes) if key is not None else (self._hover.clear() or 0)
@@ -619,23 +683,19 @@ class ARC_OT_pick_shader_zone(bpy.types.Operator):
 
     def _draw(self, context):
         cur = getattr(self, "_cur", None)
-        if not cur or cur[2] is None or getattr(self, "_shown", 0):
-            return      # the colour change on the material already shows the selection
+        if not cur or not cur[2] or not getattr(self, "_zone_mode", False):
+            return      # Part and Whole Outfit show as a tint on the material
         obj, mat, z, _ = cur
-        b = zone_batch(obj, z, mat)
-        if b is None or isinstance(b, np.ndarray):
-            return
-        import gpu
-        sh = gpu.shader.from_builtin("UNIFORM_COLOR")
-        gpu.state.blend_set("ALPHA")
-        gpu.state.depth_test_set("LESS_EQUAL")
-        gpu.matrix.push()
-        gpu.matrix.multiply_matrix(obj.evaluated_get(context.evaluated_depsgraph_get()).matrix_world)
-        sh.uniform_float("color", (1.0, 0.55, 0.1, 0.35))
-        b.draw(sh)
-        gpu.matrix.pop()
-        gpu.state.depth_test_set("NONE")
-        gpu.state.blend_set("NONE")
+        try:
+            import gpu
+            world = obj.evaluated_get(bpy.context.evaluated_depsgraph_get()).matrix_world
+            view_projection = gpu.matrix.get_projection_matrix() @ gpu.matrix.get_model_view_matrix()
+            draw_zone_overlay(obj, mat, z, view_projection, world,
+                              OVERLAY_CELL_PX * bpy.context.preferences.system.ui_scale)
+        except Exception as exc:
+            if not getattr(self, "_draw_failed", False):
+                self._draw_failed = True
+                print(f"Arc Raiders: zone highlight failed: {exc!r}")
 
     def _finish(self, context):
         self._hover.clear()
@@ -671,6 +731,9 @@ class ARC_OT_pick_shader_zone(bpy.types.Operator):
         self._cur = None
         self._hit = None
         self._shown = 0
+        self._zone_mode = False
+        self._draw_failed = False
+        clear_overlay_cache()       # the mesh may have been posed since the last pick
         self._hover = HoverColour()
         self._handle = bpy.types.SpaceView3D.draw_handler_add(self._draw, (context,), "WINDOW", "POST_VIEW")
         context.window_manager.modal_handler_add(self)
@@ -1076,6 +1139,6 @@ def bench_hover(obj_list, rays, depsgraph=None):
             mat, z, _name = get_zone_at(ob, {"face_index": fi, "location": loc})
             if z is not None:
                 hits += 1
-                zone_batch(ob, z, mat)
+                overlay_data(ob, mat)
         times.append((time.perf_counter() - t) * 1000.0)
     return times, hits
