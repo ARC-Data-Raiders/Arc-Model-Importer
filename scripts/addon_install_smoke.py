@@ -51,7 +51,8 @@ def _check_enabled(folder, version):
         raise RuntimeError('Packaged outfit reference is missing')
     if hasattr(module, '_search_poll'):
         raise RuntimeError('idle search polling is still present')
-    if bpy.app.timers.is_registered(overlay._timer):
+    overlay_timer = getattr(overlay, '_timer', None)
+    if overlay_timer is not None and bpy.app.timers.is_registered(overlay_timer):
         raise RuntimeError('reference overlay idle timer is still registered')
     if bpy.app.timers.is_registered(pak_extract._initialize_pak_defaults):
         raise RuntimeError('PAK startup initialization timer is still registered')

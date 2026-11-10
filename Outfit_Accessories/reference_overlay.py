@@ -5,7 +5,6 @@ import math
 import hashlib
 import numpy as np
 from mathutils import Matrix, Vector
-from bpy.app.handlers import persistent
 
 _HELPER = "arc_reference_overlay_helper"
 _HIDDEN = "_arc_reference_overlay_hidden_layers"
@@ -245,25 +244,6 @@ def ensure_enabled():
     return refresh(scene) == eligible
 
 
-def _timer():
-    if not _enabled:
-        return None
-    try:
-        scenes = {w.scene for w in bpy.context.window_manager.windows}
-        for scene in scenes:
-            refresh(scene)
-    except (AttributeError, ReferenceError, RuntimeError) as exc:
-        print("ARC reference overlay:", exc)
-    return 0.75
-
-
-@persistent
-def _load(_):
-    _records.clear()
-    if _enabled and not bpy.app.timers.is_registered(_timer):
-        bpy.app.timers.register(_timer, first_interval=0.25, persistent=True)
-
-
 def register():
     global _enabled
     _enabled = True
@@ -273,10 +253,6 @@ def register():
 def unregister():
     global _enabled
     _enabled = False
-    if bpy.app.timers.is_registered(_timer):
-        bpy.app.timers.unregister(_timer)
-    while _load in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_load)
     if not hasattr(bpy.data, "objects") or not hasattr(bpy.data, "scenes"):
         _records.clear()
         return
