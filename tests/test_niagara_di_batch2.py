@@ -10,7 +10,8 @@ from pathlib import Path
 
 import numpy as np
 
-import niagara_di as di
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara import niagara as di
 
 CORPUS = os.environ.get('DR_NIAGARA_CORPUS')
 SHIM = os.environ.get('DR_SVML_SHIM')
@@ -83,7 +84,7 @@ class FastPathTests(unittest.TestCase):
 
 class SpriteInfoTests(unittest.TestCase):
     def exports(self, renderer_props, renderer_type='NiagaraSpriteRendererProperties'):
-        return [{'Type': di.SPRITE_INFO, 'Properties': {'SpriteRenderer': {'ObjectPath': '/Game/X.1'}}},
+        return [{'Type': di.di_SPRITE_INFO, 'Properties': {'SpriteRenderer': {'ObjectPath': '/Game/X.1'}}},
                 {'Type': renderer_type, 'Properties': renderer_props}]
 
     def test_values_and_defaults(self):
@@ -255,9 +256,9 @@ class VectorFieldTests(unittest.TestCase):
 
     def test_case_handler(self):
         vf = synthetic_field()
-        ext = [{'num_inputs': 3, 'num_outputs': 3, 'di': {'class': di.VECTOR_FIELD, 'function': 'SampleField', 'field': '/Test/F.F',
+        ext = [{'num_inputs': 3, 'num_outputs': 3, 'di': {'class': di.di_VECTOR_FIELD, 'function': 'SampleField', 'field': '/Test/F.F',
                                                            'tile_x': True, 'tile_y': False, 'tile_z': False}},
-               {'num_inputs': 0, 'num_outputs': 3, 'di': {'class': di.SPRITE_INFO, 'function': 'GetSubUVDetails', 'has_renderer': False,
+               {'num_inputs': 0, 'num_outputs': 3, 'di': {'class': di.di_SPRITE_INFO, 'function': 'GetSubUVDetails', 'has_renderer': False,
                                                            'sub_image_blend': False, 'sub_image_size_x_bits': '4020000000000000', 'sub_image_size_y_bits': '4020000000000000'}},
                {'num_inputs': 1, 'num_outputs': 2}]
         h = di.case_handler(ext, vector_fields={'/Test/F.F': vf})
@@ -272,8 +273,8 @@ class VectorFieldTests(unittest.TestCase):
 @unittest.skipUnless(CORPUS and SHIM and VECTOR_FIELDS, 'DR_NIAGARA_CORPUS, DR_SVML_SHIM or DR_NIAGARA_VECTOR_FIELDS unset')
 class CorpusVectorFieldTests(unittest.TestCase):
     def test_vector_field_system_bakes(self):
-        from niagara_sched_model import load_system
-        from niagara_scheduler import BakeError, BakeInputs, Scheduler, bake
+        from Niagara.niagara import load_system
+        from Niagara.niagara import BakeError, BakeInputs, Scheduler, bake
         model = load_system(next(Path(CORPUS).rglob('NS_Augment_HealingCloud.json')))
         inputs = BakeInputs(ticks=60, di_mode='real', svml_shim_path=SHIM, vector_fields=VECTOR_FIELDS)
         with tempfile.TemporaryDirectory() as temp:

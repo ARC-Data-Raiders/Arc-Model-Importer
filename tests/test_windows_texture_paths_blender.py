@@ -17,11 +17,11 @@ def main():
     sys.pycache_prefix = str(Path(args.output).resolve().parent / "pycache")
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root.parent))
-    textures = importlib.import_module(root.name + ".textures")
-    common = importlib.import_module(root.name + ".materials.common")
-    utils = importlib.import_module(root.name + ".utils")
-    pak = importlib.import_module(root.name + ".pak_extract")
-    operators = importlib.import_module(root.name + ".operators")
+    textures = importlib.import_module(root.name + ".Shared.textures")
+    common = importlib.import_module(root.name + ".Shared.materials.common")
+    utils = importlib.import_module(root.name + ".Shared.utils")
+    pak = importlib.import_module(root.name + ".Shared.pak_extract")
+    operators = importlib.import_module(root.name + ".Shared.operators")
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     report = {"passed": False, "textures": [], "errors": []}

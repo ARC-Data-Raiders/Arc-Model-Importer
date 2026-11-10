@@ -11,7 +11,7 @@ import unittest
 
 DEFAULT_CACHE = os.path.join(
     os.environ.get('APPDATA', ''), 'Blender Foundation', 'Blender', '5.1', 'scripts',
-    'addons', 'DataRaiders-Outfits', 'ArcPak', 'cache')
+    'addons', 'Arc-Asset-Importer', 'ArcPak', 'cache')
 
 
 def png_size(path):

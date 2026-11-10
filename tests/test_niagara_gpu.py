@@ -5,7 +5,8 @@ from pathlib import Path
 
 import numpy as np
 
-import niagara_gpu as g
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara import niagara as g
 
 CORPUS = os.environ.get('DR_NIAGARA_CORPUS')
 SHIM = os.environ.get('DR_SVML_SHIM')
@@ -43,8 +44,8 @@ class Ids(unittest.TestCase):
 @unittest.skipUnless(CORPUS and SHIM and BINDINGS and SHADERS, 'GPU corpus inputs unset')
 class RoofSmoke(unittest.TestCase):
     def test_m2_runs_from_its_own_compute_shader(self):
-        from niagara_sched_model import load_system
-        from niagara_scheduler import BakeInputs, Scheduler
+        from Niagara.niagara import load_system
+        from Niagara.niagara import BakeInputs, Scheduler
         path = next(Path(CORPUS).rglob('NS_FrontEnd_RoofSmoke_01.json'))
         s = Scheduler(load_system(path), BakeInputs(ticks=30, di_mode='real', svml_shim_path=SHIM, gpu_bindings=BINDINGS, gpu_shaders=SHADERS))
         s.run()

@@ -1,11 +1,11 @@
 """Only the authored bUseColorScheme switch turns a simple-family BaseColor into a ColorMask (no Blender)."""
 import ast,os,unittest
 from pathlib import Path
-ROOT=Path(os.environ['DATARAIDERS_TEST_REPOSITORY']) if os.environ.get('DATARAIDERS_TEST_REPOSITORY') else next(p for p in Path(__file__).resolve().parents if (p/'materials/environment.py').is_file())
+ROOT=Path(os.environ['DATARAIDERS_TEST_REPOSITORY']) if os.environ.get('DATARAIDERS_TEST_REPOSITORY') else next(p for p in Path(__file__).resolve().parents if (p/'Shared/materials/environment.py').is_file())
 WHITE=(1.0,1.0,1.0,1.0)
 
 def gate():
-    tree=ast.parse((ROOT/'materials/environment.py').read_text(encoding='utf-8'))
+    tree=ast.parse((ROOT/'Shared/materials/environment.py').read_text(encoding='utf-8'))
     ns={}
     exec(compile(ast.Module(body=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_simple_uses_color_scheme'],type_ignores=[]),'<environment>','exec'),ns)
     return ns['_simple_uses_color_scheme']

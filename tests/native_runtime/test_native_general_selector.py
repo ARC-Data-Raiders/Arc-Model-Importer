@@ -4,7 +4,7 @@ try:
 except ImportError:
     from native_test_support import ROOT,PACKAGE,namespace
 import ast,importlib,random,unittest
-namespace();general=importlib.import_module(PACKAGE+'.materials.dr_primary_graph.general')
+namespace();general=importlib.import_module(PACKAGE+'.Shared.materials.dr_primary_graph.general')
 
 def sequential(values,factors,default):
     active=[z for z in range(1,9) if values.get(z) is not None];result=default
@@ -33,6 +33,6 @@ class GeneralSelectorContracts(unittest.TestCase):
         self.assertEqual(general.contribution_value((2,5),{2:.25,5:1.},{},17.),.25)
         self.assertEqual(general.contribution_value((2,5),{2:None,5:.75},{},17.),.75)
     def test_no_production_retained_selector_call(self):
-        tree=ast.parse((ROOT/'materials/gt_outfit_pbr.py').read_text(encoding='utf-8'));self.assertFalse(any(isinstance(n,ast.Name) and n.id=='_mux_by_zone_retained' for n in ast.walk(tree)))
-        tree=ast.parse((ROOT/'materials/dr_primary_graph/public.py').read_text(encoding='utf-8'));calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call)];self.assertFalse(any(isinstance(n.func,ast.Name) and n.func.id=='retained' for n in calls));self.assertTrue(any(isinstance(n.func,ast.Name) and n.func.id=='build_general' for n in calls))
+        tree=ast.parse((ROOT/'Shared/materials/gt_outfit_pbr.py').read_text(encoding='utf-8'));self.assertFalse(any(isinstance(n,ast.Name) and n.id=='_mux_by_zone_retained' for n in ast.walk(tree)))
+        tree=ast.parse((ROOT/'Shared/materials/dr_primary_graph/public.py').read_text(encoding='utf-8'));calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call)];self.assertFalse(any(isinstance(n.func,ast.Name) and n.func.id=='retained' for n in calls));self.assertTrue(any(isinstance(n.func,ast.Name) and n.func.id=='build_general' for n in calls))
 if __name__=='__main__':unittest.main()

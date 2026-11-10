@@ -18,11 +18,11 @@ pkg = types.ModuleType("lighting_feedback")
 source_root = pathlib.Path(sys.argv[sys.argv.index("--source-root") + 1]) if "--source-root" in sys.argv else REPO
 pkg.__path__ = [str(source_root), str(REPO)]
 sys.modules[pkg.__name__] = pkg
-post = importlib.import_module(pkg.__name__ + ".lighting_post")
-grade = importlib.import_module(pkg.__name__ + ".lighting_grade")
-looks = importlib.import_module(pkg.__name__ + ".lighting_looks")
+post = importlib.import_module(pkg.__name__ + ".Lighting.lighting_post")
+grade = importlib.import_module(pkg.__name__ + ".Lighting.lighting_grade")
+looks = importlib.import_module(pkg.__name__ + ".Lighting.lighting_looks")
 report = {}
-sky = importlib.import_module(pkg.__name__ + ".lighting_sky")
+sky = importlib.import_module(pkg.__name__ + ".Lighting.lighting_sky")
 
 scene = bpy.context.scene
 for window in bpy.context.window_manager.windows:

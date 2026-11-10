@@ -6,14 +6,14 @@ except ImportError:
 import importlib,types,sys,unittest
 from pathlib import Path
 from unittest.mock import patch
-nf=namespace();identity=importlib.import_module(PACKAGE+'.material_runtime.loaded_identity')
+nf=namespace();identity=importlib.import_module(PACKAGE+'.Shared.materials.native.loaded_identity')
 class UV:name='NativeUV'
 OBJ=types.SimpleNamespace(type='MESH',data=types.SimpleNamespace(uv_layers=[UV()]),scale=(1.,1.,1.))
 
 class NativeLoadedIdentityTests(unittest.TestCase):
     def setUp(self):self.tmp=temp_fixture('loaded-identity-');self.directory=Path(self.tmp.name)
     def tearDown(self):self.tmp.cleanup()
-    def source(self,value):return 'from '+PACKAGE+'.material_runtime.loaded_identity import capture_loaded_source\ndef value():return '+str(value)+'\ncapture_loaded_source(globals())\n'
+    def source(self,value):return 'from '+PACKAGE+'.Shared.materials.native.loaded_identity import capture_loaded_source\ndef value():return '+str(value)+'\ncapture_loaded_source(globals())\n'
     def load(self,name,text,installed=None):
         path=self.directory/(name+'.py');path.write_text(text if installed is None else installed,encoding='utf8');module=types.ModuleType(name);module.__file__=str(path);sys.modules[name]=module;exec(compile(text,str(path),'exec'),module.__dict__);self.addCleanup(sys.modules.pop,name,None);return module,path
     def test_disk_edit_does_not_execute_new_code_or_gain_new_loaded_identity(self):
@@ -30,14 +30,14 @@ class NativeLoadedIdentityTests(unittest.TestCase):
     def test_all_transitive_helpers_are_bound_and_validation_does_not_recompile(self):
         first=nf._implementation_revision('prop')
         with patch('builtins.compile',side_effect=AssertionError('Per-material validation cannot recompile')):self.assertEqual(nf._implementation_revision('prop'),first)
-        for name in ('renderer_vectors','defaults','compiler','blockout_glow'):
-            module=importlib.import_module(PACKAGE+'.material_runtime.'+name);self.assertTrue(getattr(module,identity.MARKER)['valid'])
+        for name in ('Shared.materials.native.renderer_vectors','Shared.materials.native.defaults','Weapons.material_runtime.compiler','Shared.materials.native.blockout_glow'):
+            module=importlib.import_module(PACKAGE+'.'+name);self.assertTrue(getattr(module,identity.MARKER)['valid'])
     def test_warm_mixed_load_preserves_graph_and_existing_signature(self):
-        _,source=create_shell_fixture(self.directory);candidate=nf.prepare(source,obj=OBJ);self.assertTrue(candidate.accepted,candidate.reason);signature=nf._candidate_signature(candidate);sentinel=object();material={'graph':sentinel,'dr_native_recipe_version':nf.NATIVE_FAMILY_RECIPE,'dr_native_family':'enemy_shell','dr_native_active_signature':signature.key,'dr_native_options':'{}'};module=importlib.import_module(PACKAGE+'.material_runtime.renderer_vectors')
+        _,source=create_shell_fixture(self.directory);candidate=nf.prepare(source,obj=OBJ);self.assertTrue(candidate.accepted,candidate.reason);signature=nf._candidate_signature(candidate);sentinel=object();material={'graph':sentinel,'dr_native_recipe_version':nf.NATIVE_FAMILY_RECIPE,'dr_native_family':'enemy_shell','dr_native_active_signature':signature.key,'dr_native_options':'{}'};module=importlib.import_module(PACKAGE+'.Shared.materials.native.renderer_vectors')
         with patch.object(module,identity.MARKER,None):self.assertFalse(nf.native_cache_is_stale(material,source,obj=OBJ))
         self.assertIs(material['graph'],sentinel);self.assertEqual(material['dr_native_active_signature'],signature.key);self.assertTrue(material['dr_native_restart_required']);self.assertFalse(material['dr_native_signature_complete']);self.assertIn('Restart Blender',material['dr_native_route_diagnostic'])
     def test_fresh_mixed_load_is_handled_refusal_without_generic_fallback_or_new_stamp(self):
-        _,source=create_shell_fixture(self.directory);sentinel=object();material={'graph':sentinel};module=importlib.import_module(PACKAGE+'.material_runtime.defaults');compiler=importlib.import_module(PACKAGE+'.material_runtime.compiler')
+        _,source=create_shell_fixture(self.directory);sentinel=object();material={'graph':sentinel};module=importlib.import_module(PACKAGE+'.Shared.materials.native.defaults');compiler=importlib.import_module(PACKAGE+'.Weapons.material_runtime.compiler')
         with patch.object(module,identity.MARKER,None),patch.object(compiler,'compile_plan',side_effect=AssertionError('Mixed code cannot compile')):
             handled=nf.setup_entrypoint(material,source,obj=OBJ,expected_family='enemy_shell',cache_family='decal')
         self.assertTrue(handled,'Dispatcher must stop before its legacy generic fallback');self.assertIs(material['graph'],sentinel);self.assertTrue(material['dr_native_restart_required']);self.assertNotIn('dr_native_active_signature',material);self.assertNotIn('dr_native_family',material)

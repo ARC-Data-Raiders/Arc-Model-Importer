@@ -2,10 +2,13 @@ try:
     from .native_test_support import ROOT
 except ImportError:
     from native_test_support import ROOT
+try: from .native_test_support import real_package as _ns
+except ImportError: from native_test_support import real_package as _ns
+_ns()
 import json,unittest
 from pathlib import Path
-from material_runtime.core import MaterialRecord,evaluate,literal
-from material_runtime.weapons import compile_weapon,WEAPON_DETAIL_ARRAY,RUST_NORMAL,RUST_COLOR,WEAR_PROPERTY
+from _native_runtime_regression_addon.Shared.materials.native.core import MaterialRecord,evaluate,literal
+from _native_runtime_regression_addon.Weapons.material_runtime.weapons import compile_weapon,WEAPON_DETAIL_ARRAY,RUST_NORMAL,RUST_COLOR,WEAR_PROPERTY
 
 class NativeMidLayerCheckpoints(unittest.TestCase):
     def test_mid_layer_matches_cooked_bettina_pixel_shader(self):
@@ -27,7 +30,7 @@ class NativeMidLayerCheckpoints(unittest.TestCase):
         record=MaterialRecord('/Game/test/w',textures={'CR':'/Game/cr','NXM':'/Game/nxm','Weapon ID':'/Game/id','Wear':'/Game/wear'},switches={'Enable Red Mask':True,'UseWeaponQuality':True})
         plan=compile_weapon(record)
         found=[]
-        from material_runtime.core import Expr
+        from _native_runtime_regression_addon.Shared.materials.native.core import Expr
         def walk(node):
             if not isinstance(node,Expr):return
             if node.op=='attribute':found.append((node.attrs.get('name'),node.attrs.get('type')))

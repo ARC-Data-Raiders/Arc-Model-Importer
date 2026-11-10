@@ -4,9 +4,9 @@ These are compatibility observations, not Unreal shader parity claims.
 import importlib,sys,types,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2];PKG='_dr_registry_boundary_test'
-for name,path in ((PKG,ROOT),(PKG+'.material_runtime',ROOT/'material_runtime')):
+for name,path in ((PKG,ROOT),(PKG+'.Shared.materials.native',ROOT/'Shared/materials/native')):
  m=types.ModuleType(name);m.__path__=[str(path)];sys.modules[name]=m
-helpers=importlib.import_module(PKG+'.material_runtime.shared_helpers')
+helpers=importlib.import_module(PKG+'.Shared.materials.native.shared_helpers')
 class BoundaryTests(unittest.TestCase):
  def test_normal_radial_height_not_dx_reconstruction(self):
   for color,z in (((.5,.5,.2),1.),((1.,0.,.9),.7071067811865476),((.75,.5,.1),.8660254037844386)):

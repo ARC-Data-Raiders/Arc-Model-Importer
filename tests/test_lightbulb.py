@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests'))
 import test_glass_opaque as glass_test  # noqa: E402  (registers the _sr_glass_pkg loader package)
 
-spec = importlib.util.spec_from_file_location('_sr_glass_pkg.lightbulb', ROOT / 'surface_rebuild/lightbulb.py')
+spec = importlib.util.spec_from_file_location('_sr_glass_pkg.lightbulb', ROOT / 'Shared/materials/rebuild/lightbulb.py')
 bulb = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = bulb
 spec.loader.exec_module(bulb)

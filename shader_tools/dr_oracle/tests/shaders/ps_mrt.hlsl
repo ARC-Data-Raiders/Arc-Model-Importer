@@ -1,0 +1,1 @@
+struct Output { float4 a : SV_Target0; float4 b : SV_Target1; float4 c : SV_Target2; float4 d : SV_Target3; }; Output main(float4 p : SV_Position) { Output o; o.a=float4(1,0,0,1); o.b=float4(0,1,0,1); o.c=float4(0,0,1,1); o.d=float4(.5,.25,.125,1); return o; }

@@ -39,7 +39,7 @@ class AppearanceProducerTests(unittest.TestCase):
                 writer.writeheader()
                 writer.writerow({"id": "fixture-id", "kind": "backpack", "folder": "Fixture", "icon_stem": "Fixture", "segment": "BackpackContainer"})
             output = root / "output"
-            coverage = PRODUCER.build_catalog(csv_path, [source], [], output)
+            coverage = PRODUCER.build_catalog(csv_path, [source], output)
             manifest = json.loads((output / "appearance_browse.json").read_text(encoding="utf-8"))
             self.assertEqual(coverage["backpack_colorways"], 1)
             self.assertEqual(manifest["backpack_colorways"]["Fixture"], [{"id": "Red", "label": "Authored red", "package": "PioneerGame/Content/" + package[len("/Game/"):]}])
@@ -48,7 +48,7 @@ class AppearanceProducerTests(unittest.TestCase):
             self.assertTrue(manifest["sources"][0]["files"])
             self.assertEqual(coverage["missing_icon_ids"], ["fixture-id"])
             first = (output / "appearance_browse.json").read_bytes()
-            PRODUCER.build_catalog(csv_path, [source], [], output)
+            PRODUCER.build_catalog(csv_path, [source], output)
             self.assertEqual(first, (output / "appearance_browse.json").read_bytes())
 
     def test_icon_matching_preserves_variant_suffix_and_word_ending(self):

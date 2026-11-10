@@ -3,8 +3,8 @@ import base64
 import struct
 import unittest
 import zlib
-from niagara_vm import (DecodeError, Operand, bytecode_from_vm, disassemble,
-                        external_register_counts)
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara.niagara import DecodeError, Operand, bytecode_from_vm, vm_disassemble as disassemble, external_register_counts
 
 
 def words(*values):

@@ -19,6 +19,7 @@ using CUE4Parse.UE4.Objects.Core.Misc;
 using CUE4Parse.UE4.Versions;
 using CUE4Parse.Compression;
 using CUE4Parse_Conversion;
+using CUE4Parse_Conversion.Exporters;
 using CUE4Parse_Conversion.Options;
 using CUE4Parse_Conversion.Textures.BC;
 using Newtonsoft.Json;
@@ -46,7 +47,87 @@ internal static class Program
             .WriteTo.Console()
             .CreateLogger();
 
+        AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
+        {
+            if (e.Exception is OutOfMemoryException) _outOfMemorySeen = 1;
+        };
+        if (args.Length > 0 && args[0] == "serve")
+            return Serve();
         try
+        {
+            using var dirLocks = OutputDirLock.AcquireForArgs(args);
+            var code = RunCommand(args);
+            if (code == 0 && Volatile.Read(ref _outOfMemorySeen) != 0)
+            {
+                Log.Error("Out of memory during export; output is incomplete");
+                return 1;
+            }
+            return code;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "ArcPak.Export failed");
+            return 1;
+        }
+        finally
+        {
+            Log.CloseAndFlush();
+        }
+    }
+
+    private static int _outOfMemorySeen;
+
+    internal static bool Serving;
+    private static readonly Dictionary<string, FileUsmapTypeMappingsProvider> _mappings = new(StringComparer.OrdinalIgnoreCase);
+
+    internal static FileUsmapTypeMappingsProvider Mappings(string usmap)
+    {
+        if (!Serving)
+            return new FileUsmapTypeMappingsProvider(usmap);
+        if (!_mappings.TryGetValue(usmap, out var hit))
+            _mappings[usmap] = hit = new FileUsmapTypeMappingsProvider(usmap);
+        return hit;
+    }
+
+    // JSON lines: in {"args":[...]}; out {"rc":N,"log":"..."}. Logs go to a per-request buffer.
+    private static int Serve()
+    {
+        Serving = true;
+        var stdout = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false)) { AutoFlush = true };
+        var stdin = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false));
+        stdout.WriteLine("{\"ready\":true}");
+        string? line;
+        while ((line = stdin.ReadLine()) != null)
+        {
+            if (line.Length == 0) continue;
+            var buffer = new StringWriter();
+            int code;
+            Console.SetOut(buffer);
+            Console.SetError(buffer);
+            Log.Logger = new LoggerConfiguration().MinimumLevel.Information().WriteTo.Console().CreateLogger();
+            try
+            {
+                var req = System.Text.Json.JsonDocument.Parse(line);
+                var args = req.RootElement.GetProperty("args").EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
+                Volatile.Write(ref _outOfMemorySeen, 0);
+                using (OutputDirLock.AcquireForArgs(args))
+                    code = RunCommand(args);
+                if (code == 0 && Volatile.Read(ref _outOfMemorySeen) != 0) code = 1;
+            }
+            catch (Exception ex)
+            {
+                buffer.WriteLine("ArcPak.Export failed: " + ex);
+                code = 1;
+            }
+            Log.CloseAndFlush();
+            var reply = new System.Text.Json.Nodes.JsonObject { ["rc"] = code, ["log"] = buffer.ToString() };
+            stdout.WriteLine(reply.ToJsonString());
+        }
+        return 0;
+    }
+
+    private static int RunCommand(string[] args)
+    {
         {
             if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
             {
@@ -64,6 +145,8 @@ internal static class Program
                 return BuildIndex(args.Skip(1).ToArray());
             if (string.Equals(args[0], "reindex", StringComparison.OrdinalIgnoreCase))
                 return ReindexCommand(args.Skip(1).ToArray());
+            if (string.Equals(args[0], "previews", StringComparison.OrdinalIgnoreCase))
+                return PreviewsCommand(args.Skip(1).ToArray());
             if (string.Equals(args[0], "shader-records", StringComparison.OrdinalIgnoreCase))
                 return ShaderRecordExport.Run(args.Skip(1).ToArray());
             if (string.Equals(args[0], "material-shadermaps", StringComparison.OrdinalIgnoreCase))
@@ -80,15 +163,6 @@ internal static class Program
             Log.Error("Unknown command '{Cmd}'. Expected: extract, index, reindex", args[0]);
             PrintHelp();
             return 1;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "ArcPak.Export failed");
-            return 1;
-        }
-        finally
-        {
-            Log.CloseAndFlush();
         }
     }
 
@@ -138,6 +212,54 @@ internal static class Program
         return 0;
     }
 
+    // Cache T_UI_Icon_* previews from a saved/bundled index without reindexing.
+    private static int PreviewsCommand(string[] args)
+    {
+        string gameDir = "", indexDir = "", cacheDir = "", usmap = "";
+        var indexPaths = new List<string>();
+        for (var i = 0; i < args.Length; i++)
+        {
+            var a = args[i];
+            if (i + 1 >= args.Length)
+                throw new ArgumentException($"Missing value after {a}");
+            var v = args[++i];
+            switch (a)
+            {
+                case "--game-dir": gameDir = v; break;
+                case "--index-dir": indexDir = v; break;
+                case "--index": indexPaths.Add(v); break;
+                case "--out": cacheDir = v; break;
+                case "--usmap": usmap = v; break;
+                default: throw new ArgumentException($"Unknown argument {a}");
+            }
+        }
+        if (string.IsNullOrWhiteSpace(gameDir) || !Directory.Exists(gameDir))
+            throw new ArgumentException("Missing or absent --game-dir (PioneerGame/Content/Paks)");
+        if (string.IsNullOrWhiteSpace(cacheDir))
+            throw new ArgumentException("Missing --out");
+        var timer = Stopwatch.StartNew();
+        PrepareCompression(gameDir);
+        var build = GameBuild.Read(gameDir);
+        var index = SelectIndex(gameDir, indexDir, indexPaths, build);
+        if (index is null || !index.IndexesPreviews)
+        {
+            Log.Error("previews: no matching v5+ pak index for build {Build}", build.BuildId);
+            return 3;
+        }
+        var names = index.PreviewContainerNames().Concat(index.AlwaysMountNames()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        using var provider = CreateShell(gameDir);
+        if (!string.IsNullOrWhiteSpace(usmap))
+            provider.MappingsContainer = Program.Mappings(usmap);
+        if (names.Count == 0 || !MountNames(provider, gameDir, names))
+        {
+            Log.Error("previews: could not mount {Count} preview containers", names.Count);
+            return 4;
+        }
+        CachePreviewIcons(provider, cacheDir);
+        Log.Information("previews: containers={Count} ms={Ms}", names.Count, timer.ElapsedMilliseconds);
+        return 0;
+    }
+
     private static int ReindexCommand(string[] args)
     {
         string gameDir = "";
@@ -182,7 +304,15 @@ internal static class Program
 
         PrepareCompression(gameDir);
         var build = GameBuild.Read(gameDir);
-        using var provider = Reindex(gameDir, indexDir, build, usmap, cacheDir);
+        using var provider = Reindex(gameDir, indexDir, build, usmap);
+        try
+        {
+            CachePreviewIcons(provider, cacheDir);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Could not cache preview icons");
+        }
         Log.Information(
             "Reindexed build={Build} file={File} files={Files}",
             build.IsKnown ? build.BuildId : "unknown",
@@ -262,7 +392,7 @@ internal static class Program
         Directory.CreateDirectory(indexDir);
         PrepareCompression(gameDir);
         var provider = (metadataOnly || materialMetadataOnly) ? OpenMetadataProvider(gameDir, usmap, paths, indexPaths, indexDir, materialTextureClosure: materialMetadataOnly)
-            : OpenProvider(gameDir, usmap, paths, indexPaths, indexDir, outDir);
+            : OpenProvider(gameDir, usmap, paths, indexPaths, indexDir);
         try
         {
             if (materialMetadataOnly) return ExportMaterialMetadata(provider, paths, outDir, GameBuild.Read(gameDir), materialFiles, usmap);
@@ -285,7 +415,7 @@ internal static class Program
             // no browser/index/preview writes and no image encoder runs.
             var all = CreateShell(gameDir);
             all.ReadShaderMaps = false;
-            all.MappingsContainer = new FileUsmapTypeMappingsProvider(usmap);
+            all.MappingsContainer = Program.Mappings(usmap);
             MountEverything(all);
             Log.Information("Material/texture metadata full dependency mount; no mesh/image encoding or preview/index writes");
             return all;
@@ -307,7 +437,7 @@ internal static class Program
         }
         var full = CreateShell(gameDir);
         full.ReadShaderMaps = false;
-        full.MappingsContainer = new FileUsmapTypeMappingsProvider(usmap);
+        full.MappingsContainer = Program.Mappings(usmap);
         MountEverything(full);
         Log.Information("Metadata-only full mount; no preview/index writes");
         return full;
@@ -318,8 +448,7 @@ internal static class Program
         string usmap,
         List<string> paths,
         List<string> indexPaths,
-        string indexDir,
-        string outDir)
+        string indexDir)
     {
         var timer = Stopwatch.StartNew();
         var build = GameBuild.Read(gameDir);
@@ -351,7 +480,7 @@ internal static class Program
             Log.Error("No mesh or colourway package under {Paths}", string.Join("; ", paths));
             var shell = CreateShell(gameDir);
             if (!string.IsNullOrWhiteSpace(usmap))
-                shell.MappingsContainer = new FileUsmapTypeMappingsProvider(usmap);
+                shell.MappingsContainer = Program.Mappings(usmap);
             return shell;
         }
         else if (rebuildPreviews)
@@ -371,7 +500,7 @@ internal static class Program
             Log.Information("Pak index has no folder list; rebuilding once");
         }
 
-        var full = Reindex(gameDir, indexDir, build, usmap, outDir);
+        var full = Reindex(gameDir, indexDir, build, usmap);
         Log.Information(
             "Mounted {Files} files in {Ms} ms (reindex)",
             full.Files.Count,
@@ -383,8 +512,7 @@ internal static class Program
         string gameDir,
         string indexDir,
         GameBuild.Info build,
-        string? usmap,
-        string? cacheDir)
+        string? usmap)
     {
         Log.Information(
             "Reindex build={Build} depot={Depot}",
@@ -392,7 +520,7 @@ internal static class Program
             build.DepotManifest.Length > 0 ? build.DepotManifest : "unknown");
         var full = CreateShell(gameDir);
         if (!string.IsNullOrWhiteSpace(usmap))
-            full.MappingsContainer = new FileUsmapTypeMappingsProvider(usmap);
+            full.MappingsContainer = Program.Mappings(usmap);
         MountEverything(full);
         Directory.CreateDirectory(indexDir);
         var path = Path.Combine(indexDir, PakIndex.FileName(build));
@@ -404,15 +532,6 @@ internal static class Program
         catch (Exception ex)
         {
             Log.Warning(ex, "Could not write pak index");
-        }
-
-        try
-        {
-            CachePreviewIcons(full, cacheDir);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Could not cache preview icons");
         }
 
         return full;
@@ -684,7 +803,7 @@ internal static class Program
             names.Add(name);
 
         var provider = CreateShell(gameDir);
-        provider.MappingsContainer = new FileUsmapTypeMappingsProvider(usmap);
+        provider.MappingsContainer = Program.Mappings(usmap);
         try
         {
             if (!MountNames(provider, gameDir, names))
@@ -983,32 +1102,32 @@ internal static class Program
         var queued = 0;
         for (UUnrealMaterial? cursor = material;
              cursor is not null && visitedMaterials.Add(cursor.GetPathName());
-             cursor = (cursor as UMaterialInstance)?.Parent)
+             cursor = (cursor as UMaterialInstance)?.Parent?.Load<UUnrealMaterial>())
         {
             // The conversion JSON flattens parameters and drops Parent/default
             // sampler names. Keep authoritative named data beside it so enemy
             // presets can inherit NMR/Detail without suffix-based guesses.
-            var rel = CanonicalGamePackagePath(cursor.GetPathName());
+            var rel = MaterialMetadataExport.OutputStem(cursor);
             var sourceFile = Path.Combine(outDir, rel.Replace('/', Path.DirectorySeparatorChar) + ".arc-material.json");
             Directory.CreateDirectory(Path.GetDirectoryName(sourceFile)!);
-            var source = JObject.FromObject(cursor);
-            source.Remove("LoadedMaterialResources");
-            source.Remove("CachedData");
+            var source = MaterialMetadataExport.Source(cursor);
             File.WriteAllText(sourceFile, new JObject { ["Exports"] = new JArray(source) }.ToString(Formatting.Indented));
             if (cursor is not UMaterial master) continue;
-            foreach (var texture in master.ReferencedTextures)
+            foreach (var reference in master.ReferencedTextures)
             {
                 // Cooked lists can retain empty references for inactive layers.
-                if (texture is null) continue;
+                if (reference is null) continue;
                 try
                 {
+                    var texture = reference.Load<UTexture>();
+                    if (texture is null) continue;
                     var before = session.TotalQueued;
                     session.Add(texture);
                     queued += session.TotalQueued - before;
                 }
                 catch (Exception ex)
                 {
-                    Log.Warning(ex, "Master material texture export skipped {Material} {Texture}", master.Name, texture.Name);
+                    Log.Warning(ex, "Master material texture export skipped {Material} {Texture}", master.Name, reference.Name);
                 }
             }
         }
@@ -1148,7 +1267,7 @@ internal static class Program
                     if (!string.IsNullOrWhiteSpace(wrapPath) && FindPackage(provider, wrapPath) is { } wrapPackage &&
                         wrapPackage.GetExports().OfType<USkinnedAsset>().FirstOrDefault() is { } wrapMesh)
                     {
-                        session.Add(wrapMesh);
+                        session.Add(new SkinnedAssetExporter(wrapMesh, includeDisabledSections: true));
                         materialSlotSnapshots.Add(MeshMaterialSlotsExport.Capture(wrapMesh, CookedMountPath(NormalizePackagePath(wrapPath)).Trim('/'), build));
                         queued++;
                         if (!ClothWrapExport.Write(wrapPackage, wrapMesh, CookedMountPath(NormalizePackagePath(wrapPath)).Trim('/'), outDir))
@@ -1382,7 +1501,8 @@ internal static class Program
         if (_compressionReady)
             return;
 
-        ZlibHelper.Initialize();
+        var zlibPath = Path.Combine(AppContext.BaseDirectory, ZlibHelper.DllName);
+        ZlibHelper.Initialize(File.Exists(zlibPath) ? zlibPath : null);
         var oodle = FindGameOodle(gameDir);
         if (oodle is not null)
         {

@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests'))
 import test_glass_opaque as glass_test  # noqa: E402  (registers the _sr_glass_pkg loader package)
 
-spec = importlib.util.spec_from_file_location('_sr_glass_pkg.fzt_snow', ROOT / 'surface_rebuild/fzt_snow.py')
+spec = importlib.util.spec_from_file_location('_sr_glass_pkg.fzt_snow', ROOT / 'Shared/materials/rebuild/fzt_snow.py')
 snow = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = snow
 spec.loader.exec_module(snow)

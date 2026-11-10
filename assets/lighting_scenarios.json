@@ -1738,6 +1738,50 @@
     "LeaveTangent": 0.0
    }
   ],
+  "Curve_PracticeRange_Exposure_01": [
+   {
+    "InterpMode": "RCIM_Cubic",
+    "Time": -9.0,
+    "Value": 1.5,
+    "ArriveTangent": 0.0,
+    "LeaveTangent": 0.0
+   },
+   {
+    "InterpMode": "RCIM_Cubic",
+    "Time": -6.0,
+    "Value": 1.3,
+    "ArriveTangent": -0.20075552,
+    "LeaveTangent": -0.20075552
+   },
+   {
+    "InterpMode": "RCIM_Cubic",
+    "Time": -3.0,
+    "Value": 0.0,
+    "ArriveTangent": -0.617983,
+    "LeaveTangent": -0.617983
+   },
+   {
+    "InterpMode": "RCIM_Cubic",
+    "Time": 0.0,
+    "Value": -1.2,
+    "ArriveTangent": 0.0,
+    "LeaveTangent": 0.0
+   },
+   {
+    "InterpMode": "RCIM_Cubic",
+    "Time": 4.0,
+    "Value": 0.4,
+    "ArriveTangent": 0.17758963,
+    "LeaveTangent": 0.17758963
+   },
+   {
+    "InterpMode": "RCIM_Cubic",
+    "Time": 6.0,
+    "Value": 0.5,
+    "ArriveTangent": 2.7636421e-08,
+    "LeaveTangent": 2.7636421e-08
+   }
+  ],
   "Curve_Rainstorm_Exposure_01": [
    {
     "InterpMode": "RCIM_Cubic",
@@ -8149,7 +8193,7 @@
    }
   },
   "MountainCompound": {
-   "label": "Mountain Compound",
+   "label": "Stella Montis",
    "scenarios": {
     "Lighting.DefaultDay": {
      "label": "Default Day",
@@ -24507,6 +24551,362 @@
       "x_axis": [
        0.3420201,
        0.9396926,
+       0.0
+      ],
+      "mesh": "SM_Ultra_Dynamic_Sky_Sphere",
+      "visible": true,
+      "location": null,
+      "scale": null
+     }
+    }
+   }
+  },
+  "MainMenu": {
+   "label": "Main Menu",
+   "scenarios": {
+    "MainMenu": {
+     "label": "Main Menu",
+     "weight": null,
+     "filter_tags": [],
+     "level": "MainMenu",
+     "volumes": [
+      {
+       "name": "PostProcessVolume_UAID_30C599CCC6237FF902_1150589791",
+       "unbound": true,
+       "priority": 0.0,
+       "blend_weight": 1.0,
+       "overrides": {}
+      }
+     ]
+    }
+   }
+  },
+  "PracticeRange": {
+   "label": "Practice Range",
+   "scenarios": {
+    "LI_PracticeRange_03": {
+     "label": "03",
+     "weight": null,
+     "filter_tags": [],
+     "level": "LI_PracticeRange_03",
+     "volumes": [
+      {
+       "name": "PostProcessVolume_0",
+       "unbound": true,
+       "priority": 0.0,
+       "blend_weight": 1.0,
+       "overrides": {
+        "AmbientOcclusionIntensity": 0.8,
+        "AmbientOcclusionQuality": 100.0,
+        "AmbientOcclusionRadius": 400.0,
+        "AutoExposureBias": 0.0,
+        "AutoExposureBiasCurve": {
+         "name": "Curve_PracticeRange_Exposure_01",
+         "class": "CurveFloat",
+         "path": "/Game/Pioneer/Lighting/Curves/Curve_PracticeRange_Exposure_01.0"
+        },
+        "AutoExposureMaxBrightness": 4.75,
+        "AutoExposureMeterMask": {
+         "name": "T_ExposureMeter_Mask_01",
+         "class": "Texture2D",
+         "path": "/Game/Pioneer/Lighting/T_ExposureMeter_Mask_01.0"
+        },
+        "AutoExposureMethod": "EAutoExposureMethod::AEM_Basic",
+        "AutoExposureMinBrightness": -0.5,
+        "AutoExposureSpeedDown": 2.0,
+        "BloomDirtMask": {
+         "name": "T_ScreenDirt_02",
+         "class": "Texture2D",
+         "path": "/Game/Pioneer/Lighting/EmbarkLensFlare/Textures/Custom_Lens_Flare_VFX/DirtMasks_Textures/T_ScreenDirt_02.0"
+        },
+        "BloomDirtMaskIntensity": 10.0,
+        "BloomIntensity": 2.0,
+        "BloomMethod": null,
+        "BloomSizeScale": 10.0,
+        "BloomThreshold": 0.1,
+        "ColorContrastMidtones": {
+         "X": 1.07,
+         "Y": 1.07,
+         "Z": 1.07,
+         "W": 1.07
+        },
+        "ColorGradingIntensity": null,
+        "ColorGradingLUT": {
+         "name": "RGBTable16x1_Kodak5218_BrightDay_001",
+         "class": "Texture2D",
+         "path": "/Game/Pioneer/Lighting/LUTs/RGBTable16x1_Kodak5218_BrightDay_001.0"
+        },
+        "IndirectLightingIntensity": null,
+        "LensFlareIntensity": null,
+        "LocalExposureHighlightContrastScale": 0.9,
+        "LocalExposureMiddleGreyBias": -1.0,
+        "LocalExposureShadowContrastScale": 0.9,
+        "MotionBlurAmount": 0.2,
+        "RayTracingAO": null,
+        "RayTracingGI": null,
+        "RayTracingGIMaxBounces": null,
+        "RayTracingGISamplesPerPixel": null,
+        "ReflectionMethod": "EReflectionMethod::ScreenSpace",
+        "VignetteIntensity": 0.5
+       }
+      }
+     ],
+     "sun": {
+      "forward": [
+       0.8386706,
+       0.1409631,
+       -0.5260809
+      ],
+      "intensity": 24.0,
+      "light_color": [
+       255,
+       255,
+       255
+      ],
+      "use_temperature": true,
+      "temperature": 6500.0,
+      "source_angle": 0.5357,
+      "atmosphere_sun": true
+     },
+     "moon": {
+      "forward": [
+       -0.5278877,
+       0.7419981,
+       0.4132474
+      ],
+      "intensity": 0.0,
+      "light_color": [
+       0,
+       0,
+       0
+      ],
+      "use_temperature": false,
+      "temperature": 6500.0,
+      "source_angle": 0.5357,
+      "atmosphere_sun": true
+     },
+     "sky_light": {
+      "intensity": 0.7,
+      "light_color": [
+       255,
+       247,
+       241
+      ],
+      "indirect": 1.0,
+      "cubemap": null,
+      "cubemap_angle": null
+     },
+     "sky": {
+      "Cloud Wisps Texture": {
+       "name": "HFD_HemiClouds04",
+       "class": "Texture2D",
+       "path": "/Game/Pioneer/Lighting/HDRI/HFD_HemiClouds04.0"
+      },
+      "Cloud Wisps Opacity": 1.5,
+      "Wispy Cloud Color": {
+       "X": 1.0,
+       "Y": 1.0,
+       "Z": 1.0
+      },
+      "Cloud Coverage": 1.14,
+      "Sun Angle": 90.0,
+      "Sun Yaw": 9.541040420532227,
+      "TimeOfDay": 820.0,
+      "Stars_Color": {
+       "R": 0.0,
+       "G": 0.0,
+       "B": 0.0,
+       "A": 1.0
+      },
+      "Sun Disk Intensity": 1.0,
+      "Global Sky Color": {
+       "R": 0.679878,
+       "G": 0.783376,
+       "B": 1.0,
+       "A": 1.0
+      },
+      "Global Sun Color": {
+       "R": 1.0,
+       "G": 0.86484,
+       "B": 0.666594,
+       "A": 1.0
+      },
+      "Moon Intensity": 0.0,
+      "Moon Color": {
+       "R": 0.0,
+       "G": 0.0,
+       "B": 0.0,
+       "A": 1.0
+      }
+     },
+     "fog": {
+      "FogDensity": 0.13,
+      "FogHeightFalloff": 0.18,
+      "bEnableVolumetricFog": true,
+      "VolumetricFogExtinctionScale": 0.35,
+      "VolumetricFogDistance": 7500.0,
+      "WorldHeightFogData": {
+       "RuntimeVirtualTexture": {
+        "name": "VT_World_02_H",
+        "class": "RuntimeVirtualTexture",
+        "path": "/Game/Pioneer/Maps/World_02/VirtualTexture/VT_World_02_H.0"
+       },
+       "FogDensity": 0.3,
+       "FogHeightFalloff": 8.0,
+       "FogStartDistance": 3000.0,
+       "FogEndDistance": 10000.0,
+       "NoiseLayers": [
+        {
+         "Weight": 1.0,
+         "Tiling": 4.0,
+         "Contrast": 1.0,
+         "Velocity": {
+          "X": 1.0,
+          "Y": 1.0,
+          "Z": 1.0
+         }
+        }
+       ]
+      },
+      "RelativeLocation": {
+       "X": 48675.816,
+       "Y": 8834.73,
+       "Z": -4449.453
+      }
+     },
+     "atmosphere": {
+      "RayleighExponentialDistribution": 7.405175,
+      "AerialPespectiveViewDistanceScale": 3.0,
+      "HeightFogContribution": 3.0,
+      "TransmittanceMinLightElevationAngle": 90.0,
+      "RelativeLocation": {
+       "X": 0.0,
+       "Y": 0.0,
+       "Z": -26225.0
+      },
+      "bVisible": true
+     },
+     "sky_material": {
+      "textures": {
+       "clouds_basetex": "clouds_diverse",
+       "Cloud_Wisps_Texture": "HFD_HemiClouds04",
+       "Stars_Texture": null,
+       "Moon_Texture": "Moon_Masks"
+      },
+      "texture_paths": {
+       "clouds_basetex": "/Game/Pioneer/Lighting/VolumeClouds/Textures/Clouds/clouds_diverse.0",
+       "Cloud_Wisps_Texture": "/Game/Pioneer/Lighting/HDRI/HFD_HemiClouds04.0",
+       "Stars_Texture": null,
+       "Moon_Texture": "/Game/Pioneer/Lighting/VolumeClouds/Textures/Sky/Moon_Masks.0"
+      },
+      "scalars": {
+       "Sun Angle": 0.25,
+       "Sun Brightness": 0.35,
+       "Shine Variation": 1.0,
+       "Sun Lighting Intensity": 3.0,
+       "Sun Highlight Radius": 0.045,
+       "Extra_Contrast": 0.2,
+       "Soften_Cloud_Layer_1": 1.0,
+       "Soften_Cloud_Layer_2": 1.0,
+       "Use Hybrid Sky": 2.0,
+       "Cloud Opacity": 1.0,
+       "Cloud Tiling_Layer1": 4.0,
+       "Cloud Tiling_Layer2": 3.0,
+       "Cloud Direction": 0.314,
+       "Cloud Height 1": -0.18,
+       "Cloud Height 2": -0.51,
+       "Cloud Sharpness": 1.0,
+       "Moon Scale": 1300009.2,
+       "MoonCutout": 648019.25,
+       "Stars_Tiling": 3.5,
+       "Stars Speed": 0.08,
+       "Stars Intensity": 0.0,
+       "Moon Rotation": 0.0,
+       "Moon Glow Intensity": 0.25,
+       "Stars Phase": 0.0,
+       "Custom_Moon_Texture": 0.0,
+       "Moon_Earthlight": 0.05,
+       "Aurora Speed": 0.13,
+       "Aurora Phase": 1.0,
+       "Aurora Lines": 0.25,
+       "Cloud Density": 1.14,
+       "Wispy Cloud Alpha": 1.5,
+       "OvercastSwirl": 0.0,
+       "Sun Radius": 0.012,
+       "Sun Disk Intensity": 24.0,
+       "Moon Intensity": 0.0,
+       "Moon_Lit_Percent": 1.0,
+       "Overall Intensity": 0.85,
+       "Lit_Intensity": 1.0,
+       "Saturation": 0.0
+      },
+      "vectors": {
+       "Sun Position": [
+        0.83867055,
+        0.14096296,
+        -0.5260809,
+        1.0
+       ],
+       "Moon Light Vector": [
+        -15836633.0,
+        22259942.0,
+        12397420.0,
+        1.0
+       ],
+       "Moon Color": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+       ],
+       "Aurora_Color_1": [
+        0.619792,
+        0.091135,
+        0.341744,
+        1.0
+       ],
+       "Aurora_Color_2": [
+        0.0,
+        1.0,
+        0.112561,
+        1.0
+       ],
+       "Aurora_Color_3": [
+        0.070031,
+        0.347007,
+        0.65625,
+        1.0
+       ],
+       "Wispy Cloud Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Wispy Cloud Panner": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+       ],
+       "Moon_Phase_Angle": [
+        0.0,
+        -1.0,
+        0.0,
+        1.0
+       ],
+       "Night Sky Glow Color": [
+        6.356102e-12,
+        7.2818505e-12,
+        9.931416e-12,
+        3.891499e-11
+       ]
+      }
+     },
+     "sky_sphere": {
+      "x_axis": [
+       0.0530333,
+       0.9985927,
        0.0
       ],
       "mesh": "SM_Ultra_Dynamic_Sky_Sphere",

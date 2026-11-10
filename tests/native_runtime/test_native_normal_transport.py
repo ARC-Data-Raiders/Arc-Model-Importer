@@ -4,7 +4,7 @@ except ImportError:
     from native_test_support import ROOT
 import unittest,math
 from types import SimpleNamespace
-from material_runtime.deformation import (write_corner_normals,preserve_normal_source,read_normal_source,apply_normal_deltas,MorphTarget,MorphDelta,NormalTransportUnavailable,_FLOAT_NORMAL_CAPABILITIES,NORMAL_BASE_CORNER)
+from Shared.materials.native.deformation import write_corner_normals, preserve_normal_source, read_normal_source, apply_normal_deltas, MorphTarget, MorphDelta, NormalTransportUnavailable, _FLOAT_NORMAL_CAPABILITIES, NORMAL_BASE_CORNER
 
 class Data(list):
     def foreach_set(self,field,values):

@@ -3,13 +3,13 @@ from pathlib import Path
 from unittest.mock import patch
 OUT=Path(__file__).resolve().parents[1]
 REPO=OUT
-source=OUT/'materials/clothing.py';tree=ast.parse(source.read_text(encoding='utf-8'))
+source=OUT/'Shared/materials/clothing.py';tree=ast.parse(source.read_text(encoding='utf-8'))
 node=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_stamp_visor_material_source')
 ns={'os':os,'json':json,'textures':types.SimpleNamespace(material_lineage_signature=lambda path:[(path,123,456)],_fs_abspath=os.path.abspath)}
 exec(compile(ast.Module(body=[node],type_ignores=[]),str(source),'exec'),ns)
 stamp=ns[node.name]
 fakes=runpy.run_path(str(REPO/'tests/test_dedicated_profile_graphwalk.py'))
-D=ast.parse((OUT/'materials/dispatch.py').read_text(encoding='utf-8'));node=next(n for n in D.body if isinstance(n,ast.FunctionDef) and n.name=='_active_dedicated_outfit_profile')
+D=ast.parse((OUT/'Shared/materials/dispatch.py').read_text(encoding='utf-8'));node=next(n for n in D.body if isinstance(n,ast.FunctionDef) and n.name=='_active_dedicated_outfit_profile')
 ns2={'utils':types.SimpleNamespace(_NODE_GROUP='ArcTexturer')};exec(compile(ast.Module(body=[node],type_ignores=[]),'candidate_dispatch.py','exec'),ns2)
 profile=ns2[node.name]
 class Tests(unittest.TestCase):

@@ -7,6 +7,17 @@ namespace ArcPak;
 internal static class MaterialMetadataExport
 {
     public const string Schema = "dataraiders.native-material-hierarchy";
+    internal static JObject Source(UUnrealMaterial material)
+    {
+        var source = JObject.FromObject(material);
+        source.Remove("LoadedMaterialResources");
+        source.Remove("CachedData");
+        source["Package"] = MapBundleDocument.CanonicalPackage(material.Owner?.Name ?? material.GetPathName());
+        source["ObjectPath"] = MapBundleDocument.ExactObjectPath(material.GetPathName());
+        return source;
+    }
+    internal static string OutputStem(UUnrealMaterial material) =>
+        new CUE4Parse_Conversion.Exporters.MaterialExporter((UMaterialInterface)material).SavePath.Replace('\\', '/');
     private static string Fs(string path) { var p=Path.GetFullPath(path);return p.StartsWith(@"\\?\UNC\",StringComparison.OrdinalIgnoreCase)?@"\\"+p[8..]:p.StartsWith(@"\\?\",StringComparison.Ordinal)?p[4..]:p; }
     private static string Package(string reference) {
         var p=reference.Replace('\\','/').Trim('/');if(p.Contains('.'))p=p[..p.IndexOf('.')];
@@ -21,13 +32,9 @@ internal static class MaterialMetadataExport
     }
     public static int SelectIndex(string[] names, string[] objects, string requested) {
         if(names.Length!=objects.Length)throw new ArgumentException("Material descriptor count mismatch");
-        var package=Package(requested);var leaf=requested.Replace('\\','/').Trim('/').Split('/').Last();
-        var dot=leaf.IndexOf('.');var wanted=dot<0?package.Split('/').Last():leaf[(dot+1)..];
-        if(string.IsNullOrWhiteSpace(wanted)||wanted.Contains('.'))throw new InvalidDataException("Invalid exact material object selector");
+        var wanted=MapBundleDocument.CanonicalObject(requested);
         var matches=Enumerable.Range(0,names.Length).Where(i=>
-            names[i].Equals(wanted,StringComparison.OrdinalIgnoreCase)&&
-            Package(objects[i]).Equals(package,StringComparison.OrdinalIgnoreCase)&&
-            objects[i].Replace('\\','/').Split('/').Last().Equals(package.Split('/').Last()+"."+wanted,StringComparison.OrdinalIgnoreCase)).ToArray();
+            MapBundleDocument.CanonicalObject(objects[i]).Equals(wanted,StringComparison.OrdinalIgnoreCase)).ToArray();
         if(matches.Length!=1)throw new InvalidDataException("No unique exact named material object: "+requested+" (loaded "+objects.Length+": "+string.Join(", ",objects.Take(4))+")");
         return matches[0];
     }
@@ -38,22 +45,23 @@ internal static class MaterialMetadataExport
         finally{try{if(File.Exists(temp))File.Delete(temp);}catch(IOException){}catch(UnauthorizedAccessException){}}
     }
     public static int Write(UMaterialInterface material,string requested,string root,string? cachedFile,GameBuild.Info build) {
-        var canonical=Package(requested);if(!Package(material.GetPathName()).Equals(canonical,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Loaded material identity differs from exact request");
+        var canonical=Package(requested);if(!MapBundleDocument.CanonicalObject(material.GetPathName()).Equals(MapBundleDocument.CanonicalObject(requested),StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Loaded material identity differs from exact request");
         root=Fs(root).TrimEnd(Path.DirectorySeparatorChar);var mount="PioneerGame";
         if(!string.IsNullOrEmpty(cachedFile)){
             var file=Fs(cachedFile);var rel=Path.GetRelativePath(root,file).Replace('\\','/');
             if(rel.StartsWith("../",StringComparison.Ordinal)||Path.IsPathRooted(rel)||!File.Exists(cachedFile)||!rel.EndsWith(".json",StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Exact cached material file must exist below output root");
             if(rel.EndsWith(".arc-material.json",StringComparison.OrdinalIgnoreCase))rel=rel[..^18];else rel=rel[..^5];
-            if(!Package(rel).Equals(canonical,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Cached material full package mismatch");
+            if(MapBundleDocument.CanonicalObject(material.GetPathName()).Contains('.') ? !rel.Equals(OutputStem(material),StringComparison.OrdinalIgnoreCase) : !Package(rel).Equals(canonical,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Cached material full package mismatch");
             if(canonical.StartsWith("PioneerGame/Content/",StringComparison.OrdinalIgnoreCase))mount=rel.Split('/')[0];
         }
         var visited=new HashSet<string>(StringComparer.OrdinalIgnoreCase);long total=0;var count=0;
-        for(UUnrealMaterial? cursor=material;cursor is not null;cursor=(cursor as UMaterialInstance)?.Parent){
+        for(UUnrealMaterial? cursor=material;cursor is not null;cursor=(cursor as UMaterialInstance)?.Parent?.Load<UUnrealMaterial>()){
             if(count>=64||!visited.Add(cursor.GetPathName()))throw new InvalidDataException("Material parent cycle/depth budget");
             var package=Package(cursor.GetPathName());
             var relative=package.StartsWith("PioneerGame/Content/",StringComparison.OrdinalIgnoreCase)?mount+"/Content/"+package["PioneerGame/Content/".Length..]:package;
-            var source=JObject.FromObject(cursor);source.Remove("LoadedMaterialResources");source.Remove("CachedData");
-            var parent=(cursor as UMaterialInstance)?.Parent;var provenance=new JObject{
+            if(MapBundleDocument.CanonicalObject(cursor.GetPathName()).Contains('.'))relative=OutputStem(cursor);
+            var source=Source(cursor);
+            var parent=(cursor as UMaterialInstance)?.Parent?.Load<UUnrealMaterial>();var provenance=new JObject{
                 ["schema"]=Schema,["version"]=1,["package"]=package,["object_path"]=cursor.GetPathName(),
                 ["build_id"]=build.BuildId,["depot_manifest"]=build.DepotManifest,["parent"]=parent?.GetPathName()??""};
             var payload=new JObject{["Exports"]=new JArray(source),["DataRaidersSource"]=provenance}.ToString(Formatting.Indented);

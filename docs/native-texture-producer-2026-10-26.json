@@ -1,0 +1,24 @@
+{
+  "files": [
+    {
+      "name": "ArcPak.Export.dll",
+      "sha256": "bcf027bf2b777a690d3cf7aafb17648066e0fc52c2e02e772a394ae076f87c9f"
+    },
+    {
+      "name": "ArcPak.Export.exe",
+      "sha256": "f7f84a762d9141579d1a4fd98223f34f4bdd0ca5923d9c5c7caefd0d089e509c"
+    },
+    {
+      "name": "ArcPak.Export.deps.json",
+      "sha256": "53bfc47387808bd53511cd2bcbc4c3fa158d5d38efbe88abd7cac1449b57c19d"
+    },
+    {
+      "name": "ArcPak.Export.runtimeconfig.json",
+      "sha256": "24656bf9275c7dd6e8f5d75639b3157c36bb9757cc27d4e805fdd8238cff5d91"
+    }
+  ],
+  "user_profile_synced": false,
+  "actual_cold_scenario": "soccer-native-fixed-extract",
+  "dependencies_verified": 220,
+  "actual_warm_scenario": "warm-v2-soccer-actual"
+}

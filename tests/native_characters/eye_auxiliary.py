@@ -7,7 +7,7 @@ import numpy as np
 if 'OUT' not in globals() or 'repo' not in globals():
     raise RuntimeError('Run tests/test_native_character_materials_blender.py with Blender')
 
-A=importlib.import_module(repo.name+'.materials.character_eye_aux')
+A=importlib.import_module(repo.name+'.Shared.materials.character_eye_aux')
 bpy.ops.wm.read_factory_settings(use_empty=True)
 s=bpy.context.scene;s.render.engine='CYCLES';s.cycles.device='CPU';s.cycles.samples=1;s.cycles.use_denoising=False
 s.render.dither_intensity=0;s.render.threads_mode='FIXED';s.render.threads=4

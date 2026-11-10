@@ -3,7 +3,7 @@ try:
 except ImportError:
     from native_test_support import ROOT
 import math,struct,unittest
-from material_runtime.deformation import decode_morph_targets,deform_morph_targets,MorphTarget,MorphDelta
+from Shared.materials.native.deformation import decode_morph_targets, deform_morph_targets, MorphTarget, MorphDelta
 
 def payload(targets):
     out=bytearray(struct.pack('<i',len(targets)))

@@ -1,8 +1,8 @@
 """Portable tests of explicit original generic emission preview policy."""
 import ast,importlib.util,os,unittest
 from pathlib import Path
-ROOT=Path(os.environ['DATARAIDERS_TEST_REPOSITORY']) if os.environ.get('DATARAIDERS_TEST_REPOSITORY') else next(p for p in Path(__file__).resolve().parents if (p/'surface_rebuild/surfaces.py').is_file())
-SOURCE=Path(os.environ.get('DATARAIDERS_EMISSION_STAGE',ROOT));spec=importlib.util.spec_from_file_location('_generic_emission_policy',SOURCE/'surface_rebuild/emission_preview.py');policy=importlib.util.module_from_spec(spec);spec.loader.exec_module(policy)
+ROOT=Path(os.environ['DATARAIDERS_TEST_REPOSITORY']) if os.environ.get('DATARAIDERS_TEST_REPOSITORY') else next(p for p in Path(__file__).resolve().parents if (p/'Shared/materials/rebuild/surfaces.py').is_file())
+SOURCE=Path(os.environ.get('DATARAIDERS_EMISSION_STAGE',ROOT));spec=importlib.util.spec_from_file_location('_generic_emission_policy',SOURCE/'Shared/materials/rebuild/emission_preview.py');policy=importlib.util.module_from_spec(spec);spec.loader.exec_module(policy)
 class Graph:
     def __init__(self):self.report={'warnings':[]};self.multiplies=[]
     def mul(self,a,b):self.multiplies.append((a,b));return a*b
@@ -27,5 +27,5 @@ class GenericEmission(unittest.TestCase):
     def test_nonfinite_gain_disables_preview_and_reports(self):
         g=Graph();_,strength=policy.apply_preview(g,record(scalars={'EmissiveIntensity':float('nan')}),(.1,.2,.3,1),1.);self.assertEqual(strength,0.);self.assertTrue(any('Nonfinite' in warning for warning in g.report['warnings']))
     def test_cache_recipe_is_limited_to_generic_surface_families(self):
-        self.assertTrue(policy.applies_to_cache(record()));self.assertTrue(policy.applies_to_cache(record(family='fallback')));self.assertFalse(policy.applies_to_cache(record(family='character')));source=(SOURCE/'surface_rebuild/materials.py').read_text(encoding='utf-8');self.assertIn("shader_record['generic_emission_preview_recipe']",source);self.assertLess(source.index("shader_record['generic_emission_preview_recipe']"),source.index('key = hashlib.sha256'))
+        self.assertTrue(policy.applies_to_cache(record()));self.assertTrue(policy.applies_to_cache(record(family='fallback')));self.assertFalse(policy.applies_to_cache(record(family='character')));source=(SOURCE/'Shared/materials/rebuild/materials.py').read_text(encoding='utf-8');self.assertIn("shader_record['generic_emission_preview_recipe']",source);self.assertLess(source.index("shader_record['generic_emission_preview_recipe']"),source.index('key = hashlib.sha256'))
 if __name__=='__main__':unittest.main(verbosity=2)

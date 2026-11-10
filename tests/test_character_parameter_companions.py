@@ -8,19 +8,19 @@ REPO=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser();parser.add_argument('--scratch',default=os.environ.get('DATARAIDERS_TEST_SCRATCH') or os.environ.get('TEMP'));opts,rest=parser.parse_known_args();sys.argv=[sys.argv[0]]+rest
 if not opts.scratch:raise RuntimeError('Pass --scratch or DATARAIDERS_TEST_SCRATCH; no implicit temp location')
 SCRATCH=Path(opts.scratch);SCRATCH.mkdir(parents=True,exist_ok=True)
-for name,folder in [('char_test',REPO),('char_test.surface_rebuild',REPO/'surface_rebuild'),('char_test.materials',REPO/'materials')]:
+for name,folder in [('char_test',REPO),('char_test.Shared.materials.rebuild',REPO/'Shared/materials/rebuild'),('char_test.Shared.materials',REPO/'Shared/materials')]:
  m=types.ModuleType(name);m.__path__=[str(folder)];sys.modules[name]=m
-for module,file in [('char_test.surface_rebuild.assets','assets.py'),('char_test.surface_rebuild.records','records.py')]:
- spec=importlib.util.spec_from_file_location(module,REPO/'surface_rebuild'/file);m=importlib.util.module_from_spec(spec);sys.modules[module]=m;spec.loader.exec_module(m)
+for module,file in [('char_test.Shared.materials.rebuild.assets','assets.py'),('char_test.Shared.materials.rebuild.records','records.py')]:
+ spec=importlib.util.spec_from_file_location(module,REPO/'Shared/materials/rebuild'/file);m=importlib.util.module_from_spec(spec);sys.modules[module]=m;spec.loader.exec_module(m)
 def function(path,name,scope):
  node=next(x for x in ast.parse(path.read_text(encoding='utf-8')).body if isinstance(x,ast.FunctionDef) and x.name==name)
  exec(compile(ast.Module(body=[node],type_ignores=[]),str(path),'exec'),scope);return scope[name]
-READ=function(REPO/'materials/character_body.py','read_character_parameters',{'os':os,'json':json,'__package__':'char_test.materials'})
-NATIVE=function(REPO/'materials/fur_cards.py','is_native_colormap_source',{})
-body=types.ModuleType('char_test.materials.character_body');body.read_character_parameters=READ;sys.modules[body.__name__]=body
-fur=types.ModuleType('char_test.materials.fur_cards');fur.is_native_colormap_source=NATIVE;sys.modules[fur.__name__]=fur
-spec=importlib.util.spec_from_file_location('char_test.materials.hair_tangent',REPO/'materials/hair_tangent.py');tangent=importlib.util.module_from_spec(spec);sys.modules[spec.name]=tangent;spec.loader.exec_module(tangent)
-COMPLETE=function(REPO/'materials/character.py','_complete_hair_mi',{'__package__':'char_test.materials'})
+READ=function(REPO/'Shared/materials/character_body.py','read_character_parameters',{'os':os,'json':json,'__package__':'char_test.Shared.materials'})
+NATIVE=function(REPO/'Shared/materials/fur_cards.py','is_native_colormap_source',{})
+body=types.ModuleType('char_test.Shared.materials.character_body');body.read_character_parameters=READ;sys.modules[body.__name__]=body
+fur=types.ModuleType('char_test.Shared.materials.fur_cards');fur.is_native_colormap_source=NATIVE;sys.modules[fur.__name__]=fur
+spec=importlib.util.spec_from_file_location('char_test.Shared.materials.hair_tangent',REPO/'Shared/materials/hair_tangent.py');tangent=importlib.util.module_from_spec(spec);sys.modules[spec.name]=tangent;spec.loader.exec_module(tangent)
+COMPLETE=function(REPO/'Shared/materials/character.py','_complete_hair_mi',{'__package__':'char_test.Shared.materials'})
 MASTER='/Game/Pioneer/Characters/Heads/Shared/Hair/Materials/M_Hair_Metahuman_ColorMap'
 CHILD='/Game/Pioneer/Characters/Hairs/Style/MI_Style'
 def physical(root,logical):return root/'PioneerGame/Content'/logical.removeprefix('/Game/')
@@ -84,7 +84,7 @@ class Tests(unittest.TestCase):
   palette=physical(self.root,'/Game/Pioneer/Characters/Hairs/HairColors/MI_Pink').with_suffix('.json');write(palette,raw('/Game/Pioneer/Characters/Hairs/HairColors/MI_Pink',scalars={'Spec0':0},colors={'ColorA':{'R':.9,'G':0,'B':.4,'A':1}}))
   def parse(path):
    record=READ(path);return {'instance_scalars':record['instance_scalars'],'scalars':record['scalars'],'colours':list(record['colors'].items())}
-  merge=function(REPO/'materials/character.py','_merge_hair_colour_mi',{'os':os,'_parse_hair_mi':parse});merge(style,str(palette));self.assertEqual(style['scalars']['Spec0'],0);self.assertEqual(style['scalars']['Scraggle'],0);self.assertEqual(dict(style['colours'])['ColorA'],(.9,0,.4,1))
+  merge=function(REPO/'Shared/materials/character.py','_merge_hair_colour_mi',{'os':os,'_parse_hair_mi':parse});merge(style,str(palette));self.assertEqual(style['scalars']['Spec0'],0);self.assertEqual(style['scalars']['Scraggle'],0);self.assertEqual(dict(style['colours'])['ColorA'],(.9,0,.4,1))
  def test_exact_companion_suffix_only(self):
   self.assertTrue(NATIVE(['/root/Pioneer/Characters/Heads/Shared/Hair/Materials/M_Hair_Metahuman_ColorMap.arc-material.json']))
   self.assertFalse(NATIVE(['/root/Other/M_Hair_Metahuman_ColorMap.arc-material.json']))

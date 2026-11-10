@@ -11,10 +11,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from material_runtime.interop import authored_srgb_decode  # noqa: E402
+from Shared.materials.native.interop import authored_srgb_decode  # noqa: E402
 
-ENV_BUILDERS = ("materials/environment.py", "materials/env_props/prop_trim.py", "materials/env_props/trim_map.py",
-                "materials/env_props/weathering.py", "materials/env_props/world_paint.py")
+ENV_BUILDERS = ("Shared/materials/environment.py", "Shared/materials/env_props/prop_trim.py", "Shared/materials/env_props/trim_map.py",
+                "Shared/materials/env_props/weathering.py", "Shared/materials/env_props/world_paint.py")
 NORMAL_LABEL = re.compile(r"normal|\bnoh\b|\bnao\b|\bnx\b|detail array", re.I)
 
 
@@ -26,7 +26,7 @@ def functions(rel, *names):
 class EnvAuthoredSamplingTests(unittest.TestCase):
     def setUp(self):
         sidecars = {"os": os, "json": json, "authored_srgb_decode": authored_srgb_decode}
-        exec(compile(functions("textures.py", "authored_srgb_sidecar", "authored_linear_sidecar"), "<textures>", "exec"),
+        exec(compile(functions("Shared/textures.py", "authored_srgb_sidecar", "authored_linear_sidecar"), "<textures>", "exec"),
              sidecars)
         self.roles = []
 
@@ -36,7 +36,7 @@ class EnvAuthoredSamplingTests(unittest.TestCase):
 
         self.ns = {"textures": types.SimpleNamespace(_fs_abspath=lambda p: p, **{
             k: sidecars[k] for k in ("authored_srgb_sidecar", "authored_linear_sidecar")}), "_shader_role_image": role_image}
-        exec(compile(functions("materials/common.py", "_authored_sampling", "_new_tex_image"), "<common>", "exec"), self.ns)
+        exec(compile(functions("Shared/materials/common.py", "_authored_sampling", "_new_tex_image"), "<common>", "exec"), self.ns)
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.folder = Path(folder.name)

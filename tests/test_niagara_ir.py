@@ -4,8 +4,10 @@ import importlib.util
 from pathlib import Path
 import unittest
 
-spec = importlib.util.spec_from_file_location("niagara_ir", Path(__file__).resolve().parents[1] / "niagara_ir.py")
+spec = importlib.util.spec_from_file_location("niagara", Path(__file__).resolve().parents[1] / "Niagara/niagara.py")
 ir = importlib.util.module_from_spec(spec)
+import sys
+sys.modules[spec.name] = ir
 spec.loader.exec_module(ir)
 
 

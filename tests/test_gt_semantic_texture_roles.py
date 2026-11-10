@@ -7,7 +7,7 @@ import unittest
 
 
 def resolver(properties, resolved):
-    path=Path(__file__).resolve().parents[1]/'materials/clothing.py'
+    path=Path(__file__).resolve().parents[1]/'Shared/materials/clothing.py'
     tree=ast.parse(path.read_text(encoding='utf-8'))
     function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_gt_semantic_texture_roles')
     names={'guess-ocm.png':'occlusion','guess-normal.png':'normal','guess-breakup.png':'breakup'}

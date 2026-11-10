@@ -7,9 +7,9 @@ SELECTED={'_mapping_sha256','_extraction_revision','_installed_material_provenan
 
 def load_pak():
     package=types.ModuleType(PACKAGE);package.__path__=[str(ROOT)];sys.modules[PACKAGE]=package
-    path=ROOT/'pak_extract.py';tree=ast.parse(path.read_text(encoding='utf-8'));nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in SELECTED]
+    path=ROOT/'Shared/pak_extract.py';tree=ast.parse(path.read_text(encoding='utf-8'));nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in SELECTED]
     if {n.name for n in nodes}!=SELECTED:raise AssertionError('reuse function coverage changed')
-    module=types.ModuleType(PACKAGE+'.pak_extract');module.__package__=PACKAGE;module.__dict__.update(os=os,re=__import__('re'),json=json,hashlib=hashlib,subprocess=subprocess,lru_cache=functools.lru_cache,_log_tail=lambda value:value[-1000:])
+    module=types.ModuleType(PACKAGE+'.Shared.pak_extract');module.__package__=PACKAGE+'.Shared';module.__dict__.update(os=os,re=__import__('re'),json=json,hashlib=hashlib,subprocess=subprocess,lru_cache=functools.lru_cache,_log_tail=lambda value:value[-1000:],stop_serve=lambda:None)
     module.bpy=types.SimpleNamespace(app=types.SimpleNamespace(handlers=types.SimpleNamespace(persistent=lambda function:function)))
     exec(compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)]+nodes,type_ignores=[])),str(path),'exec'),module.__dict__);return module
 
@@ -25,8 +25,8 @@ class ReuseCurrentExtraction(unittest.TestCase):
         pak.configured_dir=lambda scene:str(self.game);pak.resolve_usmap=lambda scene:str(mapping);pak.cache_dir=lambda:str(self.cache);pak.exe_path=lambda:str(self.exe)
         self.finished=[];self.published=[];pak.utils=types.SimpleNamespace(set_pak_cache_root=self.published.append)
         pak.textures=types.SimpleNamespace(clear_clothing_path_caches=lambda:self.finished.append('textures'))
-        common=types.ModuleType(PACKAGE+'.materials.common');common.clear_material_session_caches=lambda:self.finished.append('materials');sys.modules[common.__name__]=common
-        assets=types.ModuleType(PACKAGE+'.surface_rebuild.assets');assets.invalidate_index=lambda root:self.finished.append(('index',root));sys.modules[assets.__name__]=assets
+        common=types.ModuleType(PACKAGE+'.Shared.materials.common');common.clear_material_session_caches=lambda:self.finished.append('materials');sys.modules[common.__name__]=common
+        assets=types.ModuleType(PACKAGE+'.Shared.materials.rebuild.assets');assets.invalidate_index=lambda root:self.finished.append(('index',root));sys.modules[assets.__name__]=assets
         pak.appearance=types.SimpleNamespace(_ICON_SCAN_CACHE={'warm':'retained'});self.extracted=[];pak.extract_paths=self.fake_extract
         self.scene=types.SimpleNamespace();self.model=self.cache/(self.PACKAGE+'.uemodel');self.model.parent.mkdir(parents=True);self.model.write_bytes(b'cached model fixture; not parsed')
         self.receipt=Path(str(self.model)+'.arc-extract.json')
@@ -90,6 +90,6 @@ class ReuseCurrentExtraction(unittest.TestCase):
         self.assertEqual(pak.configured_dir(types.SimpleNamespace(arc_pak_dir=str(self.game/'missing'))),'')
 
 def importlib_metadata():
-    import importlib;return importlib.import_module(PACKAGE+'.material_texture_metadata')
+    import importlib;return importlib.import_module(PACKAGE+'.Shared.material_texture_metadata')
 
 if __name__=='__main__':unittest.main()

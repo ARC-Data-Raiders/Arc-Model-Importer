@@ -2,9 +2,9 @@ import importlib,json,os,sys,tempfile,types,unittest,hashlib
 from pathlib import Path
 from unittest.mock import patch
 ROOT=Path(os.environ.get('DATARAIDERS_TEST_REPOSITORY',str(Path(__file__).resolve().parents[2])));STAGE=ROOT;PKG='_current_compat_test'
-for name,paths in ((PKG,[ROOT]),(PKG+'.material_runtime',[STAGE/'material_runtime',ROOT/'material_runtime']),(PKG+'.surface_rebuild',[STAGE/'surface_rebuild',ROOT/'surface_rebuild']),(PKG+'.materials',[STAGE/'materials',ROOT/'materials'])):
+for name,paths in ((PKG,[ROOT]),(PKG+'.Shared.materials.native',[STAGE/'Shared/materials/native',ROOT/'Shared/materials/native']),(PKG+'.Shared.materials.rebuild',[STAGE/'Shared/materials/rebuild',ROOT/'Shared/materials/rebuild']),(PKG+'.Shared.materials',[STAGE/'Shared/materials',ROOT/'Shared/materials'])):
  m=types.ModuleType(name);m.__path__=[str(p) for p in paths];sys.modules[name]=m
-catalog=importlib.import_module(PKG+'.material_runtime.catalog');data=importlib.import_module(PKG+'.material_runtime.native_data');assets=importlib.import_module(PKG+'.surface_rebuild.assets');records=importlib.import_module(PKG+'.surface_rebuild.records');bridge=importlib.import_module(PKG+'.surface_rebuild.native_catalog_bridge');presets=importlib.import_module(PKG+'.materials.preset_defaults')
+catalog=importlib.import_module(PKG+'.Shared.materials.native.catalog');data=importlib.import_module(PKG+'.Shared.materials.native.native_data');assets=importlib.import_module(PKG+'.Shared.materials.rebuild.assets');records=importlib.import_module(PKG+'.Shared.materials.rebuild.records');bridge=importlib.import_module(PKG+'.Shared.materials.rebuild.native_catalog_bridge');presets=importlib.import_module(PKG+'.Shared.materials.preset_defaults')
 class CompatTests(unittest.TestCase):
  def setUp(self):
   self.temp=tempfile.TemporaryDirectory(dir=os.environ.get('DATARAIDERS_TEST_TEMP'));self.root=Path(self.temp.name);self.flat=self.root/'flat';self.flat.mkdir();self.old=data.ACTIVATION_PATH;self.master='/Game/Pioneer/MaterialLibrary/M_Presets/M_TrimMap_01';native=self.root/'native/PioneerGame/Content';(native/'Pioneer/MaterialLibrary/M_Presets').mkdir(parents=True);(native/'Test').mkdir()

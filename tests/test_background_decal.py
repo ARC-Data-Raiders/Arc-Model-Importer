@@ -14,7 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('_background_decal', ROOT / 'surface_rebuild/background_decal.py')
+spec = importlib.util.spec_from_file_location('_background_decal', ROOT / 'Shared/materials/rebuild/background_decal.py')
 background_decal = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(background_decal)
 
@@ -28,7 +28,7 @@ def shader_reference(mask, grunge, opacity):
 
 
 class NumericGraph:
-    """Eager stand-in for material_runtime.interop.Graph: sockets are floats and 3-tuples."""
+    """Eager stand-in for materials.native.interop.Graph: sockets are floats and 3-tuples."""
     def __init__(self, images):
         self.report = {'warnings': []}
         self.images, self.result, self.requested = images, None, []
@@ -87,7 +87,7 @@ class BackgroundDecalShaderTests(unittest.TestCase):
         self.assertTrue(any('missing' in w for w in g.report['warnings']))
 
     def test_master_routes_to_the_background_decal_family(self):
-        tree = ast.parse((ROOT / 'surface_rebuild/records.py').read_text(encoding='utf-8'))
+        tree = ast.parse((ROOT / 'Shared/materials/rebuild/records.py').read_text(encoding='utf-8'))
         body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'classify']
         package = types.ModuleType('_bgdecal_pkg'); package.__path__ = []
         sys.modules['_bgdecal_pkg'] = package

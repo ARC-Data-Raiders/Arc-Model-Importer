@@ -13,35 +13,38 @@ import tempfile
 import types
 import unittest
 
+from section_fixture import add_parents
+
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "_saved_source_regression"
 package = types.ModuleType(PACKAGE)
 package.__path__ = [str(ROOT)]
 sys.modules[PACKAGE] = package
-spec = importlib.util.spec_from_file_location(PACKAGE + ".pak_catalog", ROOT / "pak_catalog.py")
+spec = importlib.util.spec_from_file_location(PACKAGE + ".Outfit_Accessories.pak_catalog", ROOT / "Outfit_Accessories/pak_catalog.py")
 catalog = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = catalog
 spec.loader.exec_module(catalog)
-namespace = {"__package__": PACKAGE, "os": os}
-source = ast.parse((ROOT / "pak_extract.py").read_text(encoding="utf-8"))
+namespace = {"__package__": PACKAGE + ".Shared", "os": os}
+source = ast.parse((ROOT / "Shared/pak_extract.py").read_text(encoding="utf-8"))
 functions = [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in
              {"_normalize_asset_path", "_package_aliases", "saved_material_package", "recover_saved_material_source"}]
-exec(compile(ast.Module(body=functions, type_ignores=[]), str(ROOT / "pak_extract.py"), "exec"), namespace)
+exec(compile(ast.Module(body=functions, type_ignores=[]), str(ROOT / "Shared/pak_extract.py"), "exec"), namespace)
 recover = namespace["recover_saved_material_source"]
-extractor = types.ModuleType(PACKAGE + ".pak_extract")
+extractor = types.ModuleType(PACKAGE + ".Shared.pak_extract")
 extractor.recover_saved_material_source = recover
 extractor.saved_material_package = namespace["saved_material_package"]
 extractor.configured_dir = lambda scene: ""
 extractor._addon_dir = lambda: str(ROOT)
 sys.modules[extractor.__name__] = extractor
-operator_namespace = {"__package__": PACKAGE, "os": os,
+add_parents(sys.modules, PACKAGE)
+operator_namespace = {"__package__": PACKAGE + ".Shared", "os": os,
                       "bpy": types.SimpleNamespace(context=types.SimpleNamespace(scene=None)),
                       "utils": types.SimpleNamespace(_pak_cache_roots=[]),
                       "log": types.SimpleNamespace(info=lambda *args: None, warning=lambda *args: None, exception=lambda *args: None)}
-operator_ast = ast.parse((ROOT / "operators.py").read_text(encoding="utf-8"))
+operator_ast = ast.parse((ROOT / "Shared/operators.py").read_text(encoding="utf-8"))
 operator_function = next(node for node in operator_ast.body if isinstance(node, ast.FunctionDef) and
                          node.name == "_recover_saved_material_lookup")
-exec(compile(ast.Module(body=[operator_function], type_ignores=[]), str(ROOT / "operators.py"), "exec"), operator_namespace)
+exec(compile(ast.Module(body=[operator_function], type_ignores=[]), str(ROOT / "Shared/operators.py"), "exec"), operator_namespace)
 recover_lookup = operator_namespace["_recover_saved_material_lookup"]
 SCRATCH_PARENT = None
 
@@ -159,7 +162,7 @@ class SavedSourceTests(unittest.TestCase):
     def test_update_missing_native_package_never_enters_fuzzy_lookup(self):
         function = next(node for node in operator_ast.body if isinstance(node, ast.FunctionDef) and
                         node.name == "fix_materials_for_object")
-        exec(compile(ast.Module(body=[function], type_ignores=[]), str(ROOT / "operators.py"), "exec"), operator_namespace)
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(ROOT / "Shared/operators.py"), "exec"), operator_namespace)
         class Mesh(dict):
             name = "Backpack_Trunk"
             material_slots = []
@@ -180,7 +183,7 @@ class SavedSourceTests(unittest.TestCase):
     def apply_wrapper(self, obj, **kwargs):
         function = next(node for node in operator_ast.body if isinstance(node, ast.FunctionDef) and
                         node.name == "apply_materials_to_object")
-        exec(compile(ast.Module(body=[function], type_ignores=[]), str(ROOT / "operators.py"), "exec"), operator_namespace)
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(ROOT / "Shared/operators.py"), "exec"), operator_namespace)
         operator_namespace["_recover_saved_material_lookup"] = recover_lookup
         operator_namespace["utils"]._pak_cache_roots = [str(self.current)]
         operator_namespace["utils"].timed = lambda label: contextlib.nullcontext()

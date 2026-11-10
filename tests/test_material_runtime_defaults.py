@@ -1,7 +1,7 @@
 import base64,pathlib,struct,sys,unittest
 ROOT=pathlib.Path(__file__).resolve().parents[1]; sys.path.insert(0,str(ROOT))
-from material_runtime import MaterialRecord
-from material_runtime.defaults import project_uniform_defaults,UniformDefaultsError
+from Shared.materials.native import MaterialRecord
+from Shared.materials.native.defaults import project_uniform_defaults, UniformDefaultsError
 
 def resource(feature,uniform):
     return {'LoadedShaderMap':{'ShaderMapId':{'FeatureLevel':feature,'QualityLevel':'High','CookedShaderMapIdHash':feature+'-hash'},'Content':{'MaterialCompilationOutput':{'UniformExpressionSet':uniform}}}}

@@ -15,7 +15,8 @@ PACKAGE = '_weapon_browser_regression'
 
 
 def load_module(name):
-    spec = importlib.util.spec_from_file_location(PACKAGE + '.' + name, ROOT / (name + '.py'))
+    from section_fixture import q
+    spec = importlib.util.spec_from_file_location(PACKAGE + '.' + q(name), ROOT / (q(name).replace('.', '/') + '.py'))
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -40,6 +41,8 @@ class Layout:
         return SimpleNamespace()
     def row(self, **kwargs):
         return self
+    def box(self):
+        return Layout(self.events, 'box', self.expanded)
     def separator(self):
         pass
 
@@ -60,7 +63,8 @@ class WeaponBrowserTests(unittest.TestCase):
         sys.modules['bpy'] = bpy
         sys.modules['bpy.props'] = bpy.props
         for name in ('weapon_import', 'weapon_position', 'utils'):
-            module = ModuleType(PACKAGE + '.' + name)
+            from section_fixture import q
+            module = ModuleType(PACKAGE + '.' + q(name))
             sys.modules[module.__name__] = module
             setattr(package, name, module)
         cls.utils = package.utils
@@ -87,7 +91,7 @@ class WeaponBrowserTests(unittest.TestCase):
         self.ui._ENUMS.clear()
         self.ui._LEGACY_ENUMS.clear()
         self.scene = SimpleNamespace(arc_weapon_key=self.catalog.weapons()[0]['key'], arc_weapon_ascended='OFF', arc_enemy_key=self.arc_catalog.ARC_ENEMIES[0][0])
-        self.context = SimpleNamespace(scene=self.scene, active_object=None)
+        self.context = SimpleNamespace(scene=self.scene, active_object=None, window_manager=SimpleNamespace(arc_add_all_weapons=False))
 
     def test_cold_and_warm_enums_use_only_packaged_metadata(self):
         with patch.object(self.assets, 'pioneer_roots', side_effect=AssertionError('browse root discovery')), patch.object(self.utils, 'get_pioneer_root', side_effect=AssertionError('browse configured root')), patch.object(self.utils, 'get_content_dirs', side_effect=AssertionError('browse backup discovery')), patch.object(self.assets, 'resolve', side_effect=AssertionError('browse source resolution')):
@@ -122,10 +126,13 @@ class WeaponBrowserTests(unittest.TestCase):
                 self.ui.draw(layout, self.context)
                 default = {(kind, name) for scope, kind, name in layout.events if scope == 'default'}
                 self.assertIn(('operator', 'arc_outfits.import_weapon'), default)
-                for name in ('arc_weapon_position', 'arc_weapon_tier', 'arc_weapon_ascended', 'arc_weapon_include_ascended'):
+                for name in ('arc_weapon_position', 'arc_weapon_tier', 'arc_weapon_ascended'):
                     self.assertIn(('prop', name), default)
-                for name in ('arc_outfits.add_all_weapons', 'arc_outfits.set_weapon_tier', 'arc_outfits.update_weapon_position'):
+                for name in ('arc_outfits.set_weapon_tier', 'arc_outfits.update_weapon_position'):
                     self.assertIn(('operator', name), default)
+                self.assertIn(('prop', 'arc_add_all_weapons'), default)
+                self.assertNotIn(('operator', 'arc_outfits.add_all_weapons'), default)
+                self.assertFalse(any(scope == 'box' for scope, kind, name in layout.events))
                 self.assertFalse(any(kind == 'panel' and name == 'arc_weapon_advanced' for scope, kind, name in layout.events))
 
     def test_generated_preview_identity_and_no_external_io(self):
@@ -273,10 +280,10 @@ class WeaponBrowserTests(unittest.TestCase):
                 roots = self.assets.pioneer_roots(scene)
                 self.assertEqual(self.assets.resolve('/Game/Pioneer/Items/present', roots), root / 'Items/present.json')
                 self.assertEqual(self.assets.resolve('/Game/Pioneer/Items/present', self.assets.current_roots(roots)), root / 'Items/present.json')
-                source = ast.parse((ROOT / 'weapon_import.py').read_text(encoding='utf-8'))
+                source = ast.parse((ROOT / 'Weapons/weapon_import.py').read_text(encoding='utf-8'))
                 mesh_file = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == 'mesh_file')
                 namespace = {'assets': self.assets}
-                exec(compile(ast.Module(body=[mesh_file], type_ignores=[]), str(ROOT / 'weapon_import.py'), 'exec'), namespace)
+                exec(compile(ast.Module(body=[mesh_file], type_ignores=[]), str(ROOT / 'Weapons/weapon_import.py'), 'exec'), namespace)
                 self.assertEqual(namespace['mesh_file']('/Game/Pioneer/Items/present', self.assets.current_roots(roots)), root / 'Items/present.uemodel')
 
     def test_action_miss_resolves_backup_and_current_excludes_old_unpack(self):
@@ -328,7 +335,7 @@ class WeaponBrowserTests(unittest.TestCase):
             fallback.assert_called_once()
 
     def test_real_skin_action_extracts_missing_visual_then_resolves_it(self):
-        source = ast.parse((ROOT / 'weapon_import.py').read_text(encoding='utf-8'))
+        source = ast.parse((ROOT / 'Weapons/weapon_import.py').read_text(encoding='utf-8'))
         action = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == '_skin_visual')
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -341,10 +348,10 @@ class WeaponBrowserTests(unittest.TestCase):
                 calls.extend(refs)
                 path.parent.mkdir(parents=True)
                 path.write_text('[]')
-            pak = ModuleType(PACKAGE + '.pak_extract')
+            pak = ModuleType(PACKAGE + '.Shared.pak_extract')
             pak.configured_dir = lambda scene: ''
-            namespace = {'__package__': PACKAGE, 'assets': self.assets, 'Path': Path, '_extract_missing': extract}
-            exec(compile(ast.Module(body=[action], type_ignores=[]), str(ROOT / 'weapon_import.py'), 'exec'), namespace)
+            namespace = {'__package__': PACKAGE + '.Weapons', 'assets': self.assets, 'Path': Path, '_extract_missing': extract}
+            exec(compile(ast.Module(body=[action], type_ignores=[]), str(ROOT / 'Weapons/weapon_import.py'), 'exec'), namespace)
             data = {'weapons': {entry['stem']: {'skins': [{'id': 'RegressionSkin', 'label': 'Regression skin', 'reference': reference}]}}, 'mods': {}}
             with patch.object(self.assets, 'bundled', return_value=data), patch.dict(sys.modules, {pak.__name__: pak}):
                 choice, resolved = namespace['_skin_visual'](SimpleNamespace(arc_pioneer_root=str(root)), entry, [root], 'RegressionSkin')

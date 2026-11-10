@@ -1,6 +1,7 @@
 import unittest,os
 from pathlib import Path
-from niagara_sched_model import *
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara.niagara import *
 def td(name,underlying=2):return {'ClassStructOrEnum':{'ObjectName':"Class'"+name+"'"},'UnderlyingType':underlying}
 class ModelTests(unittest.TestCase):
  def test_layout(self):

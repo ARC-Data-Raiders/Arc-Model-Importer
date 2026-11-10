@@ -1,12 +1,12 @@
 """Portable native teeth response tests; no Blender or external game files."""
 import ast,importlib,json,math,os,sys,tempfile,types,unittest
 from pathlib import Path
-ROOT=Path(os.environ['DATARAIDERS_TEST_REPOSITORY']).resolve() if os.environ.get('DATARAIDERS_TEST_REPOSITORY') else next(parent for parent in Path(__file__).resolve().parents if (parent/'material_runtime/core.py').is_file());sys.path.insert(0,str(ROOT))
-import material_runtime
+ROOT=Path(os.environ['DATARAIDERS_TEST_REPOSITORY']).resolve() if os.environ.get('DATARAIDERS_TEST_REPOSITORY') else next(parent for parent in Path(__file__).resolve().parents if (parent/'Shared/materials/native/core.py').is_file());sys.path.insert(0,str(ROOT))
+from Shared.materials import native as native
 STAGE=Path(os.environ['DATARAIDERS_TEETH_STAGE']) if os.environ.get('DATARAIDERS_TEETH_STAGE') else ROOT
-if STAGE!=ROOT:material_runtime.__path__.insert(0,str(STAGE/'material_runtime'))
-from material_runtime.core import MaterialRecord,evaluate
-from material_runtime.teeth import compile_teeth,COLOR,NORMAL,SNOW,MASTER
+if STAGE!=ROOT:materials.native.__path__.insert(0,str(STAGE/'Shared/materials/native'))
+from Shared.materials.native.core import MaterialRecord, evaluate
+from Shared.materials.native.teeth import compile_teeth, COLOR, NORMAL, SNOW, MASTER
 
 def record(**values):return MaterialRecord('/Game/Test/MI_Teeth',MASTER,**values)
 def context(case):return {'pre_skin_normal_z':case['normal_z'],'primitive_data':case['cpd'],'screen_radius':1.,'blue_noise':1.}
@@ -46,8 +46,8 @@ class NativeTeeth(unittest.TestCase):
         i={'normal':(.5,.5),'snow':(.4,.5,.6),'color':(.1,.2,.3),'normal_z':.1,'cpd':(0.,0.,1.)};a=run(compile_teeth(record(),context(i)),i);b=run(compile_teeth(record(scalars={'WetTint':.123,'WetGlossCloth':.923}),context(i)),i);self.assertEqual(a,b)
     def test_only_exact_native_master_supported(self):self.assertFalse(compile_teeth(MaterialRecord('/Game/Test/Other','/Game/Other'),{'pre_skin_normal_z':0.}).outputs)
     def test_exact_adapter_requires_preserved_point_normal_source(self):
-        from material_runtime import native_families as nf
-        from material_runtime.teeth import COLOR,NORMAL,SNOW
+        from Shared.materials.native import native_families as nf
+        from Shared.materials.native.teeth import COLOR, NORMAL, SNOW
         with tempfile.TemporaryDirectory(dir=os.environ.get('DATARAIDERS_TEST_TEMP')) as folder:
             root=Path(folder)/'PioneerGame/Content';source=root/(MASTER.removeprefix('/Game/')+'.arc-material.json');source.parent.mkdir(parents=True)
             source.write_text(json.dumps({'Exports':[{'Type':'Material','Name':'M_Teeth','Package':MASTER,'Properties':{}}],'DataRaidersSource':{'schema':'dataraiders.native-material-hierarchy','version':1,'package':'PioneerGame/Content/'+MASTER.removeprefix('/Game/'),'object_path':MASTER+'.M_Teeth'}}),encoding='utf-8')
@@ -60,10 +60,10 @@ class NativeTeeth(unittest.TestCase):
             prepared=nf.prepare(source,obj=obj,mounts=mounts);self.assertTrue(prepared.accepted,prepared.reason);self.assertEqual(prepared.family,'teeth');self.assertEqual(len(prepared.report['images']),3)
             mesh.attributes['DR.NativeBaseVertexNormal'].domain='CORNER';self.assertFalse(nf.prepare(source,obj=obj,mounts=mounts).accepted)
     def test_public_teeth_override_precedes_candidate_allocation(self):
-        tree=ast.parse((STAGE/'materials/character.py').read_text(encoding='utf-8'));function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_setup_head_slot_teeth')
-        namespace={'__package__':'_native_teeth_entry_probe.materials'}
+        tree=ast.parse((STAGE/'Shared/materials/character.py').read_text(encoding='utf-8'));function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_setup_head_slot_teeth')
+        namespace={'__package__':'_native_teeth_entry_probe.Shared.materials'}
         package=types.ModuleType('_native_teeth_entry_probe');package.__path__=[];sys.modules[package.__name__]=package
-        runtime=types.ModuleType('_native_teeth_entry_probe.material_runtime');runtime.__path__=[];sys.modules[runtime.__name__]=runtime
+        runtime=types.ModuleType('_native_teeth_entry_probe.Shared.materials.native');runtime.__path__=[];sys.modules[runtime.__name__]=runtime
         bridge=types.ModuleType(runtime.__name__+'.native_families');bridge.is_user_override=lambda mat:True
         def forbidden(*a,**k):raise AssertionError('Override must precede material allocation/setup')
         bridge.setup_entrypoint=forbidden;sys.modules[bridge.__name__]=bridge
@@ -71,5 +71,5 @@ class NativeTeeth(unittest.TestCase):
         namespace['_setup_head_slot_teeth'](types.SimpleNamespace(material={'explicit':'override'}),'unused','unused')
         for key in (bridge.__name__,runtime.__name__,package.__name__):sys.modules.pop(key,None)
     def test_coat_roughness_maps_to_actual_principled_socket(self):
-        tree=ast.parse((STAGE/'material_runtime/compiler.py').read_text(encoding='utf-8'));mapping=next(ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='_OUTPUTS' for t in n.targets));self.assertEqual(mapping['coat_roughness'],'Coat Roughness');self.assertEqual(mapping['coat'],'Coat Weight')
+        tree=ast.parse((STAGE/'Weapons/material_runtime/compiler.py').read_text(encoding='utf-8'));mapping=next(ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='_OUTPUTS' for t in n.targets));self.assertEqual(mapping['coat_roughness'],'Coat Roughness');self.assertEqual(mapping['coat'],'Coat Weight')
 if __name__=='__main__':unittest.main(verbosity=2)

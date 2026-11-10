@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests'))
 import test_glass_opaque as glass_test  # noqa: E402  (registers the _sr_glass_pkg loader package)
 
-spec = importlib.util.spec_from_file_location('_sr_glass_pkg.fx_beams', ROOT / 'surface_rebuild/fx_beams.py')
+spec = importlib.util.spec_from_file_location('_sr_glass_pkg.fx_beams', ROOT / 'Shared/materials/rebuild/fx_beams.py')
 fx = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = fx
 spec.loader.exec_module(fx)

@@ -4,10 +4,10 @@ try:
  from .native_test_support import ROOT
 except ImportError:
  from native_test_support import ROOT
-source=ast.parse((ROOT/'body_mask.py').read_text(encoding='utf8'));names={'region_name','coverage_interval','coverage_at_uv','_surface_outputs','_coverage_mode','_coverage_connected','_external_surface_coverage','_flat_alpha_coverage','apply_body_masks'}
+source=ast.parse((ROOT/'Outfit_Accessories/body_mask.py').read_text(encoding='utf8'));names={'region_name','coverage_interval','coverage_at_uv','_surface_outputs','_coverage_mode','_coverage_connected','_external_surface_coverage','_flat_alpha_coverage','apply_body_masks'}
 namespace={'json':json,'math':math,'_is_body':lambda body:body.type=='MESH','bpy':types.SimpleNamespace(context=types.SimpleNamespace(scene=object()))}
 selected=[node for node in source.body if isinstance(node,ast.FunctionDef) and node.name in names or isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id in ('REGIONS','REGION_NAMES') for t in node.targets)]
-exec(compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),str(ROOT/'body_mask.py'),'exec'),namespace);namespace['_coverage_group']=lambda:GROUP
+exec(compile(ast.fix_missing_locations(ast.Module(body=selected,type_ignores=[])),str(ROOT/'Outfit_Accessories/body_mask.py'),'exec'),namespace);namespace['_coverage_group']=lambda:GROUP
 GROUP=object()
 class Sockets(list):
  def __getitem__(self,key):return next(s for s in self if s.name==key) if isinstance(key,str) else super().__getitem__(key)

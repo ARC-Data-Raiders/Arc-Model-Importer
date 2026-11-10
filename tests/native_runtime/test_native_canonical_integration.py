@@ -13,19 +13,19 @@ class Obj:type='MESH'
 class Mat(dict):use_nodes=True
 
 def stale_function(expected='scan_display'):
-    tree=ast.parse((STAGE/'materials/dispatch.py').read_text(encoding='utf-8'))
+    tree=ast.parse((STAGE/'Shared/materials/dispatch.py').read_text(encoding='utf-8'))
     fn=next(node for node in ast.walk(tree) if isinstance(node,ast.FunctionDef) and node.name=='_stale_shared')
-    module=types.ModuleType(harness.PACKAGE+'.materials.cache_probe');module.__package__=harness.PACKAGE+'.materials'
+    module=types.ModuleType(harness.PACKAGE+'.Shared.materials.cache_probe');module.__package__=harness.PACKAGE+'.Shared.materials'
     module.__dict__.update(signature='abc',_expected_family=lambda:expected,FAMILY_ENEMY='enemy',FAMILY_SCAN='scan_display',FAMILY_ENVIRONMENT='environment',FAMILY_METAL='metal',FAMILY_ROAD='road',stem='name',mi_path='source',obj=Obj())
     for name in ('_stale_decal_misclass','_needs_map_decal_mask_rebuild','_needs_trim_setup_rebuild','_needs_proptrim_or_glass_rebuild','_needs_env_props_rebuild','_needs_water_setup_rebuild'):module.__dict__[name]=lambda *a:False
-    exec(compile(ast.Module(body=[fn],type_ignores=[]),str(STAGE/'materials/dispatch.py'),'exec'),module.__dict__)
+    exec(compile(ast.Module(body=[fn],type_ignores=[]),str(STAGE/'Shared/materials/dispatch.py'),'exec'),module.__dict__)
     return module._stale_shared
 
 class CanonicalIntegrationTests(unittest.TestCase):
     def test_installed_runtime_uses_relative_imports_and_exact_family_gate(self):
-        for path in (STAGE/'material_runtime').glob('*.py'):
+        for path in (STAGE/'Shared/materials/native').glob('*.py'):
             for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
-                if isinstance(node,ast.ImportFrom):self.assertFalse((node.module or '').startswith('material_runtime'),str(path))
+                if isinstance(node,ast.ImportFrom):self.assertFalse((node.module or '').startswith('Shared.materials.native'),str(path))
         self.assertTrue({'weapon','display','eyelashes','enemy_shell','prop'}.issubset(set(nf.MASTERS.values())));self.assertTrue({'skin','eyes','hair'}.isdisjoint(set(nf.MASTERS.values())))
     def test_native_warm_cache_skips_legacy_stale_heuristics(self):
         stale=stale_function();mat=Mat(dr_native_family='display',dr_native_recipe_version=nf.NATIVE_FAMILY_RECIPE,arc_mi_family='scan_display',arc_mi_source_signature='abc')

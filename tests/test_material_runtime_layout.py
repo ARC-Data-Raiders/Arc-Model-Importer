@@ -1,6 +1,6 @@
 import pathlib,sys,unittest
 ROOT=pathlib.Path(__file__).resolve().parents[1]; sys.path.insert(0,str(ROOT/'implementation'))
-from material_runtime.layout import arrange
+from Shared.materials.native.layout import arrange
 class Node:
     def __init__(self,name,parent=None,kind='MATH'): self.name=name; self.parent=parent; self.type=kind; self.location=(0,0); self.width=0; self.inputs=[]; self.outputs=[]
 class Link:
@@ -10,7 +10,7 @@ class Tree(dict):
 class LayoutTests(unittest.TestCase):
     def test_typed_vector_parameter_never_routes_through_color(self):
         from types import SimpleNamespace
-        from material_runtime.interop import Graph
+        from Shared.materials.native.interop import Graph
         graph=Graph.__new__(Graph); captured=[]
         graph.combine=lambda *values:(captured.append(values) or SimpleNamespace(node=SimpleNamespace(label='')))
         graph.color=lambda *_:self.fail('Typed vector must not become a color')
@@ -20,7 +20,7 @@ class LayoutTests(unittest.TestCase):
         with self.assertRaises(ValueError): graph.parameter('UV',(1,2),'float2')
     def test_optional_normal_none_and_empty_map_use_shared_flat_native_vector(self):
         from contextlib import nullcontext
-        from material_runtime.interop import Graph
+        from Shared.materials.native.interop import Graph
         graph=Graph.__new__(Graph); graph._state={}; calls=[]
         graph.block=lambda _:nullcontext(graph)
         graph.combine=lambda *values:(calls.append(values) or values)

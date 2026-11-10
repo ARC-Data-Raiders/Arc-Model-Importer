@@ -2,8 +2,9 @@ import unittest,os,tempfile,struct,json
 from pathlib import Path
 from types import SimpleNamespace
 import numpy as np
-from niagara_scheduler import *
-from niagara_sched_model import load_system,load_param_store,type_info,VarLayout
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara.niagara import *
+from Niagara.niagara import load_system, load_param_store, type_info, VarLayout
 class SchedulerTests(unittest.TestCase):
  def test_flip(self):
   frame,valid=1,False;out=[]

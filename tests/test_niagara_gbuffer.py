@@ -8,8 +8,9 @@ from types import SimpleNamespace
 
 import numpy as np
 
-import niagara_gpu as g
-import niagara_view_ub as vu
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara import niagara as g
+from Niagara import niagara as vu
 
 CORPUS = os.environ.get('DR_NIAGARA_CORPUS')
 SHIM = os.environ.get('DR_SVML_SHIM')
@@ -177,7 +178,7 @@ class DataInterfaces(unittest.TestCase):
         self.assertEqual(g.DI_STRUCT_SIZE[g.GBUFFER], 16)
 
     def test_scheduler_scene_is_cached_per_camera_and_off_without_ground(self):
-        from niagara_scheduler import Scheduler
+        from Niagara.niagara import Scheduler
         ns = SimpleNamespace(inputs=SimpleNamespace(ground_height=None, ground_base_color=BASE_COLOR), di_state=SimpleNamespace(camera=None))
         self.assertIsNone(Scheduler.gpu_scene(ns))
         ns.inputs.ground_height = -200.0
@@ -190,8 +191,8 @@ class DataInterfaces(unittest.TestCase):
 @unittest.skipUnless(CORPUS and SHIM and BINDINGS and SHADERS and VECTOR_FIELDS, 'GPU corpus inputs unset')
 class GroundDust(unittest.TestCase):
     def run_dust(self, ground, camera=None, ticks=60):
-        from niagara_sched_model import load_system
-        from niagara_scheduler import BakeInputs, Scheduler
+        from Niagara.niagara import load_system
+        from Niagara.niagara import BakeInputs, Scheduler
         path = next(Path(CORPUS).rglob('NS_Frigate_Intro_GroundDust.json'))
         s = Scheduler(load_system(path), BakeInputs(ticks=ticks, di_mode='real', svml_shim_path=SHIM, vector_fields=VECTOR_FIELDS, gpu_bindings=BINDINGS,
                                                     gpu_shaders=SHADERS, ground_height=ground, camera=camera))

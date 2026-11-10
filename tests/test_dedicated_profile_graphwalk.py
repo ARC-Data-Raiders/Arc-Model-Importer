@@ -4,7 +4,7 @@ from pathlib import Path
 import types
 import unittest
 
-SOURCE = Path(__file__).resolve().parents[1] / "materials" / "dispatch.py"
+SOURCE = Path(__file__).resolve().parents[1] / "Shared/materials" / "dispatch.py"
 parsed = ast.parse(SOURCE.read_text(encoding="utf-8"))
 function = next(node for node in parsed.body if isinstance(node, ast.FunctionDef) and
                 node.name == "_active_dedicated_outfit_profile")

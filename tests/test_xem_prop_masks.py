@@ -15,7 +15,7 @@ def mi_switch(switches, *names, default=None):
 
 
 def load():
-    tree = ast.parse((ROOT / 'materials/environment.py').read_text(encoding='utf-8'))
+    tree = ast.parse((ROOT / 'Shared/materials/environment.py').read_text(encoding='utf-8'))
     body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in NAMES]
     body += [n for n in tree.body if isinstance(n, ast.Assign) and any(
         getattr(t, 'id', '') in ('_XEM_PROP_PRESET', '_SKINNED_PROP_PRESET') for t in n.targets)]

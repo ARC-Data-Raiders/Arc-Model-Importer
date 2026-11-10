@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using CUE4Parse.FileProvider.Objects;
+using CUE4Parse.UE4.IO.Objects;
 using CUE4Parse.UE4.Objects.Core.Math;
 using FModel.Views.Snooper.MapPlacement;
 using FModel.Exporters.MapPlacement;
@@ -34,6 +36,28 @@ internal static class MapBundleDocument
         if (parts.Length > 3 && parts[0].Equals("RemappedPlugins", StringComparison.OrdinalIgnoreCase) && parts[2].Equals("Content", StringComparison.OrdinalIgnoreCase))
             return "/" + parts[1] + "/" + string.Join('/', parts.Skip(3));
         return "/" + path;
+    }
+
+    internal static string CanonicalObject(string value)
+    {
+        var exact = ExactObjectPath(value);
+        var package = CanonicalPackage(exact);
+        return exact.Equals(package + "." + package.Split('/').Last(), StringComparison.OrdinalIgnoreCase) ? package : exact;
+    }
+
+    internal static string ExactObjectPath(string value)
+    {
+        var path = value.Trim().Replace('\\', '/');
+        var quote = path.IndexOf('\'');
+        if (quote >= 0) path = path[(quote + 1)..].TrimEnd('\'');
+        var package = CanonicalPackage(path);
+        var dot = path.IndexOf('.');
+        var suffix = dot < 0 ? "" : path[(dot + 1)..];
+        if (suffix.Equals("uasset", StringComparison.OrdinalIgnoreCase) || suffix.Equals("umap", StringComparison.OrdinalIgnoreCase)) suffix = "";
+        if (suffix.Length == 0) suffix = package.Split('/').Last();
+        if (suffix.Split(['.', ':']).Any(part => part.Length == 0 || part.IndexOfAny(['/', '\0', '\'', '#']) >= 0))
+            throw new InvalidDataException("Invalid object path: " + value);
+        return package + "." + suffix;
     }
 
     internal static string Inside(string root, string relative)
@@ -81,7 +105,9 @@ internal static class MapBundleDocument
             ["asset"] = string.IsNullOrEmpty(record.AssetPath) ? "" : CanonicalPackage(record.AssetPath),
             ["kind"] = record.AssetKind,
             ["matrix"] = Matrix(record.X, record.Y, record.Z, record.Pitch, record.Yaw, record.Roll, record.ScaleX, record.ScaleY, record.ScaleZ),
-            ["materials"] = new JArray(record.MaterialOverrides.Select(path => string.IsNullOrEmpty(path) ? "" : CanonicalPackage(path))),
+            ["materials"] = new JArray(record.MaterialOverrides.Select(path => string.IsNullOrEmpty(path) ? "" : CanonicalObject(path))),
+            ["materialObjects"] = new JArray(record.MaterialOverrides.Select(path => string.IsNullOrEmpty(path) ? "" : CanonicalObject(path))),
+            ["materialPackages"] = new JArray(record.MaterialOverrides.Select(path => string.IsNullOrEmpty(path) ? "" : CanonicalPackage(path))),
             ["properties"] = new JObject
             {
                 ["actorName"] = record.ActorName, ["componentPath"] = record.ComponentPath,
@@ -118,6 +144,17 @@ internal static class MapBundleDocument
 
     internal static byte[] Bytes(JToken token) => Encoding.UTF8.GetBytes(Ordered(token).ToString(Formatting.Indented) + "\n");
     internal static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+    internal static string HashSource(GameFile file)
+    {
+        if (file is FIoStoreEntry entry)
+        {
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            entry.IoStoreReader.ReadToSink(entry, bytes => hash.AppendData(bytes));
+            return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+        }
+
+        return Hash(file.Read());
+    }
     internal static string HashFile(string path)
     {
         using var stream = File.OpenRead(path);
@@ -144,7 +181,9 @@ internal static class MapBundleDocument
         }
     }
 
-    internal static JObject PublishAsset(string stagingRoot, string output, string package, string sourceRevision, string[] materials)
+    internal static JObject PublishAsset(string stagingRoot, string output, string package, string sourceRevision, string[] materials,
+        string? objectPath = null, string[]? materialObjects = null, string? materialFile = null,
+        JObject? derivedGeometry = null, JArray? materialSlots = null, JArray? textureDependencies = null)
     {
         var sourceFiles = Directory.EnumerateFiles(stagingRoot, "*", SearchOption.AllDirectories)
             .Select(path => Path.GetRelativePath(stagingRoot, path).Replace('\\', '/')).Order(StringComparer.Ordinal).ToArray();
@@ -153,16 +192,41 @@ internal static class MapBundleDocument
         var fingerprint = Hash(Bytes(new JObject
         {
             ["producer"] = ProducerVersion, ["package"] = package, ["sourceRevision"] = sourceRevision,
-            ["materials"] = new JArray(materials), ["files"] = hashes
+            ["materials"] = new JArray(materials), ["files"] = hashes,
+            ["objectPath"] = objectPath, ["materialObjects"] = new JArray(materialObjects ?? []), ["materialFile"] = materialFile,
+            ["derivedGeometry"] = derivedGeometry, ["materialSlots"] = materialSlots, ["textureDependencies"] = textureDependencies
         }));
         var prefix = "assets/" + fingerprint + "/";
         var files = sourceFiles.Select(relative => prefix + relative).ToArray();
         var meshes = files.Where(path => path.EndsWith(".uemodel", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".pskx", StringComparison.OrdinalIgnoreCase)).ToArray();
         var result = new JObject
         {
-            ["fingerprint"] = fingerprint, ["materials"] = new JArray(materials), ["files"] = new JArray(files),
-            ["meshFiles"] = new JArray(meshes)
+            ["fingerprint"] = fingerprint,
+            ["materials"] = new JArray((materialObjects ?? materials).Where(path => path.Length > 0).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)),
+            ["materialPackages"] = new JArray(materials), ["files"] = new JArray(files),
+            ["meshFiles"] = new JArray(meshes),
+            ["materialObjects"] = new JArray(materialObjects ?? [])
         };
+        if (objectPath != null) result["objectPath"] = objectPath;
+        if (materialSlots != null) result["materialSlots"] = materialSlots.DeepClone();
+        if (textureDependencies != null) result["textureDependencies"] = textureDependencies.DeepClone();
+        if (derivedGeometry != null)
+        {
+            var binding = (JObject)derivedGeometry.DeepClone();
+            foreach (var physical in binding["outputs"]!.OfType<JObject>())
+            {
+                var relative = physical.Value<string>("file")!;
+                if (!sourceFiles.Contains(relative, StringComparer.Ordinal) || physical.Value<string>("sha256") != hashes.Value<string>(relative))
+                    throw new InvalidDataException("Derived output is not a hash-verified staged file");
+                physical["file"] = prefix + relative;
+            }
+            result["derivedGeometry"] = binding;
+        }
+        if (materialFile != null)
+        {
+            if (!sourceFiles.Contains(materialFile, StringComparer.Ordinal)) throw new InvalidDataException("Exact material JSON is absent: " + materialFile);
+            result["material"] = prefix + materialFile;
+        }
         if (meshes.Length > 0) result["mesh"] = meshes[0];
         var receiptPath = Inside(output, "receipts/" + fingerprint + ".json");
         if (File.Exists(receiptPath))
@@ -195,3 +259,5 @@ internal static class MapBundleDocument
         return result;
     }
 }
+
+

@@ -15,6 +15,9 @@ namespace ArcPak;
 
 internal static class MapResourceExport
 {
+    internal static FastGeoDetachedCapture CaptureFastGeo(IEnumerable<MapTraversalObject> objects, string spoolDirectory, int sliceLimit) =>
+        FastGeoSnapshot.Capture(objects, spoolDirectory, sliceLimit);
+
     internal static void FastGeo(IEnumerable<MapTraversalObject> objects, JArray placements, JObject resources, SortedSet<string> diagnostics)
     {
         var preserved = new JArray();
@@ -65,7 +68,8 @@ internal static class MapResourceExport
     }
 
     internal static void Geometry(AbstractVfsFileProvider provider, MapPlacementExtractionResult extraction,
-        IEnumerable<MapTraversalObject> objects, JObject bundle, string output, SortedSet<string> diagnostics)
+        IEnumerable<MapTraversalObject> objects, JObject bundle, string output, SortedSet<string> diagnostics, string gameDir, string usmap,
+        ExportArtifactReuse? artifactReuse = null)
     {
         var assets = (JObject)bundle["assets"]!;
         var resources = (JObject)bundle["resources"]!;
@@ -83,9 +87,21 @@ internal static class MapResourceExport
                 if (files.Count == 0) throw new InvalidDataException("Spline bake wrote no files");
                 for (var index = 0; index < files.Count; index++)
                     MapBundleDocument.WriteAtomic(scratch, "spline-" + index + ".uemodel", files[index].Data);
-                var baseAsset = MapBundleDocument.CanonicalPackage(job.BaseAssetPath);
-                var materials = assets[baseAsset]?["materials"]?.Values<string>().OfType<string>().ToArray() ?? [];
-                assets[job.SplineAssetKey] = MapBundleDocument.PublishAsset(scratch, output, job.SplineAssetKey, revision, materials);
+                var slots = MapDerivedGeometry.Slots(dto);
+                var materialObjects = slots.OfType<JObject>().Select(slot => slot.Value<string>("materialObject")!).ToArray();
+                var materials = materialObjects.Where(value => value.Length > 0).Select(MapBundleDocument.CanonicalPackage).Distinct(StringComparer.Ordinal).ToArray();
+                MapDerivedGeometry.Materials(provider, bundle, slots, output, gameDir, usmap, diagnostics, artifactReuse);
+                var sourceIds = bundle["placements"]!.OfType<JObject>().Where(placement => placement["properties"]?.Value<string>("sourceAssetKey") == job.SplineAssetKey).Select(placement => placement.Value<string>("id")!).ToArray();
+                var sourceId = sourceIds.FirstOrDefault() ?? job.MeshIdShort;
+                var binding = MapDerivedGeometry.Binding(provider, job.Component, sourceId, "spline", job.MeshIdShort, scratch);
+                binding["sourceRecordIds"] = new JArray(sourceIds);
+                binding["base"] = MapDerivedGeometry.Source(provider, mesh, MapBundleDocument.CanonicalObject(mesh.GetPathName()));
+                binding["deformation"] = new JObject { ["algorithm"] = "map-spline-deformation-v2", ["signature"] = job.MeshIdShort,
+                    ["parameters"] = JToken.FromObject(job.Component.SplineParams), ["forwardAxis"] = job.Component.ForwardAxis.ToString(),
+                    ["upDir"] = JToken.FromObject(job.Component.SplineUpDir), ["boundaryMin"] = job.Component.SplineBoundaryMin,
+                    ["boundaryMax"] = job.Component.SplineBoundaryMax, ["smoothInterpRollScale"] = job.Component.bSmoothInterpRollScale };
+                assets[job.SplineAssetKey] = MapBundleDocument.PublishAsset(scratch, output, job.SplineAssetKey, revision, materials,
+                    objectPath: binding["outputs"]![0]!.Value<string>("objectPath"), materialObjects: materialObjects, derivedGeometry: binding, materialSlots: slots);
                 foreach (var placement in bundle["placements"]!.OfType<JObject>().Where(placement =>
                     placement["properties"]?.Value<string>("sourceAssetKey") == job.SplineAssetKey))
                     placement["asset"] = job.SplineAssetKey;
@@ -106,12 +122,42 @@ internal static class MapResourceExport
             Directory.CreateDirectory(scratch);
             try
             {
-                var session = new ExportSession { MaxDegreeOfParallelism = 2 };
+                var session = MapBundleExport.CreateAssetExportSession(artifactReuse);
                 session.Add(item.Source);
                 var results = session.RunAsync(scratch, MapBundleExport.CreateExportOptions()).GetAwaiter().GetResult();
                 if (results.Count == 0 || results.Any(result => !result.Success)) throw new InvalidDataException("Terrain dependency conversion failed");
                 var key = item.SourcePath + "#terrain";
-                var exported = MapBundleDocument.PublishAsset(scratch, output, key, revision, []);
+                var proxy = (ALandscapeProxy)item.Source;
+                using var dto = new LandscapeMeshDto(proxy, ELandscapeFlags.All);
+                var authoredMaterials = new List<CUE4Parse.UE4.Objects.UObject.FPackageIndex>();
+                var authoredComponents = new JArray();
+                foreach (var componentReference in proxy.LandscapeComponents)
+                {
+                    var component = componentReference.Load<CUE4Parse.UE4.Assets.Exports.Component.Landscape.ULandscapeComponent>() ?? throw new InvalidDataException("Landscape component unavailable");
+                    var authored = component.OverrideMaterial is { IsNull: false } material ? material : proxy.LandscapeMaterial;
+                    authoredMaterials.Add(authored);
+                    authoredComponents.Add(new JObject { ["objectPath"] = component.GetPathName(), ["materialObject"] = authored.ResolvedObject?.GetPathName(),
+                        ["slotIndex"] = dto.Materials.Length == 1 ? 0 : authoredMaterials.Count - 1 });
+                }
+                if (dto.Materials.Length == authoredMaterials.Count)
+                    for (var slotIndex = 0; slotIndex < dto.Materials.Length; slotIndex++)
+                        dto.Materials[slotIndex] = new MeshMaterialDto(dto.Materials[slotIndex].SlotName, authoredMaterials[slotIndex]);
+                else if (dto.Materials.Length == 1 && authoredMaterials.Select(material => material.ResolvedObject?.GetPathName()).Distinct(StringComparer.Ordinal).Count() == 1)
+                    dto.Materials[0] = new MeshMaterialDto(dto.Materials[0].SlotName, authoredMaterials[0]);
+                else
+                    throw new InvalidDataException("Landscape has distinct authored section materials that this converter cannot bind safely");
+                var slots = MapDerivedGeometry.Slots(dto);
+                MapDerivedGeometry.Materials(provider, bundle, slots, output, gameDir, usmap, diagnostics, artifactReuse);
+                var physical = Directory.EnumerateFiles(scratch, "*.uemodel", SearchOption.AllDirectories).Single();
+                var header = MapDerivedGeometry.Header(physical);
+                var meshes = new UEFormatMeshFormat().BuildStaticMesh(header.Name, header.Path, MapBundleExport.CreateExportOptions(), dto);
+                if (meshes.Count != 1) throw new InvalidDataException("Terrain material binding produced ambiguous physical outputs");
+                MapBundleDocument.WriteAtomic(scratch, Path.GetRelativePath(scratch, physical), meshes[0].Data);
+                var binding = MapDerivedGeometry.Binding(provider, item.Source, item.Id, "terrain", key, scratch);
+                binding["authoredComponents"] = authoredComponents;
+                var materialObjects = slots.OfType<JObject>().Select(slot => slot.Value<string>("materialObject")!).ToArray();
+                var materials = materialObjects.Where(value => value.Length > 0).Select(MapBundleDocument.CanonicalPackage).Distinct(StringComparer.Ordinal).ToArray();
+                var exported = MapBundleDocument.PublishAsset(scratch, output, key, revision, materials, header.Path, materialObjects, derivedGeometry: binding, materialSlots: slots);
                 if (exported["mesh"] == null) throw new InvalidDataException("Terrain exporter produced no geometry");
                 assets[key] = exported;
                 ((JArray)resources["landscapes"]!).Add(new JObject
@@ -126,7 +172,8 @@ internal static class MapResourceExport
                     {
                         ["id"] = MapPlacementRecord.StableId(item.SourcePath + "#terrain", null, item.WorldInstancePath),
                         ["asset"] = key, ["kind"] = "Landscape", ["matrix"] = MapBundleDocument.Matrix(item.TransformCm.Value),
-                        ["materials"] = new JArray(), ["properties"] = new JObject { ["sourcePath"] = item.SourcePath, ["actorId"] = item.Id }
+                        ["materials"] = new JArray(materialObjects), ["materialObjects"] = new JArray(materialObjects),
+                        ["properties"] = new JObject { ["sourcePath"] = item.SourcePath, ["actorId"] = item.Id }
                     });
                 diagnostics.Remove("Landscape geometry is not exported: " + item.SourcePath);
                 diagnostics.Add("Terrain mesh and height/weight resources exported, but landscape visibility holes and full WP proxy discovery remain unproven: " + item.SourcePath);

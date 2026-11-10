@@ -4,7 +4,7 @@ except ImportError:
     from native_test_support import ROOT
 """Graph contract tests; actual renderer basis is verified by root-only fixture."""
 import unittest
-from material_runtime.renderer_vectors import lower_native_tangent_view, lower_world_view
+from Shared.materials.native.renderer_vectors import lower_native_tangent_view, lower_world_view
 
 class Socket:
     def __init__(self,name): self.name=name;self.default_value=None
@@ -38,7 +38,7 @@ class RendererVectorTests(unittest.TestCase):
 
 class RendererViewIRTests(unittest.TestCase):
     def test_explicit_native_tangent_and_world_inputs_stay_distinct(self):
-        from material_runtime.core import expr,literal,evaluate
+        from Shared.materials.native.core import expr, literal, evaluate
         tangent=expr('tangent_view',uv_map='NativeUV')
         incoming=expr('incoming')
         supplied={'tangent_view':(.2,-.3,.9),'incoming':(-.3,.2,.9)}
@@ -48,11 +48,11 @@ class RendererViewIRTests(unittest.TestCase):
         for actual,expected in zip(evaluate(encoded,supplied),(.6,.35,.95)):
             self.assertAlmostEqual(actual,expected)
     def test_missing_view_context_fails_explicitly(self):
-        from material_runtime.core import expr,evaluate
+        from Shared.materials.native.core import expr, evaluate
         for op in ('tangent_view','incoming'):
             with self.assertRaises(KeyError):evaluate(expr(op),{})
     def test_vector_view_input_can_be_resolved_explicitly_by_context(self):
-        from material_runtime.core import expr,evaluate
+        from Shared.materials.native.core import expr, evaluate
         calls=[]
         def lookup(key):calls.append(key);return (.1,.4,.8)
         view=expr('tangent_view',uv_map='NativeUV')

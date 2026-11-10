@@ -2,6 +2,7 @@
 import ast,json,os,sys,types,unittest
 from pathlib import Path
 from unittest.mock import patch
+from section_fixture import add_parents
 
 class Material(dict):
     def __init__(self,name):super().__init__();self.name=name
@@ -13,14 +14,14 @@ class Object(dict):
 
 
 def run_hook(bindings,legacy=False,missing=None):
-    source=Path(__file__).resolve().parents[1]/'materials/clothing.py'
+    source=Path(__file__).resolve().parents[1]/'Shared/materials/clothing.py'
     tree=ast.parse(source.read_text(encoding='utf-8'));node=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='apply_embedded_fur_slots')
     base={0:'/native/Base_Fur0.json',1:'/native/Base_Fur1.json'};selected={**base,**{int(k):v for k,v in bindings.items()}}
     obj=Object(bindings);calls=[];legacy_calls=[]
     def forbidden(*a,**k):raise AssertionError('Native exact route reached a fuzzy folder/name resolver')
     def setup(mat,path,**kwargs):mat['arc_mi_path']=path;calls.append(path)
     def unique(obj,target,index,**kwargs):return target.material
-    namespace={'__package__':'_fur_fixture.materials','os':os,'json':json,'print':lambda *args,**kwargs:None,
+    namespace={'__package__':'_fur_fixture.Shared.materials','os':os,'json':json,'print':lambda *args,**kwargs:None,
       '_parse_sk_material_slots':lambda _: [('FirstFur','Base_Fur0',base[0]),('SecondFur','Base_Fur1',base[1])],
       '_slot_is_fur':lambda names,path:bool(path),
       '_native_clothing_section_paths':lambda obj,sections:selected,
@@ -34,11 +35,11 @@ def run_hook(bindings,legacy=False,missing=None):
         def resolver(path,*a):legacy_calls.append(path);return '/legacy/Selected_Fur.json'
         namespace['_resolve_colorway_fur_mi']=resolver
     exec(compile(ast.Module(body=[node],type_ignores=[]),str(source),'exec'),namespace)
-    root=types.ModuleType('_fur_fixture');root.__path__=[];materials=types.ModuleType('_fur_fixture.materials');materials.__path__=[]
-    fur=types.ModuleType('_fur_fixture.materials.fur_shells');fur._asset=lambda source,reference,extension:reference
-    ue=types.ModuleType('_fur_fixture.uemodel_import');ue.parse_uemodel=lambda source:('mesh',10,[types.SimpleNamespace(name='LOD0',materials=[('FirstFur',base[0],0,1),('SecondFur',base[1],3,1)])])
-    native=types.ModuleType('_fur_fixture.native_material_slots');native.load_native_material_layout=lambda *args:None;native.translate_visual_part_bindings=lambda rows,layout:(rows,[])
-    modules={root.__name__:root,materials.__name__:materials,fur.__name__:fur,ue.__name__:ue,native.__name__:native}
+    root=types.ModuleType('_fur_fixture');root.__path__=[];materials=types.ModuleType('_fur_fixture.Shared.materials');materials.__path__=[]
+    fur=types.ModuleType('_fur_fixture.Shared.materials.fur_shells');fur._asset=lambda source,reference,extension:reference
+    ue=types.ModuleType('_fur_fixture.Shared.uemodel_import');ue.parse_uemodel=lambda source:('mesh',10,[types.SimpleNamespace(name='LOD0',materials=[('FirstFur',base[0],0,1),('SecondFur',base[1],3,1)])])
+    native=types.ModuleType('_fur_fixture.Outfit_Accessories.native_material_slots');native.load_native_material_layout=lambda *args:None;native.translate_visual_part_bindings=lambda rows,layout:(rows,[])
+    modules={root.__name__:root,materials.__name__:materials,fur.__name__:fur,ue.__name__:ue,native.__name__:native};add_parents(modules,root.__name__)
     with patch.dict(sys.modules,modules),patch('os.path.isfile',side_effect=lambda path:path!=missing):
         count=namespace[node.name](obj,'source.psk' if legacy else 'source.uemodel',skin_json='/native/Selected_Fur.json')
     return obj,count,calls,legacy_calls

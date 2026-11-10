@@ -10,6 +10,8 @@ from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from section_fixture import add_parents, path_of, q
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -18,20 +20,22 @@ def load_modules():
     package.__path__ = [str(ROOT)]
     modules = {package.__name__: package}
     for name in ("importing", "rig", "utils", "textures", "pak_extract", "pak_catalog"):
-        module = ModuleType(package.__name__ + "." + name)
+        module = ModuleType(package.__name__ + "." + q(name))
         modules[module.__name__] = module
-    modules[package.__name__ + ".utils"].get_pioneer_root = Mock(side_effect=AssertionError("external discovery"))
+    modules[package.__name__ + ".Shared.utils"].get_pioneer_root = Mock(side_effect=AssertionError("external discovery"))
     bpy = ModuleType("bpy")
     bpy.context = SimpleNamespace(scene=SimpleNamespace(arc_appearance_csv_path="X:/forbidden/custom.csv"))
     bpy.path = SimpleNamespace(abspath=lambda value: value)
     modules["bpy"] = bpy
+    add_parents(modules, package.__name__)
     with patch.dict(sys.modules, modules):
         for name in ("backpack_catalog", "appearance"):
-            spec = importlib.util.spec_from_file_location(package.__name__ + "." + name, ROOT / (name + ".py"))
+            spec = importlib.util.spec_from_file_location(package.__name__ + "." + q(name), path_of(name))
             module = importlib.util.module_from_spec(spec)
             modules[spec.name] = module
             sys.modules[spec.name] = module
             spec.loader.exec_module(module)
+            add_parents(sys.modules, package.__name__)
             setattr(package, name, module)
     return package, modules
 
@@ -41,6 +45,11 @@ class AppearanceBrowseTests(unittest.TestCase):
         self.addon, self.modules = load_modules()
         self.appearance = self.addon.appearance
         self.appearance._PREVIEW_COLLECTION = {}
+        self.timers = []
+        self.modules['bpy'].app = SimpleNamespace(timers=SimpleNamespace(
+            is_registered=lambda callback: callback in self.timers,
+            register=lambda callback, **kwargs: self.timers.append(callback),
+            unregister=lambda callback: self.timers.remove(callback)))
 
     def guard(self):
         original = builtins.open
@@ -90,7 +99,7 @@ class AppearanceBrowseTests(unittest.TestCase):
         self.assertEqual(salvager["label"], "Salvager")
 
     def test_action_mesh_miss_reaches_extraction(self):
-        pak = self.modules["appearance_test_addon.pak_extract"]
+        pak = self.modules["appearance_test_addon.Shared.pak_extract"]
         pak.configured_dir = Mock(return_value="fixture-paks")
         pak.resolve_usmap = Mock(return_value="fixture.usmap")
         pak.ensure_rels = Mock(return_value=["extracted.psk"])
@@ -99,7 +108,7 @@ class AppearanceBrowseTests(unittest.TestCase):
         pak.ensure_rels.assert_called_once_with(self.modules["bpy"].context.scene, ["Characters/Heads/fixture.psk"])
 
     def test_missing_outfit_preview_has_no_external_fallback(self):
-        importing = self.modules["appearance_test_addon.importing"]
+        importing = self.modules["appearance_test_addon.Shared.importing"]
         importing.get_outfit_csv_path = Mock(return_value="packaged.csv")
         importing.load_outfit_csv = Mock(return_value=[{}])
         importing.find_outfit_row = Mock(return_value={"outfit": "fixture"})
@@ -126,7 +135,7 @@ class AppearanceBrowseTests(unittest.TestCase):
 
     def test_hair_palette_action_retains_export_resolution(self):
         choice = self.appearance.list_hair_color_choices()[0]
-        pak = self.modules["appearance_test_addon.pak_extract"]
+        pak = self.modules["appearance_test_addon.Shared.pak_extract"]
         pak.configured_dir = Mock(return_value="")
         with patch.dict(sys.modules, self.modules), patch.object(self.appearance, "_resolve_csv_rel_path", return_value="palette.json") as resolve, patch.object(os.path, "isfile", return_value=True):
             self.assertEqual(self.appearance.resolve_hair_color_path(choice["id"]), "palette.json")
@@ -144,12 +153,50 @@ class AppearanceBrowseTests(unittest.TestCase):
         class Previews(dict):
             def load(self, key, path, kind):
                 self[key] = SimpleNamespace(icon_id=37)
+                return self[key]
         previews = Previews()
         with patch.object(self.appearance, "_PREVIEW_COLLECTION", previews), patch.object(self.appearance, "_crop_sidebar_preview") as crop, patch.object(self.appearance, "_icon_file_for_choice", side_effect=AssertionError("action icon resolver")):
-            self.assertEqual(self.appearance.preview_icon_id(choice_id), 37)
+            with patch.dict(sys.modules, self.modules):
+                self.assertEqual(self.appearance.preview_icon_id(choice_id), 0)
+                self.assertEqual(self.appearance.preview_icon_id(choice_id), 0)
+                self.assertEqual(len(previews), 0)
+                crop.assert_not_called()
+                self.assertEqual(len(self.timers), 1)
+                self.assertIsNone(self.appearance._prepare_sidebar_previews())
             self.assertEqual(self.appearance.preview_icon_id(choice_id), 37)
         self.assertEqual(len(previews), 1)
         crop.assert_called_once()
+
+    def test_preview_timer_processes_only_one_image_per_tick(self):
+        class Previews(dict):
+            def load(self, key, path, kind):
+                self[key] = SimpleNamespace(icon_id=37)
+                return self[key]
+        previews = Previews()
+        with patch.dict(sys.modules, self.modules), patch.object(self.appearance, '_PREVIEW_COLLECTION', previews), patch.object(self.appearance, '_crop_sidebar_preview'), patch.object(os.path, 'isfile', return_value=True):
+            self.appearance._preview_icon_id_for_path('first.png')
+            self.appearance._preview_icon_id_for_path('second.png')
+            self.assertEqual(len(previews), 0)
+            self.assertGreater(self.appearance._prepare_sidebar_previews(), 0)
+            self.assertEqual(len(previews), 1)
+            self.assertIsNone(self.appearance._prepare_sidebar_previews())
+            self.assertEqual(len(previews), 2)
+
+    def test_failed_preview_is_not_requeued_and_unregister_cancels_work(self):
+        class Previews(dict):
+            def load(self, key, path, kind):
+                raise RuntimeError('unreadable preview')
+        with patch.dict(sys.modules, self.modules), patch.object(self.appearance, '_PREVIEW_COLLECTION', Previews()), patch.object(os.path, 'isfile', return_value=True):
+            self.appearance._preview_icon_id_for_path('broken.png')
+            self.assertIsNone(self.appearance._prepare_sidebar_previews())
+            self.assertEqual(self.appearance._preview_icon_id_for_path('broken.png'), 0)
+            self.assertFalse(self.appearance._PREVIEW_PENDING)
+            self.appearance._preview_icon_id_for_path('pending.png')
+            self.assertTrue(self.appearance._PREVIEW_PENDING)
+            self.appearance.unregister_previews()
+            self.assertFalse(self.appearance._PREVIEW_PENDING)
+            self.assertFalse(self.appearance._PREVIEW_FAILED)
+            self.assertNotIn(self.appearance._prepare_sidebar_previews, self.timers)
 
     def test_missing_manifest_is_an_empty_package_gap(self):
         original = builtins.open
@@ -170,7 +217,7 @@ class AppearanceBrowseTests(unittest.TestCase):
         index.assert_called_once()
 
     def test_csv_identity_is_preserved(self):
-        with (ROOT / "appearance_reference.csv").open(encoding="utf-8-sig") as stream:
+        with (ROOT / 'Data/appearance_reference.csv').open(encoding="utf-8-sig") as stream:
             rows = {row["id"]: row for row in csv.DictReader(stream)}
         choices = self.appearance.list_head_choices() + self.appearance._list_all_hair_choices() + self.appearance.list_hair_color_choices()
         for kind in self.appearance._GEAR_KINDS:

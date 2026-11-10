@@ -10,7 +10,7 @@ import bpy,math,sys
 from pathlib import Path
 from mathutils import Vector,Matrix
 ROOT=Path(__file__).resolve().parents[2];sys.path.insert(0,str(ROOT))
-from material_runtime.deformation import write_corner_normals
+from Shared.materials.native.deformation import write_corner_normals
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 # Upright tube, 2 m tall, 16 sides, 20 rings, skinned to two bones that meet at z=1.

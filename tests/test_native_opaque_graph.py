@@ -2,7 +2,7 @@
 import importlib.util,json,math,unittest
 from pathlib import Path
 from types import SimpleNamespace
-OUT=Path(__file__).resolve().parents[1]/'materials'
+OUT=Path(__file__).resolve().parents[1]/'Shared/materials'
 spec=importlib.util.spec_from_file_location('glass_native_candidate',OUT/'glass_native.py');M=importlib.util.module_from_spec(spec);spec.loader.exec_module(M)
 PARAM=json.loads((Path(__file__).resolve().parent/'fixtures/native_opaque_parameters.json').read_text())
 CASES=json.loads((Path(__file__).resolve().parent/'fixtures/native_opaque_oracles.json').read_text())['cases']

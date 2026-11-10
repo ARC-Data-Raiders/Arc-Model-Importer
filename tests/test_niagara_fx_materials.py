@@ -4,7 +4,8 @@ import os
 import tempfile
 import unittest
 
-import niagara_fx_materials as fxm
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara import niagara as fxm
 
 MASTER = [{'Type': 'Material', 'Name': 'M_FX_Smoke_Cheap_Master', 'Properties': {
     'BlendMode': 'EBlendMode::BLEND_Translucent', 'ShadingModel': 'EMaterialShadingModel::MSM_DefaultLit'},
@@ -49,7 +50,7 @@ class FxMaterials(unittest.TestCase):
             open(os.path.join(fx, png), 'wb').close()
         os.makedirs(os.path.join(self.root, 'loose'))
         open(os.path.join(self.root, 'loose', 'T_Elsewhere.png'), 'wb').close()
-        self.res = fxm.Resolver([self.root])
+        self.res = fxm.fx_materials_Resolver([self.root])
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -81,7 +82,7 @@ class FxMaterials(unittest.TestCase):
     def test_master_blend_and_incomplete_chain(self):
         self.assertEqual(self.res.material_info('/Game/Pioneer/FX/M_FX_Smoke_Cheap_Master.0')['blend'], 'BLEND_Translucent')
         self.write(os.path.join(self.root, 'PioneerGame', 'Content', 'Pioneer', 'FX', 'MI_Orphan.json'), mi('MI_Orphan', '/Game/Pioneer/FX/Nope.0'))
-        info = fxm.Resolver([self.root]).material_info('/Game/Pioneer/FX/MI_Orphan.0')
+        info = fxm.fx_materials_Resolver([self.root]).material_info('/Game/Pioneer/FX/MI_Orphan.0')
         self.assertFalse(info['complete'])
         self.assertEqual(info['blend'], 'BLEND_Opaque')
         self.assertIsNone(self.res.material_info('/Game/Pioneer/FX/Absent.0'))

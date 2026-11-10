@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from material_runtime.interop import Graph
+from Shared.materials.native.interop import Graph
 
 class UvClampTests(unittest.TestCase):
     def graph(self,layers):

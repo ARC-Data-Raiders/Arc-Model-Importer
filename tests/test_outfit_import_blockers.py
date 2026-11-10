@@ -14,14 +14,14 @@ def _function(rel, name, **ns):
     tree = ast.parse((ROOT / rel).read_text(encoding='utf-8'))
     node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
     source = ast.get_source_segment((ROOT / rel).read_text(encoding='utf-8'), node)
-    source = source.replace('    from . import pak_catalog\n', '')
+    source = source.replace('    from ..Outfit_Accessories import pak_catalog\n', '').replace('    from . import pak_catalog\n', '')
     namespace = {'os': os, **ns}
     exec(compile(source, rel, 'exec'), namespace)
     return namespace[name]
 
 
 def _pak_catalog():
-    spec = importlib.util.spec_from_file_location('pak_catalog_under_test', ROOT / 'pak_catalog.py')
+    spec = importlib.util.spec_from_file_location('pak_catalog_under_test', ROOT / 'Outfit_Accessories/pak_catalog.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -29,7 +29,7 @@ def _pak_catalog():
 
 class CachedPluginPackageTests(unittest.TestCase):
     def setUp(self):
-        self.package = _function('pak_extract.py', 'cached_plugin_package', pak_catalog=_pak_catalog())
+        self.package = _function('Shared/pak_extract.py', 'cached_plugin_package', pak_catalog=_pak_catalog())
         self.folder = tempfile.TemporaryDirectory()
         self.cache = os.path.join(self.folder.name, 'ArcPak', 'cache')
 
@@ -61,14 +61,14 @@ class TextureLogicalPackageTests(unittest.TestCase):
 class DecalOverrideTests(unittest.TestCase):
     def test_zero_colour_override_keeps_the_decal_artwork(self):
         # Driftcoat's T_Patch_02_Color_C keeps its chevron artwork at ColorOverride 0 (master default).
-        text = (ROOT / 'materials' / 'gt_outfit_pbr.py').read_text(encoding='utf-8')
+        text = (ROOT / 'Shared/materials' / 'gt_outfit_pbr.py').read_text(encoding='utf-8')
         self.assertIn('tint_fac = float(color_override)', text)
         self.assertIsNone(re.search(r'tint_fac < 0\.01:\s*\n\s*tint_fac = 1\.0', text))
 
 
 class ReceiptLongPathTests(unittest.TestCase):
     def test_receipt_names_take_the_long_path_form(self):
-        text = (ROOT / 'pak_extract.py').read_text(encoding='utf-8')
+        text = (ROOT / 'Shared/pak_extract.py').read_text(encoding='utf-8')
         self.assertIn("target = filesystem_path(_material_companion(material_file) + '.ready')", text)
         self.assertIn("temp = filesystem_path(target + '.tmp-' + uuid.uuid4().hex)", text)
         self.assertIn("open(filesystem_path(_material_companion(material_file) + '.ready'), encoding='utf-8')", text)
@@ -146,10 +146,10 @@ class BatchedHierarchyTests(unittest.TestCase):
         self.calls = []
         ns = {'threading': threading, 'contextmanager': contextlib.contextmanager,
               'raw_material_metadata_plan': lambda scene, **kw: self.calls.append(kw)}
-        tree = ast.parse((ROOT / 'pak_extract.py').read_text(encoding='utf-8'))
+        tree = ast.parse((ROOT / 'Shared/pak_extract.py').read_text(encoding='utf-8'))
         nodes = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name in ('batched_material_hierarchy', 'ensure_cached_material_hierarchy'))
                  or (isinstance(n, ast.Assign) and any(getattr(t, 'id', '') == '_HIERARCHY_BATCH' for t in n.targets))]
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'pak_extract.py', 'exec'), ns)
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'Shared/pak_extract.py', 'exec'), ns)
         self.ns = ns
 
     def test_an_outfits_part_requests_launch_once(self):
@@ -173,7 +173,7 @@ class BatchedHierarchyTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
 
     def test_apply_outfit_preset_runs_inside_one_batch(self):
-        text = (ROOT / 'importing.py').read_text(encoding='utf-8')
+        text = (ROOT / 'Shared/importing.py').read_text(encoding='utf-8')
         body = text[text.index('def apply_outfit_preset('):text.index('def _apply_outfit_preset(')]
         self.assertIn('with pak_extract.batched_material_hierarchy(scene):', body)
         self.assertIn('pak_extract.ensure_cached_mesh_material_metadata(scene, meshes)', body)

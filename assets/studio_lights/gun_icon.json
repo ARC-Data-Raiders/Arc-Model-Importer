@@ -1,0 +1,8059 @@
+{
+ "schema": "arc-studio-lights-v1",
+ "camera": "gun_inspect",
+ "id": "gun_icon",
+ "label": "Gun Icon",
+ "source": "Z:/Datamining/Arc Raiders/CodexScratch/DataRaiders-BlenderImporter/.local/weapon-accuracy-20261029/bench/WeaponIconBenchmark.blend",
+ "note": "Exact copy of the user-authored rig (world-space transforms). Suns are direction-only.",
+ "view_settings": {
+  "view_transform": "Standard",
+  "look": "None",
+  "exposure": 0.0,
+  "gamma": 1.0
+ },
+ "display_device": "sRGB",
+ "world": {
+  "name": "IconStudio Black",
+  "use_nodes": true,
+  "color": [
+   0.0,
+   0.0,
+   0.0
+  ],
+  "node_tree": {
+   "nodes": [
+    {
+     "type": "ShaderNodeBackground",
+     "name": "Background",
+     "props": {
+      "label": ""
+     },
+     "inputs": {
+      "Color": [
+       0.0,
+       0.0,
+       0.0,
+       1.0
+      ],
+      "Strength": 0.0,
+      "Weight": 0.0
+     }
+    },
+    {
+     "type": "ShaderNodeOutputWorld",
+     "name": "World Output",
+     "props": {
+      "label": "",
+      "is_active_output": true,
+      "target": "ALL"
+     },
+     "inputs": {}
+    }
+   ],
+   "links": [
+    [
+     "Background",
+     "Background",
+     "World Output",
+     "Surface"
+    ]
+   ]
+  }
+ },
+ "lights": [
+  {
+   "name": "IconStudio L19 SpotLight2",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     -0.21289968490600586,
+     -0.9398073554039001,
+     -0.2672748267650604,
+     -0.7488551139831543
+    ],
+    [
+     0.8134234547615051,
+     -0.32202833890914917,
+     0.4843965768814087,
+     0.7756152749061584
+    ],
+    [
+     -0.5413095355033875,
+     -0.11427973955869675,
+     0.8330211043357849,
+     3.349092483520508
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     0.8282155394554138,
+     0.8418111205101013,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 4598.87548828125,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.625,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 1.0712205171585083,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "IconStudio L20 SpotLight3",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     0.22153110802173615,
+     0.8872247338294983,
+     -0.40466806292533875,
+     -0.3285548686981201
+    ],
+    [
+     0.35257992148399353,
+     -0.4597797989845276,
+     -0.8150398135185242,
+     -1.5723178386688232
+    ],
+    [
+     -0.9091817140579224,
+     0.037878844887018204,
+     -0.4146731495857239,
+     -0.29103386402130127
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": false,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     0.9504783153533936,
+     0.9235475659370422,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 68.14710998535156,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.25,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 1.6664482355117798,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "IconStudio L20 SpotLight3 specular 1 capsule 1/5",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     0.28999561071395874,
+     0.7722429633140564,
+     -0.5652816295623779,
+     -1.0343998670578003
+    ],
+    [
+     0.4813157618045807,
+     -0.6282138824462891,
+     -0.611295759677887,
+     -1.062916874885559
+    ],
+    [
+     -0.8271865844726562,
+     -0.09480588138103485,
+     -0.5538719892501831,
+     -0.5428282618522644
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": false,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     0.9504783153533936,
+     0.9235475659370422,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 18.666927337646484,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 1.25,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 3.1415927410125732,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "IconStudio L20 SpotLight3 specular 1 capsule 2/5",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     0.28999561071395874,
+     0.7722429633140564,
+     -0.5652816295623779,
+     -0.841339111328125
+    ],
+    [
+     0.4813157618045807,
+     -0.6282138824462891,
+     -0.611295759677887,
+     -1.2199703454971313
+    ],
+    [
+     -0.8271865844726562,
+     -0.09480588138103485,
+     -0.5538719892501831,
+     -0.5665296912193298
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": false,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     0.9504783153533936,
+     0.9235475659370422,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 18.666927337646484,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 1.25,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 3.1415927410125732,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "IconStudio L20 SpotLight3 specular 1 capsule 3/5",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     0.28999561071395874,
+     0.7722429633140564,
+     -0.5652816295623779,
+     -0.6482784152030945
+    ],
+    [
+     0.4813157618045807,
+     -0.6282138824462891,
+     -0.611295759677887,
+     -1.3770238161087036
+    ],
+    [
+     -0.8271865844726562,
+     -0.09480588138103485,
+     -0.5538719892501831,
+     -0.59023118019104
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": false,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     0.9504783153533936,
+     0.9235475659370422,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 18.666927337646484,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 1.25,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 3.1415927410125732,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "IconStudio L20 SpotLight3 specular 1 capsule 4/5",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     0.28999561071395874,
+     0.7722429633140564,
+     -0.5652816295623779,
+     -0.4552176594734192
+    ],
+    [
+     0.4813157618045807,
+     -0.6282138824462891,
+     -0.611295759677887,
+     -1.5340772867202759
+    ],
+    [
+     -0.8271865844726562,
+     -0.09480588138103485,
+     -0.5538719892501831,
+     -0.6139326095581055
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": false,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     0.9504783153533936,
+     0.9235475659370422,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 18.666927337646484,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 1.25,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 3.1415927410125732,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "IconStudio L20 SpotLight3 specular 1 capsule 5/5",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     0.28999561071395874,
+     0.7722429633140564,
+     -0.5652816295623779,
+     -0.2621569335460663
+    ],
+    [
+     0.4813157618045807,
+     -0.6282138824462891,
+     -0.611295759677887,
+     -1.6911307573318481
+    ],
+    [
+     -0.8271865844726562,
+     -0.09480588138103485,
+     -0.5538719892501831,
+     -0.6376340985298157
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": false,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     0.9504783153533936,
+     0.9235475659370422,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 18.666927337646484,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 1.25,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 3.1415927410125732,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "IconStudio L20 SpotLight3 specular 2 capsule 1/5",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     0.28999561071395874,
+     0.7722429633140564,
+     -0.5652816295623779,
+     -1.0343998670578003
+    ],
+    [
+     0.4813157618045807,
+     -0.6282138824462891,
+     -0.611295759677887,
+     -1.062916874885559
+    ],
+    [
+     -0.8271865844726562,
+     -0.09480588138103485,
+     -0.5538719892501831,
+     -0.5428282618522644
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": false,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     0.9504783153533936,
+     0.9235475659370422,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 1.8272687196731567,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.6000000238418579,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 3.1415927410125732,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "IconStudio L20 SpotLight3 specular 2 capsule 2/5",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     0.28999561071395874,
+     0.7722429633140564,
+     -0.5652816295623779,
+     -0.841339111328125
+    ],
+    [
+     0.4813157618045807,
+     -0.6282138824462891,
+     -0.611295759677887,
+     -1.2199703454971313
+    ],
+    [
+     -0.8271865844726562,
+     -0.09480588138103485,
+     -0.5538719892501831,
+     -0.5665296912193298
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": false,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     0.9504783153533936,
+     0.9235475659370422,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 1.8272687196731567,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.6000000238418579,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 3.1415927410125732,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "IconStudio L20 SpotLight3 specular 2 capsule 3/5",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     0.28999561071395874,
+     0.7722429633140564,
+     -0.5652816295623779,
+     -0.6482784152030945
+    ],
+    [
+     0.4813157618045807,
+     -0.6282138824462891,
+     -0.611295759677887,
+     -1.3770238161087036
+    ],
+    [
+     -0.8271865844726562,
+     -0.09480588138103485,
+     -0.5538719892501831,
+     -0.59023118019104
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": false,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     0.9504783153533936,
+     0.9235475659370422,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 1.8272687196731567,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.6000000238418579,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 3.1415927410125732,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "IconStudio L20 SpotLight3 specular 2 capsule 4/5",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     0.28999561071395874,
+     0.7722429633140564,
+     -0.5652816295623779,
+     -0.4552176594734192
+    ],
+    [
+     0.4813157618045807,
+     -0.6282138824462891,
+     -0.611295759677887,
+     -1.5340772867202759
+    ],
+    [
+     -0.8271865844726562,
+     -0.09480588138103485,
+     -0.5538719892501831,
+     -0.6139326095581055
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": false,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     0.9504783153533936,
+     0.9235475659370422,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 1.8272687196731567,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.6000000238418579,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 3.1415927410125732,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "IconStudio L20 SpotLight3 specular 2 capsule 5/5",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     0.28999561071395874,
+     0.7722429633140564,
+     -0.5652816295623779,
+     -0.2621569335460663
+    ],
+    [
+     0.4813157618045807,
+     -0.6282138824462891,
+     -0.611295759677887,
+     -1.6911307573318481
+    ],
+    [
+     -0.8271865844726562,
+     -0.09480588138103485,
+     -0.5538719892501831,
+     -0.6376340985298157
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": false,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     0.9504783153533936,
+     0.9235475659370422,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 1.8272687196731567,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.6000000238418579,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 3.1415927410125732,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "IconStudio L21 SpotLight",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     0.36507657170295715,
+     0.8492973446846008,
+     0.3813307285308838,
+     1.2646052837371826
+    ],
+    [
+     -0.9190216660499573,
+     0.26333606243133545,
+     0.2933482825756073,
+     0.7391697764396667
+    ],
+    [
+     0.14872178435325623,
+     -0.45754581689834595,
+     0.8766605257987976,
+     3.2105917930603027
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 2938.977294921875,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.25,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 1.0592366456985474,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "IconStudio L22 SpotLight",
+   "type": "SPOT",
+   "matrix_world": [
+    [
+     0.9684352278709412,
+     -0.18911153078079224,
+     0.16238857805728912,
+     0.22724699974060059
+    ],
+    [
+     -0.180888369679451,
+     -0.08495434373617172,
+     0.9798276424407959,
+     2.8469619750976562
+    ],
+    [
+     -0.17150110006332397,
+     -0.9782736897468567,
+     -0.11648086458444595,
+     -0.26219305396080017
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SPOT",
+    "use_temperature": false,
+    "color": [
+     0.7991027235984802,
+     0.8879231214523315,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 4591.2109375,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.25,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "use_square": false,
+    "spot_blend": 0.0,
+    "spot_size": 0.9754412174224854,
+    "show_cone": false,
+    "use_soft_falloff": false
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": false,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeTexCoord",
+      "name": "Light-space direction",
+      "props": {
+       "label": "Light-space direction",
+       "from_instancer": false
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeLightPath",
+      "name": "Light path",
+      "props": {
+       "label": "Light path"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "light -> point (light space)",
+      "props": {
+       "label": "light -> point (light space)",
+       "operation": "SCALE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE capsule offset of this sub-light (m)",
+      "props": {
+       "label": "UE capsule offset of this sub-light (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeCombineXYZ",
+      "name": "capsule offset vector",
+      "props": {
+       "label": "capsule offset vector"
+      },
+      "inputs": {
+       "X": 0.0,
+       "Z": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "capsule centre -> point",
+      "props": {
+       "label": "capsule centre -> point",
+       "operation": "ADD"
+      },
+      "inputs": {
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "distance from centre",
+      "props": {
+       "label": "distance from centre",
+       "operation": "LENGTH"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeSeparateXYZ",
+      "name": "Direction XYZ",
+      "props": {
+       "label": "Direction XYZ"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeVectorMath",
+      "name": "direction from centre",
+      "props": {
+       "label": "direction from centre",
+       "operation": "NORMALIZE"
+      },
+      "inputs": {
+       "Vector_001": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Vector_002": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "Scale": 1.0
+      }
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(OuterConeAngle)",
+      "props": {
+       "label": "UE cos(OuterConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE cos(InnerConeAngle)",
+      "props": {
+       "label": "UE cos(InnerConeAngle)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeValue",
+      "name": "UE AttenuationRadius (m)",
+      "props": {
+       "label": "UE AttenuationRadius (m)"
+      },
+      "inputs": {}
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos(angle to axis)",
+      "props": {
+       "label": "cos(angle to axis)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_001": -1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cosInner - cosOuter",
+      "props": {
+       "label": "cosInner - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cos - cosOuter",
+      "props": {
+       "label": "cos - cosOuter",
+       "operation": "SUBTRACT",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone ramp",
+      "props": {
+       "label": "cone ramp",
+       "operation": "DIVIDE",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE spot cone (squared)",
+      "props": {
+       "label": "UE spot cone (squared)",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "d / r",
+      "props": {
+       "label": "d / r",
+       "operation": "DIVIDE",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^2",
+      "props": {
+       "label": "(d/r)^2",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "(d/r)^4",
+      "props": {
+       "label": "(d/r)^4",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "1 - (d/r)^4",
+      "props": {
+       "label": "1 - (d/r)^4",
+       "operation": "SUBTRACT",
+       "use_clamp": true
+      },
+      "inputs": {
+       "Value": 1.0,
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "UE attenuation window",
+      "props": {
+       "label": "UE attenuation window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeMath",
+      "name": "cone x window",
+      "props": {
+       "label": "cone x window",
+       "operation": "MULTIPLY",
+       "use_clamp": false
+      },
+      "inputs": {
+       "Value_002": 0.5
+      }
+     },
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": "Emission"
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "Light Output",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Light-space direction",
+      "Normal",
+      "light -> point (light space)",
+      "Vector"
+     ],
+     [
+      "Light path",
+      "Ray Length",
+      "light -> point (light space)",
+      "Scale"
+     ],
+     [
+      "UE capsule offset of this sub-light (m)",
+      "Value",
+      "capsule offset vector",
+      "Y"
+     ],
+     [
+      "light -> point (light space)",
+      "Vector",
+      "capsule centre -> point",
+      "Vector"
+     ],
+     [
+      "capsule offset vector",
+      "Vector",
+      "capsule centre -> point",
+      "Vector_001"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "distance from centre",
+      "Vector"
+     ],
+     [
+      "capsule centre -> point",
+      "Vector",
+      "direction from centre",
+      "Vector"
+     ],
+     [
+      "direction from centre",
+      "Vector",
+      "Direction XYZ",
+      "Vector"
+     ],
+     [
+      "Direction XYZ",
+      "Z",
+      "cos(angle to axis)",
+      "Value"
+     ],
+     [
+      "UE cos(InnerConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cosInner - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos(angle to axis)",
+      "Value",
+      "cos - cosOuter",
+      "Value"
+     ],
+     [
+      "UE cos(OuterConeAngle)",
+      "Value",
+      "cos - cosOuter",
+      "Value_001"
+     ],
+     [
+      "cos - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value"
+     ],
+     [
+      "cosInner - cosOuter",
+      "Value",
+      "cone ramp",
+      "Value_001"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value"
+     ],
+     [
+      "cone ramp",
+      "Value",
+      "UE spot cone (squared)",
+      "Value_001"
+     ],
+     [
+      "distance from centre",
+      "Value",
+      "d / r",
+      "Value"
+     ],
+     [
+      "UE AttenuationRadius (m)",
+      "Value",
+      "d / r",
+      "Value_001"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value"
+     ],
+     [
+      "d / r",
+      "Value",
+      "(d/r)^2",
+      "Value_001"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value"
+     ],
+     [
+      "(d/r)^2",
+      "Value",
+      "(d/r)^4",
+      "Value_001"
+     ],
+     [
+      "(d/r)^4",
+      "Value",
+      "1 - (d/r)^4",
+      "Value_001"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value"
+     ],
+     [
+      "1 - (d/r)^4",
+      "Value",
+      "UE attenuation window",
+      "Value_001"
+     ],
+     [
+      "UE spot cone (squared)",
+      "Value",
+      "cone x window",
+      "Value"
+     ],
+     [
+      "UE attenuation window",
+      "Value",
+      "cone x window",
+      "Value_001"
+     ],
+     [
+      "cone x window",
+      "Value",
+      "Emission",
+      "Strength"
+     ],
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  }
+ ]
+}

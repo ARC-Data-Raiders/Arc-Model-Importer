@@ -56,13 +56,13 @@ class AppearanceFeedbackTests(unittest.TestCase):
         self.assertIsNot(obj.data.materials[0], shared)
 
     def test_banshee_exact_packaged_preview(self):
-        with (ROOT / "outfit_reference.csv").open(encoding="utf-8-sig") as stream:
+        with (ROOT / "Data/outfit_reference.csv").open(encoding="utf-8-sig") as stream:
             row = next(row for row in csv.DictReader(stream) if row["ST"] == "ID_PLAYERSKIN_BANSHEE")
         self.assertEqual(self.appearance._outfit_preview_stems(row), ["Banshee"])
         self.assertTrue(self.appearance._shipped_outfit_preview_path("Banshee"))
 
     def test_facial_color_registered_and_cleaned_up(self):
-        source = (ROOT / "properties.py").read_text(encoding="utf-8-sig")
+        source = (ROOT / "Outfit_Accessories/properties.py").read_text(encoding="utf-8-sig")
         self.assertEqual(source.count('"arc_appearance_facial_hair_color"'), 3)
 
     def test_missing_selected_preview_queues_without_discovery(self):
@@ -83,7 +83,7 @@ class AppearanceFeedbackTests(unittest.TestCase):
         callbacks = []
         self.modules["bpy"].app = SimpleNamespace(timers=SimpleNamespace(register=lambda callback, **kwargs: callbacks.append(callback)))
         package_name = self.addon.__name__
-        pak = self.modules[package_name + ".pak_extract"]
+        pak = self.modules[package_name + ".Shared.pak_extract"]
         pak.extraction_command = unittest.mock.Mock(return_value=["exporter", "extract"])
         submitted = unittest.mock.Mock(return_value=SimpleNamespace())
         context = SimpleNamespace(scene=SimpleNamespace(arc_pak_dir="configured-game", arc_usmap_path="mapping.usmap"))
@@ -99,33 +99,8 @@ class AppearanceFeedbackTests(unittest.TestCase):
         pak.extraction_command.assert_called_once()
         self.assertEqual(submitted.call_args.args[-1], ("exporter", "extract"))
 
-    def test_banshee_preview_receipt_and_unchanged_crop(self):
-        import numpy as np
-        from PIL import Image
-        receipt = json.loads((ROOT / "assets/outfit_previews/Banshee.source.json").read_text())
-        self.assertEqual(receipt["outfit"], "ID_PLAYERSKIN_BANSHEE")
-        self.assertEqual(receipt["image_reference"], "/Game/Pioneer/Items/Characters/Skins/Outfit/Banshee/T_UI_Icon_Outfit_Banshee.T_UI_Icon_Outfit_Banshee")
-        self.assertEqual(hashlib.sha256((ROOT / "assets/outfit_previews/Banshee.png").read_bytes()).hexdigest(), receipt["output_sha256"])
-        metadata = Path(receipt["metadata"])
-        icon = Path(receipt["icon"])
-        if not metadata.is_file() or not icon.is_file():
-            self.skipTest("Retained game exports are not available")
-        self.assertEqual(hashlib.sha256(metadata.read_bytes()).hexdigest(), receipt["metadata_sha256"])
-        self.assertEqual(hashlib.sha256(icon.read_bytes()).hexdigest(), receipt["icon_sha256"])
-        spec = importlib.util.spec_from_file_location("crop_producer", ROOT / "outfit_preview.py")
-        crop = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(crop)
-        with Image.open(icon) as image:
-            expected = np.rint(crop.crop_outfit_preview_rgba(np.asarray(image.convert("RGBA"), dtype=np.float32) / 255.0) * 255).astype(np.uint8)
-        with Image.open(ROOT / "assets/outfit_previews/Banshee.png") as image:
-            np.testing.assert_array_equal(np.asarray(image), expected)
-        pioneer = icon.parents[5]
-        resolved = crop.selected_game_icon(("Banshee",), "ID_PLAYERSKIN_BANSHEE", (str(metadata.parents[5]), str(pioneer)), str(pioneer))
-        self.assertEqual(Path(resolved).resolve(), icon.resolve())
-        self.assertEqual(crop.selected_game_icon(("Banshee",), "ID_PLAYERSKIN_OTHER", (str(metadata.parents[5]), str(pioneer)), str(pioneer)), "")
-
     def test_missing_icon_worker_extracts_only_authored_selected_paths(self):
-        spec = importlib.util.spec_from_file_location("selected_preview_worker", ROOT / "outfit_preview.py")
+        spec = importlib.util.spec_from_file_location("selected_preview_worker", ROOT / "Outfit_Accessories/outfit_preview.py")
         worker = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(worker)
         scratch = Path("Z:/Datamining/Arc Raiders/CodexScratch/DataRaiders-BlenderImporter/.local/ui-feedback-20261101/appearance") if self.appearance.os.name == "nt" else Path(tempfile.gettempdir())

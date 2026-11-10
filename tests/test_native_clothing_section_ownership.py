@@ -5,7 +5,7 @@ import unittest
 
 
 def selection():
-    path=Path(__file__).resolve().parents[1]/'materials/clothing.py'
+    path=Path(__file__).resolve().parents[1]/'Shared/materials/clothing.py'
     tree=ast.parse(path.read_text(encoding='utf-8'))
     node=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_select_native_clothing_owner')
     namespace={}

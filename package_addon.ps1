@@ -8,10 +8,10 @@
 
   Two SEPARATE Blender addons (different AppData folders — never overwrite each other):
 
-    outfits       folder: DataRaiders-Outfits
-                  bl_info: "Arc Model Importer"
+    outfits       folder: Arc-Asset-Importer
+                  bl_info: "Arc Asset Importer"
                   branches: outfits-stable / pre-map-importer
-                  AppData: %APPDATA%\Blender Foundation\Blender\5.1\scripts\addons\DataRaiders-Outfits
+                  AppData: %APPDATA%\Blender Foundation\Blender\5.1\scripts\addons\Arc-Asset-Importer
                   zip dir: dist/outfits/
 
     map-importer  folder: DataRaiders-MapImporter
@@ -32,7 +32,7 @@
   .\package_addon.ps1 -SyncAppData
   .\package_addon.ps1 -Line outfits -SyncAppData
   .\package_addon.ps1 -Line map-importer -SyncAppData
-  .\package_addon.ps1 -OutZip ".\dist\custom\DataRaiders-Outfits.zip"
+  .\package_addon.ps1 -OutZip ".\dist\custom\Arc-Asset-Importer.zip"
 #>
 [CmdletBinding()]
 param(
@@ -56,114 +56,51 @@ if (-not $RepoRoot) {
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 
 # Folder names under Blender scripts/addons (also zip inner root).
-$script:AddonFolderOutfits = "DataRaiders-Outfits"
+$script:AddonFolderOutfits = "Arc-Asset-Importer"
+$script:LegacyAddonFolderOutfits = "DataRaiders-Outfits"
 $script:AddonFolderMap = "DataRaiders-MapImporter"
-$script:BlInfoNameOutfits = "Arc Model Importer"
+$script:BlInfoNameOutfits = "Arc Asset Importer"
 $script:BlInfoNameMap = "Arc Raiders Map Importer"
 
 # Runtime files/dirs that Blender needs. Everything else stays in git but out of the zip.
 $RootFilesShared = @(
     "__init__.py",
-    "addon_line.py",
-    "properties.py",
-    "operators.py",
-    "ui.py",
-    "importing.py",
-    "native_material_slots.py",
-    "appearance.py",
-    "outfit_preview.py",
-    "appearance_queue.py",
-    "asset_organization.py",
-    "backpack_instances.py",
-    "hair_placement.py",
-    "backpack_catalog.py",
-    "pose_presets.py",
-    "reference_planes.py",
-    "reference_overlay.py",
-    "revamped_bridge.py",
-    "import_layout.py",
-    "character_fit.py",
-    "head_wrap.py",
-    "body_mask.py",
-    "uemodel_import.py",
-    "pak_extract.py",
-    "material_texture_metadata.py",
-    "pak_catalog.py",
-    "outfit_catalog.py",
-    "textures.py",
-    "utils.py",
     "fmdex.py",
-    "rig.py",
-    "palette_calibration.py",
-    "outfit_reference.csv",
-    "appearance_reference.csv",
-    "asset_domain.py",
-    "arc_catalog_data.py",
-    "arc_ui.py",
-    "group_hotswap.py",
-    "mask_debug.py",
-    "ocm_zone_cache.py",
-    "prop_assemble.py",
-    "prop_fx.py",
-    "frigate_entrance.py",
-    "weapon_catalog.py",
-    "weapon_assets.py",
-    "weapon_import.py",
-    "weapon_position.py",
-    "weapon_ui.py",
-    "weapon_catalog_data.py",
-    "animation_catalog.py",
-    "animation_import.py",
-    "lighting_looks.py",
-    "lighting_lut.py",
-    "lighting_atmosphere.py",
-    "lighting_catalog.py",
-    "lighting_grade.py",
-    "lighting_post.py",
-    "lighting_sky.py",
-    "niagara_curves.py",
-    "niagara_ir.py",
-    "niagara_vm.py",
-    "niagara_runtime.py",
-    "niagara_context.py",
-    "niagara_fx.py",
-    "niagara_catalog.py",
-    "niagara_di.py",
-    "niagara_vm_numpy.py",
-    "niagara_sched_model.py",
-    "niagara_scheduler.py",
-    "niagara_cache.py",
-    "niagara_render_ref.py",
-    "niagara_ribbons.py",
-    "niagara_rigs.py",
-    "niagara_playback.py",
-    "niagara_fx_materials.py",
-    "niagara_dump_params.py",
-    "niagara_gpu.py",
-    "niagara_d3d11.py",
-    "niagara_view_ub.py",
-    "niagara_view_ub_57.json",
-    # Required for clothing/outfit ColorMask materials — without this, imports
+    "sidebar.py",
+    # Required for clothing/outfit ColorMask materials; without this, imports
     # succeed as bare Principled stubs ("Arc Texturer unavailable").
     "ArcTexturer.blend",
     "add-on-io-scene-psk-psa-v9_1_2.zip",
     "ADDON_SYNC.txt"
 )
 
-# Present on map-importer line (and optionally outfits for bridge helpers).
-$RootFilesMapExtra = @(
-    "map_placement.py",
-    "map_hybrid.py",
-    "map_family.py"
+# One folder per sidebar section plus Data/ catalogs. Each ships whole (minus excludes below),
+# so a new runtime module in any of them is packaged without editing this list.
+$SectionDirs = @(
+    "Outfit_Accessories",
+    "Weapons",
+    "Arc",
+    "Animations",
+    "Niagara",
+    "Lighting",
+    "Maps",
+    "Script_Helpers",
+    "Shared",
+    "Data"
+)
+
+# Dev-only scripts and local (gitignored) data inside the section folders.
+$SectionExcludeFiles = @(
+    "build_outfit_reference.py",
+    "package_addon.py",
+    "parse_outfit_toggles.py",
+    "arc_palette_calibration.json",
+    "arc_white_materials_inventory.json"
 )
 
 $RootDirs = @(
     "assets",
-    "materials",
-    "map_tools",
-    "reference",
-    "surface_rebuild",
-    "material_runtime"
+    "reference"
 )
 
 # Under map_tools: ship runtime helpers only (exclude analyze dumps / docs).
@@ -252,18 +189,34 @@ function Copy-ArcPakRuntime {
     if ($ReleaseLine -eq "map-importer") { return }
     $proj = Join-Path $RepoRoot "ArcPak\ArcPak.Export.csproj"
     if (-not (Test-Path -LiteralPath $proj)) { return }
-    $publish = Join-Path $RepoRoot "ArcPak\publish"
-    $exe = Join-Path $publish "ArcPak.Export.exe"
-    if (-not (Test-Path -LiteralPath $exe)) {
-        Write-Host "Publishing ArcPak.Export (win-x64 self-contained)..."
-        & dotnet publish $proj -c Release -r win-x64 --self-contained true -m:4 -o $publish --nologo
+    # Always build from current sources. An existing publish/ executable may
+    # predate texture-decoder fixes even when the addon version is unchanged.
+    $runtimeRoot = Join-Path $env:TEMP ("ArcPak-runtime-" + [guid]::NewGuid().ToString("n"))
+    $publish = Join-Path $runtimeRoot "publish"
+    $buildRoot = Join-Path $runtimeRoot "build"
+    try {
+        Write-Host "Publishing current ArcPak.Export (win-x64 self-contained)..."
+        & dotnet publish $proj -c Release -r win-x64 --self-contained true -m:4 -o $publish "-p:ArcPakBuildRoot=$buildRoot" --nologo
         if ($LASTEXITCODE -ne 0) { throw "ArcPak.Export publish failed ($LASTEXITCODE)" }
+        $exe = Join-Path $publish "ArcPak.Export.exe"
+        if (-not (Test-Path -LiteralPath $exe)) { throw "ArcPak.Export publish produced no executable" }
+        $dst = Join-Path $AddonDir "ArcPak"
+        New-Item -ItemType Directory -Path $dst -Force | Out-Null
+        Get-ChildItem -LiteralPath $publish -File | Where-Object { $_.Extension -ne ".pdb" -and @("BouncyCastle.Cryptography.dll") -notcontains $_.Name } | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dst $_.Name) -Force
+        }
     }
-    $dst = Join-Path $AddonDir "ArcPak"
-    New-Item -ItemType Directory -Path $dst -Force | Out-Null
-    Get-ChildItem -LiteralPath $publish -File | Where-Object { $_.Extension -ne ".pdb" } | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dst $_.Name) -Force
+    finally {
+        if (Test-Path -LiteralPath $runtimeRoot) {
+            $resolvedRuntime = (Resolve-Path -LiteralPath $runtimeRoot).Path
+            $resolvedTemp = (Resolve-Path -LiteralPath $env:TEMP).Path.TrimEnd([IO.Path]::DirectorySeparatorChar)
+            if (-not $resolvedRuntime.StartsWith($resolvedTemp + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Refusing ArcPak build cleanup outside the configured temporary root: $resolvedRuntime"
+            }
+            Remove-Item -LiteralPath $resolvedRuntime -Recurse -Force -Confirm:$false
+        }
     }
+    # pak-index.bin: regenerate on each game patch: ArcPak.Export.exe reindex --game-dir <Paks> --index-dir <tmp> --out <tmp> --usmap <usmap>; copy <tmp>/pak-index-<buildid>.bin here
     $mapSrc = Join-Path $RepoRoot "ArcPak\mappings"
     if (Test-Path -LiteralPath $mapSrc) {
         $mapDst = Join-Path $dst "mappings"
@@ -287,17 +240,6 @@ function New-StagingDir {
     $rootFiles = [System.Collections.Generic.List[string]]::new()
     foreach ($f in $RootFilesShared) { [void]$rootFiles.Add($f) }
 
-    if ($ReleaseLine -eq "map-importer") {
-        foreach ($f in $RootFilesMapExtra) { [void]$rootFiles.Add($f) }
-    }
-    else {
-        # Outfits still needs map_placement for FModel TCP listener operator classes only.
-        # Map UI is stripped from ui.py on the outfits line; map_tools map scripts are excluded below.
-        if (Test-Path -LiteralPath (Join-Path $RepoRoot "map_placement.py")) {
-            [void]$rootFiles.Add("map_placement.py")
-        }
-    }
-
     foreach ($f in $rootFiles) {
         $src = Join-Path $RepoRoot $f
         if (Test-Path -LiteralPath $src) {
@@ -307,11 +249,25 @@ function New-StagingDir {
 
     $mapToolsExclude = if ($ReleaseLine -eq "map-importer") { $MapToolsExcludeAlways } else { $MapToolsExcludeOutfits }
 
-    foreach ($d in $RootDirs) {
+    foreach ($d in $SectionDirs) {
+        $src = Join-Path $RepoRoot $d
+        if (-not (Test-Path -LiteralPath $src)) { throw "Missing addon section folder: $src" }
+        $dst = Join-Path $addonStage $d
+        $xd = @("__pycache__", ".git")
+        if ($d -eq "Maps") { $xd += "map_tools" }
+        robocopy $src $dst /E /NFL /NDL /NJH /NJS /nc /ns /np `
+            /XD @xd `
+            /XF *.pyc *.pyo *.log *.blend1 Thumbs.db @SectionExcludeFiles | Out-Null
+        if ($LASTEXITCODE -ge 8) {
+            throw "robocopy failed for $d (exit $LASTEXITCODE)"
+        }
+    }
+
+    foreach ($d in @("Maps\map_tools") + $RootDirs) {
         $src = Join-Path $RepoRoot $d
         if (-not (Test-Path -LiteralPath $src)) { continue }
         $dst = Join-Path $addonStage $d
-        if ($d -eq "map_tools") {
+        if ($d -eq "Maps\map_tools") {
             New-Item -ItemType Directory -Path $dst -Force | Out-Null
             Get-ChildItem -LiteralPath $src -Force | ForEach-Object {
                 if ($mapToolsExclude -contains $_.Name) { return }
@@ -334,8 +290,8 @@ function New-StagingDir {
 
     # Current material loaders require a reviewed native bank. Retired historical
     # facts stay in the repository for provenance, but are not shipped again.
-    if (Test-Path -LiteralPath (Join-Path $addonStage "material_runtime\native_data.py")) {
-        $nativeDataRoot = [IO.Path]::GetFullPath((Join-Path $addonStage "surface_rebuild\data"))
+    if (Test-Path -LiteralPath (Join-Path $addonStage "Shared\materials\native\native_data.py")) {
+        $nativeDataRoot = [IO.Path]::GetFullPath((Join-Path $addonStage "Shared\materials\rebuild\data"))
         $nativeManifestPath = Join-Path $nativeDataRoot "native_catalog_active.json"
         if (-not (Test-Path -LiteralPath $nativeManifestPath)) { throw "Missing reviewed current-native material catalog manifest" }
         $nativeManifest = Get-Content -LiteralPath $nativeManifestPath -Raw | ConvertFrom-Json
@@ -349,10 +305,6 @@ function New-StagingDir {
         if ($nativeBankHash -ne ([string]$nativeManifest.sha256).ToLowerInvariant()) { throw "Current-native catalog content hash mismatch" }
         $stagePrefix = [IO.Path]::GetFullPath($addonStage).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
         foreach ($retiredRelative in @(
-            "surface_rebuild\data\materials_142.json.gz",
-            "surface_rebuild\data\character_materials_142.json.gz",
-            "surface_rebuild\data\parameter_scopes_142.json.gz",
-            "surface_rebuild\data\bundled_textures_142.json",
             "assets\preset_defaults.json"
         )) {
             $retiredPath = [IO.Path]::GetFullPath((Join-Path $addonStage $retiredRelative))
@@ -387,7 +339,7 @@ function New-StagingDir {
 function Write-AddonLineFile([string]$AddonDir, [string]$ReleaseLine) {
     $line = if ($ReleaseLine -eq "map-importer") { "map-importer" } else { "outfits" }
     $folder = Get-AddonFolderName $line
-    $path = Join-Path $AddonDir "addon_line.py"
+    $path = Join-Path $AddonDir "Outfit_Accessories\addon_line.py"
     $content = @"
 """Release line for this install (outfits vs map-importer).
 
@@ -395,7 +347,7 @@ Baked by package_addon.ps1 (line=$line, folder=$folder). Do not edit AppData cop
 re-run packaging with -Line / from the correct branch.
 
 AppData paths (Blender 5.1):
-  outfits      -> .../addons/DataRaiders-Outfits
+  outfits      -> .../addons/Arc-Asset-Importer
   map-importer -> .../addons/DataRaiders-MapImporter
 """
 
@@ -431,7 +383,7 @@ def is_outfits_line() -> bool:
 
 def sibling_addon_module_candidates() -> tuple[str, ...]:
     if is_map_importer_line():
-        return ("DataRaiders-Outfits",)
+        return ("Arc-Asset-Importer",)
     return ("DataRaiders-MapImporter",)
 
 
@@ -473,6 +425,19 @@ function Sync-ToAppData([string]$AddonDir, [string]$ReleaseLine, [string]$GitBra
     $parent = Split-Path $TargetAppData -Parent
     if (-not (Test-Path -LiteralPath $parent)) {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+    # Rename migration: move the old install folder (with its ArcPak cache) to the new
+    # module name so the cache is kept and two copies of the addon never load.
+    if ($ReleaseLine -ne "map-importer") {
+        $legacy = Join-Path $parent $script:LegacyAddonFolderOutfits
+        if ((Test-Path -LiteralPath $legacy) -and ((Split-Path $TargetAppData -Leaf) -eq $folder)) {
+            if (Test-Path -LiteralPath $TargetAppData) {
+                throw "Both '$legacy' and '$TargetAppData' exist. Close Blender, keep one, then sync again."
+            }
+            try { Move-Item -LiteralPath $legacy -Destination $TargetAppData -ErrorAction Stop }
+            catch { throw "Could not rename '$legacy' to '$folder' (close Blender so its files are not locked): $_" }
+            Write-Host "Migrated AppData install: $($script:LegacyAddonFolderOutfits) -> $folder"
+        }
     }
     if (-not (Test-Path -LiteralPath $TargetAppData)) {
         New-Item -ItemType Directory -Path $TargetAppData -Force | Out-Null
@@ -653,6 +618,14 @@ try {
     Update-StagedBlInfo -AddonDir $staged.AddonDir -ReleaseLine $releaseLine
     $stageSize = (Get-ChildItem -LiteralPath $staged.AddonDir -Recurse -Force | Measure-Object Length -Sum).Sum
     Write-Host ("Stage size: {0:N2} MB" -f ($stageSize / 1MB))
+    # Shared precompute (assets/precompute, shipped with assets): size vs budget, warning only.
+    $precomputeDir = Join-Path $staged.AddonDir "assets\precompute"
+    if (Test-Path -LiteralPath $precomputeDir) {
+        $precomputeMB = ((Get-ChildItem -LiteralPath $precomputeDir -Recurse -Force -File | Measure-Object Length -Sum).Sum) / 1MB
+        Write-Host ("precompute {0:N2} MB / 20 MB (+5 weapons)" -f $precomputeMB)
+        if ($precomputeMB -gt 25) { Write-Warning ("precompute over budget: {0:N2} MB" -f $precomputeMB) }
+    }
+    else { Write-Warning "precompute folder missing from stage (assets\precompute); live fallback only" }
 
     $outParent = Split-Path -Parent $OutZip
     if ($outParent -and -not (Test-Path -LiteralPath $outParent)) {

@@ -4,8 +4,9 @@ import unittest
 
 import numpy as np
 
-import niagara_cache as nc
-import niagara_ribbons as rb
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara import niagara as nc
+from Niagara import niagara as rb
 
 
 def straight(n, spacing=0.5):

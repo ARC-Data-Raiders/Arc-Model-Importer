@@ -5,8 +5,8 @@ except ImportError:
     from native_test_support import ROOT
 import json,math,unittest
 from pathlib import Path
-from material_runtime.core import MaterialRecord,expr,evaluate,expression_fingerprint
-from material_runtime.blockout_glow import compile_blockout_glow,MASTER,EXPOSURE_KEY
+from Shared.materials.native.core import MaterialRecord, expr, evaluate, expression_fingerprint
+from Shared.materials.native.blockout_glow import compile_blockout_glow, MASTER, EXPOSURE_KEY
 
 FIXTURE=json.loads((Path(__file__).parent/'fixtures/blockout_glow_native_checkpoints.json').read_text(encoding='utf-8'))
 

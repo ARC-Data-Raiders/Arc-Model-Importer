@@ -26,9 +26,12 @@ import sys
 
 MAPS = ["BuriedCity_01", "FrozenTrail_01", "MountainCompound", "RivenTides_01", "Spaceport_01",
         "TheBlueGate_01", "TheDam_02"]
-LABELS = {"BuriedCity_01": "Buried City", "FrozenTrail_01": "Frozen Trail", "MountainCompound": "Mountain Compound",
+LABELS = {"BuriedCity_01": "Buried City", "FrozenTrail_01": "Frozen Trail", "MountainCompound": "Stella Montis",
           "RivenTides_01": "Riven Tides", "Spaceport_01": "Spaceport", "TheBlueGate_01": "The Blue Gate",
-          "TheDam_02": "The Dam", "Home": "Raider Den"}
+          "TheDam_02": "The Dam", "Home": "Raider Den", "MainMenu": "Main Menu", "PracticeRange": "Practice Range"}
+# (map key, evidence dump folder, level name prefix stripped for the scenario label)
+LEVEL_MAPS = [("Home", "dump-Home", "Home_Lighting_"), ("MainMenu", "dump-MainMenu", ""),
+              ("PracticeRange", "dump-PracticeRange", "LI_PracticeRange_")]
 # Engine class defaults for fields an instance leaves at the archetype value.
 DIRECTIONAL_DEFAULTS = {"Intensity": 10.0, "LightColor": {"R": 255, "G": 255, "B": 255, "A": 255},
                         "Temperature": 6500.0, "bUseTemperature": False, "LightSourceAngle": 0.5357}
@@ -278,19 +281,21 @@ def main():
             entries[tag] = entry
         catalog["maps"][m] = {"label": LABELS[m], "scenarios": entries}
 
-    home = load_dump(evidence / "dump-Home")
-    templates = templates_from(home)
-    entries = {}
-    for pkg, items in sorted(home.items()):
-        level = pkg.split("/")[-1]
-        entry = finish(collect_cell(items, templates))
-        if not entry.get("volumes"):
-            continue  # interior base level: only bounded volumes
-        name = level.replace("Home_Lighting_", "")
-        entry = {"label": label_for(name), "weight": None, "filter_tags": [], "level": level, **entry}
-        note_curves(entry)
-        entries[level] = entry
-    catalog["maps"]["Home"] = {"label": LABELS["Home"], "scenarios": entries}
+    # Level-based maps (no LevelLightingScenariosDataAsset): one entry per level package with lighting.
+    for m, dump, prefix in LEVEL_MAPS:
+        cells = load_dump(evidence / dump)
+        templates = templates_from(cells)
+        entries = {}
+        for pkg, items in sorted(cells.items()):
+            level = pkg.split("/")[-1]
+            entry = finish(collect_cell(items, templates))
+            if not entry.get("volumes"):
+                continue  # level without bounded or unbound volumes (base or reflection-only)
+            name = level.replace(prefix, "") or level
+            entry = {"label": label_for(name), "weight": None, "filter_tags": [], "level": level, **entry}
+            note_curves(entry)
+            entries[level] = entry
+        catalog["maps"][m] = {"label": LABELS[m], "scenarios": entries}
     catalog["curves"] = {k: curves[k] for k in sorted(used_curves) if k in curves}
     missing = sorted(used_curves - set(curves))
     if missing:

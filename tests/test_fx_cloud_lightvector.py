@@ -15,7 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('_fx_cloud', ROOT / 'surface_rebuild/clouds.py')
+spec = importlib.util.spec_from_file_location('_fx_cloud', ROOT / 'Shared/materials/rebuild/clouds.py')
 clouds = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(clouds)
 
@@ -65,7 +65,7 @@ class Outputs:
 
 
 class NumericGraph:
-    """Eager stand-in for material_runtime.interop.Graph: sockets are floats and 3-tuples."""
+    """Eager stand-in for materials.native.interop.Graph: sockets are floats and 3-tuples."""
     def __init__(self, obj, images, position, normal, backfacing, tangent):
         self.report = {'warnings': []}
         self.obj, self.images = obj, images
@@ -160,7 +160,7 @@ class CloudShaderTests(unittest.TestCase):
         self.assertEqual(g.result['color'], (.380208, .380208, .380208))
 
     def test_master_routes_to_the_cloud_family(self):
-        tree = ast.parse((ROOT / 'surface_rebuild/records.py').read_text(encoding='utf-8'))
+        tree = ast.parse((ROOT / 'Shared/materials/rebuild/records.py').read_text(encoding='utf-8'))
         body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'classify']
         package = types.ModuleType('_cloud_pkg'); package.__path__ = []
         sys.modules['_cloud_pkg'] = package

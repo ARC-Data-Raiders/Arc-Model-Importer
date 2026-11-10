@@ -2,7 +2,7 @@ import importlib.util
 from pathlib import Path
 import unittest
 
-path = Path(__file__).resolve().parents[1] / "material_runtime/shader_parity/xform.py"
+path = Path(__file__).resolve().parents[1] / "Shared/materials/native/shader_parity/xform.py"
 spec = importlib.util.spec_from_file_location("parity_xform_test", path)
 x = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(x)

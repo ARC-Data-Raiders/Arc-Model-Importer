@@ -37,7 +37,7 @@ internal static class ArcVerbCommon
         Program.PrepareCompression(gameDir);
         var p = Program.CreateShell(gameDir);
         p.ReadShaderMaps = readShaderMaps;
-        p.MappingsContainer = new FileUsmapTypeMappingsProvider(usmap);
+        p.MappingsContainer = Program.Mappings(usmap);
         Program.MountEverything(p);
         return p;
     }

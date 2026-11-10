@@ -3,9 +3,9 @@ try:
 except ImportError:
     from native_test_support import ROOT
 import unittest,math
-from material_runtime.core import MaterialRecord,evaluate,literal
-from material_runtime.hair import compile_eyelashes
-from material_runtime.deformation import deform_vertices,decode_delta_texel,transform_normal,deform_corner_normals
+from Shared.materials.native.core import MaterialRecord, evaluate, literal
+from Shared.materials.native.hair import compile_eyelashes
+from Shared.materials.native.deformation import deform_vertices, decode_delta_texel, transform_normal, deform_corner_normals
 def sample(inputs=None,uv=(.5,.5,0.),time=0.):
     data=inputs or {}
     return {'uv':uv,'time':time,'texture':lambda reference,coords,attrs:data[reference]}

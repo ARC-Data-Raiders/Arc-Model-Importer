@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('_prop_assemble_probe', ROOT / 'prop_assemble.py')
+spec = importlib.util.spec_from_file_location('_prop_assemble_probe', ROOT / 'Maps/prop_assemble.py')
 pa = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pa)
 S = np.diag([1.0, -1.0, 1.0])

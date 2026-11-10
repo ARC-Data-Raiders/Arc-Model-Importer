@@ -24,7 +24,7 @@ class Bootstrap(unittest.TestCase):
         def build(t,record):
             self.received.append((t,record,[(n.type,{k:s.default_value for k,s in n.inputs.items()}) for n in t.nodes]));t.nodes.clear();t['arc_face_native_revision']=1
         native.build_face_tree=build;sys.modules[native.__name__]=native;self.native=native
-        spec=importlib.util.spec_from_file_location('_face_probe.character_bootstrap',ROOT/'materials/character_bootstrap.py');self.module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=self.module;spec.loader.exec_module(self.module)
+        spec=importlib.util.spec_from_file_location('_face_probe.character_bootstrap',ROOT/'Shared/materials/character_bootstrap.py');self.module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=self.module;spec.loader.exec_module(self.module)
         self.mat=types.SimpleNamespace(name='Face')
     def tearDown(self):
         for k,v in self.saved.items():
@@ -32,7 +32,7 @@ class Bootstrap(unittest.TestCase):
             else:sys.modules[k]=v
     def test_actual_fidelity_entry_does_not_touch_vendor_base(self):
         import ast
-        source=ast.parse((SOURCE/'materials/character_fidelity.py').read_text(encoding='utf-8'))
+        source=ast.parse((SOURCE/'Shared/materials/character_fidelity.py').read_text(encoding='utf-8'))
         function=next(n for n in source.body if isinstance(n,ast.FunctionDef) and n.name=='prepare_face_shader')
         namespace={'__package__':'_face_probe','os':types.SimpleNamespace(path=types.SimpleNamespace(isfile=lambda p:True))}
         exec(compile(ast.Module(body=[function],type_ignores=[]),'<actual staged fidelity>','exec'),namespace)
@@ -42,7 +42,7 @@ class Bootstrap(unittest.TestCase):
         self.assertEqual(tree['dr_face_bootstrap'],'native-interface-v2')
     def test_actual_head_native_gate_has_no_binary_template_ensure(self):
         import ast
-        source=ast.parse((SOURCE/'materials/character.py').read_text(encoding='utf-8'))
+        source=ast.parse((SOURCE/'Shared/materials/character.py').read_text(encoding='utf-8'))
         function=next(n for n in source.body if isinstance(n,ast.FunctionDef) and n.name=='_setup_head_slot_head')
         calls=[n for n in ast.walk(function) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr in ('ensure_node_group','ensure_material')]
         self.assertEqual(calls,[])

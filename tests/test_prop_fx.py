@@ -5,7 +5,8 @@ import os
 import tempfile
 import unittest
 
-import prop_fx as pf
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara import niagara as pf
 
 BP = [
     {'Type': 'SCS_Node', 'Name': 'SCS_Node_0', 'Properties': {'InternalVariableName': 'DefaultSceneRoot', 'ChildNodes': [

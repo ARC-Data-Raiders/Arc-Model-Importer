@@ -4,7 +4,7 @@ from pathlib import Path
 import types
 import unittest
 
-SOURCE = Path(__file__).resolve().parents[1] / "materials" / "gt_outfit_pbr.py"
+SOURCE = Path(__file__).resolve().parents[1] / "Shared/materials" / "gt_outfit_pbr.py"
 parsed = ast.parse(SOURCE.read_text(encoding="utf-8"))
 function = next(node for node in parsed.body if isinstance(node, ast.FunctionDef) and
                 node.name == "_wire_array_uv_reroutes")

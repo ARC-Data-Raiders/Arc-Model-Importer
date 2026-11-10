@@ -1,0 +1,15 @@
+# 2.19.58 — exact native slots and cached material inheritance
+
+Packaged release verified and synced. The actual ZIP passed install, enable, disable/re-enable and overwrite of an enabled install in Blender 5.1.2. The private process exited 0; no Traceback or Error output occurred. Saved-file migration remains separately tracked.
+
+Native skeletal material-table indices now map to the render sections actually exported for the selected LOD. Sparse/repeated slots map explicitly; valid native slots unused by that LOD are retained as diagnostics instead of being assigned to another section. Versioned sidecars validate the model hash, object identity, section names and triangle ranges. This fixes the Chap/GWRanger and Outlander colorway failures without changing geometry. Named default DA material-bank keys remain a separate namespace; unresolved bank-role semantics are recorded rather than guessed.
+
+Primary Pak imports prepare missing metadata for existing caches without exporting meshes or textures again. Material metadata retains exact parent chains and source provenance. Cached geometry must belong to the configured game installation and build; addon updates alone do not invalidate geometry. Repeated usmap hashing uses a stat-keyed cache. FModel imports retain their offline path.
+
+Hair tangent reconstruction now follows the proved native Scraggle/FlattenNormal stage, including exact EngineRandomAngles nearest/repeat sampling at PNG texel centers. FrenchBraids' actual M_Hair_Metahuman_01 parent has its own exact tangent gate; ColorMap-specific behavior stays separate. Validated local raw companions restore omitted Parent fields and inherited parameters while preserving selected hair palette overrides.
+
+Verification evidence includes 23 native-slot tests, 14 character companion tests, four exact hair-family tests, seven real native-slot/colorway cases, 53 CPU and 53 GPU tangent/sampling cases, and two repeated real FrenchBraids/Pink setup calls preserving geometry, UVs, morphs and the tie shader. Metadata for 1,077 cached models was independently validated without changing model bytes. Canonical portable suites ran 98 tests: 97 passed and one optional real-game fixture was skipped there; the isolated actual-game probe covers that fixture. The final cache/source suite adds 25 raw-provenance/receipt tests, 15 cache/thread tests and eight compiled object-selector cases. Actual published-apphost metadata export preserved all four fixture files, and source/ZIP/installed identities match for 15 critical runtime files (only documented packaging name/description rewrites are allowed).
+
+The saved split audit identified ten groups needing genuine material-binding refreshes, including helmet, visor and goggles sections. Refreshing saved graphs is separate from installing this release. Original blend files remain preserved.
+
+Working decal placement math is unchanged. Native hair scattering, engine subsurface/refraction, runtime weather, matched lighting and final display transforms remain separate rendering work. This checkpoint does not certify 99% perceptual accuracy.

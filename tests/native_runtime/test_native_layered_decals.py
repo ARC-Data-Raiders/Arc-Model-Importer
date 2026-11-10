@@ -6,7 +6,7 @@ try:
 except ImportError:
     from native_test_support import ROOT, PACKAGE, namespace
 namespace()
-m=importlib.import_module(PACKAGE+'.materials.dr_layered_decals')
+m=importlib.import_module(PACKAGE+'.Shared.materials.dr_layered_decals')
 class Scalar:
     def __init__(self,value):self.value=value;self.node=types.SimpleNamespace(use_clamp=False)
     def read(self):return max(0.,min(1.,self.value)) if self.node.use_clamp else self.value
@@ -39,7 +39,7 @@ class LayeredDecalTests(unittest.TestCase):
         self.assertAlmostEqual(number(m.wear_multiplier(None,None,None,[dict(s,wear=1.) for s in self.slots()])),1.)
         self.assertAlmostEqual(number(m.wear_multiplier(None,None,None,self.slots())),.5)
     def test_scalar_import_and_disabled_switch(self):
-        tree=ast.parse((ROOT/'textures.py').read_text(encoding='utf8'))
+        tree=ast.parse((ROOT/'Shared/textures.py').read_text(encoding='utf8'))
         fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_decals_from_props')
         ns={'re':re};exec(compile(ast.Module(body=[fn],type_ignores=[]),'native-parser','exec'),ns)
         props={'TextureParameterValues':[{'ParameterInfo':{'Name':'2_DecalColor'},'ParameterValue':{'ObjectName':"Texture2D'T_Line_Single_C'"}}],
@@ -49,7 +49,7 @@ class LayeredDecalTests(unittest.TestCase):
         props['StaticParametersRuntime']={'StaticSwitchParameters':[{'ParameterInfo':{'Name':'2_UseDecal'},'Value':False}]}
         self.assertEqual(ns['_decals_from_props'](props),[])
     def test_no_outfit_name_or_local_roughness_override_in_compositor(self):
-        tree=ast.parse((ROOT/'materials/dr_layered_decals.py').read_text(encoding='utf8'))
+        tree=ast.parse((ROOT/'Shared/materials/dr_layered_decals.py').read_text(encoding='utf8'))
         strings=[n.value for n in ast.walk(tree) if isinstance(n,ast.Constant) and isinstance(n.value,str)]
         self.assertFalse(any('Bomber' in x or 'T_Line_Single' in x for x in strings))
 if __name__=='__main__':unittest.main()

@@ -2,7 +2,7 @@
 import copy,hashlib,importlib.util,json,os,struct,tempfile,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-spec=importlib.util.spec_from_file_location('native_material_slots',ROOT/'native_material_slots.py')
+spec=importlib.util.spec_from_file_location('native_material_slots',ROOT/'Outfit_Accessories/native_material_slots.py')
 M=importlib.util.module_from_spec(spec);spec.loader.exec_module(M)
 FIXTURES=Path(__file__).resolve().parent/'fixtures'
 
@@ -113,14 +113,14 @@ class NativeMaterialSlotTests(unittest.TestCase):
         os.makedirs(M._fs(deep),exist_ok=True);model=deep/self.path.name
         with open(M._fs(model),'wb') as stream:stream.write(self.path.read_bytes())
         with open(M._fs(model.with_suffix('.arc-material-slots.json')),'w') as stream:json.dump(self.data,stream)
-        tree=ast.parse((ROOT/'importing.py').read_text(encoding='utf-8-sig'))
+        tree=ast.parse((ROOT/'Shared/importing.py').read_text(encoding='utf-8-sig'))
         function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='resolve_outfit_preset_material_bindings')
         native_calls=[]
-        package=types.ModuleType('long_resolver_fixture');package.__path__=[]
-        ue=types.ModuleType('long_resolver_fixture.uemodel_import')
+        package=types.ModuleType('long_resolver_fixture');package.__path__=[str(ROOT)]
+        ue=types.ModuleType('long_resolver_fixture.Shared.uemodel_import')
         ue.parse_uemodel=lambda path:(native_calls.append(path) or ('mesh',10,[types.SimpleNamespace(name='LOD0',materials=self.rows)]))
         records=[{'part':'/Game/Visual','slot':0,'material':'/Game/Variant0'},{'part':'/Game/Visual','slot':3,'material':'/Game/Variant3'}]
-        namespace={'os':os,'json':json,'__package__':package.__name__,
+        namespace={'os':os,'json':json,'__package__':package.__name__+'.Shared',
             'get_part_key':lambda path:'part','get_characters_rel_key':lambda path:'part',
             'parse_outfit_preset_slot_bindings':lambda path:{'part':records},
             '_outfit_package_key':lambda path:'same-exact-mesh','_soft_asset_path':lambda value:value['ObjectPath'],
@@ -128,27 +128,27 @@ class NativeMaterialSlotTests(unittest.TestCase):
             'textures':types.SimpleNamespace(_fs_abspath=M._fs,find_asset_from_object_path=lambda ref,ext:'Material.json'),
             'utils':types.SimpleNamespace(normalize_part_key=lambda part:part,ue_export_entries=lambda value:value,
                 get_logger=lambda:types.SimpleNamespace(info=lambda *args:None))}
-        exec(compile(ast.Module(body=[function],type_ignores=[]),'importing.py','exec'),namespace)
+        exec(compile(ast.Module(body=[function],type_ignores=[]),'Shared/importing.py','exec'),namespace)
         original=os.path.isfile
         def exists(path):
             if path=='Material.json':return True
             if len(str(path))>260 and not str(path).startswith(chr(92)*2+'?'+chr(92)):return False
             return original(path)
-        with patch.dict(sys.modules,{package.__name__:package,ue.__name__:ue,package.__name__+'.native_material_slots':M}),patch('os.path.isfile',side_effect=exists):
+        with patch.dict(sys.modules,{package.__name__:package,ue.__name__:ue,package.__name__+'.Outfit_Accessories.native_material_slots':M}),patch('os.path.isfile',side_effect=exists):
             bindings=namespace[function.name]('preset.json',str(model))
         self.assertEqual(native_calls,[M._fs(model)])
         self.assertEqual(set(bindings),{'0'});self.assertEqual(bindings.unused_native_bindings[0]['native_slot'],3)
 class EntryAuditPreservationTests(unittest.TestCase):
     def test_initial_batch_json_roundtrip_keeps_separate_unused_audit(self):
         import ast,sys,types
-        tree=ast.parse((ROOT/'operators.py').read_text(encoding='utf-8-sig'))
+        tree=ast.parse((ROOT/'Shared/operators.py').read_text(encoding='utf-8-sig'))
         names={'_entry_material_bindings','_snapshot_entry_skin_choices','_restore_entry_skin_choices'}
-        namespace={'json':json,'__package__':'native_entry_fixture'}
-        package=types.ModuleType('native_entry_fixture');package.__path__=[]
-        sys.modules[package.__name__]=package;sys.modules[package.__name__+'.native_material_slots']=M
+        namespace={'json':json,'__package__':'native_entry_fixture.Shared'}
+        package=types.ModuleType('native_entry_fixture');package.__path__=[str(ROOT)]
+        sys.modules[package.__name__]=package;sys.modules[package.__name__+'.Outfit_Accessories.native_material_slots']=M
         for node in tree.body:
             if isinstance(node,ast.FunctionDef) and node.name in names:
-                exec(compile(ast.Module(body=[node],type_ignores=[]),'operators.py','exec'),namespace)
+                exec(compile(ast.Module(body=[node],type_ignores=[]),'Shared/operators.py','exec'),namespace)
         class Entry(dict):pass
         entry=Entry(arc_outfit_material_bindings=json.dumps({'0':'exact.json'}),arc_unused_outfit_material_bindings=json.dumps([{'native_slot':3,'material':'/Game/LOD'}]))
         entry.skin_choice='White';entry.batch_skin_json='exact.json'
@@ -196,7 +196,7 @@ class DefaultVisualPartIntegrationTests(unittest.TestCase):
         self.assertEqual(rows,[]);self.assertEqual(unused[0]['native_slot'],3)
     def test_real_three_consumer_predicates_use_render_index_before_legacy_name(self):
         import ast
-        targets=[('materials/clothing.py','_native_clothing_sections'),('materials/clothing.py','apply_embedded_fur_slots'),('materials/character.py','setup_hair_material')]
+        targets=[('Shared/materials/clothing.py','_native_clothing_sections'),('Shared/materials/clothing.py','apply_embedded_fur_slots'),('Shared/materials/character.py','setup_hair_material')]
         for path,name in targets:
             tree=ast.parse((ROOT/path).read_text(encoding='utf-8-sig'))
             function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name)
@@ -211,12 +211,12 @@ class DefaultVisualPartIntegrationTests(unittest.TestCase):
             self.assertTrue(eval(code,context),name+' keeps legacy named route when metadata absent')
     def test_explicit_already_render_preset_override_is_not_double_mapped(self):
         import ast,sys,types
-        tree=ast.parse((ROOT/'materials/clothing.py').read_text(encoding='utf-8-sig'))
+        tree=ast.parse((ROOT/'Shared/materials/clothing.py').read_text(encoding='utf-8-sig'))
         function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_native_clothing_section_paths')
-        namespace={'json':json,'__package__':'slot_merge_fixture.materials'}
+        namespace={'json':json,'__package__':'slot_merge_fixture.Shared.materials'}
         package=types.ModuleType('slot_merge_fixture');package.__path__=[]
-        materials=types.ModuleType('slot_merge_fixture.materials');materials.__path__=[]
-        operators=types.ModuleType('slot_merge_fixture.operators');operators._recover_saved_material_lookup=lambda obj,path,stamp_mesh=False:path
+        materials=types.ModuleType('slot_merge_fixture.Shared.materials');materials.__path__=[]
+        operators=types.ModuleType('slot_merge_fixture.Shared.operators');operators._recover_saved_material_lookup=lambda obj,path,stamp_mesh=False:path
         sys.modules[package.__name__]=package;sys.modules[materials.__name__]=materials;sys.modules[operators.__name__]=operators
         exec(compile(ast.Module(body=[function],type_ignores=[]),'clothing.py','exec'),namespace)
         translated,_=M.translate_visual_part_bindings([{'slot':2,'path':'Default.json','material_path':'/Game/Default'}],(self.data,self.data['lods'][0]))
@@ -229,13 +229,13 @@ class DefaultVisualPartIntegrationTests(unittest.TestCase):
 class RawVisualPartSelectorTests(unittest.TestCase):
     def test_actual_da_parser_preserves_native_numeric_zero(self):
         import ast,types
-        tree=ast.parse((ROOT/'textures.py').read_text(encoding='utf-8-sig'))
+        tree=ast.parse((ROOT/'Shared/textures.py').read_text(encoding='utf-8-sig'))
         function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='authored_visual_part_materials')
         def stem(ref):return str(ref.get('ObjectPath') or ref.get('AssetPathName') or '').rsplit('/',1)[-1].split('.')[0]
         namespace={'os':os,'json':json,'_fs_abspath':os.path.abspath,'mi_stem_from_material_ref':stem,
             'find_asset_from_object_path':lambda ref,ext:'ExactDefault.json','resolve_part_mi_json':lambda path,name:path,
             'utils':types.SimpleNamespace(ue_export_entries=lambda data:data['Exports'])}
-        exec(compile(ast.Module(body=[function],type_ignores=[]),'textures.py','exec'),namespace)
+        exec(compile(ast.Module(body=[function],type_ignores=[]),'Shared/textures.py','exec'),namespace)
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'DA_VP_Raw.json'
             path.write_text(json.dumps({'Exports':[{'Properties':{'Mesh':{'ObjectPath':'/Game/SK_Raw.SK_Raw'},

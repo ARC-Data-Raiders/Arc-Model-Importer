@@ -1,14 +1,14 @@
 import hashlib,json,pathlib,sys,tempfile,unittest
 ROOT=pathlib.Path(__file__).resolve().parents[1]; sys.path.insert(0,str(ROOT))
-from material_runtime import AssetRepository
-from material_runtime.repository import invalidate_digest_cache
-from material_runtime.catalog import NativeCatalog,generate_catalog,material_build_signature as _material_build_signature,iter_native_material_references,NativeMetadataError,StaleCatalogError
+from Shared.materials.native import AssetRepository
+from Shared.materials.native.repository import invalidate_digest_cache
+from Shared.materials.native.catalog import NativeCatalog, generate_catalog, material_build_signature as _material_build_signature, iter_native_material_references, NativeMetadataError, StaleCatalogError
 
 def material_build_signature(*args,**kwargs):
     kwargs.setdefault('recipe','test-family-v1'); kwargs.setdefault('implementation_revision','test-implementation-v1')
     return _material_build_signature(*args,**kwargs)
 
-from material_runtime.assets import NativeAssetRepository,AmbiguousAssetError
+from Shared.materials.native.assets import NativeAssetRepository, AmbiguousAssetError
 
 class CatalogTests(unittest.TestCase):
     def setUp(self):
@@ -200,7 +200,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(repo.load_material('/Game/Local').scalars['X'],0)
         with self.assertRaises(AmbiguousAssetError): repo.image_path('/Game/T')
     def test_active_plan_signature_ignores_inactive_image_ambiguity_and_tracks_plan(self):
-        from material_runtime import MaterialPlan,expr,literal
+        from Shared.materials.native import MaterialPlan, expr, literal
         alternate=self.root/'alternate'; alternate.mkdir()
         self.texture('T'); self.texture('Unused'); self.native_material('C',{'textures':{'Used':'/Game/T','Unused':'/Game/Unused'}}); catalog=self.catalog()
         self.image('T'); self.image('Unused',b'old'); (alternate/'Unused.png').write_bytes(b'different')
@@ -214,7 +214,7 @@ class CatalogTests(unittest.TestCase):
         self.assertNotEqual(before.key,material_build_signature('/Game/C',repo,catalog=catalog,plan=changed).key)
         with self.assertRaises(AmbiguousAssetError): material_build_signature('/Game/C',repo,catalog=catalog)
     def test_explicit_opaque_signature_does_not_require_unused_alpha_resource(self):
-        from material_runtime import MaterialPlan,expr,literal
+        from Shared.materials.native import MaterialPlan, expr, literal
         self.native_material('C'); catalog=self.catalog()
         plan=MaterialPlan('/Game/C','opaque',{'base_color':literal((1,1,1,1)),'alpha':expr('texture',reference='/Game/Absent',role='data')},{'BlendMode':0})
         signature=material_build_signature('/Game/C',self.repo,catalog=catalog,plan=plan)

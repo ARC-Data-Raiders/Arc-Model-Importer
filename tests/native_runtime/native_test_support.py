@@ -2,18 +2,18 @@
 import ast,importlib,importlib.util,json,os,re,sys,tempfile,types
 from pathlib import Path
 ROOT=Path(os.environ.get('DATARAIDERS_TEST_REPOSITORY',Path(__file__).resolve().parents[2])).resolve()
-if not (ROOT/'material_runtime/core.py').is_file():raise RuntimeError('Run from installed repository tests, or set DATARAIDERS_TEST_REPOSITORY for staged verification')
+if not (ROOT/'Shared/materials/native/core.py').is_file():raise RuntimeError('Run from installed repository tests, or set DATARAIDERS_TEST_REPOSITORY for staged verification')
 sys.path.insert(0,str(ROOT))
 PACKAGE='_native_runtime_regression_addon'
 def namespace():
-    for name,path in ((PACKAGE,ROOT),(PACKAGE+'.material_runtime',ROOT/'material_runtime'),(PACKAGE+'.materials',ROOT/'materials')):
+    for name,path in ((PACKAGE,ROOT),(PACKAGE+'.Shared',ROOT/'Shared'),(PACKAGE+'.Weapons',ROOT/'Weapons'),(PACKAGE+'.Shared.materials',ROOT/'Shared/materials'),(PACKAGE+'.Weapons.material_runtime',ROOT/'Weapons/material_runtime')):
         if name not in sys.modules:
             module=types.ModuleType(name);module.__path__=[str(path)];sys.modules[name]=module
-    return importlib.import_module(PACKAGE+'.material_runtime.native_families')
+    return importlib.import_module(PACKAGE+'.Shared.materials.native.native_families')
 def functions_module(name,names,bpy=None):
-    path=ROOT/'materials'/(name+'.py');tree=ast.parse(path.read_text(encoding='utf-8'));selected=[x for x in tree.body if isinstance(x,ast.FunctionDef) and x.name in names]
+    path=ROOT/'Shared/materials'/(name+'.py');tree=ast.parse(path.read_text(encoding='utf-8'));selected=[x for x in tree.body if isinstance(x,ast.FunctionDef) and x.name in names]
     if set(x.name for x in selected)!=set(names):raise AssertionError('canonical function set changed')
-    module=types.ModuleType(PACKAGE+'.materials.'+name);module.__package__=PACKAGE+'.materials';module.__dict__.update(bpy=bpy,json=json,os=os,re=re,FAMILY_ENVIRONMENT='environment')
+    module=types.ModuleType(PACKAGE+'.Shared.materials.'+name);module.__package__=PACKAGE+'.Shared.materials';module.__dict__.update(bpy=bpy,json=json,os=os,re=re,FAMILY_ENVIRONMENT='environment')
     exec(compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)]+selected,type_ignores=[])),str(path),'exec'),module.__dict__);return module
 
 def temp_fixture(prefix='native-runtime-'):
@@ -36,3 +36,9 @@ def create_shell_fixture(root):
         path=content/(ref.removeprefix('/Game/')+'.png');path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'fixture image bytes, never decoded')
         write_json(content/(ref.removeprefix('/Game/')+'.arc-texture.json'),{'Type':'Texture2D','Name':ref.rsplit('/',1)[-1],'Package':ref,'Properties':{'SRGB':False},'Mips':[{'SizeX':1,'SizeY':1,'SizeZ':1}]})
     return assets,source
+
+def real_package(name='Shared.materials.native'):
+    for key,path in ((PACKAGE,ROOT),(PACKAGE+'.Shared',ROOT/'Shared'),(PACKAGE+'.Weapons',ROOT/'Weapons'),(PACKAGE+'.Shared.materials',ROOT/'Shared/materials'),(PACKAGE+'.Weapons.material_runtime',ROOT/'Weapons/material_runtime')):
+        if key not in sys.modules:
+            module=types.ModuleType(key);module.__path__=[str(path)];sys.modules[key]=module
+    return importlib.import_module(PACKAGE+'.'+name)

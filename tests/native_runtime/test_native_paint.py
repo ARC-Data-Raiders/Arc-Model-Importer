@@ -2,9 +2,12 @@ try:
     from .native_test_support import ROOT
 except ImportError:
     from native_test_support import ROOT
+try: from .native_test_support import real_package as _ns
+except ImportError: from native_test_support import real_package as _ns
+_ns()
 import unittest
-from material_runtime.core import MaterialRecord,literal,evaluate
-from material_runtime.weapons import compile_weapon,WEAPON_DETAIL_ARRAY,RUST_NORMAL,RUST_COLOR,_surface_type
+from _native_runtime_regression_addon.Shared.materials.native.core import MaterialRecord,literal,evaluate
+from _native_runtime_regression_addon.Weapons.material_runtime.weapons import compile_weapon,WEAPON_DETAIL_ARRAY,RUST_NORMAL,RUST_COLOR,_surface_type
 
 class TestNativePaintCheckpoints(unittest.TestCase):
     def record(self,switches=None,scalars=None,colors=None):

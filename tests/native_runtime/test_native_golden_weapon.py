@@ -4,8 +4,9 @@ except ImportError:
     from native_test_support import ROOT,namespace,functions_module,PACKAGE,temp_fixture,create_shell_fixture,write_json
 import json,unittest
 from pathlib import Path
-from material_runtime.core import MaterialRecord,evaluate,literal
-from material_runtime.weapons import compile_weapon,WEAPON_DETAIL_ARRAY,RUST_NORMAL,RUST_COLOR
+namespace()
+from _native_runtime_regression_addon.Shared.materials.native.core import MaterialRecord,evaluate,literal
+from _native_runtime_regression_addon.Weapons.material_runtime.weapons import compile_weapon,WEAPON_DETAIL_ARRAY,RUST_NORMAL,RUST_COLOR
 
 class NativeNumericReplayCheckpoints(unittest.TestCase):
     def test_native_float32_instruction_replay_checkpoints(self):

@@ -3,12 +3,12 @@ import importlib.util,struct,sys,types,unittest,json
 from pathlib import Path
 from unittest.mock import patch
 import numpy as np
-CANONICAL=Path(__file__).resolve().parents[1]/'uemodel_import.py'
+CANONICAL=Path(__file__).resolve().parents[1]/'Shared/uemodel_import.py'
 sys.path.insert(0,str(CANONICAL.parent))
 
 def load_reader():
-    package='_charfx_canonical_parser_probe';pkg=types.ModuleType(package);pkg.__path__=[str(CANONICAL.parent)];sys.modules[package]=pkg
-    name=package+'.uemodel_import';spec=importlib.util.spec_from_file_location(name,CANONICAL);module=importlib.util.module_from_spec(spec);sys.modules[name]=module
+    package='_charfx_canonical_parser_probe';pkg=types.ModuleType(package);pkg.__path__=[str(CANONICAL.parents[1])];sys.modules[package]=pkg
+    name=package+'.Shared.uemodel_import';spec=importlib.util.spec_from_file_location(name,CANONICAL);module=importlib.util.module_from_spec(spec);sys.modules[name]=module
     with patch.dict(sys.modules,{'bpy':types.ModuleType('bpy')}):spec.loader.exec_module(module)
     return module
 
@@ -34,18 +34,18 @@ class TestCanonicalNativeMorphParser(unittest.TestCase):
         with self.assertRaises(reader.UeModelError):reader._parse_morph_targets(bytes(bad),scale=.01,flip_y=True)
     def test_inactive_weights_are_not_unknown_targets_at_reset(self):
         reader=load_reader();package=reader.__package__;calls=[]
-        from material_runtime.deformation import MorphDelta,MorphTarget
-        spy=types.ModuleType(package+'.material_runtime.deformation');spy.MorphDelta=MorphDelta;spy.MorphTarget=MorphTarget
+        from Shared.materials.native.deformation import MorphDelta, MorphTarget
+        spy=types.ModuleType(package+'.materials.native.deformation');spy.MorphDelta=MorphDelta;spy.MorphTarget=MorphTarget
         def apply(mesh,targets,weights):
             self.assertEqual(dict(weights),{});self.assertEqual(list(targets),[]);calls.append(True)
         spy.apply_normal_deltas=apply
-        rt=types.ModuleType(package+'.material_runtime');rt.__path__=[]
+        rt=types.ModuleType(package+'.materials.native');rt.__path__=[]
         basis=object();keys={name:types.SimpleNamespace(value=0.,mute=False,vertex_group='',relative_key=basis) for name in ('female','male')}
         mesh={'arc_native_normal_targets':json.dumps({'female':'F','male':'M'})}
         class Mesh(dict):pass
         m=Mesh(mesh);m.shape_keys=types.SimpleNamespace(use_relative=True,key_blocks=keys,reference_key=basis)
         obj=Mesh();obj.type='MESH';obj.data=m
-        with patch.dict(sys.modules,{package+'.material_runtime':rt,package+'.material_runtime.deformation':spy}):self.assertTrue(reader.apply_uemodel_morph_normals(obj))
+        with patch.dict(sys.modules,{package+'.materials.native':rt,package+'.materials.native.deformation':spy}):self.assertTrue(reader.apply_uemodel_morph_normals(obj))
         self.assertEqual(calls,[True]);self.assertIn('male',m['arc_native_normal_weights'])
         self.assertFalse(reader.apply_uemodel_morph_normals(obj))
 

@@ -6,8 +6,8 @@ except ImportError:
 import ast,importlib,json,unittest
 from pathlib import Path
 namespace()
-decoder=importlib.import_module(PACKAGE+'.materials.dr_packed_decal')
-core=importlib.import_module(PACKAGE+'.material_runtime.core')
+decoder=importlib.import_module(PACKAGE+'.Shared.materials.dr_packed_decal')
+core=importlib.import_module(PACKAGE+'.Shared.materials.native.core')
 FIXTURE=json.loads((Path(__file__).parent/'fixtures/packed_decal_observed_checkpoints.json').read_text(encoding='utf-8'))
 
 class PackedDecalObservedTests(unittest.TestCase):
@@ -38,7 +38,7 @@ class PackedDecalObservedTests(unittest.TestCase):
 
     def test_gt_binds_native_metallic_alpha(self):
         # Packed decal A is native metallic; the importer must pass texture Alpha.
-        tree=ast.parse((ROOT/'materials/gt_outfit_pbr.py').read_text(encoding='utf-8'))
+        tree=ast.parse((ROOT/'Shared/materials/gt_outfit_pbr.py').read_text(encoding='utf-8'))
         links=[];allowed_dynamic=set()
         def dd_input(node):
             return isinstance(node,ast.Subscript) and isinstance(node.value,ast.Attribute) and node.value.attr=='inputs' and isinstance(node.value.value,ast.Name) and node.value.value.id=='dd'
@@ -60,12 +60,12 @@ class PackedDecalObservedTests(unittest.TestCase):
         alpha_link=next(n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='new' and len(n.args)==2 and dd_input(n.args[1]) and isinstance(n.args[1].slice,ast.Constant) and n.args[1].slice.value=='Alpha')
         self.assertEqual(ast.unparse(alpha_link.args[0]), "data_tex.outputs['Alpha']")
         # The generic decoder retains a neutral default for callers without data.
-        build=next(n for n in ast.parse((ROOT/'materials/dr_packed_decal.py').read_text(encoding='utf-8')).body if isinstance(n,ast.FunctionDef) and n.name=='build_group')
+        build=next(n for n in ast.parse((ROOT/'Shared/materials/dr_packed_decal.py').read_text(encoding='utf-8')).body if isinstance(n,ast.FunctionDef) and n.name=='build_group')
         alpha=[n for n in ast.walk(build) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='socket' and n.args and isinstance(n.args[0],ast.Constant) and n.args[0].value=='Alpha']
         self.assertEqual(len(alpha),1);self.assertEqual([ast.literal_eval(a) for a in alpha[0].args],['Alpha','INPUT','NodeSocketFloat',0.])
 
     def test_primary_decoder_has_no_retained_library_loader(self):
-        tree=ast.parse((ROOT/'materials/dr_packed_decal.py').read_text(encoding='utf-8'))
+        tree=ast.parse((ROOT/'Shared/materials/dr_packed_decal.py').read_text(encoding='utf-8'))
         calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call)]
         self.assertFalse(any(isinstance(n.func,ast.Attribute) and n.func.attr=='ensure_decal_data_node_group' for n in calls))
         self.assertFalse(any(isinstance(n.func,ast.Attribute) and n.func.attr=='load' and isinstance(n.func.value,ast.Attribute) and n.func.value.attr=='libraries' for n in calls))

@@ -1,0 +1,1 @@
+Texture2D<float> t : register(t0); SamplerState s : register(s0); cbuffer C : register(b0) { float4 c; }; float4 main(float4 p : SV_Position) : SV_Target0 { float u=c.x+c.y*floor(p.x); float v=t.Sample(s,float2(u,.5)); return float4(v,v,v,1); }

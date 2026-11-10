@@ -69,10 +69,10 @@ def build(source, destination, catalog_path, evidence_path):
                 raise ValueError('Source exceeds quarter-resolution budget: ' + str(path))
             image = original.convert('RGBA')
             output = io.BytesIO()
-            image.save(output, format='PNG', optimize=True)
+            image.save(output, format='AVIF', quality=60, speed=6)
             encoded = output.getvalue()
             size = list(image.size)
-        filename = hashlib.sha256(encoded).hexdigest() + '.png'
+        filename = hashlib.sha256(encoded).hexdigest() + '.avif'
         prepared.append((item['identity'], filename, encoded, {
             'identity': item['identity'], 'source': path.relative_to(source).as_posix(),
             'source_sha256': digest, 'preview': filename, 'size': size,

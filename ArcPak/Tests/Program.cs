@@ -1,5 +1,6 @@
 using System.Text;
 using ArcPak;
+using ArcPak.Tests;
 using CUE4Parse.UE4.Objects.Core.Math;
 using CUE4Parse.UE4.Objects.Engine;
 using CUE4Parse.UE4.Assets.Exports;
@@ -13,6 +14,99 @@ using FModel.Exporters.MapPlacement;
 using FModel.Views.Snooper.MapPlacement;
 using Newtonsoft.Json.Linq;
 
+if (args.FirstOrDefault() == "--dependency-entry-hash")
+{
+    if (args.Length < 3) throw new ArgumentException("--dependency-entry-hash requires evidence and fixture paths");
+    var count = DependencyHashChecks.Run(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]));
+    Console.WriteLine($"PASS {count} dependency entry hash checks");
+    return;
+}if (args.Length > 0 && args[0].StartsWith("--child-", StringComparison.Ordinal))
+{
+    Environment.ExitCode = MapPackageRecordStoreChecks.RunChild(args[0], args[1], args.Length > 2 ? args[2] : "");
+    return;
+}
+if (args.FirstOrDefault() == "--map-package-record-store")
+{
+    var storeEvidence = Path.GetFullPath(args.Length > 1 ? args[1] : Path.Combine(Path.GetTempPath(), "map-package-record-store-checks"));
+    var storeChecks = MapPackageRecordStoreChecks.Run(storeEvidence);
+    Console.WriteLine($"PASS {storeChecks} package record store checks");
+    return;
+}
+
+if (args.FirstOrDefault() == "--map-archive-source-identity")
+{
+    var identityEvidence = Path.GetFullPath(args.Length > 1 ? args[1] : Path.Combine(Path.GetTempPath(), "map-archive-source-identity-checks"));
+    var identityChecks = MapArchiveSourceIdentityChecks.Run(identityEvidence);
+    Console.WriteLine($"PASS {identityChecks} map archive source identity checks");
+    return;
+}
+if (args.FirstOrDefault() == "--map-raw-package-record")
+{
+    if (args.Length < 3) throw new ArgumentException("--map-raw-package-record requires evidence and fixture paths");
+    var rawEvidence = Path.GetFullPath(args[1]);
+    var fixtureRoot = Path.GetFullPath(args[2]);
+    var rawChecks = MapRawPackageRecordChecks.Run(rawEvidence, fixtureRoot);
+    Console.WriteLine($"PASS {rawChecks} raw package record checks");
+    return;
+}
+if (args.FirstOrDefault() == "--map-pinned-provider-registration")
+{
+    if (args.Length < 3) throw new ArgumentException("--map-pinned-provider-registration requires evidence and fixture paths");
+    var pinnedChecks = MapPinnedProviderRegistrationChecks.Run(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]));
+    Console.WriteLine($"PASS {pinnedChecks} pinned provider registration checks");
+    return;
+}
+if (args.FirstOrDefault() is "--map-source-snapshot" or "--map-source-snapshot-red")
+{
+    var leaseEvidence = Path.GetFullPath(args.Length > 1 ? args[1] : Path.Combine(Path.GetTempPath(), "map-source-snapshot-checks"));
+    var leaseChecks = args[0] == "--map-source-snapshot-red"
+        ? MapSourceSnapshotChecks.RunRed(leaseEvidence)
+        : MapSourceSnapshotChecks.Run(leaseEvidence);
+    Console.WriteLine($"PASS {leaseChecks} map source snapshot checks");
+    return;
+}
+if (args.FirstOrDefault() is "--map-package-memoization" or "--map-package-memoization-red")
+{
+    var memoizationEvidence = Path.GetFullPath(args.Length > 1 ? args[1] : Path.Combine(Path.GetTempPath(), "map-package-memoization-checks"));
+    var memoizationChecks = await MapPackageMemoizationChecks.Run(memoizationEvidence, args[0] == "--map-package-memoization-red");
+    Console.WriteLine($"PASS {memoizationChecks} map package memoization checks");
+    return;
+}
+if (args.FirstOrDefault() == "--probe-exact-source")
+{
+    ExactSourceProbe.Run(args.Skip(1).ToArray());
+    return;
+}
+if (args.FirstOrDefault() == "--verify-release")
+{
+    ReleaseChecks.Verify(args.Skip(1).ToArray());
+    return;
+}
+if (args.FirstOrDefault() == "--probe-real")
+{
+    RealMapProbe.Run(args.Skip(1).ToArray());
+    return;
+}
+if (args.FirstOrDefault() == "--probe-spline")
+{
+    RealSplineProbe.Run(args.Skip(1).ToArray());
+    return;
+}
+if (args.FirstOrDefault() is "--map-bundle-reuse" or "--map-bundle-reuse-red" or "--map-bundle-trace")
+{
+    var reuseEvidence = Path.GetFullPath(args.Length > 1 ? args[1] : Path.Combine(Path.GetTempPath(), "map-bundle-reuse-checks"));
+    var traceMode = args[0] == "--map-bundle-trace";
+    var count = MapBundleReuseChecks.Run(reuseEvidence, args[0] == "--map-bundle-reuse-red", traceMode);
+    Console.WriteLine($"PASS {count} {(traceMode ? "map bundle trace" : "map bundle reuse")} checks");
+    return;
+}
+if (args.FirstOrDefault() is "--map-stable-identity" or "--map-stable-identity-red")
+{
+    var stableEvidence = Path.GetFullPath(args.Length > 1 ? args[1] : Path.Combine(Path.GetTempPath(), "map-stable-identity-checks"));
+    var count = MapBundleReuseChecks.RunStableIdentityChecks(stableEvidence, args[0] == "--map-stable-identity-red");
+    Console.WriteLine($"PASS {count} map stable identity checks");
+    return;
+}
 var evidence = Path.GetFullPath(args.Length > 0 ? args[0] : Path.Combine(Path.GetTempPath(), "map-bundle-tests"));
 Directory.CreateDirectory(evidence);
 if (typeof(MapPlacementExtractorOptions).GetProperty("TraversalCallback") == null)
@@ -164,3 +258,4 @@ if (args.Length > 1)
         MapBundleDocument.Hash(MapBundleDocument.Bytes(MappingFacts(legacyMapping))), "actual usmap mappings and filename-scoped fixes match the existing provider");
 }
 Console.WriteLine("PASS " + checks + " focused map export checks");
+

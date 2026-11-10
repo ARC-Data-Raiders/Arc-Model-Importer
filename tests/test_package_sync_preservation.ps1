@@ -7,10 +7,10 @@ $testProbe=Join-Path $testScratch ('sync-preservation-'+[guid]::NewGuid().ToStri
 $resolvedProbe=[IO.Path]::GetFullPath($testProbe)
 if (-not $resolvedProbe.StartsWith($testScratch.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Test path escaped scratch' }
 $RepoRoot=Join-Path $testProbe 'repository'
-$testStage=Join-Path $testProbe 'stage\DataRaiders-Outfits'
-$testTarget=Join-Path $testProbe 'profile\DataRaiders-Outfits'
-$script:AddonFolderOutfits='DataRaiders-Outfits';$script:AddonFolderMap='DataRaiders-MapImporter'
-$script:BlInfoNameOutfits='Arc Model Importer';$script:BlInfoNameMap='Arc Raiders Map Importer'
+$testStage=Join-Path $testProbe 'stage\Arc-Asset-Importer'
+$testTarget=Join-Path $testProbe 'profile\Arc-Asset-Importer'
+$script:AddonFolderOutfits='Arc-Asset-Importer';$script:AddonFolderMap='DataRaiders-MapImporter'
+$script:BlInfoNameOutfits='Arc Asset Importer';$script:BlInfoNameMap='Arc Raiders Map Importer'
 $tokens=$null;$parseErrors=$null
 $tree=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path $testRepo 'package_addon.ps1'),[ref]$tokens,[ref]$parseErrors)
 if ($parseErrors.Count) { throw 'Package script parse errors' }

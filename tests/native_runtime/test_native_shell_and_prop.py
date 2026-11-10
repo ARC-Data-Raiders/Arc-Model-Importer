@@ -3,9 +3,9 @@ try:
 except ImportError:
     from native_test_support import ROOT
 import dataclasses,unittest
-from material_runtime.core import MaterialRecord,evaluate,literal
-from material_runtime.surfaces import compile_native_prop_emission,native_prop_coordinates
-from material_runtime.decals import compile_enemy_shell
+from Shared.materials.native.core import MaterialRecord, evaluate, literal
+from Shared.materials.native.surfaces import compile_native_prop_emission, native_prop_coordinates
+from Shared.materials.native.decals import compile_enemy_shell
 
 class NativeShellAndPropSemantics(unittest.TestCase):
     def prop(self,**scalars):

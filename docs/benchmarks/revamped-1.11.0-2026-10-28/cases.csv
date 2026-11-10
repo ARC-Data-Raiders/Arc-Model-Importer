@@ -1,0 +1,27 @@
+id,label,A_meshes,B_meshes,A_triangles,B_triangles,A_slots,B_slots,A_missing_bound_images,B_missing_bound_images,A_surface_rebuild_FAIL_objects,B_material_errors,B_fallback_slots,A_import_seconds,B_import_seconds
+01_outfit,Full outfit - Goalie,11,11,55792,55792,12,12,0,0,0,0,1,130.016,19.332
+02_body,Body - shared SK_Body,1,1,17976,17976,1,1,0,0,0,0,0,2.402,1.31
+03_face,"Face - Face03 with eye, teeth and lashes",1,1,16978,16978,7,7,0,0,0,0,0,2.785,1.168
+04_hair,Hair - French Braids,1,1,50128,50078,2,2,0,0,0,0,0,5.732,2.534
+05_facial_hair,Facial hair - Full Beard,1,1,27850,27850,1,1,0,0,0,0,0,1.286,1.401
+06_backpack,Backpack - Urn,1,1,9161,9161,1,1,0,0,0,0,0,10.655,1.98
+07_frame,Backpack frame,1,1,3269,3269,1,1,0,0,0,0,0,1.869,0.484
+08_strap,Backpack straps,1,1,18048,18048,1,1,0,0,0,0,0,11.114,2.229
+09_charm_decal,Charm decal - Soccer Finals Ticket,1,1,936,936,1,1,0,0,0,0,0,0.492,0.449
+10_charm_fur,Charm fur - Rabbit Foot,1,1,4230,4230,2,2,0,0,0,0,0,0.709,0.559
+11_connector,Charm connector,1,1,926,926,1,1,0,0,0,0,0,0.361,0.441
+12_attachment,Backpack attachment - Briefcase,1,1,5606,5606,1,1,0,0,0,0,0,0.71,0.746
+13_raider_tool,Raider tool - Ice Climber,1,1,2920,2920,1,1,0,0,0,0,0,0.617,0.549
+14_weapon,Weapon - Bettina,7,7,11018,11018,8,8,0,0,0,0,0,8.987,3.83
+15_gadget,Gadget - Tesla Coil,1,1,3944,3944,1,1,0,0,0,0,0,0.641,0.506
+16_quickuse,Quickuse - Bandage,1,1,190,190,1,1,0,0,0,0,0,0.43,0.466
+17_throwable,Throwable - HE Grenade,1,1,484,484,1,1,0,0,0,0,0,0.284,0.423
+18_salvage,Salvage - ARC Powercell,1,1,2834,2834,1,1,0,0,0,0,0,0.542,0.617
+19_enemy,Enemy - Leaper Bullcrab,1,1,49118,49118,6,6,0,0,0,0,0,4.542,2.338
+20_elevator,Extraction elevator,13,13,35967,35967,31,31,0,0,3,0,4,16.208,9.21
+21_computer,Environment - warehouse style Computer,1,1,1243,1243,1,1,0,0,0,0,0,0.458,0.509
+22_vending,Environment - Vending Machine,1,1,2525,2525,2,2,0,0,1,0,1,0.777,0.619
+23_cloth,Environment cloth - Curtain,1,1,924,924,1,1,0,0,1,0,1,0.56,0.496
+24_glass,Environment glass - Window,1,1,4,4,1,1,0,0,1,0,1,0.479,0.472
+25_painted_wall,Environment - Painted Concrete Wall,1,1,386,386,1,1,0,0,1,0,0,0.918,0.664
+26_metal,Environment - metal barrel,1,1,680,680,1,1,0,0,0,0,0,0.425,0.478

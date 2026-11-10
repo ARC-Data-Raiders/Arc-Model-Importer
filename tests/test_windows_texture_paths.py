@@ -41,7 +41,7 @@ class WindowsTexturePathTests(unittest.TestCase):
         self.namespace = {"os": types.SimpleNamespace(path=path, sep="\\"), "utils": self.utils,
                           "_fs_abspath": extended, "_object_path_is_null_stub": lambda path: False,
                           "_OBJECT_PATH_ASSET_CACHE": {}}
-        self.resolve = function(ROOT / "textures.py", "find_asset_from_object_path", self.namespace)
+        self.resolve = function(ROOT / "Shared/textures.py", "find_asset_from_object_path", self.namespace)
         self.os = self.namespace["os"]
 
     def test_current_cache_long_mask_and_stat_use_extended_paths(self):
@@ -113,7 +113,7 @@ class WindowsTexturePathTests(unittest.TestCase):
         target = extended(ntpath.join(folder, leaf + ".png"))
         self.files[target] = 1
         textures = types.SimpleNamespace(find_asset_from_object_path=lambda *args: "", _fs_abspath=extended)
-        resolve = function(ROOT / "materials/common.py", "_resolve_mi_texture_path", {"os": self.os, "textures": textures})
+        resolve = function(ROOT / "Shared/materials/common.py", "_resolve_mi_texture_path", {"os": self.os, "textures": textures})
         self.assertEqual(resolve(self.reference, [folder]), target)
         self.assertTrue(all(path.startswith(PREFIX) for path in self.reads))
 

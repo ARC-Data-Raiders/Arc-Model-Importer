@@ -4,8 +4,8 @@ try:
 except ImportError:
     from native_test_support import ROOT,namespace
 import math,unittest
-from material_runtime.core import MaterialRecord,evaluate,expr
-from material_runtime import tileable_trim as tt
+from Shared.materials.native.core import MaterialRecord, evaluate, expr
+from Shared.materials.native import tileable_trim as tt
 
 LUMA=(.2126,.7152,.0722)
 TEX={'NXX/NMX Texture':'/Game/T/NMX','CR Texture':'/Game/T/CR','Overlay':'/Game/T/OV','CR Blend':'/Game/T/BCR','NOH Blend':'/Game/T/BNOH'}

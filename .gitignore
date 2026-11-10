@@ -68,6 +68,7 @@ ArcPak/cache/
 dist/
 *.addon.zip
 DataRaiders-BlenderImporter-*.zip
+Arc-Asset-Importer-*.zip
 DataRaiders-Outfits-*.zip
 DataRaiders-MapImporter-*.zip
 

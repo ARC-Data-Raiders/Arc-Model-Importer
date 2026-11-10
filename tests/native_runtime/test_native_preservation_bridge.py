@@ -7,10 +7,10 @@ class Material(dict):
     name='fixture';use_nodes=True;node_tree=None
 
 def functions():
-    path=ROOT/'revamped_bridge.py';tree=ast.parse(path.read_text(encoding='utf-8'))
+    path=ROOT/'Outfit_Accessories/revamped_bridge.py';tree=ast.parse(path.read_text(encoding='utf-8'))
     names={'_preserve_native_material','verify_surface_materials'}
     selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in names]
-    module=types.ModuleType(PACKAGE+'.preservation_contract');module.__package__=PACKAGE
+    module=types.ModuleType(PACKAGE+'.Outfit_Accessories.preservation_contract');module.__package__=PACKAGE+'.Outfit_Accessories'
     module.__dict__.update(json=json,_has_surface_output=lambda mat:True,_loaded_images=lambda tree:[],_image_ready=lambda image:True)
     code=ast.Module(body=[ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)]+selected,type_ignores=[])
     exec(compile(ast.fix_missing_locations(code),str(path),'exec'),module.__dict__)

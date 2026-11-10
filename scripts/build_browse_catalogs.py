@@ -34,11 +34,17 @@ def load_animation_parser():
     package = types.ModuleType(name)
     package.__path__ = [str(ROOT)]
     sys.modules[name] = package
-    utils = types.ModuleType(name + ".utils")
+    for section in ("Shared", "Animations"):
+        sub = types.ModuleType(name + "." + section)
+        sub.__path__ = [str(ROOT / section)]
+        sys.modules[sub.__name__] = sub
+        setattr(package, section, sub)
+    utils = types.ModuleType(name + ".Shared.utils")
+    sys.modules[name + ".Shared"].utils = utils
     utils.get_logger = lambda: logging.getLogger(name)
     utils.get_pioneer_root = lambda: ""
     sys.modules[utils.__name__] = utils
-    spec = importlib.util.spec_from_file_location(name + ".animation_catalog", ROOT / "animation_catalog.py")
+    spec = importlib.util.spec_from_file_location(name + ".Animations.animation_catalog", ROOT / "Animations" / "animation_catalog.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)

@@ -2,7 +2,7 @@ import gzip,hashlib,importlib,json,os,sys,tempfile,types,unittest
 from pathlib import Path
 from .native_test_support import PACKAGE,namespace,temp_fixture
 namespace()
-catalog=importlib.import_module(PACKAGE+'.material_runtime.catalog')
+catalog=importlib.import_module(PACKAGE+'.Shared.materials.native.catalog')
 def fixture():
  facts={'package':'/Game/M','parent':'/Game/M','scalars':{'Zero':0},'colors':{},'textures':{'Null':None},'switches':{'Off':False},'settings':{},'scopes':[]}
  digest=hashlib.sha256(json.dumps(facts,sort_keys=True,separators=(',',':')).encode()).hexdigest()

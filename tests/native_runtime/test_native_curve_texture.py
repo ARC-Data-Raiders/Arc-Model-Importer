@@ -5,7 +5,7 @@ try:
 except ImportError:
  from native_test_support import ROOT,PACKAGE,namespace,temp_fixture
 namespace()
-assets=importlib.import_module(PACKAGE+'.material_runtime.assets');catalog=importlib.import_module(PACKAGE+'.material_runtime.catalog');repository=importlib.import_module(PACKAGE+'.material_runtime.repository')
+assets=importlib.import_module(PACKAGE+'.Shared.materials.native.assets');catalog=importlib.import_module(PACKAGE+'.Shared.materials.native.catalog');repository=importlib.import_module(PACKAGE+'.Shared.materials.native.repository')
 class CurveKindTests(unittest.TestCase):
  def setUp(self):self.tmp=temp_fixture('native-curve-kind-');self.root=pathlib.Path(self.tmp.name);self.game=self.root/'native/PioneerGame/Content';self.game.mkdir(parents=True);self.repo=assets.NativeAssetRepository({'/Game':self.game},build='fixture',mapping='typed-kind')
  def tearDown(self):self.tmp.cleanup()

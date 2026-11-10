@@ -2,7 +2,7 @@ import importlib,json,os,sys,tempfile,types,unittest
 from pathlib import Path
 from .native_test_support import ROOT as REPO,PACKAGE as PKG,namespace,temp_fixture
 namespace()
-defaults=importlib.import_module(PKG+'.material_runtime.defaults');core=importlib.import_module(PKG+'.material_runtime.core');catalog=importlib.import_module(PKG+'.material_runtime.catalog');assets=importlib.import_module(PKG+'.material_runtime.assets')
+defaults=importlib.import_module(PKG+'.Shared.materials.native.defaults');core=importlib.import_module(PKG+'.Shared.materials.native.core');catalog=importlib.import_module(PKG+'.Shared.materials.native.catalog');assets=importlib.import_module(PKG+'.Shared.materials.native.assets')
 def material(values=(1,2),kind='Scalar',textures=False):
  parameters=[{'ParameterInfo':{'Name':'Param'},'ParameterType':kind,'DefaultValueOffset':i*4,'Value':v} for i,v in enumerate(values)]
  uniform={'UniformNumericParameters':parameters}

@@ -2,9 +2,12 @@ try:
     from .native_test_support import ROOT
 except ImportError:
     from native_test_support import ROOT
+try: from .native_test_support import real_package as _ns
+except ImportError: from native_test_support import real_package as _ns
+_ns()
 import unittest
-from material_runtime.core import MaterialRecord,literal,evaluate
-from material_runtime.weapons import compile_weapon,WEAPON_DETAIL_ARRAY
+from _native_runtime_regression_addon.Shared.materials.native.core import MaterialRecord,literal,evaluate
+from _native_runtime_regression_addon.Weapons.material_runtime.weapons import compile_weapon,WEAPON_DETAIL_ARRAY
 
 class TestNativeWeaponStages(unittest.TestCase):
     def record(self,b=0.,**scalars):return MaterialRecord('/Game/test/weapon',textures={'CR':'/Game/cr','NXM':'/Game/nxm'},scalars=scalars)
@@ -35,7 +38,7 @@ class TestNativeWeaponStages(unittest.TestCase):
     def test_source_roles_do_not_alias_color_and_data(self):
         p=compile_weapon(self.record())
         references=[]
-        from material_runtime.core import Expr
+        from _native_runtime_regression_addon.Shared.materials.native.core import Expr
         def walk(node):
             if not isinstance(node,Expr):return
             if node.op=='texture':references.append((node.attrs['reference'],node.attrs['role']))

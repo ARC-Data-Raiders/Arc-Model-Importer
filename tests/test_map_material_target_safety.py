@@ -12,7 +12,7 @@ class Mesh(dict):
 
 
 def collector(objects):
-    source=Path(__file__).resolve().parents[1]/'map_placement.py'
+    source=Path(__file__).resolve().parents[1]/'Maps/map_placement.py'
     tree=ast.parse(source.read_text(encoding='utf-8'))
     function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='collect_map_mesh_targets')
     module=ast.Module(body=[function],type_ignores=[])

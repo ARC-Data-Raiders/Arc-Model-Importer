@@ -6,9 +6,9 @@ except ImportError:
 import importlib.util,json,sys,unittest
 from pathlib import Path
 from unittest.mock import patch
-import material_runtime.native_families as adapter
-from material_runtime.assets import NativeAssetRepository
-from material_runtime.core import expr,literal,evaluate,serialize
+from Shared.materials.native import native_families as adapter
+from Shared.materials.native.assets import NativeAssetRepository
+from Shared.materials.native.core import expr, literal, evaluate, serialize
 
 class AdapterTests(unittest.TestCase):
     def setUp(self):
@@ -62,7 +62,7 @@ class AdapterTests(unittest.TestCase):
         candidate=adapter.prepare(source,obj=Obj());self.assertTrue(candidate.accepted,candidate.reason)
         found=[];seen=set()
         def walk(node):
-            from material_runtime.core import Expr
+            from Shared.materials.native.core import Expr
             if not isinstance(node,Expr) or id(node) in seen:return
             seen.add(id(node))
             if node.op=='tangent_view':found.append(node.attrs['uv_map'])
@@ -101,7 +101,7 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(all(str(root).startswith(prefix) for roots in prepared.repository.mount_roots.values() for root in roots))
 
     def test_opaque_alpha_dependency_is_inactive_while_masked_and_unset_remain_required(self):
-        from material_runtime.core import MaterialPlan
+        from Shared.materials.native.core import MaterialPlan
         class UV:name='NativeUV'
         class Data:uv_layers=[UV()]
         class Obj:data=Data();scale=(1,1,1)
@@ -110,6 +110,6 @@ class AdapterTests(unittest.TestCase):
         for settings,accepted in (({'blend':'opaque'},True),({'blend':'masked'},False),({},False)):
             with self.subTest(settings=settings):
                 plan=MaterialPlan('/Game/Fixture','enemy_shell',{'base_color':literal((.2,.3,.4)),'alpha':missing_alpha},settings)
-                with patch('material_runtime.decals.compile_enemy_shell',return_value=plan):candidate=adapter.prepare(source,obj=Obj())
+                with patch('Shared.materials.native.decals.compile_enemy_shell',return_value=plan):candidate=adapter.prepare(source,obj=Obj())
                 self.assertEqual(candidate.accepted,accepted,candidate.reason)
                 if accepted:self.assertEqual(candidate.report['images'],[])

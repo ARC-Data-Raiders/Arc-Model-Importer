@@ -22,11 +22,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-# Load surface_rebuild.decals and its sibling helpers without the package __init__ (which needs bpy).
+# Load materials.rebuild.decals and its sibling helpers without the package __init__ (which needs bpy).
 package = types.ModuleType('_sr_decals_pkg')
-package.__path__ = [str(ROOT / 'surface_rebuild')]
+package.__path__ = [str(ROOT / 'Shared/materials/rebuild')]
 sys.modules['_sr_decals_pkg'] = package
-spec = importlib.util.spec_from_file_location('_sr_decals_pkg.decals', ROOT / 'surface_rebuild/decals.py')
+spec = importlib.util.spec_from_file_location('_sr_decals_pkg.decals', ROOT / 'Shared/materials/rebuild/decals.py')
 decals = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = decals
 spec.loader.exec_module(decals)
@@ -68,7 +68,7 @@ class Socket(SimpleNamespace):
 
 
 class NumericGraph:
-    """Eager stand-in for material_runtime.interop.Graph: sockets are floats and 3-tuples."""
+    """Eager stand-in for materials.native.interop.Graph: sockets are floats and 3-tuples."""
     def __init__(self, images, location=(0., 0., 0.), uv=(.3, .6)):
         self.report = {'warnings': []}
         self.images, self.result, self.requested = images, None, []

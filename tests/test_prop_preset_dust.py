@@ -60,7 +60,7 @@ def mi_scalar(scalars, *names, default=0.0):
 
 
 def load(images):
-    tree = ast.parse((ROOT / 'materials/env_props/weathering.py').read_text(encoding='utf-8'))
+    tree = ast.parse((ROOT / 'Shared/materials/env_props/weathering.py').read_text(encoding='utf-8'))
     body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in NAMES]
     body += [n for n in tree.body if isinstance(n, ast.Assign) and any(getattr(t, 'id', '') in CONSTANTS for t in n.targets)]
     loads = []

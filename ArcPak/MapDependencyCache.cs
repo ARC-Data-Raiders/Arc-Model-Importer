@@ -83,7 +83,7 @@ internal static class MapDependencyCache
                 throw new InvalidDataException("Dependency source unavailable: " + canonical);
             provider.Files.FindPayloads(source, out var uexp, out var ubulks, out var uptnls);
             foreach (var file in new[] { source, uexp }.Where(file => file != null).Concat(ubulks).Concat(uptnls))
-                hashes[file!.Path] = MapBundleDocument.Hash(file.Read());
+                hashes[file!.Path] = MapBundleDocument.HashSource(file!);
             for (var index = 1; index <= package.ImportMapLength; index++)
             {
                 if (package is IoPackage cooked && (cooked.ImportMap[index - 1].IsNull || cooked.ImportMap[index - 1].IsScriptImport))
@@ -108,3 +108,4 @@ internal static class MapDependencyCache
         return hashes;
     }
 }
+

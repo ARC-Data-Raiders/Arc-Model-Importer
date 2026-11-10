@@ -8,7 +8,7 @@ import types
 import unittest
 
 REPO = Path(__file__).resolve().parents[1]
-SOURCE = REPO / "materials" / "clothing.py"
+SOURCE = REPO / "Shared/materials" / "clothing.py"
 TREE = ast.parse(SOURCE.read_text(encoding="utf-8"))
 
 def load(name, namespace):
@@ -83,7 +83,7 @@ class Tests(unittest.TestCase):
 
 class FamilyConsistencyTests(unittest.TestCase):
     def test_matching_identity_does_not_preserve_wrong_layered_crt_or_glass(self):
-        tree = ast.parse((REPO / 'materials' / 'dispatch.py').read_text(encoding='utf-8-sig'))
+        tree = ast.parse((REPO / 'Shared/materials' / 'dispatch.py').read_text(encoding='utf-8-sig'))
         function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_dedicated_outfit_material_current')
         namespace = {'_active_dedicated_outfit_profile': lambda mat: 'layered',
                      '_mi_uses_layered_character_profile': lambda path: path == 'layered.json',

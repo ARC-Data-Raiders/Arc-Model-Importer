@@ -24,11 +24,11 @@ def _check_enabled(folder, version):
     if not addon_utils.check(folder)[1]:
         raise RuntimeError(f'{folder} failed addon_utils.check')
     module = importlib.import_module(folder)
-    importlib.import_module(folder + ".material_texture_metadata")
+    importlib.import_module(folder + ".Shared.material_texture_metadata")
     if tuple(module.bl_info['version']) != version:
         raise RuntimeError(f'{folder} version {module.bl_info["version"]!r} != {version!r}')
-    if folder == 'DataRaiders-Outfits':
-        expected_name = 'Arc Model Importer v' + '.'.join(str(part) for part in version)
+    if folder == 'Arc-Asset-Importer':
+        expected_name = 'Arc Asset Importer v' + '.'.join(str(part) for part in version)
         if module.bl_info.get('name') != expected_name:
             raise RuntimeError(f'Packaged addon name {module.bl_info.get("name")!r} != {expected_name!r}')
     weapon_ui = getattr(module, 'weapon_ui', None)
@@ -36,12 +36,15 @@ def _check_enabled(folder, version):
         weapon_ui._finish_ascended_registration()
         if not weapon_ui._ASCENDED_ENUM_READY:
             raise RuntimeError('Ascended weapon controls did not finish registration')
-    fit = importlib.import_module(folder + '.character_fit')
-    overlay = importlib.import_module(folder + '.reference_overlay')
-    pak_extract = importlib.import_module(folder + '.pak_extract')
+    fit = importlib.import_module(folder + '.Outfit_Accessories.character_fit')
+    overlay = importlib.import_module(folder + '.Outfit_Accessories.reference_overlay')
+    pak_extract = importlib.import_module(folder + '.Shared.pak_extract')
     package_root = Path(module.__file__).parent.resolve()
     mapping = Path(pak_extract.bundled_usmap()).resolve()
-    reference = Path(module.importing.default_outfit_csv_path()).resolve()
+    selected_mapping = Path(bpy.context.scene.arc_usmap_path).resolve()
+    if selected_mapping != mapping:
+        raise RuntimeError(f'Fresh scene usmap default {selected_mapping} != packaged mapping {mapping}')
+    reference = Path(module.Shared.importing.default_outfit_csv_path()).resolve()
     if not mapping.is_relative_to(package_root) or not mapping.is_file() or not mapping.stat().st_size:
         raise RuntimeError('Packaged usmap is missing')
     if not reference.is_relative_to(package_root) or not reference.is_file() or not reference.stat().st_size:
@@ -56,7 +59,7 @@ def _check_enabled(folder, version):
         raise RuntimeError('character-fit load handler is still registered while idle')
     if fit._changed_fit in bpy.app.handlers.depsgraph_update_post:
         raise RuntimeError('character-fit depsgraph handler is still registered while idle')
-    parity = importlib.import_module(folder + '.material_runtime.shader_parity.props')
+    parity = importlib.import_module(folder + '.Shared.materials.native.shader_parity.props')
     for collection in (bpy.app.handlers.depsgraph_update_post, bpy.app.handlers.render_pre, bpy.app.handlers.frame_change_post):
         if any(getattr(handler, '__module__', '') == parity.__name__ for handler in collection):
             raise RuntimeError('shader parity handler is registered while idle')

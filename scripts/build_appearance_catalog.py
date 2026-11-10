@@ -1,7 +1,8 @@
 """Build bounded appearance browse data from explicitly supplied retained exports.
 
 Example: py -3.14 -B scripts/build_appearance_catalog.py --source BUILD=CONTENT_PIONEER
-Add --previews BUILD=CONTENT_PIONEER to prepare available non-outfit icons.
+Icons are not written here. Run scripts/build_ui_icons_appearance.py after this; it sets the `icons` map
+and writes assets/ui_icons/appearance/<stem>.avif. This step keeps the existing `icons` map.
 """
 from __future__ import annotations
 
@@ -69,7 +70,7 @@ def choose_icon(row, candidates):
     return near[0] if len(near) == 1 else None
 
 
-def build_catalog(csv_path, sources, preview_sources, output):
+def build_catalog(csv_path, sources, output):
     with csv_path.open(encoding="utf-8-sig", newline="") as stream:
         rows = list(csv.DictReader(stream))
     manifest = {"schema": 1, "csv_sha256": hashlib.sha256(csv_path.read_bytes()).hexdigest(), "flavour_tables": {}, "icons": {}, "backpack_colorways": {}}
@@ -116,39 +117,15 @@ def build_catalog(csv_path, sources, preview_sources, output):
                         label = display.get("LocalizedString") or display.get("SourceString") or label
                 variants.setdefault(color, {"id": color, "label": label, "package": "PioneerGame/Content/" + package[len("/Game/"):]})
         manifest["backpack_colorways"][item] = sorted(variants.values(), key=lambda value: value["label"].casefold())
-    icon_candidates = {}
-    for source_index, source in enumerate(preview_sources):
-        for segment in set(SEGMENTS.values()) | {"FacialHair"}:
-            directory = Path(source["root"]) / "Items/Characters/Skins" / segment
-            prefix = "T_UI_Icon_" + segment + "_"
-            candidates = []
-            for path in sorted(directory.glob("*/" + prefix + "*.png")):
-                candidates.append((token(path.stem[len(prefix):]), path))
-            icon_candidates[source_index, segment] = candidates
+    icons_path = output / "appearance_browse.json"
+    previous_icons = json.loads(icons_path.read_text(encoding="utf-8")).get("icons", {}) if icons_path.is_file() else {}
     missing_icons = []
     for row in rows:
-        segment = "FacialHair" if row["segment"].casefold() == "facialhairs" else SEGMENTS.get(row["kind"])
-        if not segment:
-            continue
-        selected = None
-        for source_index, source in enumerate(preview_sources):
-            selected = choose_icon(row, icon_candidates[source_index, segment])
-            if selected:
-                raw = selected.read_bytes()
-                source["records"][selected.relative_to(source["root"]).as_posix()] = hashlib.sha256(raw).hexdigest()
-                break
-        if not selected:
+        if row["id"] in previous_icons:
+            manifest["icons"][row["id"]] = previous_icons[row["id"]]
+        else:
             missing_icons.append(row["id"])
-            continue
-        from PIL import Image
-        image = Image.open(selected).convert("RGBA")
-        image.thumbnail((256, 256), Image.Resampling.LANCZOS)
-        filename = hashlib.sha256(raw).hexdigest()[:20] + ".png"
-        destination = output / "appearance_previews" / filename
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        image.save(destination, optimize=True)
-        manifest["icons"][row["id"]] = filename
-    manifest["sources"] = [{"build": source["build"], "root": source["root"], "files": source["records"]} for source in sources + preview_sources]
+    manifest["sources"] = [{"build": source["build"], "root": source["root"], "files": source["records"]} for source in sources]
     manifest["coverage"] = {"choices": len(rows), "icons": len(manifest["icons"]), "missing_icon_ids": missing_icons, "backpack_colorways": sum(len(variants) for variants in manifest["backpack_colorways"].values()), "backpacks_without_colorways": [item for item, variants in manifest["backpack_colorways"].items() if not variants]}
     output.mkdir(parents=True, exist_ok=True)
     (output / "appearance_browse.json").write_text(json.dumps(manifest, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
@@ -158,11 +135,10 @@ def build_catalog(csv_path, sources, preview_sources, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=source_argument, action="append", required=True)
-    parser.add_argument("--previews", type=source_argument, action="append", default=[])
-    parser.add_argument("--csv", type=Path, default=ROOT / "appearance_reference.csv")
+    parser.add_argument("--csv", type=Path, default=ROOT / 'Data/appearance_reference.csv')
     parser.add_argument("--output", type=Path, default=ROOT / "assets")
     args = parser.parse_args()
-    coverage = build_catalog(args.csv, args.source, args.previews, args.output)
+    coverage = build_catalog(args.csv, args.source, args.output)
     print(json.dumps({key: len(value) if key == "missing_icon_ids" else value for key, value in coverage.items()}, indent=2))
 
 

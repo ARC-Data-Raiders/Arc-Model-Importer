@@ -1,0 +1,905 @@
+{
+ "schema": "arc-weapon-icon-capture-v1",
+ "note": "DA_UIMetaData_<stem> ItemCaptureActorTransformBig / ItemCaptureCameraTransformBig (UE cm, XYZW quaternions). Camera: perspective, 40 deg horizontal FOV, 1024x512.",
+ "fov_deg": 40.0,
+ "resolution": [
+  1024,
+  512
+ ],
+ "weapons": {
+  "AssaultRifle_Bullpup_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -16.113728,
+     "Y": 82.30876,
+     "Z": 119.462234
+    }
+   }
+  },
+  "AssaultRifle_Burst_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -21.823614,
+     "Y": 88.59609,
+     "Z": 127.49798
+    }
+   }
+  },
+  "AssaultRifle_Heavy_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -33.898884,
+     "Y": 95.27872,
+     "Z": 136.03894
+    }
+   }
+  },
+  "AssaultRifle_LowTier_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -25.165365,
+     "Y": 95.41795,
+     "Z": 132.03682
+    }
+   }
+  },
+  "AssaultRifle_Pneumatic_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -14.38763,
+     "Y": 68.57674,
+     "Z": 103.55401
+    }
+   }
+  },
+  "BattleRifle_BreachAction_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -39.474113,
+     "Y": 121.61064,
+     "Z": 169.69336
+    }
+   }
+  },
+  "BattleRifle_EnergyBurst_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.163085,
+     "Y": -0.187437,
+     "Z": 0.95773,
+     "W": 0.144999,
+     "IsNormalized": true,
+     "Size": 1.0000004,
+     "SizeSquared": 1.0000008
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -32.26136,
+     "Y": 102.27777,
+     "Z": 144.98431
+    }
+   }
+  },
+  "BattleRifle_LeverAction_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -34.527843,
+     "Y": 101.49798,
+     "Z": 135.75812
+    }
+   }
+  },
+  "BattleRifle_SemiAuto_Light_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -21.27363,
+     "Y": 94.64332,
+     "Z": 128.11809
+    }
+   }
+  },
+  "HandCannon_DoubleAction_Snubnose_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.147461,
+     "Y": -0.284048,
+     "Z": 0.933646,
+     "W": 0.160862,
+     "IsNormalized": true,
+     "Size": 0.99999976,
+     "SizeSquared": 0.9999995
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -4.3421044,
+     "Y": 59.52813,
+     "Z": 82.38766
+    }
+   }
+  },
+  "HandCannon_SingleAction_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -18.88134,
+     "Y": 56.675003,
+     "Z": 80.036575
+    }
+   }
+  },
+  "LMG_Medium_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1697303,
+     "Y": -0.14213851,
+     "Z": 0.96549225,
+     "W": 0.13716048,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -40.653793,
+     "Y": 118.647964,
+     "Z": 170.84975
+    }
+   }
+  },
+  "Launcher_AntiArc_Medium_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -25.356863,
+     "Y": 89.05043,
+     "Z": 120.688835
+    }
+   }
+  },
+  "Launcher_AntiArc_SingleShot_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.6,
+     "Y": 1.6,
+     "Z": 1.6
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": 7.4812093,
+     "Y": 75.671265,
+     "Z": 106.28925
+    }
+   }
+  },
+  "Pistol_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -3.3069487,
+     "Y": 51.27055,
+     "Z": 69.067635
+    }
+   }
+  },
+  "Pistol_HighPower_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -9.31311,
+     "Y": 52.798794,
+     "Z": 71.1966
+    }
+   }
+  },
+  "Pistol_Silenced_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -18.423504,
+     "Y": 57.00753,
+     "Z": 77.02525
+    }
+   }
+  },
+  "SMG_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.15461117,
+     "Y": -0.27877647,
+     "Z": 0.9281785,
+     "W": 0.19199935,
+     "IsNormalized": true,
+     "Size": 0.99999994,
+     "SizeSquared": 0.99999994
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -11.874413,
+     "Y": 53.46832,
+     "Z": 77.95873
+    }
+   }
+  },
+  "SMG_LowTier_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -14.115056,
+     "Y": 51.09615,
+     "Z": 72.00431
+    }
+   }
+  },
+  "SMG_Medium_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": 0.0,
+     "Y": 0.0,
+     "Z": 6.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -10.0,
+     "Y": 61.226295,
+     "Z": 84.40788
+    }
+   }
+  },
+  "Shotgun_Energy_Adjustable_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.1474611,
+     "Y": -0.2840483,
+     "Z": 0.9336462,
+     "W": 0.16086204,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -20.583931,
+     "Y": 81.91294,
+     "Z": 119.2269
+    }
+   }
+  },
+  "Shotgun_PumpAction_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.15699285,
+     "Y": -0.22660589,
+     "Z": 0.9492251,
+     "W": 0.1515738,
+     "IsNormalized": true,
+     "Size": 0.99999994,
+     "SizeSquared": 0.99999994
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -25.32401,
+     "Y": 83.20177,
+     "Z": 115.36
+    }
+   }
+  },
+  "Shotgun_SemiAuto_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.14839618,
+     "Y": -0.2786017,
+     "Z": 0.9352859,
+     "W": 0.15999983,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -28.252747,
+     "Y": 88.59609,
+     "Z": 127.49798
+    }
+   }
+  },
+  "SniperRifle_BoltAction_Medium_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.13864188,
+     "Y": -0.2672095,
+     "Z": 0.93964624,
+     "W": 0.16261129,
+     "IsNormalized": true,
+     "Size": 0.99999994,
+     "SizeSquared": 0.99999994
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -45.542263,
+     "Y": 127.35816,
+     "Z": 177.03917
+    }
+   }
+  },
+  "Special_BeamRifle_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.16308454,
+     "Y": -0.1874366,
+     "Z": 0.9577297,
+     "W": 0.14499934,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -3.6290483,
+     "Y": -1.3459151,
+     "Z": -1.7529233
+    },
+    "Scale3D": {
+     "X": 0.78784543,
+     "Y": 0.78784543,
+     "Z": 0.78784543
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -39.986115,
+     "Y": 102.20373,
+     "Z": 126.01667
+    }
+   }
+  },
+  "Special_Railgun_01": {
+   "actor": {
+    "Rotation": {
+     "X": 0.15183073,
+     "Y": -0.25825548,
+     "Z": 0.9411072,
+     "W": 0.15674439,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Scale3D": {
+     "X": 1.2,
+     "Y": -1.2,
+     "Z": 1.2
+    }
+   },
+   "camera": {
+    "Rotation": {
+     "X": 0.3097513,
+     "Y": 0.3097513,
+     "Z": -0.63565254,
+     "W": 0.63565254,
+     "IsNormalized": true,
+     "Size": 1.0,
+     "SizeSquared": 1.0
+    },
+    "Translation": {
+     "X": -22.374023,
+     "Y": 101.41788,
+     "Z": 143.8853
+    }
+   }
+  }
+ }
+}

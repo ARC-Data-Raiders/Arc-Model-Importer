@@ -1,0 +1,239 @@
+{
+  "build": "26159202",
+  "usmap": "Z:/Datamining/Arc Raiders/ARC-Raiders-CL1430164.usmap",
+  "groups": [
+    {
+      "id": "01_outfit",
+      "label": "Full outfit - Goalie",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Characters/Assets/Goalie/Boots/SK_Goalie_Boots",
+        "PioneerGame/Content/Pioneer/Characters/Assets/Goalie/ChestGuard/SK_Goalie_ChestGuard",
+        "PioneerGame/Content/Pioneer/Characters/Assets/Goalie/Gloves/SK_Goalie_Gloves",
+        "PioneerGame/Content/Pioneer/Characters/Assets/Goalie/Helmet/SK_Goalie_Helmet",
+        "PioneerGame/Content/Pioneer/Characters/Assets/Goalie/LegBox/SK_Goalie_LegBox",
+        "PioneerGame/Content/Pioneer/Characters/Assets/Goalie/Pants/SK_Goalie_Pants",
+        "PioneerGame/Content/Pioneer/Characters/Assets/Goalie/Pauldrons/SK_Goalie_Pauldrons",
+        "PioneerGame/Content/Pioneer/Characters/Assets/Goalie/RadioBag/SK_Goalie_RadioBag",
+        "PioneerGame/Content/Pioneer/Characters/Assets/Goalie/Shirt/SK_Goalie_Shirt",
+        "PioneerGame/Content/Pioneer/Characters/Assets/Goalie/UpperBody/SK_Goalie_UpperBody",
+        "PioneerGame/Content/Pioneer/Characters/Assets/Goalie/Visor/SK_Goalie_Visor"
+      ]
+    },
+    {
+      "id": "02_body",
+      "label": "Body - shared SK_Body",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Characters/Shared/Bodies/SK_Body"
+      ]
+    },
+    {
+      "id": "03_face",
+      "label": "Face - Face03 with eye, teeth and lashes",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Characters/Heads/Face_03_Pio/Base/Head_Face_03_Pio_Base"
+      ]
+    },
+    {
+      "id": "04_hair",
+      "label": "Hair - French Braids",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Characters/Hairs/FrenchBraids/SK_FrenchBraids"
+      ]
+    },
+    {
+      "id": "05_facial_hair",
+      "label": "Facial hair - Full Beard",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Characters/FacialHairs/BeardFull/SK_BeardFull"
+      ]
+    },
+    {
+      "id": "06_backpack",
+      "label": "Backpack - Urn",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Characters/Backpacks/Containers/Urn/Urn/SM_Urn_Urn"
+      ]
+    },
+    {
+      "id": "07_frame",
+      "label": "Backpack frame",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Characters/Backpacks/Frames/Default/SM_Backpack_Frame_01_A"
+      ]
+    },
+    {
+      "id": "08_strap",
+      "label": "Backpack straps",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Characters/Backpacks/Straps/Default/Strap/SK_Default_Strap"
+      ]
+    },
+    {
+      "id": "09_charm_decal",
+      "label": "Charm decal - Soccer Finals Ticket",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Characters/Backpacks/Charms/SoccerFinalsTicket_01/SM_SoccerFinalsTicket_01_A"
+      ]
+    },
+    {
+      "id": "10_charm_fur",
+      "label": "Charm fur - Rabbit Foot",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Characters/Backpacks/Charms/RabbitFoot_01/SM_RabbitFoot_01_A"
+      ]
+    },
+    {
+      "id": "11_connector",
+      "label": "Charm connector",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Characters/Backpacks/Charms/Karabiner/SM_BackpackCharm_Karabiner"
+      ]
+    },
+    {
+      "id": "12_attachment",
+      "label": "Backpack attachment - Briefcase",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Characters/Backpacks/Attachments/BriefCase/SM_Briefcase_01_A"
+      ]
+    },
+    {
+      "id": "13_raider_tool",
+      "label": "Raider tool - Ice Climber",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Characters/RaiderTool/IceClimber_01/SK_IceClimber_01_A"
+      ]
+    },
+    {
+      "id": "14_weapon",
+      "label": "Weapon - Bettina",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/SK_AssaultRifle_Heavy_01_A",
+        "PioneerGame/Content/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/SM_AssaultRifle_Heavy_01_BottomFrame_A",
+        "PioneerGame/Content/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/SM_AssaultRifle_Heavy_01_ChargingHandle_A",
+        "PioneerGame/Content/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/SM_AssaultRifle_Heavy_01_Details_A",
+        "PioneerGame/Content/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/SM_AssaultRifle_Heavy_01_MainShroud_A",
+        "PioneerGame/Content/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/SM_AssaultRifle_Heavy_01_PistolGrip_A",
+        "PioneerGame/Content/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/SM_AssaultRifle_Heavy_01_Sensor_A"
+      ]
+    },
+    {
+      "id": "15_gadget",
+      "label": "Gadget - Tesla Coil",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Items/Deployables/EmitterTrap_TeslaCoil_01/SM_EmitterTrap_TeslaCoil_01_A"
+      ]
+    },
+    {
+      "id": "16_quickuse",
+      "label": "Quickuse - Bandage",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Items/Consumables/Bandage_01/SM_Bandage_01_A"
+      ]
+    },
+    {
+      "id": "17_throwable",
+      "label": "Throwable - HE Grenade",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Items/_GENERATED_/ExplosionThrowable/HEGrenade/SM_GrenadeGeneric_01_A"
+      ]
+    },
+    {
+      "id": "18_salvage",
+      "label": "Salvage - ARC Powercell",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Items/Salvage/AdvancedARCPowercell/SM_PowerCell_02_A"
+      ]
+    },
+    {
+      "id": "19_enemy",
+      "label": "Enemy - Leaper Bullcrab",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Enemies/Bullcrab/Art/SK_BullCrab_01"
+      ]
+    },
+    {
+      "id": "20_elevator",
+      "label": "Extraction elevator",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01/SM_ExtractionElevator_01_A",
+        "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01/SM_ExtractionElevator_01_Door_A",
+        "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01/SM_ExtractionElevator_01_Door_B",
+        "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01/SM_ExtractionElevator_01_Elevator_A",
+        "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01/SM_ExtractionElevator_01_Engine_A",
+        "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01/SM_Barrier_01",
+        "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01/SM_Barrier_02",
+        "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01/SM_ExtractionElevator_01_A_Cables",
+        "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01/SM_ExtractionElevator_01_DoorPiston_01_A",
+        "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01/SM_ExtractionElevator_01_DoorPiston_01_B",
+        "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01/SM_ExtractionElevator_01_DoorPiston_02_A",
+        "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01/SM_ExtractionElevator_01_DoorPiston_02_B",
+        "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01/SM_ExtractionElevator_01_Tower_A"
+      ],
+      "presentation": "All13 source components; shared fresh game blueprint/socket presentation is separate from each product material import"
+    },
+    {
+      "id": "21_computer",
+      "label": "Environment - warehouse style Computer",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Environment/Props/Government/Computer_01/SM_Gvt_Computer_01_A"
+      ]
+    },
+    {
+      "id": "22_vending",
+      "label": "Environment - Vending Machine",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Environment/Props/Commercial/VendingMachine_01/SM_VendingMachine_01_A"
+      ]
+    },
+    {
+      "id": "23_cloth",
+      "label": "Environment cloth - Curtain",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Environment/Props/Residential/Curtain/SM_Res_Curtain_01_A"
+      ]
+    },
+    {
+      "id": "24_glass",
+      "label": "Environment glass - Window",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Environment/Architecture/BuildingModules/WindowFrames/SM_WindowGlass_01_200cm_WindowSlit_A_Fbx"
+      ]
+    },
+    {
+      "id": "25_painted_wall",
+      "label": "Environment - Painted Concrete Wall",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Environment/POI/TheBlueGate/TunnelMain/SM_TBG_WallConcretePainted_ServiceEntrance_A"
+      ]
+    },
+    {
+      "id": "26_metal",
+      "label": "Environment - metal barrel",
+      "packages": [
+        "PioneerGame/Content/Pioneer/Environment/Props/_Generic/Barrel_01/SM_Barrel_01_A"
+      ]
+    }
+  ],
+  "extra_packages": [
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/Body/BodyA/DA_OI_Body_BodyA",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/Face/Face_03_Pio/DA_OI_Face_Face_03_Pio",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/Face/Face_03_Pio/T_UI_Icon_Face_Face_03_Pio",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/FacialHair/BeardFull/DA_OI_FacialHair_BeardFull",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/FacialHair/BeardFull/DA_OI_FacialHair_BeardFull_Color",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/FacialHair/BeardFull/DA_OI_FacialHair_BeardFull_Color_Black",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/FacialHair/BeardFull/DA_OI_FacialHair_BeardFull_Color_Blonde",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/FacialHair/BeardFull/DA_OI_FacialHair_BeardFull_Color_Brown",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/FacialHair/BeardFull/DA_OI_FacialHair_BeardFull_Color_Grey",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/FacialHair/BeardFull/DA_OI_FacialHair_BeardFull_Color_Red",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/FacialHair/BeardFull/T_UI_Icon_FacialHair_BeardFull",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/Hair/FrenchBraids/DA_OI_Hair_FrenchBraids",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/Hair/FrenchBraids/DA_OI_Hair_FrenchBraids_Color",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/Hair/FrenchBraids/DA_OI_Hair_FrenchBraids_Color_Black",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/Hair/FrenchBraids/DA_OI_Hair_FrenchBraids_Color_Blonde",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/Hair/FrenchBraids/DA_OI_Hair_FrenchBraids_Color_Brown",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/Hair/FrenchBraids/DA_OI_Hair_FrenchBraids_Color_Grey",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/Hair/FrenchBraids/DA_OI_Hair_FrenchBraids_Color_Red",
+    "PioneerGame/Content/Pioneer/Items/Characters/Skins/Hair/FrenchBraids/T_UI_Icon_Hair_FrenchBraids"
+  ],
+  "design": "A=DataRaiders2.20.0 native UEModel, B=Revamped1.11.0 ActorX; same current source package and highest LOD; format-specific geometry differences reported separately; no graphs shared"
+}

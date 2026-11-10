@@ -15,7 +15,7 @@ NAMES = ('_MISC_GENERIC_TOKENS', '_misc_name_tokens', '_find_misc_textures')
 
 
 def load():
-    tree = ast.parse((ROOT / 'materials/items.py').read_text(encoding='utf-8'))
+    tree = ast.parse((ROOT / 'Shared/materials/items.py').read_text(encoding='utf-8'))
     body = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name in NAMES)
             or (isinstance(n, ast.Assign) and any(getattr(t, 'id', '') in NAMES for t in n.targets))]
     ns = {'os': os, 're': re}

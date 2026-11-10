@@ -1,0 +1,16 @@
+
+## Tarragon reconstruction correction — 2.19.40 (2026-10-16)
+
+Game → ST → human: Installed PAK build 25879518 → matching SM5 material maps/DXBC and inherited named parameters → healthy Tarragon surface graphs. This supersedes earlier claims that compiled bytecode was unavailable and that a constant-grey OX fallback was a completed shader.
+
+Both Interior and Exterior use M_EnemyPreset_CR+NOM+Tint+E+Damage. Interior map 6609894AC753A1D7C11A8C695BA81B4FDA527C2B; exterior 07985D85548ACE0A42D03BEB693BFB65A5069B20. Base colour is saturate(CR.rgb*(1+0.4*(2*detail.B-1))); roughness saturate(CR.A^1.1*2*detail.A). NOM RG reconstructs tangent normal Z, B is engine AO, A metallic. Detail normals add signed XY and Z=1 before normalization. Interior detail tiling12; exterior13.482104. EX.R is not sampled in these permutations; healthy emission is zero. Runtime soot/damage/holes and engine reflection/contact-shadow behaviour remain outside this healthy profile. AO is exposed separately rather than baked into colour.
+
+Tileable map 367C2A90B3DA72D164B1A91E75663244A6626692 verifies the vendored Revamped OX graph: OX R wear/AO, G curvature, B leaks, A panel coverage. NMR and fixed metal/detail textures require parent defaults, previously lost by compact PAK metadata. New .arc-material.json sidecars preserve named inherited parameters. NMR tiling10.215046, DetailTile6.355722, mask multiplier0.5, detail multiplier2. Color.R is the authored scalar, not full RGB. Enemy construction stays separate from prop/firearm builders.
+
+Revamped reference: enemy_tile.py matches the recovered healthy OX profile. Its generic CR/NOM surface lacks these specific detail stages. Its enemy scan handler explicitly uses a user-requested solid #FF6666 override, not a reconstruction of game circles/gradients.
+
+Scan display: circular cells use length(frac(UV*Tiling)-0.5), radius0.4 nearby, game camera-depth expansion/fill, broad+narrow scanning sweep and native linear palette blue(0,.325897,1), orange(1,.406525,.006859), red(1,0,0). ARC Eye Display offers Scanning/Alert/Aggro and isolates selected hierarchies and shared meshes/materials. Full aggro in the verified Loop permutation saturates all red dots; the screenshot central band cannot be assigned to that branch without more evidence. Glitch, selection and damaged display branches are not reconstructed.
+
+Verification: Blender5.1.2 factory-startup, all four slots, no missing textures/parents, unchanged geometry checksum and slot assignments, packed blend render and albedo render. Six independently calculated tile/CR colour/roughness/metallic outputs match rendered graphs within7.71e-8. Denoising must be disabled for numeric fixture renders. Scan registration/state changes/shared material and linked mesh isolation tests pass. Packaged ZIP install/enable/disable/re-enable/overwrite gate remains mandatory for EVERY version bump; syntax/import tests alone do not catch _RestrictData installation failures.
+
+Evidence: Z:/Datamining/Arc Raiders/CodexScratch/DataRaiders-BlenderImporter/.local/tarragon-investigation/ contains material-shaders, surface-evidence/findings.md, shader_report.json, arithmetic-report.json, render evidence and the safety checkpoint. These shader equations are verified for Tarragon healthy permutations; they do not imply parity for every enemy master or Unreal runtime lighting.

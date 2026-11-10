@@ -7,14 +7,14 @@ import sys
 import tempfile
 import unittest
 ROOT=Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(ROOT))
-from material_runtime import *
-from material_runtime.repository import digest
-from material_runtime.core import base_property_overrides
+sys.path.insert(0,str(ROOT));sys.path.insert(0,str(ROOT/'tests'/'native_runtime'));__import__('native_test_support').real_package()
+from _native_runtime_regression_addon.Shared.materials.native import *
+from _native_runtime_regression_addon.Shared.materials.native.repository import digest
+from _native_runtime_regression_addon.Shared.materials.native.core import base_property_overrides
 
 class NumericTests(unittest.TestCase):
     def test_negative_world_triplanar_reference(self):
-        from material_runtime.interop import triplanar_reference
+        from _native_runtime_regression_addon.Shared.materials.native.interop import triplanar_reference
         coordinates,weights=triplanar_reference((-.3,-.7,-.2),(-.2,.3,.9),200)
         expected=((.35,-.1,0),(-.15,-.1,0),(-.15,.35,0))
         for axis,target in zip(coordinates,expected):
@@ -23,7 +23,7 @@ class NumericTests(unittest.TestCase):
         self.assertAlmostEqual(sum(weights),1)
         self.assertEqual(triplanar_reference((-3,5,7),(0,0,0),0),(((0.,0.,0.),(0.,0.,0.),(0.,0.,0.)),(0.,0.,0.)))
     def test_shared_dag_hash_and_evaluation_are_memoized(self):
-        from material_runtime.core import expression_fingerprint
+        from _native_runtime_regression_addon.Shared.materials.native.core import expression_fingerprint
         source=expr('texture',reference='/Game/T',role='data',uv=literal((0,0,0)))
         value=expr('channel',source,index=0)
         for _ in range(100): value=expr('add',value,value)
@@ -55,7 +55,7 @@ class NumericTests(unittest.TestCase):
         with self.assertRaises(ValueError): evaluate(expr('multiply',literal((1,2,3)),literal((4,5))))
         with self.assertRaises(ValueError): evaluate(expr('multiply',literal((1,2,3,4)),literal((4,5,6))))
     def test_native_settings_normalization_preserves_false_zero_and_known_enum(self):
-        from material_runtime.core import normalize_material_settings
+        from _native_runtime_regression_addon.Shared.materials.native.core import normalize_material_settings
         settings,diagnostics=normalize_material_settings({'TwoSided':True,'two_sided':False,'BlendMode':2,'blend':0,'OpacityMaskClipValue':.5,'cutoff':0})
         self.assertFalse(settings['two_sided']); self.assertEqual(settings['blend'],'opaque'); self.assertEqual(settings['cutoff'],0)
         for raw in (1,'EBlendMode::BLEND_Masked','EMaterialBlendMode::Masked','masked'):
@@ -70,7 +70,7 @@ class NumericTests(unittest.TestCase):
         normalized,diagnostics=normalize_material_settings({'BlendMode':7})
         self.assertEqual(normalized['blend'],'translucent_colored'); self.assertTrue(diagnostics)
     def test_only_explicit_opaque_mode_ignores_alpha_output(self):
-        from material_runtime.core import ignores_alpha_output
+        from _native_runtime_regression_addon.Shared.materials.native.core import ignores_alpha_output
         self.assertTrue(ignores_alpha_output({'BlendMode':0}))
         self.assertTrue(ignores_alpha_output({'blend':'opaque','BlendMode':2}))
         self.assertFalse(ignores_alpha_output({})); self.assertFalse(ignores_alpha_output({'BlendMode':1})); self.assertFalse(ignores_alpha_output({'blend':'translucent'}))
@@ -155,7 +155,7 @@ class RepositoryTests(unittest.TestCase):
         p=self.path/(name+'.json'); p.parent.mkdir(parents=True,exist_ok=True); p.write_text(json.dumps(data)); return p
     @unittest.skipUnless(os.name=='nt','Windows extended-prefix path fixture')
     def test_extended_prefix_survives_asset_and_digest_resolution(self):
-        from material_runtime.repository import resolved_io_path
+        from _native_runtime_regression_addon.Shared.materials.native.repository import resolved_io_path
         self.write('A/Long',{'scalars':{'zero':0}})
         prefix=chr(92)*2+'?'+chr(92)
         repo=AssetRepository({'/Game':prefix+str(self.path.resolve())})
@@ -166,10 +166,10 @@ class RepositoryTests(unittest.TestCase):
     def test_bounded_stat_digest_cache_and_explicit_invalidation(self):
         import hashlib
         from unittest.mock import patch
-        from material_runtime.repository import digest,invalidate_digest_cache,_DIGEST_CACHE,_DIGEST_LIMIT
+        from _native_runtime_regression_addon.Shared.materials.native.repository import digest,invalidate_digest_cache,_DIGEST_CACHE,_DIGEST_LIMIT
         image=self.path/'A/T.png'; image.write_bytes(b'first')
         invalidate_digest_cache()
-        with patch('material_runtime.repository.hashlib.sha256',wraps=hashlib.sha256) as hashing:
+        with patch('_native_runtime_regression_addon.Shared.materials.native.repository.hashlib.sha256',wraps=hashlib.sha256) as hashing:
             first=digest(image); self.assertEqual(digest(image),first); self.assertEqual(hashing.call_count,1)
             image.write_bytes(b'second changed size')
             self.assertNotEqual(digest(image),first); self.assertEqual(hashing.call_count,2)
@@ -254,7 +254,7 @@ class SlotTests(unittest.TestCase):
         obj.material_slots[2].fail=False; assign_transaction(obj,bindings,factory)
         self.assertEqual([s.material for s in obj.material_slots],['new','keep','new'])
     def test_multi_owner_shared_mesh_safety_and_single_slot_override(self):
-        from material_runtime.slots import assign_many_transaction,assign_slot_transaction
+        from _native_runtime_regression_addon.Shared.materials.native.slots import assign_many_transaction,assign_slot_transaction
         class Data:
             def __init__(self): self.materials=['data0','data1','data2']
         class Slot:

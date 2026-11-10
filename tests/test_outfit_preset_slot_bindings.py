@@ -12,15 +12,15 @@ def functions(data):
     names={'_soft_asset_path','get_part_key_from_asset_path','get_characters_rel_key','get_part_key',
            'parse_outfit_preset_slot_bindings','parse_outfit_preset_bindings','parse_outfit_preset',
            '_outfit_package_key','_merge_outfit_slot_records','resolve_outfit_preset_material_bindings'}
-    tree=ast.parse((ROOT/'importing.py').read_text(encoding='utf-8'))
+    tree=ast.parse((ROOT/'Shared/importing.py').read_text(encoding='utf-8'))
     body=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in names]
-    namespace={'os':os,'json':json,'__package__':'_outfit_slot_fixture',
+    namespace={'os':os,'json':json,'__package__':'_outfit_slot_fixture.Shared',
       '_COLOURWAY_MOD_TYPES':{'CustomizationVisualPartSetMaterialModifier','CustomizationVisualPartSetMaterialPropertyModifier'},
       '_load_ue_json':lambda path:data.get(path),
       'utils':SimpleNamespace(ue_export_entries=lambda value:value if isinstance(value,list) else value.get('Exports',[value]),normalize_part_key=lambda key:key.casefold()),
       'textures':SimpleNamespace(_fs_abspath=lambda path:path,find_asset_from_object_path=lambda ref,ext:ref.split('.')[0]+ext),
       'bpy':SimpleNamespace(path=SimpleNamespace(abspath=lambda path:path))}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=body,type_ignores=[])),'importing.py','exec'),namespace)
+    exec(compile(ast.fix_missing_locations(ast.Module(body=body,type_ignores=[])),'Shared/importing.py','exec'),namespace)
     return namespace
 
 
@@ -54,11 +54,11 @@ class OutfitPresetSlotBindingTests(unittest.TestCase):
             if '/Headgear/' in reference:
                 data[reference.split('.')[0]+'.json']=[{'Properties':{'Mesh':{'ObjectPath':'/Game/Pioneer/Characters/Assets/Patcher/Headgear/'+mesh+'.0'}}}]
         n=functions(data)
-        package=ModuleType('_outfit_slot_fixture');package.__path__=[]
-        ue=ModuleType('_outfit_slot_fixture.uemodel_import')
+        package=ModuleType('_outfit_slot_fixture');package.__path__=[str(ROOT)]
+        ue=ModuleType('_outfit_slot_fixture.Shared.uemodel_import')
         ue.parse_uemodel=lambda path:('mesh',10,[SimpleNamespace(name='LOD0',materials=[('Headgear','',0,1),('Screen','',3,1)])])
-        native=ModuleType('_outfit_slot_fixture.native_material_slots');native.load_native_material_layout=lambda *args:None
-        with patch.dict(sys.modules,{'_outfit_slot_fixture':package,'_outfit_slot_fixture.uemodel_import':ue,'_outfit_slot_fixture.native_material_slots':native}),patch('os.path.isfile',return_value=True):
+        native=ModuleType('_outfit_slot_fixture.Outfit_Accessories.native_material_slots');native.load_native_material_layout=lambda *args:None
+        with patch.dict(sys.modules,{'_outfit_slot_fixture':package,'_outfit_slot_fixture.Shared.uemodel_import':ue,'_outfit_slot_fixture.Outfit_Accessories.native_material_slots':native}),patch('os.path.isfile',return_value=True):
             tech=n['resolve_outfit_preset_material_bindings']('preset','/Game/Pioneer/Characters/Assets/Patcher/Headgear/SK_Patcher_HeadgearTech.uemodel')
             plain=n['resolve_outfit_preset_material_bindings']('preset','/Game/Pioneer/Characters/Assets/Patcher/Headgear/SK_Patcher_Headgear.uemodel')
         self.assertEqual(set(tech),{'0','1'});self.assertEqual(set(plain),{'0'})

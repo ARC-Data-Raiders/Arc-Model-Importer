@@ -2,9 +2,9 @@ import ast,copy,hashlib,importlib,json,os,sys,tempfile,types,unittest
 from pathlib import Path
 from .native_test_support import ROOT as REPO,PACKAGE as PKG,namespace,temp_fixture
 namespace()
-if PKG+'.surface_rebuild' not in sys.modules:
- m=types.ModuleType(PKG+'.surface_rebuild');m.__path__=[str(REPO/'surface_rebuild')];sys.modules[m.__name__]=m
-bridge=importlib.import_module(PKG+'.surface_rebuild.native_catalog_bridge');catalog=importlib.import_module(PKG+'.material_runtime.catalog');records=importlib.import_module(PKG+'.surface_rebuild.records')
+if PKG+'.Shared.materials.rebuild' not in sys.modules:
+ m=types.ModuleType(PKG+'.Shared.materials.rebuild');m.__path__=[str(REPO/'Shared/materials/rebuild')];sys.modules[m.__name__]=m
+bridge=importlib.import_module(PKG+'.Shared.materials.rebuild.native_catalog_bridge');catalog=importlib.import_module(PKG+'.Shared.materials.native.catalog');records=importlib.import_module(PKG+'.Shared.materials.rebuild.records')
 class ActivationTests(unittest.TestCase):
  def setUp(self):
   self.temp=temp_fixture('native-reviewed-activation-');self.root=Path(self.temp.name);native=self.root/'native';content=native/'PioneerGame/Content';content.mkdir(parents=True);cache=self.root/'empty-cache';(cache/'PioneerGame/Content').mkdir(parents=True)
@@ -25,7 +25,7 @@ class ActivationTests(unittest.TestCase):
   for ref in ('/Game/Bad','/Game/Child'):
    with self.assertRaises(bridge.NativeRenderLimitationError):owner.legacy_record(ref)
  def test_affected_build_refuses_before_graph_mutation(self):
-  mutations=[];tree=ast.parse((REPO/'surface_rebuild/materials.py').read_text(encoding='utf8'));function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='build_material');module=types.ModuleType('gate_test');module.__package__=PKG+'.surface_rebuild';module.__dict__.update(hashlib=hashlib,json=json,native_begin=bridge.begin,bpy=types.SimpleNamespace(data=types.SimpleNamespace(materials=types.SimpleNamespace(new=lambda *a:mutations.append(a)))))
+  mutations=[];tree=ast.parse((REPO/'Shared/materials/rebuild/materials.py').read_text(encoding='utf8'));function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='build_material');module=types.ModuleType('gate_test');module.__package__=PKG+'.Shared.materials.rebuild';module.__dict__.update(hashlib=hashlib,json=json,native_begin=bridge.begin,bpy=types.SimpleNamespace(data=types.SimpleNamespace(materials=types.SimpleNamespace(new=lambda *a:mutations.append(a)))))
   exec(compile(ast.Module(body=[function],type_ignores=[]),'<actual build_material entry>','exec'),module.__dict__);obj=types.SimpleNamespace(data=types.SimpleNamespace(uv_layers=[],color_attributes=[]));record={'package':'/Game/Child','master':'/Game/Bad','textures':{},'scalars':{},'colors':{},'switches':{},'settings':{},'family':'surface'}
   with self.assertRaises(bridge.NativeRenderLimitationError):module.build_material(obj,record,self.index)
   self.assertEqual(mutations,[])

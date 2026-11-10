@@ -1,5 +1,6 @@
 using CUE4Parse.UE4.Assets.Exports.Material;
 using CUE4Parse.UE4.Assets.Exports.Texture;
+using CUE4Parse.UE4.Objects.UObject;
 using System.Text.Json.Nodes;
 
 namespace ArcPak;
@@ -13,10 +14,16 @@ internal static class MaterialTextureMetadataExport
     {
         if (material is not UMaterial && material is not UMaterialInstanceConstant)
             throw new InvalidDataException("Unsupported native texture-closure material class: " + material.ExportType);
-        var referenced = new List<UUnrealMaterial>();
+        var referenced = new List<FPackageIndex>();
         material.AppendReferencedTextures(referenced, onlyRendered: false);
-        if (referenced.Any(item => item is not UTexture)) throw new InvalidDataException("Native texture closure contains a non-texture resource");
-        var textures = referenced.OfType<UTexture>().GroupBy(item => item.GetPathName(),StringComparer.OrdinalIgnoreCase)
+        // Index 0 is a texture parameter overridden to None (colourway skin MIs do this): no texture, not an error.
+        referenced.RemoveAll(reference => reference.Index == 0);
+        var resolved = referenced.Select(reference => reference.Load<UUnrealMaterial>()).ToArray();
+        var rejected = referenced.Zip(resolved).Where(pair => pair.Second is not UTexture)
+            .Select(pair => pair.First + " -> " + (pair.Second?.ExportType ?? "unresolved")).Distinct().ToArray();
+        if (rejected.Length > 0)
+            throw new InvalidDataException("Native texture closure contains a non-texture resource in " + logicalPackage + ": " + string.Join("; ", rejected.Take(8)));
+        var textures = resolved.OfType<UTexture>().GroupBy(item => item.GetPathName(),StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First()).OrderBy(item => item.GetPathName(),StringComparer.Ordinal).ToArray();
         if (textures.Length > 16384) throw new InvalidDataException("Native texture metadata closure budget exceeded");
         var root = Path.GetFullPath(outputRoot);

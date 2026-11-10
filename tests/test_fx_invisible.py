@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests'))
 import test_glass_opaque as glass_test  # noqa: E402  (registers the _sr_glass_pkg loader package)
 
-spec = importlib.util.spec_from_file_location('_sr_glass_pkg.fx_invisible', ROOT / 'surface_rebuild/fx_invisible.py')
+spec = importlib.util.spec_from_file_location('_sr_glass_pkg.fx_invisible', ROOT / 'Shared/materials/rebuild/fx_invisible.py')
 fx = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = fx
 spec.loader.exec_module(fx)
@@ -40,7 +40,7 @@ class FxInvisibleTests(unittest.TestCase):
         self.assertTrue(any('motion blur' in w for w in g.report['warnings']))
 
     def test_master_routes_to_the_invisible_family(self):
-        tree = ast.parse((ROOT / 'surface_rebuild/records.py').read_text(encoding='utf-8'))
+        tree = ast.parse((ROOT / 'Shared/materials/rebuild/records.py').read_text(encoding='utf-8'))
         body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'classify']
         package = types.ModuleType('_fxinv_pkg'); package.__path__ = []
         sys.modules['_fxinv_pkg'] = package

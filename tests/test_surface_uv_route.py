@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load():
-    tree = ast.parse((ROOT / 'surface_rebuild/surfaces.py').read_text(encoding='utf-8'))
+    tree = ast.parse((ROOT / 'Shared/materials/rebuild/surfaces.py').read_text(encoding='utf-8'))
     body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'collapsed_uv']
     ns = {}
     exec(compile(ast.Module(body=body, type_ignores=[]), '<surfaces>', 'exec'), ns)
@@ -45,7 +45,7 @@ class SurfaceUvRouteTests(unittest.TestCase):
         self.assertFalse(collapsed(SimpleNamespace(), 1))
 
     def test_cloth_sim_masters_ignore_use_uv1(self):
-        source = (ROOT / 'surface_rebuild/surfaces.py').read_text(encoding='utf-8')
+        source = (ROOT / 'Shared/materials/rebuild/surfaces.py').read_text(encoding='utf-8')
         self.assertIn("use_uv1 = sw.get('Use UV1') and 'clothsim' not in master", source)
         self.assertLess(source.index('use_uv1 = '), source.index('uv = g.transform_uv(uv_channel'))
 

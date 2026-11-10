@@ -1,11 +1,11 @@
 """Portable character fallback control/route regressions without Blender."""
 import ast,importlib.util,json,os,sys,types,unittest
 from pathlib import Path
-ROOT=Path(os.environ['DATARAIDERS_TEST_REPOSITORY']) if os.environ.get('DATARAIDERS_TEST_REPOSITORY') else next(p for p in Path(__file__).resolve().parents if (p/'materials/character.py').is_file())
+ROOT=Path(os.environ['DATARAIDERS_TEST_REPOSITORY']) if os.environ.get('DATARAIDERS_TEST_REPOSITORY') else next(p for p in Path(__file__).resolve().parents if (p/'Shared/materials/character.py').is_file())
 STAGE=Path(os.environ.get('DATARAIDERS_CHARACTER_STAGE',ROOT))
 class FallbackTests(unittest.TestCase):
     def setUp(self):
-        self.saved=sys.modules.get('bpy');sys.modules['bpy']=types.ModuleType('bpy');spec=importlib.util.spec_from_file_location('_character_fallback_probe',STAGE/'materials/character_fallback.py');self.module=importlib.util.module_from_spec(spec);spec.loader.exec_module(self.module)
+        self.saved=sys.modules.get('bpy');sys.modules['bpy']=types.ModuleType('bpy');spec=importlib.util.spec_from_file_location('_character_fallback_probe',STAGE/'Shared/materials/character_fallback.py');self.module=importlib.util.module_from_spec(spec);spec.loader.exec_module(self.module)
     def tearDown(self):
         if self.saved is None:sys.modules.pop('bpy',None)
         else:sys.modules['bpy']=self.saved
@@ -30,24 +30,24 @@ class FallbackTests(unittest.TestCase):
         mat=Mat(arc_head_role='head');mat.use_nodes=True;node=types.SimpleNamespace(type='BSDF_PRINCIPLED',inputs={'Subsurface Weight':types.SimpleNamespace(default_value=.373),'Coat Roughness':types.SimpleNamespace(default_value=.217)})
         mat.node_tree=types.SimpleNamespace(nodes=[node],as_pointer=lambda:3);self.assertEqual(self.module.surface_controls(mat,'head'),{'Subsurface Weight':.373,'Coat Roughness':.217});self.assertEqual(self.module.surface_controls(mat,'eyes'),{})
     def test_all_public_character_roles_keep_explicit_overrides_first(self):
-        source=ast.parse((STAGE/'materials/character.py').read_text(encoding='utf-8'));package=types.ModuleType('_fallback_route_probe');package.__path__=[];runtime=types.ModuleType(package.__name__+'.material_runtime');runtime.__path__=[];bridge=types.ModuleType(runtime.__name__+'.native_families');bridge.is_user_override=lambda m:True
+        source=ast.parse((STAGE/'Shared/materials/character.py').read_text(encoding='utf-8'));package=types.ModuleType('_fallback_route_probe');package.__path__=[];runtime=types.ModuleType(package.__name__+'.Shared.materials.native');runtime.__path__=[];bridge=types.ModuleType(runtime.__name__+'.native_families');bridge.is_user_override=lambda m:True
         def forbidden(*a,**k):raise AssertionError('Override reached material builder')
         bridge.setup_entrypoint=forbidden
         for module in (package,runtime,bridge):sys.modules[module.__name__]=module
         try:
             for name in ('_setup_head_slot_head','_setup_head_slot_teeth','_setup_head_slot_eyes','_setup_head_slot_eyelashes','_setup_head_slot_wet'):
                 with self.subTest(role=name):
-                    f=next(n for n in source.body if isinstance(n,ast.FunctionDef) and n.name==name);namespace={'__package__':'_fallback_route_probe.materials'};exec(compile(ast.Module(body=[f],type_ignores=[]),'<actual fallback entry>','exec'),namespace);namespace[name](types.SimpleNamespace(material={'override':True}),'unused')
+                    f=next(n for n in source.body if isinstance(n,ast.FunctionDef) and n.name==name);namespace={'__package__':'_fallback_route_probe.Shared.materials'};exec(compile(ast.Module(body=[f],type_ignores=[]),'<actual fallback entry>','exec'),namespace);namespace[name](types.SimpleNamespace(material={'override':True}),'unused')
         finally:
             for module in (package,runtime,bridge):sys.modules.pop(module.__name__,None)
     def test_no_character_binary_material_or_shader_template_calls(self):
-        source=ast.parse((STAGE/'materials/character.py').read_text(encoding='utf-8'))
+        source=ast.parse((STAGE/'Shared/materials/character.py').read_text(encoding='utf-8'))
         for n in ast.walk(source):
             if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr in ('ensure_node_group','ensure_material'):
                 self.assertEqual(n.func.attr,'ensure_node_group');self.assertEqual(ast.literal_eval(n.args[0]),'NormalFlipper')
-        fidelity=ast.parse((STAGE/'materials/character_fidelity.py').read_text(encoding='utf-8'));prepare=next(n for n in fidelity.body if isinstance(n,ast.FunctionDef) and n.name=='prepare_face_shader');self.assertFalse(any(isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='copy' for n in ast.walk(prepare)))
+        fidelity=ast.parse((STAGE/'Shared/materials/character_fidelity.py').read_text(encoding='utf-8'));prepare=next(n for n in fidelity.body if isinstance(n,ast.FunctionDef) and n.name=='prepare_face_shader');self.assertFalse(any(isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='copy' for n in ast.walk(prepare)))
     def test_teeth_static_fallback_never_invents_preskin_normal_or_weather(self):
-        source=ast.parse((STAGE/'materials/character_fallback.py').read_text(encoding='utf-8'));function=next(n for n in source.body if isinstance(n,ast.FunctionDef) and n.name=='static_teeth');text=ast.unparse(function);self.assertNotIn('ShaderNodeNewGeometry',text);self.assertNotIn('primitive_data',text);self.assertIn('snow/wet/proximity',text)
+        source=ast.parse((STAGE/'Shared/materials/character_fallback.py').read_text(encoding='utf-8'));function=next(n for n in source.body if isinstance(n,ast.FunctionDef) and n.name=='static_teeth');text=ast.unparse(function);self.assertNotIn('ShaderNodeNewGeometry',text);self.assertNotIn('primitive_data',text);self.assertIn('snow/wet/proximity',text)
     def test_lash_mask_uses_proven_R_not_image_alpha(self):
-        source=(STAGE/'materials/character_fallback.py').read_text(encoding='utf-8');tree=ast.parse(source);function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='lash_material');text=ast.unparse(function);self.assertIn('split.outputs[0]',text);self.assertNotIn("outputs['Alpha']",text)
+        source=(STAGE/'Shared/materials/character_fallback.py').read_text(encoding='utf-8');tree=ast.parse(source);function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='lash_material');text=ast.unparse(function);self.assertIn('split.outputs[0]',text);self.assertNotIn("outputs['Alpha']",text)
 if __name__=='__main__':unittest.main(verbosity=2)

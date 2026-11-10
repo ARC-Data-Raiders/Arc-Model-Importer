@@ -4,9 +4,9 @@ import math
 import os
 import struct
 import unittest
-from niagara_vm import OPCODES
-from niagara_runtime import (Dataset, ExecutionError, IdState, execute, float_word,
-                            word_float, word_int, rng_seed_state)
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara.niagara import OPCODES
+from Niagara.niagara import Dataset, ExecutionError, IdState, execute, float_word, word_float, word_int, rng_seed_state
 IDS = {name: code for code, name in OPCODES.items()}
 def op(name, *words, mask=None):
     return bytes([IDS[name]]) + (bytes([mask]) if mask is not None else b'') + struct.pack('<'+'H'*len(words), *words)

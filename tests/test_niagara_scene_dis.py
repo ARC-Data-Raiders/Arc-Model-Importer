@@ -4,7 +4,8 @@ import unittest
 
 import numpy as np
 
-import niagara_di as di
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara import niagara as di
 
 T = 0xffffffff
 

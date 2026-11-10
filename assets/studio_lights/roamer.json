@@ -1,0 +1,1703 @@
+{
+ "schema": "arc-studio-lights-v1",
+ "camera": "outfit_icon",
+ "id": "roamer",
+ "label": "Outfit Icon",
+ "source": "Z:/Datamining/Arc Raiders/CodexScratch/DataRaiders-BlenderImporter/.local/anchor_sweep/BATTER/hh/BATTER_hh.blend",
+ "note": "Exact copy of the user-authored rig (world-space transforms). Suns are direction-only.",
+ "view_settings": {
+  "view_transform": "Standard",
+  "look": "None",
+  "exposure": 0.0,
+  "gamma": 1.0
+ },
+ "display_device": "sRGB",
+ "world": {
+  "name": "OV_World",
+  "use_nodes": true,
+  "color": [
+   0.05000000074505806,
+   0.05000000074505806,
+   0.05000000074505806
+  ],
+  "node_tree": {
+   "nodes": [
+    {
+     "type": "ShaderNodeBackground",
+     "name": "Background",
+     "props": {
+      "label": ""
+     },
+     "inputs": {
+      "Color": [
+       0.11438536643981934,
+       0.11438536643981934,
+       0.11438536643981934,
+       1.0
+      ],
+      "Strength": 1.0,
+      "Weight": 0.0
+     }
+    },
+    {
+     "type": "ShaderNodeOutputWorld",
+     "name": "World Output",
+     "props": {
+      "label": "",
+      "is_active_output": true,
+      "target": "ALL"
+     },
+     "inputs": {}
+    }
+   ],
+   "links": [
+    [
+     "Background",
+     "Background",
+     "World Output",
+     "Surface"
+    ]
+   ]
+  }
+ },
+ "lights": [
+  {
+   "name": "Area",
+   "type": "AREA",
+   "matrix_world": [
+    [
+     0.43921560049057007,
+     -0.43196436762809753,
+     0.5985174775123596,
+     2.4037907123565674
+    ],
+    [
+     0.153819739818573,
+     0.4015491306781769,
+     0.7327781915664673,
+     3.6976161003112793
+    ],
+    [
+     -1.160141944885254,
+     -0.11029624938964844,
+     0.32374829053878784,
+     1.2684671878814697
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "AREA",
+    "use_temperature": false,
+    "color": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 3.3789939880371094,
+    "normalize": true,
+    "energy": 29.400005340576172,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "shape": "SQUARE",
+    "size": 1.9838415384292603,
+    "size_y": 1.0,
+    "spread": 2.6354472637176514
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "Area.001",
+   "type": "AREA",
+   "matrix_world": [
+    [
+     0.3668738603591919,
+     -0.8906368017196655,
+     0.26864415407180786,
+     0.9255114197731018
+    ],
+    [
+     0.4860268533229828,
+     0.4297429323196411,
+     0.7609854936599731,
+     2.0121941566467285
+    ],
+    [
+     -0.7932096123695374,
+     -0.14861741662025452,
+     0.5905348658561707,
+     3.401916980743408
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "AREA",
+    "use_temperature": false,
+    "color": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 8.800003051757812,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "shape": "SQUARE",
+    "size": 0.28815582394599915,
+    "size_y": 1.0,
+    "spread": 3.1415927410125732
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "Area.002",
+   "type": "AREA",
+   "matrix_world": [
+    [
+     0.9786103963851929,
+     -0.20425692200660706,
+     0.024511829018592834,
+     0.4151687026023865
+    ],
+    [
+     0.0840868279337883,
+     0.28840455412864685,
+     -0.9538093209266663,
+     -6.571229934692383
+    ],
+    [
+     0.1877528429031372,
+     0.935468852519989,
+     0.29941099882125854,
+     3.088980197906494
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "AREA",
+    "use_temperature": true,
+    "color": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "temperature": 4896.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 9.800003051757812,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "shape": "SQUARE",
+    "size": 1.6695421934127808,
+    "size_y": 1.0,
+    "spread": 2.3108160495758057
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "Area.003",
+   "type": "AREA",
+   "matrix_world": [
+    [
+     0.8859456777572632,
+     -0.16136187314987183,
+     -0.4348132610321045,
+     -3.0839481353759766
+    ],
+    [
+     -0.3937590420246124,
+     0.23367738723754883,
+     -0.8890155553817749,
+     -6.571229934692383
+    ],
+    [
+     0.24505923688411713,
+     0.9588311910629272,
+     0.14348778128623962,
+     2.7535085678100586
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "AREA",
+    "use_temperature": true,
+    "color": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "temperature": 5852.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 3.600003719329834,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "shape": "SQUARE",
+    "size": 0.4488408863544464,
+    "size_y": 1.0,
+    "spread": 3.1415927410125732
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "Area.004",
+   "type": "AREA",
+   "matrix_world": [
+    [
+     0.9624305963516235,
+     -0.10733211040496826,
+     -0.2494135946035385,
+     -2.331782817840576
+    ],
+    [
+     -0.0657711997628212,
+     0.7990493774414062,
+     -0.597657322883606,
+     -5.645148277282715
+    ],
+    [
+     0.2634415924549103,
+     0.591607928276062,
+     0.7619702219963074,
+     8.493412971496582
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "AREA",
+    "use_temperature": true,
+    "color": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "temperature": 4460.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 10.500003814697266,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "shape": "SQUARE",
+    "size": 1.9910846948623657,
+    "size_y": 1.0,
+    "spread": 1.3072518110275269
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "Area.005",
+   "type": "AREA",
+   "matrix_world": [
+    [
+     0.05058176815509796,
+     -0.9263126850128174,
+     -0.3731294870376587,
+     -2.6958227157592773
+    ],
+    [
+     0.9461585879325867,
+     0.12734581530094147,
+     -0.1798238456249237,
+     -1.16964852809906
+    ],
+    [
+     0.20766691863536835,
+     -0.3545812666416168,
+     0.9101855754852295,
+     8.493412971496582
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "AREA",
+    "use_temperature": true,
+    "color": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "temperature": 5764.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 2.28310489654541,
+    "normalize": true,
+    "energy": 57.0,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "shape": "SQUARE",
+    "size": 0.6701021790504456,
+    "size_y": 1.0,
+    "spread": 3.1415927410125732
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "Area.006",
+   "type": "AREA",
+   "matrix_world": [
+    [
+     0.15876898169517517,
+     -0.6528033018112183,
+     -0.9234440326690674,
+     -1.7728029489517212
+    ],
+    [
+     1.9089746475219727,
+     -0.32624635100364685,
+     0.16074739396572113,
+     0.34272876381874084
+    ],
+    [
+     -0.4599006772041321,
+     -1.579560399055481,
+     0.34844130277633667,
+     2.1885170936584473
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "AREA",
+    "use_temperature": true,
+    "color": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "energy": 34.400001525878906,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "shape": "SQUARE",
+    "size": 0.34565940499305725,
+    "size_y": 1.0,
+    "spread": 3.1415927410125732
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "Area.007",
+   "type": "AREA",
+   "matrix_world": [
+    [
+     1.3688594102859497,
+     12.3271484375,
+     0.10257574170827866,
+     -7.110499382019043
+    ],
+    [
+     -0.5846039056777954,
+     27.520526885986328,
+     0.3478584885597229,
+     -16.580097198486328
+    ],
+    [
+     0.06754627078771591,
+     -11.629462242126465,
+     0.9319187998771667,
+     16.585302352905273
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": false,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "AREA",
+    "use_temperature": false,
+    "color": [
+     0.45205575227737427,
+     0.7702295780181885,
+     1.0
+    ],
+    "temperature": 15160.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 1.0502290725708008,
+    "normalize": true,
+    "energy": 172.6000213623047,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "shape": "SQUARE",
+    "size": 1.3085590600967407,
+    "size_y": 1.0,
+    "spread": 1.6790070533752441
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "Area.008",
+   "type": "AREA",
+   "matrix_world": [
+    [
+     10.0,
+     0.0,
+     0.0,
+     -0.05821371078491211
+    ],
+    [
+     0.0,
+     10.0,
+     0.0,
+     0.056415408849716187
+    ],
+    [
+     0.0,
+     0.0,
+     1.0,
+     1.9594066143035889
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": true,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "AREA",
+    "use_temperature": false,
+    "color": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "temperature": 15160.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 1.0,
+    "normalize": false,
+    "energy": 1.0,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "shape": "DISK",
+    "size": 100.0,
+    "size_y": 1.0,
+    "spread": 0.0
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "Area.009",
+   "type": "AREA",
+   "matrix_world": [
+    [
+     9.815264701843262,
+     -1.876865029335022,
+     0.03714263066649437,
+     -0.05821371078491211
+    ],
+    [
+     0.3646661043167114,
+     -0.07054628431797028,
+     -0.9993099570274353,
+     -0.7184109687805176
+    ],
+    [
+     1.8781901597976685,
+     9.822036743164062,
+     -8.001390233403072e-05,
+     1.2199900150299072
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": true,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "AREA",
+    "use_temperature": false,
+    "color": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "temperature": 15160.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": -0.22831058502197266,
+    "normalize": true,
+    "energy": 1000.0,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "use_absolute_resolution": false,
+    "shape": "DISK",
+    "size": 100.0,
+    "size_y": 1.0,
+    "spread": 3.1415927410125732
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "OV_Fill",
+   "type": "SUN",
+   "matrix_world": [
+    [
+     0.09311458468437195,
+     0.8271693587303162,
+     -0.5541844964027405,
+     0.0
+    ],
+    [
+     -0.2768847942352295,
+     -0.5131344795227051,
+     -0.8124209642410278,
+     0.0
+    ],
+    [
+     -0.9563809037208557,
+     0.2290935069322586,
+     0.18125033378601074,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": true,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SUN",
+    "use_temperature": false,
+    "color": [
+     0.9595417976379395,
+     0.9480695724487305,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "angle": 0.9038838148117065,
+    "energy": 0.2595265209674835,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "shadow_cascade_max_distance": 200.0,
+    "shadow_cascade_count": 4,
+    "shadow_cascade_exponent": 0.800000011920929,
+    "shadow_cascade_fade": 0.10000000149011612
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "OV_Fill.001",
+   "type": "SUN",
+   "matrix_world": [
+    [
+     -0.2969648241996765,
+     0.9536007642745972,
+     -0.04957248643040657,
+     0.0
+    ],
+    [
+     -0.8966298699378967,
+     -0.29632654786109924,
+     -0.32900673151016235,
+     0.0
+    ],
+    [
+     -0.32843074202537537,
+     -0.05325525999069214,
+     0.943025529384613,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": true,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SUN",
+    "use_temperature": false,
+    "color": [
+     0.9984126091003418,
+     0.9977219104766846,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "angle": 0.2999999523162842,
+    "energy": 0.6865180134773254,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "shadow_cascade_max_distance": 200.0,
+    "shadow_cascade_count": 4,
+    "shadow_cascade_exponent": 0.800000011920929,
+    "shadow_cascade_fade": 0.10000000149011612
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "OV_Key",
+   "type": "SUN",
+   "matrix_world": [
+    [
+     -0.29019635915756226,
+     -0.5117022395133972,
+     -0.8086698055267334,
+     0.0
+    ],
+    [
+     -0.28826263546943665,
+     -0.7590431571006775,
+     0.5837448835372925,
+     0.0
+    ],
+    [
+     -0.9125189185142517,
+     0.4025099277496338,
+     0.07276691496372223,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": true,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SUN",
+    "use_temperature": false,
+    "color": [
+     0.9595417976379395,
+     0.9480695724487305,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "angle": 0.9280873537063599,
+    "energy": 0.5653052926063538,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "shadow_cascade_max_distance": 200.0,
+    "shadow_cascade_count": 4,
+    "shadow_cascade_exponent": 0.800000011920929,
+    "shadow_cascade_fade": 0.10000000149011612
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "OV_Key.001",
+   "type": "SUN",
+   "matrix_world": [
+    [
+     -0.7777986526489258,
+     -0.4410339891910553,
+     0.4477926790714264,
+     0.0
+    ],
+    [
+     0.37451180815696716,
+     0.2469472736120224,
+     0.8937326073646545,
+     0.0
+    ],
+    [
+     -0.5047476291656494,
+     0.862847626209259,
+     -0.0269028227776289,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "hide_render": false,
+   "hide_viewport": true,
+   "object": {
+    "visible_camera": false,
+    "visible_diffuse": true,
+    "visible_glossy": true,
+    "visible_transmission": true,
+    "visible_volume_scatter": true,
+    "visible_shadow": true
+   },
+   "light": {
+    "type": "SUN",
+    "use_temperature": false,
+    "color": [
+     0.9984126091003418,
+     0.9977219104766846,
+     1.0
+    ],
+    "temperature": 6500.0,
+    "specular_factor": 1.0,
+    "diffuse_factor": 1.0,
+    "transmission_factor": 1.0,
+    "volume_factor": 1.0,
+    "use_custom_distance": false,
+    "cutoff_distance": 40.0,
+    "use_shadow": true,
+    "exposure": 0.0,
+    "normalize": true,
+    "angle": 1.5825858116149902,
+    "energy": 2.051130533218384,
+    "shadow_buffer_clip_start": 0.05000000074505806,
+    "shadow_soft_size": 0.0,
+    "shadow_filter_radius": 1.0,
+    "shadow_maximum_resolution": 0.0010000000474974513,
+    "use_shadow_jitter": false,
+    "shadow_jitter_overblur": 10.0,
+    "shadow_cascade_max_distance": 200.0,
+    "shadow_cascade_count": 4,
+    "shadow_cascade_exponent": 0.800000011920929,
+    "shadow_cascade_fade": 0.10000000149011612
+   },
+   "cycles": {
+    "max_bounces": 1024,
+    "use_multiple_importance_sampling": true,
+    "is_portal": false,
+    "is_caustics_light": false
+   },
+   "use_nodes": true,
+   "node_tree": {
+    "nodes": [
+     {
+      "type": "ShaderNodeEmission",
+      "name": "Emission",
+      "props": {
+       "label": ""
+      },
+      "inputs": {
+       "Color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+       ],
+       "Strength": 1.0,
+       "Weight": 0.0
+      }
+     },
+     {
+      "type": "ShaderNodeOutputLight",
+      "name": "Light Output",
+      "props": {
+       "label": "",
+       "is_active_output": true,
+       "target": "ALL"
+      },
+      "inputs": {}
+     }
+    ],
+    "links": [
+     [
+      "Emission",
+      "Emission",
+      "Light Output",
+      "Surface"
+     ]
+    ]
+   }
+  }
+ ]
+}

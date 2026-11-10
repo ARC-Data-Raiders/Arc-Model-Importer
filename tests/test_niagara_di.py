@@ -8,10 +8,11 @@ from pathlib import Path
 
 import numpy as np
 
-import niagara_di as di
-from niagara_runtime import ExecutionError, execute
-from niagara_vm import OPCODES
-from niagara_vm_numpy import execute_np
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara import niagara as di
+from Niagara.niagara import ExecutionError, execute
+from Niagara.niagara import OPCODES
+from Niagara.niagara import execute_np
 
 IDS = {name: code for code, name in OPCODES.items()}
 FIXTURE = Path(__file__).resolve().parent / 'fixtures' / 'niagara_curve_vectors.json'
@@ -129,7 +130,7 @@ class CorpusTests(unittest.TestCase):
         return next(Path(CORPUS).rglob(name + '.json'))
 
     def test_bind_script(self):
-        import niagara_ir
+        from Niagara import niagara as niagara_ir
         exports = niagara_ir.exports_from_document(json.loads(self.corpus_file('NS_Cin_FakeWeaponTracers').read_text(encoding='utf-8-sig')))
         rows = [(b.fn_index, b.name, b.kind, b.di_class, b.di_export, b.user_ptr, b.num_inputs, b.num_outputs) for b in di.bind_script(exports, 7)]
         self.assertEqual(rows, [(0, 'SampleCurve', 'di', 'NiagaraDataInterfaceCurve', 1, -1, 1, 1)])
@@ -140,8 +141,8 @@ class CorpusTests(unittest.TestCase):
         self.assertEqual(handler(0, [np.array([0x3f000000], np.uint32)], 1, 0)[0].tolist(), [0x3f0108e6])
 
     def test_scheduler_real(self):
-        from niagara_sched_model import load_system
-        from niagara_scheduler import BakeError, BakeInputs, Scheduler, bake
+        from Niagara.niagara import load_system
+        from Niagara.niagara import BakeError, BakeInputs, Scheduler, bake
         model = load_system(self.corpus_file('NS_Cin_FakeWeaponTracers'))
         inputs = BakeInputs(ticks=120, di_mode='real', svml_shim_path=SHIM)
         with tempfile.TemporaryDirectory() as temp:

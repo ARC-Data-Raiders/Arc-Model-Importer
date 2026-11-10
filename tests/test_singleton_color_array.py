@@ -10,7 +10,7 @@ import unittest
 
 
 def resolver():
-    source = Path(__file__).resolve().parents[1] / 'materials/clothing.py'
+    source = Path(__file__).resolve().parents[1] / 'Shared/materials/clothing.py'
     module = ast.parse(source.read_text(encoding='utf-8'))
     function = next(n for n in module.body if isinstance(n, ast.FunctionDef) and n.name == '_find_colortex_slice_png')
     def find_slice(paths, index):

@@ -2,13 +2,13 @@
   "version": 2,
   "weapons": {
     "HandCannon_SingleAction_01": {
-      "preview": "T_UI_Icon_HandCannon_SingleAction_01_Big_T3.png",
+      "preview": "T_UI_Icon_HandCannon_SingleAction_01_Big_T3.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_HandCannon_SingleAction_01_Ascended_Default_A.json",
           "label": "Default",
           "reference": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/Ascended/Default/DA_WeaponVisuals_HandCannon_SingleAction_01_Ascended_Default_A",
-          "preview": "T_UI_Icon_HandCannon_SingleAction_01_Ascended_Big_T0.png"
+          "preview": "T_UI_Icon_HandCannon_SingleAction_01_Ascended_Big_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Firearms/HandCannon_SingleAction_01/DA_WeaponVisuals_HandCannon_01",
@@ -93,13 +93,13 @@
       ]
     },
     "BattleRifle_EnergyBurst_01": {
-      "preview": "T_UI_Icon_BattleRifle_EnergyBurst_01_BigIcon_T0.png",
+      "preview": "T_UI_Icon_BattleRifle_EnergyBurst_01_BigIcon_T0.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A.json",
           "label": "Default",
           "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/Ascended/Default/DA_WeaponVisuals_BattleRifle_EnergyBurst_01_Ascended_Default_A",
-          "preview": "T_UI_Icon_BattleRifle_EnergyBurst_01_Ascended_BigIcon_T0.png"
+          "preview": "T_UI_Icon_BattleRifle_EnergyBurst_01_Ascended_BigIcon_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Firearms/BattleRifle_EnergyBurst_01/DA_WeaponVisuals_BattleRifle_EnergyBurst_01",
@@ -231,7 +231,7 @@
       ]
     },
     "AssaultRifle_Burst_01": {
-      "preview": "T_UI_Icon_AssaultRifle_Burst_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_AssaultRifle_Burst_01_Big_A_T3.avif",
       "variants": [],
       "base_visual": "/Game/Pioneer/Items/Firearms/AssaultRifle_Burst_01/DA_WeaponVisuals_AssaultRifle_Burst_01",
       "skeleton": "/Game/Pioneer/Items/Firearms/AssaultRifle_Burst_01/SK_AssaultRifle_Burst_01_A_Skeleton",
@@ -276,7 +276,7 @@
       ]
     },
     "HandCannon_DoubleAction_Snubnose_01": {
-      "preview": "T_UI_Icon_HandCannon_DoubleAction_Snubnose_01_BigIcon_T3.png",
+      "preview": "T_UI_Icon_HandCannon_DoubleAction_Snubnose_01_BigIcon_T3.avif",
       "variants": [],
       "base_visual": "/Game/Pioneer/Items/Firearms/HandCannon_DoubleAction_Snubnose_01/DA_WeaponVisuals_HandCannon_DoubleAction_Snubnose_01",
       "skeleton": "/Game/Pioneer/Items/Firearms/HandCannon_DoubleAction_Snubnose_01/SK_HandCannon_DoubleAction_Snubnose_01_A_Skeleton",
@@ -319,13 +319,13 @@
       ]
     },
     "AssaultRifle_Heavy_01": {
-      "preview": "T_UI_Icon_AssaultRifle_Heavy_01_BigIcon_T3.png",
+      "preview": "T_UI_Icon_AssaultRifle_Heavy_01_BigIcon_T3.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_Heavy_01_Ascended_Default_A.json",
           "label": "Default",
           "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/Ascended/Default/DA_WeaponVisuals_AssaultRifle_Heavy_01_Ascended_Default_A",
-          "preview": "T_UI_Icon_AssaultRifle_Heavy_01_Ascended_BigIcon_T3.png"
+          "preview": "T_UI_Icon_AssaultRifle_Heavy_01_Ascended_BigIcon_T3.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Firearms/AssaultRifle_Heavy_01/DA_WeaponVisuals_AssaultRifle_Heavy_01",
@@ -404,7 +404,7 @@
       ]
     },
     "SMG_01": {
-      "preview": "T_UI_Icon_SMG_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_SMG_01_Big_A_T3.avif",
       "variants": [],
       "base_visual": "/Game/Pioneer/Items/Firearms/SMG_01/DA_WeaponVisuals_SMG_01",
       "skeleton": "/Game/Pioneer/Items/Firearms/SMG_01/SK_SMG_01_A_Skeleton",
@@ -452,13 +452,13 @@
       ]
     },
     "Pistol_01": {
-      "preview": "T_UI_Icon_Pistol_01_BigIcon_T3.png",
+      "preview": "T_UI_Icon_Pistol_01_BigIcon_T3.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_Pistol_01_Ascended_Default_A.json",
           "label": "Default",
           "reference": "/Game/Pioneer/Items/Firearms/Pistol_01/Ascended/Default/DA_WeaponVisuals_Pistol_01_Ascended_Default_A",
-          "preview": "T_UI_Icon_Pistol_01_Ascended_BigIcon_T0.png"
+          "preview": "T_UI_Icon_Pistol_01_Ascended_BigIcon_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Firearms/Pistol_01/DA_WeaponVisuals_Pistol_01",
@@ -587,25 +587,25 @@
       ]
     },
     "SMG_Medium_01": {
-      "preview": "T_UI_Icon_SMG_Medium_01_BigIcon_T3.png",
+      "preview": "T_UI_Icon_SMG_Medium_01_BigIcon_T3.avif",
       "variants": [
         {
           "id": "Ascended/Carbine/DA_WeaponVisuals_SMG_Medium_01_Ascended_Carbine_A.json",
           "label": "Carbine",
           "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Carbine/DA_WeaponVisuals_SMG_Medium_01_Ascended_Carbine_A",
-          "preview": "T_UI_Icon_SMG_Medium_01_Carbine_BigIcon_T0.png"
+          "preview": "T_UI_Icon_SMG_Medium_01_Carbine_BigIcon_T0.avif"
         },
         {
           "id": "Ascended/Default/DA_WeaponVisuals_SMG_Medium_01_Ascended_Default_A.json",
           "label": "Default",
           "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/Default/DA_WeaponVisuals_SMG_Medium_01_Ascended_Default_A",
-          "preview": "T_UI_Icon_SMG_Medium_01_Ascended_BigIcon_T0.png"
+          "preview": "T_UI_Icon_SMG_Medium_01_Ascended_BigIcon_T0.avif"
         },
         {
           "id": "Ascended/SprintShooting/DA_WeaponVisuals_SMG_Medium_01_Ascended_SprintShooting_A.json",
           "label": "Sprint Shooting",
           "reference": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/Ascended/SprintShooting/DA_WeaponVisuals_SMG_Medium_01_Ascended_SprintShooting_A",
-          "preview": "T_UI_Icon_SMG_Medium_01_Ascended_BigIcon_T0.png"
+          "preview": "T_UI_Icon_SMG_Medium_01_Ascended_BigIcon_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Firearms/SMG_Medium_01/DA_WeaponVisuals_SMG_Medium_01",
@@ -701,7 +701,7 @@
       ]
     },
     "Shotgun_Energy_Adjustable_01": {
-      "preview": "T_UI_Icon_Shotgun_Energy_Adjustable_01_Big_A_T0.png",
+      "preview": "T_UI_Icon_Shotgun_Energy_Adjustable_01_Big_A_T0.avif",
       "variants": [],
       "base_visual": "/Game/Pioneer/Items/Firearms/Shotgun_Energy_Adjustable_01/DA_WeaponVisuals_Shotgun_Energy_Adjustable_01",
       "skeleton": "/Game/Pioneer/Items/Firearms/Shotgun_Energy_Adjustable_01/SK_Shotgun_Energy_Adjustable_01_A_Skeleton",
@@ -720,13 +720,13 @@
       ]
     },
     "Special_BeamRifle_01": {
-      "preview": "T_UI_Icon_Special_BeamRifle_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_Special_BeamRifle_01_Big_A_T3.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_Special_BeamRifle_01_Ascended_Default_A.json",
           "label": "Default",
           "reference": "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/Ascended/Default/DA_WeaponVisuals_Special_BeamRifle_01_Ascended_Default_A",
-          "preview": "T_UI_Icon_Special_BeamRifle_01_Ascended_Big_A_T0.png"
+          "preview": "T_UI_Icon_Special_BeamRifle_01_Ascended_Big_A_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Firearms/Special_BeamRifle_01/DA_WeaponVisuals_Special_BeamRifle_01",
@@ -799,7 +799,7 @@
       ]
     },
     "BattleRifle_BreachAction_01": {
-      "preview": "T_UI_Icon_BattleRifle_BreachAction_01_BigIcon_T3.png",
+      "preview": "T_UI_Icon_BattleRifle_BreachAction_01_BigIcon_T3.avif",
       "variants": [],
       "base_visual": "/Game/Pioneer/Items/Firearms/BattleRifle_BreachAction_01/DA_WeaponVisuals_BattleRifle_BreachAction_01",
       "skeleton": "/Game/Pioneer/Items/Firearms/BattleRifle_BreachAction_01/SK_BattleRifle_BreachAction_A_Skeleton",
@@ -843,13 +843,13 @@
       ]
     },
     "Pistol_Silenced_01": {
-      "preview": "T_UI_Icon_Pistol_Silenced_01_BigIcon_T3.png",
+      "preview": "T_UI_Icon_Pistol_Silenced_01_BigIcon_T3.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_Pistol_Silenced_01_Ascended_Default_A.json",
           "label": "Default",
           "reference": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/Ascended/Default/DA_WeaponVisuals_Pistol_Silenced_01_Ascended_Default_A",
-          "preview": "T_UI_Icon_Pistol_Silenced_01_Ascended_BigIcon_T0.png"
+          "preview": "T_UI_Icon_Pistol_Silenced_01_Ascended_BigIcon_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Firearms/Pistol_Silenced_01/DA_WeaponVisuals_Pistol_Silenced_01",
@@ -943,19 +943,19 @@
       ]
     },
     "Launcher_AntiArc_Medium_01": {
-      "preview": "T_UI_Icon_Launcher_AntiArc_Medium_01_BigIcon_T3.png",
+      "preview": "T_UI_Icon_Launcher_AntiArc_Medium_01_BigIcon_T3.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_Ascended_Default_A.json",
           "label": "Default",
           "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_Ascended_Default_A",
-          "preview": "T_UI_Icon_Launcher_AntiArc_Medium_01_Ascended_BigIcon_T0.png"
+          "preview": "T_UI_Icon_Launcher_AntiArc_Medium_01_Ascended_BigIcon_T0.avif"
         },
         {
           "id": "Ascended/MagReload/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_MagReload_A.json",
           "label": "Mag Reload",
           "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/Ascended/MagReload/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_MagReload_A",
-          "preview": "T_UI_Icon_Launcher_AntiArc_Medium_01_Ascended_BigIcon_T0.png"
+          "preview": "T_UI_Icon_Launcher_AntiArc_Medium_01_Ascended_BigIcon_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_Medium_01/DA_WeaponVisuals_Launcher_AntiArc_Medium_01_A",
@@ -1024,13 +1024,13 @@
       ]
     },
     "Shotgun_PumpAction_01": {
-      "preview": "T_UI_Icon_Shotgun_PumpAction_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_Shotgun_PumpAction_01_Big_A_T3.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_Shotgun_PumpAction_01_Ascended_Default_A.json",
           "label": "Default",
           "reference": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/Ascended/Default/DA_WeaponVisuals_Shotgun_PumpAction_01_Ascended_Default_A",
-          "preview": "T_UI_Icon_Shotgun_PumpAction_01_Ascended_Big_A_T0.png"
+          "preview": "T_UI_Icon_Shotgun_PumpAction_01_Ascended_Big_A_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Firearms/Shotgun_PumpAction_01/DA_WeaponVisuals_Shotgun_PumpAction_01",
@@ -1114,13 +1114,13 @@
       ]
     },
     "Launcher_AntiArc_SingleShot_01": {
-      "preview": "T_UI_Icon_Launcher_AntiArc_SingleShot_01_BigIcon_T3.png",
+      "preview": "T_UI_Icon_Launcher_AntiArc_SingleShot_01_BigIcon_T3.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_Ascended_Default_A_02.json",
           "label": "Default 02",
           "reference": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/Ascended/Default/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_Ascended_Default_A_02",
-          "preview": "T_UI_Icon_Launcher_AntiArc_SingleShot_01_Ascended_BigIcon_T0.png"
+          "preview": "T_UI_Icon_Launcher_AntiArc_SingleShot_01_Ascended_BigIcon_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Launchers/Launcher_AntiArc_SingleShot_01/DA_WeaponVisuals_Launcher_AntiArc_SingleShot_01_A",
@@ -1214,19 +1214,19 @@
       ]
     },
     "Special_Railgun_01": {
-      "preview": "T_UI_Icon_Special_Railgun_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_Special_Railgun_01_Big_A_T3.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Default_A.json",
           "label": "Default",
           "reference": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Default/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Default_A",
-          "preview": "T_UI_Icon_Special_Railgun_01_Ascended_Big_A_T0.png"
+          "preview": "T_UI_Icon_Special_Railgun_01_Ascended_Big_A_T0.avif"
         },
         {
           "id": "Ascended/Scoped/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Scoped_A.json",
           "label": "Scoped",
           "reference": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/Ascended/Scoped/DA_WeaponVisuals_Special_SniperRifle_Railgun_01_Ascended_Scoped_A",
-          "preview": "T_UI_Icon_Special_Railgun_01_Scoped_Big_A_T0.png"
+          "preview": "T_UI_Icon_Special_Railgun_01_Scoped_Big_A_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Firearms/Special_Railgun_01/DA_WeaponVisuals_Special_Railgun_01",
@@ -1317,13 +1317,13 @@
       ]
     },
     "AssaultRifle_Pneumatic_01": {
-      "preview": "T_UI_Icon_AssaultRifle_Pneumatic_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_AssaultRifle_Pneumatic_01_Big_A_T3.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_Pneumatic_01_Ascended_Default_A.json",
           "label": "Default",
           "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/Ascended/Default/DA_WeaponVisuals_AssaultRifle_Pneumatic_01_Ascended_Default_A",
-          "preview": "T_UI_Icon_AssaultRifle_Pneumatic_01_Ascended_Big_A_T0.png"
+          "preview": "T_UI_Icon_AssaultRifle_Pneumatic_01_Ascended_Big_A_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Firearms/AssaultRifle_Pneumatic_01/DA_WeaponVisuals_AssaultRifle_Pneumatic_01",
@@ -1409,13 +1409,13 @@
       ]
     },
     "SniperRifle_BoltAction_Medium_01": {
-      "preview": "T_UI_Icon_SniperRifle_BoltAction_Medium_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_SniperRifle_BoltAction_Medium_01_Big_A_T3.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_Ascended_Default_A_01.json",
           "label": "Default 01",
           "reference": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/Ascended/Default/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01_Ascended_Default_A_01",
-          "preview": "T_UI_Icon_SniperRifle_BoltAction_Medium_01_Ascended_Big_A_T0.png"
+          "preview": "T_UI_Icon_SniperRifle_BoltAction_Medium_01_Ascended_Big_A_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Firearms/SniperRifle_BoltAction_Medium_01/DA_WeaponVisuals_SniperRifle_BoltAction_Medium_01",
@@ -1518,19 +1518,19 @@
       ]
     },
     "AssaultRifle_LowTier_01": {
-      "preview": "T_UI_Icon_AssaultRifle_LowTier_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_AssaultRifle_LowTier_01_Big_A_T3.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_Default_A.json",
           "label": "Default",
           "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/Default/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_Default_A",
-          "preview": "T_UI_Icon_AssaultRifle_LowTier_01_Ascended_Big_A_T0.png"
+          "preview": "T_UI_Icon_AssaultRifle_LowTier_01_Ascended_Big_A_T0.avif"
         },
         {
           "id": "Ascended/DrumMag/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_DrumMag_A.json",
           "label": "Drum Mag",
           "reference": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/Ascended/DrumMag/DA_WeaponVisuals_AssaultRifle_LowTier_01_Ascended_DrumMag_A",
-          "preview": "T_UI_Icon_AssaultRifle_LowTier_01_MoreReload_DrumMag_Big_A_T0.png"
+          "preview": "T_UI_Icon_AssaultRifle_LowTier_01_MoreReload_DrumMag_Big_A_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Firearms/AssaultRifle_LowTier_01/DA_WeaponVisuals_AssaultRifle_LowTier_01",
@@ -1637,19 +1637,19 @@
       ]
     },
     "BattleRifle_LeverAction_01": {
-      "preview": "T_UI_Icon_BattleRifle_LeverAction_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_BattleRifle_LeverAction_01_Big_A_T3.avif",
       "variants": [
         {
           "id": "Ascended/Default/DA_WeaponVisuals_BattleRifle_LeverAction_01_Ascended_Default_A.json",
           "label": "Default",
           "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Ascended/Default/DA_WeaponVisuals_BattleRifle_LeverAction_01_Ascended_Default_A",
-          "preview": "T_UI_Icon_BattleRifle_LeverAction_01_Ascended_Big_A_T3.png"
+          "preview": "T_UI_Icon_BattleRifle_LeverAction_01_Ascended_Big_A_T3.avif"
         },
         {
           "id": "Ascended/Scoped/DA_WeaponVisuals_BattleRifle_LeverAction_01_Ascended_Scoped_A.json",
           "label": "Scoped",
           "reference": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/Ascended/Scoped/DA_WeaponVisuals_BattleRifle_LeverAction_01_Ascended_Scoped_A",
-          "preview": "T_UI_Icon_BattleRifle_LeverAction_01_Scoped_Big_A_T0.png"
+          "preview": "T_UI_Icon_BattleRifle_LeverAction_01_Scoped_Big_A_T0.avif"
         }
       ],
       "base_visual": "/Game/Pioneer/Items/Firearms/BattleRifle_LeverAction_01/DA_WeaponVisuals_BattleRifle_LeverAction_01",
@@ -1734,7 +1734,7 @@
       ]
     },
     "BattleRifle_SemiAuto_Light_01": {
-      "preview": "T_UI_Icon_BattleRifle_SemiAuto_Light_01_BigIcon_T3.png",
+      "preview": "T_UI_Icon_BattleRifle_SemiAuto_Light_01_BigIcon_T3.avif",
       "variants": [],
       "base_visual": "/Game/Pioneer/Items/Firearms/BattleRifle_SemiAuto_Light_01/DA_WeaponVisuals_BattleRifle_SemiAuto_Light_01",
       "skeleton": "/Game/Pioneer/Items/Firearms/BattleRifle_SemiAuto_Light_01/SK_BattleRifle_SemiAuto_Light_01_A_Skeleton",
@@ -1777,7 +1777,7 @@
       ]
     },
     "SMG_LowTier_01": {
-      "preview": "T_UI_Icon_SMG_LowTier_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_SMG_LowTier_01_Big_A_T3.avif",
       "variants": [],
       "base_visual": "/Game/Pioneer/Items/Firearms/SMG_LowTier_01/DA_WeaponVisuals_SMG_LowTier_01",
       "skeleton": "/Game/Pioneer/Items/Firearms/SMG_LowTier_01/SK_SMG_LowTier_01_A_Skeleton",
@@ -1816,7 +1816,7 @@
       ]
     },
     "AssaultRifle_Bullpup_01": {
-      "preview": "T_UI_Icon_AssaultRifle_Bullpup_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_AssaultRifle_Bullpup_01_Big_A_T3.avif",
       "variants": [],
       "base_visual": "/Game/Pioneer/Items/Firearms/AssaultRifle_Bullpup_01/DA_WeaponVisuals_AssaultRifle_Bullpup_01",
       "skeleton": "/Game/Pioneer/Items/Firearms/AssaultRifle_Bullpup_01/SK_AssaultRifle_Bullpup_01_A_Skeleton",
@@ -1865,7 +1865,7 @@
       ]
     },
     "LMG_Medium_01": {
-      "preview": "T_UI_Icon_LMG_Medium_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_LMG_Medium_01_Big_A_T3.avif",
       "variants": [],
       "base_visual": "/Game/Pioneer/Items/Firearms/LMG_Medium_01/DA_WeaponVisuals_LMG_Medium_01",
       "skeleton": "/Game/Pioneer/Items/Firearms/LMG_Medium_01/SK_LMG_Medium_01_A_Skeleton",
@@ -1910,7 +1910,7 @@
       ]
     },
     "Pistol_HighPower_01": {
-      "preview": "T_UI_Icon_Pistol_HighPower_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_Pistol_HighPower_01_Big_A_T3.avif",
       "variants": [],
       "base_visual": "/Game/Pioneer/Items/Firearms/Pistol_HighPower_01/DA_WeaponVisuals_Pistol_HighPower_01",
       "skeleton": "/Game/Pioneer/Items/Firearms/Pistol_HighPower_01/SK_Pistol_HighPower_01_A_Skeleton",
@@ -1954,7 +1954,7 @@
       ]
     },
     "Shotgun_SemiAuto_01": {
-      "preview": "T_UI_Icon_Shotgun_SemiAuto_01_Big_A_T3.png",
+      "preview": "T_UI_Icon_Shotgun_SemiAuto_01_Big_A_T3.avif",
       "variants": [],
       "base_visual": "/Game/Pioneer/Items/Firearms/Shotgun_SemiAuto_01/DA_WeaponVisuals_Shotgun_SemiAuto_01",
       "skeleton": "/Game/Pioneer/Items/Firearms/Shotgun_SemiAuto_01/SK_Shotgun_SemiAuto_01_A_Skeleton",
@@ -2000,121 +2000,121 @@
   },
   "mods": {
     "UnderBarrel_AngledGrip_01": {
-      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_AngledGrip_01.png"
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_AngledGrip_01.avif"
     },
     "UnderBarrel_AngledGrip_02": {
-      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_AngledGrip_02.png"
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_AngledGrip_02.avif"
     },
     "UnderBarrel_AngledGrip_03": {
-      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_AngledGrip_03.png"
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_AngledGrip_03.avif"
     },
     "Muzzle_Compensator_01": {
-      "preview": "T_UI_Icon_WeaponMod_Muzzle_Compensator_01.png"
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Compensator_01.avif"
     },
     "Muzzle_Compensator_02": {
-      "preview": "T_UI_Icon_WeaponMod_Muzzle_Compensator_02.png"
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Compensator_02.avif"
     },
     "Muzzle_Compensator_03": {
-      "preview": "T_UI_Icon_WeaponMod_Muzzle_Compensator_03.png"
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Compensator_03.avif"
     },
     "Muzzle_ExtendedBarrel_01": {
-      "preview": "T_UI_Icon_WeaponMod_Muzzle_ExtendedBarrel_01.png"
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_ExtendedBarrel_01.avif"
     },
     "Muzzle_ExtendedBarrel_02": {
-      "preview": "T_UI_Icon_WeaponMod_Muzzle_ExtendedBarrel_02.png"
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_ExtendedBarrel_02.avif"
     },
     "Muzzle_ExtendedBarrel_03": {
-      "preview": "T_UI_Icon_WeaponMod_Muzzle_ExtendedBarrel_03.png"
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_ExtendedBarrel_03.avif"
     },
     "MagazineLight_Extended_01": {
-      "preview": "T_UI_Icon_WeaponMod_MagazineLight_Extended_01.png"
+      "preview": "T_UI_Icon_WeaponMod_MagazineLight_Extended_01.avif"
     },
     "MagazineLight_Extended_02": {
-      "preview": "T_UI_Icon_WeaponMod_MagazineLight_Extended_02.png"
+      "preview": "T_UI_Icon_WeaponMod_MagazineLight_Extended_02.avif"
     },
     "MagazineLight_Extended_03": {
-      "preview": "T_UI_Icon_WeaponMod_MagazineLight_Extended_03.png"
+      "preview": "T_UI_Icon_WeaponMod_MagazineLight_Extended_03.avif"
     },
     "MagazineMedium_Extended_01": {
-      "preview": "T_UI_Icon_WeaponMod_MagazineMedium_Extended_01.png"
+      "preview": "T_UI_Icon_WeaponMod_MagazineMedium_Extended_01.avif"
     },
     "MagazineMedium_Extended_02": {
-      "preview": "T_UI_Icon_WeaponMod_MagazineMedium_Extended_02.png"
+      "preview": "T_UI_Icon_WeaponMod_MagazineMedium_Extended_02.avif"
     },
     "MagazineMedium_Extended_03": {
-      "preview": "T_UI_Icon_WeaponMod_MagazineMedium_Extended_03.png"
+      "preview": "T_UI_Icon_WeaponMod_MagazineMedium_Extended_03.avif"
     },
     "MagazineShotgun_Extended_01": {
-      "preview": "T_UI_Icon_WeaponMod_MagazineShotgun_Extended_01.png"
+      "preview": "T_UI_Icon_WeaponMod_MagazineShotgun_Extended_01.avif"
     },
     "MagazineShotgun_Extended_02": {
-      "preview": "T_UI_Icon_WeaponMod_MagazineShotgun_Extended_02.png"
+      "preview": "T_UI_Icon_WeaponMod_MagazineShotgun_Extended_02.avif"
     },
     "MagazineShotgun_Extended_03": {
-      "preview": "T_UI_Icon_WeaponMod_MagazineShotgun_Extended_03.png"
+      "preview": "T_UI_Icon_WeaponMod_MagazineShotgun_Extended_03.avif"
     },
     "UnderBarrel_FoldableGrip_01": {
-      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_HorizontalGrip_01.png"
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_HorizontalGrip_01.avif"
     },
     "Stock_ActiveStabilizer_01": {
-      "preview": "T_UI_Icon_WeaponMod_Stock_ActiveStabilizer_01.png"
+      "preview": "T_UI_Icon_WeaponMod_Stock_ActiveStabilizer_01.avif"
     },
     "Stock_Lightweight_01": {
-      "preview": "T_UI_Icon_WeaponMod_Stock_Lightweight_01.png"
+      "preview": "T_UI_Icon_WeaponMod_Stock_Lightweight_01.avif"
     },
     "Muzzle_Brake_01": {
-      "preview": "T_UI_Icon_WeaponMod_Muzzle_Brake_01.png"
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Brake_01.avif"
     },
     "Muzzle_Brake_02": {
-      "preview": "T_UI_Icon_WeaponMod_Muzzle_Brake_02.png"
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Brake_02.avif"
     },
     "Muzzle_Brake_03": {
-      "preview": "T_UI_Icon_WeaponMod_Muzzle_Brake_03.png"
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Brake_03.avif"
     },
     "Stock_Padded_01": {
-      "preview": "T_UI_Icon_WeaponMod_Stock_Padded_01.png"
+      "preview": "T_UI_Icon_WeaponMod_Stock_Padded_01.avif"
     },
     "ShotgunMuzzle_Choke_01": {
-      "preview": "T_UI_Icon_WeaponMod_ShotgunMuzzle_Choke_01.png"
+      "preview": "T_UI_Icon_WeaponMod_ShotgunMuzzle_Choke_01.avif"
     },
     "ShotgunMuzzle_Choke_02": {
-      "preview": "T_UI_Icon_WeaponMod_ShotgunMuzzle_Choke_02.png"
+      "preview": "T_UI_Icon_WeaponMod_ShotgunMuzzle_Choke_02.avif"
     },
     "ShotgunMuzzle_Choke_03": {
-      "preview": "T_UI_Icon_WeaponMod_ShotgunMuzzle_Choke_03.png"
+      "preview": "T_UI_Icon_WeaponMod_ShotgunMuzzle_Choke_03.avif"
     },
     "ShotgunMuzzle_Silencer_01": {
-      "preview": "T_UI_Icon_WeaponMod_ShotgunMuzzle_Silencer_01.png"
+      "preview": "T_UI_Icon_WeaponMod_ShotgunMuzzle_Silencer_01.avif"
     },
     "Muzzle_Silencer_01": {
-      "preview": "T_UI_Icon_WeaponMod_Muzzle_Silencer_01.png"
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Silencer_01.avif"
     },
     "Muzzle_Silencer_02": {
-      "preview": "T_UI_Icon_WeaponMod_Muzzle_Silencer_02.png"
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Silencer_02.avif"
     },
     "Muzzle_Silencer_03": {
-      "preview": "T_UI_Icon_WeaponMod_Muzzle_Silencer_03.png"
+      "preview": "T_UI_Icon_WeaponMod_Muzzle_Silencer_03.avif"
     },
     "Stock_Stable_01": {
-      "preview": "T_UI_Icon_WeaponMod_Stock_Stable_01.png"
+      "preview": "T_UI_Icon_WeaponMod_Stock_Stable_01.avif"
     },
     "Stock_Stable_02": {
-      "preview": "T_UI_Icon_WeaponMod_Stock_Stable_02.png"
+      "preview": "T_UI_Icon_WeaponMod_Stock_Stable_02.avif"
     },
     "Stock_Stable_03": {
-      "preview": "T_UI_Icon_WeaponMod_Stock_Stable_03.png"
+      "preview": "T_UI_Icon_WeaponMod_Stock_Stable_03.avif"
     },
     "UnderBarrel_VerticalGrip_01": {
-      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_VerticalGrip_01.png"
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_VerticalGrip_01.avif"
     },
     "UnderBarrel_VerticalGrip_02": {
-      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_VerticalGrip_02.png"
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_VerticalGrip_02.avif"
     },
     "UnderBarrel_VerticalGrip_03": {
-      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_VerticalGrip_03.png"
+      "preview": "T_UI_Icon_WeaponMod_UnderBarrel_VerticalGrip_03.avif"
     },
     "Tech_ProjectileSplitter": {
-      "preview": null
+      "preview": "T_UI_Icon_WeaponMod_Tech_ProjectileSplitter.avif"
     }
   },
   "patterns": [

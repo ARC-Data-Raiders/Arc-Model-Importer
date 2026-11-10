@@ -4,7 +4,7 @@ def _extraction_revision(scene=None) -> str:
     mapping = resolve_usmap(scene)
     if not mapping or not os.path.isfile(mapping):
         return ''
-    from .pak_catalog import filesystem_path, display_path
+    from ..Outfit_Accessories.pak_catalog import filesystem_path, display_path
     mapping = filesystem_path(os.path.abspath(mapping))
     stat = os.stat(mapping)
     game = configured_dir(scene)

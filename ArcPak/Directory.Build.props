@@ -6,5 +6,8 @@
     <BaseIntermediateOutputPath Condition="'$(ArcPakBuildRoot)' != ''">$(ArcPakBuildRoot)/obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
     <BaseOutputPath Condition="'$(ArcPakBuildRoot)' != ''">$(ArcPakBuildRoot)/bin/$(MSBuildProjectName)/</BaseOutputPath>
     <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;bin\**</DefaultItemExcludes>
+    <!-- Shipped runtime only: no PDBs, no XML docs. -->
+    <DebugType>none</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 </Project>

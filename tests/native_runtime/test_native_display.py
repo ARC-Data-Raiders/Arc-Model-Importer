@@ -4,8 +4,8 @@ except ImportError:
     from native_test_support import ROOT
 """Native instruction-backed checkpoints, separate from portable preview tests."""
 import unittest
-from material_runtime.core import MaterialRecord,evaluate,literal
-from material_runtime.enemies import compile_enemy_display,native_alert_state
+from Shared.materials.native.core import MaterialRecord, evaluate, literal
+from Shared.materials.native.enemies import compile_enemy_display, native_alert_state
 
 def inputs(uv=(.5,.5,0.),time=0.):return {'uv':uv,'time':time}
 def context(**extra):return {'enemy_view_depth':literal(0.),'enemy_bone_damage':literal(0.),'enemy_eye_adaptation':literal(1.),**extra}

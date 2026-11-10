@@ -32,7 +32,7 @@ internal static class MaterialShaderMapExport
                     var i = MaterialMetadataExport.SelectIndex(mats.Select(m => m.Name).ToArray(), mats.Select(m => m.GetPathName()).ToArray(), path);
                     var chain = new List<UUnrealMaterial>();
                     var seen = new HashSet<string>(StringComparer.Ordinal);
-                    for (UUnrealMaterial? c = mats[i]; c != null; c = (c as UMaterialInstance)?.Parent)
+                    for (UUnrealMaterial? c = mats[i]; c != null; c = (c as UMaterialInstance)?.Parent?.Load<UUnrealMaterial>())
                     {
                         var key = c.GetPathName();
                         if (chain.Count >= 64 || !seen.Add(key)) throw new InvalidDataException("Material parent cycle/depth budget");
@@ -44,7 +44,7 @@ internal static class MaterialShaderMapExport
                         for (var n = 0; n < chain.Count; n++)
                         {
                             var node = (UMaterialInterface)chain[n];
-                            var parent = (node as UMaterialInstance)?.Parent?.GetPathName() ?? "";
+                            var parent = (node as UMaterialInstance)?.Parent?.Load<UUnrealMaterial>()?.GetPathName() ?? "";
                             var flag = node.TryGetValue(out bool b, "bHasStaticPermutationResource") ? (b ? "true" : "false") : "absent";
                             var resources = node.LoadedMaterialResources;
                             rows[node.GetPathName()] = new[] { node.GetPathName(), node.ExportType, parent, chain[^1].GetPathName(), (chain.Count - n - 1).ToString(System.Globalization.CultureInfo.InvariantCulture), flag, resources.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), string.Join(";", resources.Select(r => r.LoadedShaderMap?.ResourceHash?.ToString() ?? "")), string.Join(";", resources.Select(r => r.LoadedShaderMap?.ShaderMapId?.FeatureLevel.ToString() ?? "")), string.Join(";", resources.Select(r => r.LoadedShaderMap?.ShaderMapId?.QualityLevel.ToString() ?? "")), string.Join(";", resources.Select(r => r.LoadedShaderMap?.ShaderPlatform.ToString() ?? "")), node.CachedExpressionData != null ? "present" : "absent", "" };
@@ -53,7 +53,7 @@ internal static class MaterialShaderMapExport
                     else
                     {
                         var entries = new JArray();
-                        foreach (var node in chain) entries.Add(new JObject { ["object_path"] = node.GetPathName(), ["class"] = node.ExportType, ["parent"] = (node as UMaterialInstance)?.Parent?.GetPathName(), ["json"] = JObject.FromObject(node) });
+                        foreach (var node in chain) entries.Add(new JObject { ["object_path"] = node.GetPathName(), ["class"] = node.ExportType, ["parent"] = (node as UMaterialInstance)?.Parent?.Load<UUnrealMaterial>()?.GetPathName(), ["json"] = JObject.FromObject(node) });
                         WriteFull(output, path, new JObject { ["schema"] = "dr.material-shadermaps/1", ["build_id"] = GameBuild.Read(game).BuildId, ["requested"] = path, ["chain"] = entries });
                     }
                 }

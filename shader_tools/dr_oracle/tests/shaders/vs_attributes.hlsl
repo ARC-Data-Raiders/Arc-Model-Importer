@@ -1,0 +1,1 @@
+struct Input { float4 p : POSITION; float4 a : ATTRIBUTE0; float2 b : ATTRIBUTE1; }; struct Output { float4 p : SV_Position; float4 a : ATTRIBUTE0; float2 b : ATTRIBUTE1; }; Output main(Input i) { Output o; o.p=i.p; o.a=i.a; o.b=i.b; return o; }

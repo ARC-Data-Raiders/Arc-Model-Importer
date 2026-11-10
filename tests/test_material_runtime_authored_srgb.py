@@ -5,8 +5,8 @@ import types
 import unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(ROOT))
-from material_runtime.interop import Graph
+sys.path.insert(0,str(ROOT));sys.path.insert(0,str(ROOT/'tests'/'native_runtime'));__import__('native_test_support').namespace()
+from _native_runtime_regression_addon.Shared.materials.native.interop import Graph
 
 class Image(dict):
     pass
@@ -41,14 +41,14 @@ class AuthoredSrgbTests(unittest.TestCase):
     def test_normal_role_is_not_overridden(self):
         self.assertEqual(self.sample({},'normal')[:2],('normal','Non-Color'))
     def test_every_index_provenance_shape_counts(self):
-        # surface_rebuild reports {'source': {...}}; the native catalog tracker only Type.
-        decode=__import__('material_runtime.interop',fromlist=['x']).authored_srgb_decode
+        # materials.rebuild reports {'source': {...}}; the native catalog tracker only Type.
+        decode=__import__('_native_runtime_regression_addon.Shared.materials.native.interop',fromlist=['x']).authored_srgb_decode
         self.assertTrue(decode({'Type':'Texture2D','source':{'path':'x'}}))
         self.assertTrue(decode({'Type':'Texture2D','CompressionSettings':'TextureCompressionSettings::TC_BC7'}))
         self.assertFalse(decode({}))
     def test_formats_without_srgb_variant_stay_data(self):
         # T_MechanicalDebris_01_Mask is TC_Alpha/BC4 with the default flag; CA_ atlases are float.
-        decode=__import__('material_runtime.interop',fromlist=['x']).authored_srgb_decode
+        decode=__import__('_native_runtime_regression_addon.Shared.materials.native.interop',fromlist=['x']).authored_srgb_decode
         self.assertFalse(decode({'Type':'Texture2D','CompressionSettings':'TextureCompressionSettings::TC_Alpha'}))
         self.assertFalse(decode({'Type':'CurveLinearColorAtlas','source_path':'x'}))
         self.assertEqual(self.sample({'CompressionSettings':'TextureCompressionSettings::TC_Normalmap'},False)[:2],('data','Non-Color'))
@@ -58,8 +58,8 @@ class FurShellSidecarTests(unittest.TestCase):
         # M_FurShells and the simple hero RM sampler load PNGs directly; Bells' T_FurMask_04_A
         # and Bilguun's tassel RM are DXT with the default flag.
         import ast,json
-        tree=ast.parse((ROOT/'textures.py').read_text(encoding='utf-8'))
-        ns={'os':__import__('os'),'json':json,'authored_srgb_decode':__import__('material_runtime.interop',fromlist=['x']).authored_srgb_decode}
+        tree=ast.parse((ROOT/'Shared/textures.py').read_text(encoding='utf-8'))
+        ns={'os':__import__('os'),'json':json,'authored_srgb_decode':__import__('_native_runtime_regression_addon.Shared.materials.native.interop',fromlist=['x']).authored_srgb_decode}
         exec(compile(ast.Module(body=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='authored_srgb_sidecar'],type_ignores=[]),'<textures>','exec'),ns)
         with tempfile.TemporaryDirectory() as folder:
             def check(name,properties):
@@ -74,7 +74,7 @@ class FurShellSidecarTests(unittest.TestCase):
 class NativeCompilerRoleTests(unittest.TestCase):
     def test_recipe_roles_follow_authored_sampling(self):
         # T_Door_02_A_XEM (native prop recipe 'data') keeps the default flag on BC7; the sampler decodes it.
-        from material_runtime.compiler import authored_role
+        from _native_runtime_regression_addon.Weapons.material_runtime.compiler import authored_role
         class Repo:
             def __init__(self,info):self.info=info
             def texture_info(self,reference):return self.info

@@ -1,7 +1,7 @@
 """UEModel section-table MI references resolve per slot across folders, and outrank folder guesses (no Blender)."""
 import ast,importlib.util,logging,os,sys,types,unittest
 from pathlib import Path
-ROOT=Path(os.environ['DATARAIDERS_TEST_REPOSITORY']) if os.environ.get('DATARAIDERS_TEST_REPOSITORY') else next(p for p in Path(__file__).resolve().parents if (p/'materials/dispatch.py').is_file())
+ROOT=Path(os.environ['DATARAIDERS_TEST_REPOSITORY']) if os.environ.get('DATARAIDERS_TEST_REPOSITORY') else next(p for p in Path(__file__).resolve().parents if (p/'Shared/materials/dispatch.py').is_file())
 PKG='_authored_section_probe'
 HERO='/Game/Pioneer/Characters/Heroes/Celeste/Resources/Base/Materials/MI_Celeste_Base_Visor.MI_Celeste_Base_Visor'
 FX='/Game/Pioneer/Effects/Systems/Weapons/EnergyShotgun/MI_FX_EnergyShotgun.MI_FX_EnergyShotgun'
@@ -25,12 +25,12 @@ class SectionSlotTests(unittest.TestCase):
         self.built=[];self.sections=[]
         def module(name,**attrs):
             m=types.ModuleType(name);m.__path__=[];m.__dict__.update(attrs);return m
-        self.modules=[module(PKG),module(PKG+'.materials'),
+        self.modules=[module(PKG),module(PKG+'.Shared'),module(PKG+'.Shared.materials'),
             module(PKG+'.fmdex',lookup_asset_path=lambda stem:('',[]),fmdex_summary_for_report=lambda:''),
-            module(PKG+'.textures',is_hair=lambda path:False,is_hair_cards_mi=lambda path:False,
+            module(PKG+'.Shared.textures',is_hair=lambda path:False,is_hair_cards_mi=lambda path:False,
                    find_asset_from_object_path=lambda path,ext:FILES.get(path.split('.')[0],''))]
         for m in self.modules:sys.modules[m.__name__]=m
-        self.ns={'__package__':PKG+'.materials','os':types.SimpleNamespace(path=types.SimpleNamespace(
+        self.ns={'__package__':PKG+'.Shared.materials','os':types.SimpleNamespace(path=types.SimpleNamespace(
                     isfile=lambda path:False,dirname=os.path.dirname,join=os.path.join,basename=os.path.basename)),
                  'json':__import__('json'),'re':__import__('re'),'utils':types.SimpleNamespace(get_logger=lambda:logging.getLogger('probe')),
                  'CTX_MAP':'map','_active_dedicated_outfit_profile':lambda mat:'',
@@ -39,7 +39,7 @@ class SectionSlotTests(unittest.TestCase):
                  '_resolve_mi_json_path':lambda stem,mesh,folder,context='any':'',
                  '_uemodel_section_materials':lambda path:list(self.sections),
                  '_get_or_build_shared_mi_material':lambda stem,mi,psk,slot,obj=None:self.built.append((stem,mi)) or Mat('built:'+stem)}
-        exec(compile(functions('materials/dispatch.py','fix_object_materials_from_mi_slots','_mi_stem_from_blender_name'),'<dispatch>','exec'),self.ns)
+        exec(compile(functions('Shared/materials/dispatch.py','fix_object_materials_from_mi_slots','_mi_stem_from_blender_name'),'<dispatch>','exec'),self.ns)
     def tearDown(self):
         for m in self.modules:sys.modules.pop(m.__name__,None)
     def fix(self,obj,context='outfit'):
@@ -65,7 +65,7 @@ class FolderGuessTests(unittest.TestCase):
     def setUp(self):
         self.sections=[]
         self.ns={'os':os,'materials':types.SimpleNamespace(_uemodel_section_materials=lambda path:list(self.sections))}
-        exec(compile(functions('operators.py','_folder_mi_contradicts_sections'),'<operators>','exec'),self.ns)
+        exec(compile(functions('Shared/operators.py','_folder_mi_contradicts_sections'),'<operators>','exec'),self.ns)
     def check(self,folder_mi):
         return self.ns['_folder_mi_contradicts_sections']('X:/cache/Outpost/SM_OutpostModules_01_B.uemodel',folder_mi)
     def test_folder_mi_must_be_the_only_authored_mi(self):
@@ -90,7 +90,7 @@ class LayeredPartTests(unittest.TestCase):
         self.ns={'os':os,'textures':types.SimpleNamespace(find_asset_from_object_path=lambda path,ext:files.get(path,'')),
                  'materials':types.SimpleNamespace(_uemodel_section_materials=lambda path:list(self.sections),
                      dispatch=types.SimpleNamespace(_mi_uses_layered_character_profile=lambda path:self.layered))}
-        exec(compile(functions('operators.py','_authored_layered_part_mi'),'<operators>','exec'),self.ns)
+        exec(compile(functions('Shared/operators.py','_authored_layered_part_mi'),'<operators>','exec'),self.ns)
     def part(self):
         return self.ns['_authored_layered_part_mi']('X:/cache/Items/Animation/Frontend/SM_Celeste_ToggleRadio_01.uemodel')
     def test_single_layered_skin_mi_names_the_part(self):
@@ -106,7 +106,7 @@ class LayeredPartTests(unittest.TestCase):
 
 class DomainTests(unittest.TestCase):
     def test_environment_folders_outside_environment(self):
-        spec=importlib.util.spec_from_file_location('_asset_domain_probe',ROOT/'asset_domain.py')
+        spec=importlib.util.spec_from_file_location('_asset_domain_probe',ROOT/'Outfit_Accessories/asset_domain.py')
         ad=importlib.util.module_from_spec(spec);spec.loader.exec_module(ad)
         for path in ('PioneerGame/Content/Pioneer/Items/Outpost/Rooms/Module_01_B/SM_OutpostModules_01_B.uemodel',
                      'PioneerGame/Content/Pioneer/Maps/BuriedCity_01/Cables/SM_Cable_01.uemodel',

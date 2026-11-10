@@ -1,9 +1,10 @@
 """Constant layout/availability fixtures; values are explicitly authored."""
 import struct
 import unittest
-from niagara_vm import OPCODES
-from niagara_context import ContextError, build_constant_context, build_dataset_inputs
-from niagara_runtime import Dataset, execute
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara.niagara import OPCODES
+from Niagara.niagara import ContextError, build_constant_context, build_dataset_inputs
+from Niagara.niagara import Dataset, execute
 IDS={name:index for index,name in OPCODES.items()}
 def op(name,*words,mask=None):
     return bytes([IDS[name]])+(bytes([mask]) if mask is not None else b'')+struct.pack('<'+'H'*len(words),*words)

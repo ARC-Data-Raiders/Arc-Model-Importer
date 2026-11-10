@@ -8,8 +8,9 @@ from pathlib import Path
 
 import numpy as np
 
-import niagara_cache as nc
-import niagara_render_ref as ref
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara import niagara as nc
+from Niagara import niagara as ref
 
 CORPUS = os.environ.get('DR_NIAGARA_CORPUS')
 SHIM = os.environ.get('DR_SVML_SHIM')

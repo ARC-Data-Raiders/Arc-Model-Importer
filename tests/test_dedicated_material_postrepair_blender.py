@@ -23,7 +23,7 @@ def main():
     output_path=Path(options.output).expanduser().resolve();output_path.parent.mkdir(parents=True,exist_ok=True)
     ROOT=Path(__file__).resolve().parents[1];WORK=output_path.parent
     sys.pycache_prefix=str(WORK/'pycache');sys.path.insert(0,str(ROOT.parent))
-    D=importlib.import_module(ROOT.name+'.materials.dispatch');C=importlib.import_module(ROOT.name+'.materials.common')
+    D=importlib.import_module(ROOT.name+'.Shared.materials.dispatch');C=importlib.import_module(ROOT.name+'.Shared.materials.common')
     fixture_directory=tempfile.TemporaryDirectory(prefix='dedicated-guard-',dir=WORK)
     fixture_root=Path(fixture_directory.name).resolve()
     assert fixture_root.is_relative_to(WORK.resolve())

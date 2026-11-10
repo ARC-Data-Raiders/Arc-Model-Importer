@@ -46,6 +46,14 @@ class Layout:
         pass
 
 
+def _sections(package):
+    # sidebar imports through section folders (.Outfit_Accessories, .Shared, .Animations); one fake serves all.
+    modules = {"feedback_addon": package}
+    for section in ("Outfit_Accessories", "Shared", "Animations"):
+        modules["feedback_addon." + section] = package
+    return modules
+
+
 def function(filename, name, extra=None):
     tree = ast.parse((ROOT / filename).read_text(encoding="utf-8-sig"))
     if "." in name:
@@ -63,8 +71,8 @@ class FeedbackLayoutTests(unittest.TestCase):
         scene = SimpleNamespace(arc_appearance_hair="hair", arc_appearance_facial_hair="beard", arc_appearance_hair_color="black", arc_appearance_facial_hair_color="brown")
         for facial, expected, other in ((False, "arc_appearance_hair_color", "arc_appearance_facial_hair_color"), (True, "arc_appearance_facial_hair_color", "arc_appearance_hair_color")):
             layout = Layout()
-            extras = {"_appearance_preview_icon_id": lambda choice: 0, "_split_controls_preview": lambda *args, **kwargs: (layout, None), "_draw_preview_icon": lambda *args: None}
-            function("ui.py", "_draw_hair_section", extras)(layout, SimpleNamespace(scene=scene), facial=facial)
+            extras = {"_add_or_all": function("sidebar.py", "_add_or_all"), "_appearance_preview_icon_id": lambda choice: 0, "_split_controls_preview": lambda *args, **kwargs: (layout, None), "_draw_preview_icon": lambda *args: None}
+            function("sidebar.py", "_draw_hair_section", extras)(layout, SimpleNamespace(scene=scene), facial=facial)
             names = [event[1] for event in layout.events if event[0] == "prop"]
             self.assertIn(expected, names)
             self.assertNotIn(other, names)
@@ -75,30 +83,44 @@ class FeedbackLayoutTests(unittest.TestCase):
         package = SimpleNamespace(properties=SimpleNamespace(make_outfit_selector_items=lambda *args: entries))
         context = SimpleNamespace(scene=SimpleNamespace(arc_outfit_search="", arc_selected_outfit="0"))
         extras = {"_split_controls_preview": lambda *args, **kwargs: (layout, None), "_draw_preview_icon": lambda *args: None}
-        with patch.dict(sys.modules, {"feedback_addon": package}):
-            function("ui.py", "_draw_outfit_selector_preview", extras)(layout, context, 0)
+        with patch.dict(sys.modules, _sections(package)):
+            function("sidebar.py", "_draw_outfit_selector_preview", extras)(layout, context, 0)
             selections = [event for event in layout.events if event[1] == "arc_outfits.select_outfit"]
             self.assertEqual(len(selections), 3)
             action = next(event for event in layout.events if event[1] == "arc_outfits.load_outfit")
             self.assertNotEqual(selections[0][2], action[2])
             self.assertTrue(any(event[0] == "separator" for event in layout.events))
             menu = Layout()
-            function("ui.py", "ARC_OUTFITS_MT_outfit_browse.draw")(SimpleNamespace(layout=menu), context)
+            function("sidebar.py", "ARC_OUTFITS_MT_outfit_browse.draw")(SimpleNamespace(layout=menu), context)
             self.assertIn(("columns", 2, ()), menu.events)
             self.assertEqual(len([event for event in menu.events if event[1] == "arc_outfits.select_outfit"]), len(entries))
 
     def test_import_source_visible_without_advanced(self):
-        layout = Layout()
-        function("ui.py", "_draw_import_section")(layout, SimpleNamespace(scene=SimpleNamespace(arc_import_source="PAK")))
-        self.assertIn("arc_import_source", [event[1] for event in layout.events])
+        for source in ('PAK', 'FMODEL'):
+            layout = Layout()
+            def picker(mode):
+                return lambda child, context: child.events.append(('picker', mode, child.path))
+            extras = {'_draw_pak_folder_picker': picker('PAK'), '_draw_fmodel_folder_picker': picker('FMODEL')}
+            function("sidebar.py", "_draw_import_section", extras)(layout, SimpleNamespace(scene=SimpleNamespace(arc_import_source=source)))
+            events = [event for event in layout.events if event[0] in ('prop', 'picker', 'operator')]
+            self.assertEqual(events[0][1], 'arc_import_source')
+            self.assertEqual(events[1][:2], ('picker', source))
+            self.assertEqual(len([event for event in events if event[0] == 'picker']), 1)
 
     def test_arc_controls_visible_without_advanced(self):
         layout = Layout()
         layout.panel = lambda *args, **kwargs: (layout, None)
-        context = SimpleNamespace(scene=SimpleNamespace(arc_enemy_key="NONE"), active_object=None)
-        function("arc_ui.py", "draw", {"arc_catalog_data": SimpleNamespace(by_key=lambda key: None)})(layout, context)
-        self.assertIn("arc_outfits.add_all_arc", [event[1] for event in layout.events])
-        self.assertIn("arc_scan_state", [event[1] for event in layout.events])
+        for use_all, expected in ((False, "arc_outfits.import_codex_enemy"), (True, "arc_outfits.add_all_arc")):
+            layout = Layout()
+            layout.panel = lambda *args, **kwargs: (layout, None)
+            wm = SimpleNamespace(arc_add_all_arc=use_all)
+            context = SimpleNamespace(scene=SimpleNamespace(arc_enemy_key="NONE"), active_object=None, window_manager=wm)
+            extras = {"arc_catalog_data": SimpleNamespace(by_key=lambda key: None), "_add_or_all": function("sidebar.py", "_add_or_all")}
+            function("sidebar.py", "_draw_arc_content", extras)(layout, context)
+            names = [event[1] for event in layout.events]
+            self.assertIn(expected, names)
+            self.assertIn("arc_add_all_arc", names)
+            self.assertIn("arc_scan_state", names)
 
     def test_animation_results_limited_and_actions_separate(self):
         layout = Layout()
@@ -108,8 +130,8 @@ class FeedbackLayoutTests(unittest.TestCase):
             return [{"key": str(index)} for index in range(kwargs["limit"])]
         package = SimpleNamespace(animation_catalog=SimpleNamespace(filter_entries=entries, display_label=lambda entry: entry["key"]), animation_import=SimpleNamespace(resolve_target_armature=lambda context: None))
         scene = SimpleNamespace(arc_anim_search="", arc_anim_kind_filter="ALL")
-        with patch.dict(sys.modules, {"feedback_addon": package}):
-            function("ui.py", "_draw_animations_content")(layout, SimpleNamespace(scene=scene))
+        with patch.dict(sys.modules, _sections(package)):
+            function("sidebar.py", "_draw_animations_content")(layout, SimpleNamespace(scene=scene))
         self.assertEqual(limits, [3])
         select = next(event for event in layout.events if event[1] == "arc_outfits.select_anim")
         apply = next(event for event in layout.events if event[1] == "arc_outfits.apply_anim")
@@ -122,10 +144,9 @@ class FeedbackLayoutTests(unittest.TestCase):
         def entries(*args, **kwargs):
             limits.append(kwargs["limit"])
             return [{"key": str(index)} for index in range(kwargs["limit"])]
-        package = SimpleNamespace(niagara_catalog=SimpleNamespace(filter_entries=entries, display_label=lambda entry: entry["key"]))
-        ui = SimpleNamespace(_collapsible=lambda *args, **kwargs: None)
-        with patch.dict(sys.modules, {"feedback_addon": package, "feedback_addon.ui": ui}):
-            function("niagara_fx.py", "draw_niagara_fx_box")(layout, SimpleNamespace(scene=SimpleNamespace()))
+        extras = {"filter_entries": entries, "display_label": lambda entry: entry["key"],
+                  "draw_playback_box": lambda *args, **kwargs: None}
+        function("sidebar.py", "draw_niagara_fx_box", extras)(layout, SimpleNamespace(scene=SimpleNamespace()))
         self.assertEqual(limits, [3])
         select = next(event for event in layout.events if event[1] == "arc_outfits.select_ns")
         apply = next(event for event in layout.events if event[1] == "arc_outfits.import_niagara_fx")

@@ -2,7 +2,7 @@ import importlib,json,os,sys,tempfile,types,unittest
 from pathlib import Path
 from .native_test_support import ROOT as REPO,PACKAGE as PKG,namespace,temp_fixture
 namespace()
-catalog=importlib.import_module(PKG+'.material_runtime.catalog');assets=importlib.import_module(PKG+'.material_runtime.assets')
+catalog=importlib.import_module(PKG+'.Shared.materials.native.catalog');assets=importlib.import_module(PKG+'.Shared.materials.native.assets')
 class ResourceTests(unittest.TestCase):
  def setUp(self):
   self.temp=temp_fixture('native-nonimage-');self.root=Path(self.temp.name)/"native";self.content=self.root/'PioneerGame/Content';self.content.mkdir(parents=True)

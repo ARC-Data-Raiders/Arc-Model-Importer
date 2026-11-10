@@ -1,0 +1,5 @@
+# Private benchmark harness
+
+Archived task harness; no production addon code or game binaries are included. Outputs are guarded to the designated Z: scratch root. `DATARAIDERS_BENCHMARK_ROOT` may select a task folder beneath that root. Execute Blender scripts in a private profile with four CPU threads and affinity15, one Blender process at a time. Use `SIDE='A'` or `SIDE='B'` in a wrapper before executing `import_side.py`.
+
+The concrete ready-to-run wrappers, capped launcher, export helpers, exact input hashes and verification logs remain in the recorded task folder on Z:. Extract fresh current packages before running; standard FModel export arrays are a lossless typed JSON projection for the reference plugin, and native metadata sidecars are retained. Do not fabricate PSK files by renaming UEModel. The benchmark separates import source metrics from common display and elevator placement. Render controls and source-origin comparison are documented in the report. None of these scripts are shipped runtime behavior.

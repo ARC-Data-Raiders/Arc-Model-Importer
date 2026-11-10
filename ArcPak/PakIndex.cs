@@ -88,6 +88,15 @@ internal sealed class PakIndex
         return false;
     }
 
+    internal IEnumerable<string> PreviewContainerNames()
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var stored in _storedPaths)
+            if (stored.Container < Containers.Length && IsPreviewPackage(stored.Path))
+                names.Add(Containers[stored.Container].Name);
+        return names;
+    }
+
     internal bool TryResolve(IReadOnlyList<string> assetPaths, out List<PathHit> hits)
     {
         hits = new List<PathHit>(assetPaths.Count);
@@ -302,7 +311,27 @@ internal sealed class PakIndex
         return true;
     }
 
+    private static readonly Dictionary<string, (DateTime, long, PakIndex?)> _loaded = new(StringComparer.OrdinalIgnoreCase);
+
     internal static PakIndex? TryLoad(string path)
+    {
+        if (!Program.Serving)
+            return TryLoadCore(path);
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists) return TryLoadCore(path);
+            var key = Path.GetFullPath(path);
+            if (_loaded.TryGetValue(key, out var hit) && hit.Item1 == info.LastWriteTimeUtc && hit.Item2 == info.Length)
+                return hit.Item3;
+            var index = TryLoadCore(path);
+            _loaded[key] = (info.LastWriteTimeUtc, info.Length, index);
+            return index;
+        }
+        catch { return TryLoadCore(path); }
+    }
+
+    private static PakIndex? TryLoadCore(string path)
     {
         try
         {

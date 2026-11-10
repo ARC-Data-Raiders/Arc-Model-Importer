@@ -39,11 +39,15 @@ def load_module(rebuild):
     package='_backpack_transaction_fixture'
     modules={package:ModuleType(package)}
     modules[package].__path__=[]
-    for name in ('utils','textures','pak_extract','pak_catalog','operators'):
+    for name in ('Shared','Outfit_Accessories'):
+        modules[package+'.'+name]=ModuleType(package+'.'+name);modules[package+'.'+name].__path__=[]
+    for name in ('Shared.utils','Shared.textures','Shared.pak_extract','Outfit_Accessories.pak_catalog','Shared.operators'):
         modules[package+'.'+name]=ModuleType(package+'.'+name)
-    modules[package+'.operators'].apply_materials_to_object=rebuild
-    path=Path(__file__).resolve().parents[1]/'backpack_catalog.py'
-    spec=importlib.util.spec_from_file_location(package+'.backpack_catalog',path)
+    for name in ('utils','textures','pak_extract','operators'):setattr(modules[package+'.Shared'],name,modules[package+'.Shared.'+name])
+    modules[package+'.Outfit_Accessories'].pak_catalog=modules[package+'.Outfit_Accessories.pak_catalog']
+    modules[package+'.Shared.operators'].apply_materials_to_object=rebuild
+    path=Path(__file__).resolve().parents[1]/'Outfit_Accessories/backpack_catalog.py'
+    spec=importlib.util.spec_from_file_location(package+'.Outfit_Accessories.backpack_catalog',path)
     module=importlib.util.module_from_spec(spec)
     modules[spec.name]=module
     return module,spec,modules
@@ -90,15 +94,15 @@ class BackpackMaterialTransactionTests(unittest.TestCase):
         def rebuild(obj,*args,**kwargs):
             calls.append(kwargs['skin_json']);obj.data.materials[0]=native
         module,spec,modules=load_module(rebuild)
-        package=spec.name.rsplit('.',1)[0]
-        material_package=ModuleType(package+'.materials');material_package.__path__=[]
-        dispatch=ModuleType(package+'.materials.dispatch')
+        package=spec.name.split('.',1)[0]
+        material_package=ModuleType(package+'.Shared.materials');material_package.__path__=[]
+        dispatch=ModuleType(package+'.Shared.materials.dispatch')
         dispatch._mi_uses_layered_character_profile=lambda path:True
         dispatch._dedicated_outfit_material_current=lambda *a,**k:False
         dispatch._get_or_build_shared_mi_material=lambda *a,**k: (_ for _ in ()).throw(AssertionError('generic builder reached'))
-        ue=ModuleType(package+'.uemodel_import')
+        ue=ModuleType(package+'.Shared.uemodel_import')
         ue.parse_uemodel=lambda path:('mesh',10,[SimpleNamespace(materials=[('shell','/Game/layered',0,1)])])
-        modules.update({package+'.materials':material_package,package+'.materials.dispatch':dispatch,package+'.uemodel_import':ue})
+        modules.update({package+'.Shared.materials':material_package,package+'.Shared.materials.dispatch':dispatch,package+'.Shared.uemodel_import':ue})
         with patch.dict(sys.modules,modules):
             spec.loader.exec_module(module);module.cached_file=lambda ref:'/native/layered.json'
             module.apply_material_bindings(obj,{'mesh':'fixture.uemodel','materials':{},'choice_id':'fixture','colorway':'base','part':'shell'})

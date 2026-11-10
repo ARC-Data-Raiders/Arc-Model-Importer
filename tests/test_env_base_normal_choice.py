@@ -10,7 +10,7 @@ PACKED = ("NXX/NMX Texture", "NOM", "NXM", "NMX", "NXX", "NormalMap")
 
 class BaseNormalChoiceTests(unittest.TestCase):
     def choose(self, lookup):
-        tree = ast.parse((ROOT / 'materials/environment.py').read_text(encoding='utf-8'))
+        tree = ast.parse((ROOT / 'Shared/materials/environment.py').read_text(encoding='utf-8'))
         body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_base_normal_image']
 
         def suffix_only(tex_lookup, *keys):

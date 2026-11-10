@@ -4,14 +4,14 @@ import math
 import os
 import struct
 import unittest
-from niagara_vm import OPCODES
-from niagara_runtime import (Dataset, ExecutionError, IdState, execute, float_word,
-                            word_float, word_int, rng_seed_state)
+import os as _os, sys as _sys; _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # repo root
+from Niagara.niagara import OPCODES
+from Niagara.niagara import Dataset, ExecutionError, IdState, execute, float_word, word_float, word_int, rng_seed_state
 
 # Preserve the legacy gate assertions; all opted-in execution uses execute_np.
 import types
 import numpy as np
-from niagara_vm_numpy import execute_np,NpDataset
+from Niagara.niagara import execute_np, NpDataset
 _scalar_execute=execute
 def execute(bytecode,**kwargs):
     if not kwargs.pop('x86_semantics',False):return _scalar_execute(bytecode,**kwargs)

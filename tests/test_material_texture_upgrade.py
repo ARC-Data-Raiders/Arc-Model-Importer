@@ -10,11 +10,11 @@ SELECTED={'_mapping_sha256','_extraction_revision','mesh_cache_is_current','_mat
 def load_pak(source_root=None):
     source_root=Path(source_root or STAGE)
     package=types.ModuleType(PACKAGE);package.__path__=[str(source_root),str(STAGE),str(ROOT)];sys.modules[PACKAGE]=package
-    rebuild=types.ModuleType(PACKAGE+'.surface_rebuild');rebuild.__path__=[];sys.modules[rebuild.__name__]=rebuild
-    asset=types.ModuleType(PACKAGE+'.surface_rebuild.assets');asset.invalidate_index=lambda:None;sys.modules[asset.__name__]=asset
-    path=source_root/'pak_extract.py';tree=ast.parse(path.read_text(encoding='utf-8'));nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in SELECTED]
+    rebuild=types.ModuleType(PACKAGE+'.Shared.materials.rebuild');rebuild.__path__=[];sys.modules[rebuild.__name__]=rebuild
+    asset=types.ModuleType(PACKAGE+'.Shared.materials.rebuild.assets');asset.invalidate_index=lambda:None;sys.modules[asset.__name__]=asset
+    path=source_root/'Shared/pak_extract.py';tree=ast.parse(path.read_text(encoding='utf-8'));nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in SELECTED]
     if {n.name for n in nodes}!=SELECTED:raise AssertionError('metadata function coverage changed')
-    module=types.ModuleType(PACKAGE+'.pak_extract');module.__package__=PACKAGE;module.__dict__.update(os=os,re=__import__('re'),subprocess=subprocess,hashlib=hashlib,json=json,lru_cache=functools.lru_cache,_CREATE_NO_WINDOW=0,_log_tail=lambda value:value[-1000:])
+    module=types.ModuleType(PACKAGE+'.Shared.pak_extract');module.__package__=PACKAGE+'.Shared';module.__dict__.update(os=os,re=__import__('re'),subprocess=subprocess,hashlib=hashlib,json=json,lru_cache=functools.lru_cache,_CREATE_NO_WINDOW=0,_log_tail=lambda value:value[-1000:])
     exec(compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)]+nodes,type_ignores=[])),str(path),'exec'),module.__dict__);return module
 
 def write_json(path,value):
@@ -45,7 +45,7 @@ class WarmMetadataUpgrade(unittest.TestCase):
         self.calls=[]
     def fake_helper(self,command,**options):
         self.calls.append(command);self.assertEqual(command[1],'material-metadata');self.assertIn('--material-file',command);self.assertNotIn('extract',command);self.assertNotIn('mesh-metadata',command)
-        metadata=importlib.import_module(PACKAGE+'.material_texture_metadata');producer=metadata.producer_signature(str(self.exe));mapping=hashlib.sha256(self.mapping.read_bytes()).hexdigest()
+        metadata=importlib.import_module(PACKAGE+'.Shared.material_texture_metadata');producer=metadata.producer_signature(str(self.exe));mapping=hashlib.sha256(self.mapping.read_bytes()).hexdigest()
         fact={'Type':'Texture2D','Name':'T_Warm','Package':'/Game/Pioneer/Test/T_Warm','Properties':{'SRGB':True},'Mips':[{'SizeX':1,'SizeY':1,'SizeZ':1}],'DataRaidersSource':{'projection':'native-texture-sidecar-v1','schema_version':1,'build':'12345','depot_manifest':'67890','mapping_sha256':mapping,'producer_assemblies':producer}}
         texture=self.content/'Pioneer/Test/T_Warm.arc-texture.json';write_json(texture,fact)
         closure={'schema':'dataraiders.native-material-texture-closure','version':1,'recipe':'inherited-native-texture-metadata-v1','material_package':'/Game/Pioneer/Test/MI_Warm','material_object_path':'/Game/Pioneer/Test/MI_Warm.MI_Warm','build_id':'12345','depot_manifest':'67890','mapping_sha256':mapping,'texture_projection':'native-texture-sidecar-v1','texture_schema_version':1,'producer_assemblies':producer,'dependencies':[{'package':fact['Package'],'relative_path':texture.relative_to(self.cache).as_posix(),'sha256':hashlib.sha256(texture.read_bytes()).hexdigest()}]}
@@ -82,7 +82,7 @@ class WarmMetadataUpgrade(unittest.TestCase):
         self.upgrade();path=Path(str(self.sidecar)+'.textures.json');closure=json.loads(path.read_text(encoding='utf-8'));closure['dependencies'][0]['relative_path']='../outside.arc-texture.json';write_json(path,closure)
         with self.assertRaises(ValueError):self.pak.material_hierarchy_is_current(str(self.material),'12345','67890',self.revision)
     def test_global_mesh_revision_function_matches_original_ast(self):
-        original=ast.parse((Path(__file__).parent/'fixtures/native_mesh_revision_v1.py.txt').read_text(encoding='utf-8'));candidate=ast.parse((ROOT/'pak_extract.py').read_text(encoding='utf-8'))
+        original=ast.parse((Path(__file__).parent/'fixtures/native_mesh_revision_v1.py.txt').read_text(encoding='utf-8'));candidate=ast.parse((ROOT/'Shared/pak_extract.py').read_text(encoding='utf-8'))
         def revision(tree):return ast.dump(next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='_extraction_revision'))
         self.assertEqual(revision(original),revision(candidate))
 

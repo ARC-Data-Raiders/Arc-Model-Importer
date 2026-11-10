@@ -40,7 +40,7 @@ def packaged_browser(kind: str) -> tuple:
 
 def resolve_catalog_file(entry: dict, extension: str, root: str = "") -> str:
     """Resolve portable package references only during an explicit asset action."""
-    from . import utils
+    from .Shared import utils
 
     def roots():
         if root:
@@ -597,7 +597,7 @@ def get_fmdex_directory() -> str:
 
     # 3) Near Pioneer root
     try:
-        from . import utils
+        from .Shared import utils
 
         pioneer = utils.get_pioneer_root()
         if pioneer:
@@ -837,7 +837,7 @@ def resolve_export_file(
     ``context`` / ``allow_basename_walk`` gate unconstrained Pioneer walks that
     previously returned Characters/helmet MIs for map prop stems.
     """
-    from . import textures
+    from .Shared import textures
 
     if not stem:
         return ""
@@ -907,7 +907,7 @@ def resolve_mesh_asset_folder(stem: str) -> str:
 
 
 def _search_content_by_basename(stem: str, extension: str, max_visited: int = 40000) -> str:
-    from . import utils
+    from .Shared import utils
 
     if not stem:
         return ""

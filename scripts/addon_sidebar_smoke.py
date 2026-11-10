@@ -28,13 +28,17 @@ class Layout:
         return lambda *arguments, **keywords: self
 
 
+_SECTION = {'weapon_ui': 'Weapons', 'weapon_catalog': 'Weapons', 'appearance': 'Outfit_Accessories', 'backpack_catalog': 'Outfit_Accessories', 'animation_catalog': 'Animations', 'niagara': 'Niagara', 'lighting_catalog': 'Lighting', 'lighting_looks': 'Lighting', 'animation_import': 'Animations', 'materials.native.shader_parity.plans': 'Shared'}
+
+
 def check_sidebar(module):
     import bpy
+    import bpy.utils.previews as previews
     from contextlib import ExitStack
-    modules = {name: importlib.import_module(module.__name__ + '.' + name) for name in (
+    modules = {name: importlib.import_module(module.__name__ + '.' + _SECTION[name] + '.' + name) for name in (
         'weapon_ui', 'weapon_catalog', 'appearance', 'backpack_catalog', 'animation_catalog',
-        'niagara_catalog', 'lighting_catalog', 'lighting_looks', 'animation_import',
-        'niagara_fx', 'niagara_playback', 'material_runtime.shader_parity.plans')}
+        'niagara', 'lighting_catalog', 'lighting_looks', 'animation_import',
+        'materials.native.shader_parity.plans')}
     violations = []
 
     def forbidden(name):
@@ -43,10 +47,12 @@ def check_sidebar(module):
             raise AssertionError('Browse crossed action boundary: ' + name)
         return reject
 
-    targets = [(module.utils, 'get_content_dirs'), (module.pak_extract, 'configured_dir'),
-               (module.pak_extract, 'resolve_pak_folder'), (module.pak_extract, 'load_pak_index')]
+    targets = [(module.Shared.utils, 'get_content_dirs'), (module.Shared.pak_extract, 'configured_dir'),
+               (module.Shared.pak_extract, 'resolve_pak_folder'), (module.Shared.pak_extract, 'load_pak_index'),
+               (previews.ImagePreviewCollection, 'load'),
+               (modules['appearance'], '_crop_sidebar_preview')]
     for name in ('root', 'index', 'defaults', 'find'):
-        targets.append((modules['material_runtime.shader_parity.plans'], name))
+        targets.append((modules['materials.native.shader_parity.plans'], name))
     with ExitStack() as stack:
         stack.enter_context(patch('os.scandir', forbidden('os.scandir')))
         for owner, name in targets:
@@ -54,7 +60,7 @@ def check_sidebar(module):
                 stack.enter_context(patch.object(owner, name, forbidden(owner.__name__ + '.' + name)))
         for expanded in (False, True):
             layout = Layout(expanded)
-            module.ui.ARC_OUTFITS_PT_MainPanel.draw(SimpleNamespace(layout=layout), bpy.context)
+            module.sidebar.ARC_OUTFITS_PT_MainPanel.draw(SimpleNamespace(layout=layout), bpy.context)
             assert not layout.errors, layout.errors
         scene = bpy.context.scene
         modules['weapon_ui']._finish_ascended_registration()
@@ -72,7 +78,7 @@ def check_sidebar(module):
         animation = modules['animation_catalog']
         animation.catalog_stats('')
         animation.filter_entries('idle', cache_dir='', limit=8)
-        effects = modules['niagara_catalog']
+        effects = modules['niagara']
         effects.catalog_stats('')
         effects.filter_entries('shield', catalog_root='', limit=10)
     assert not violations, violations
@@ -84,10 +90,10 @@ def check_sidebar(module):
 
 def check_fx_actions(module):
     import bpy
-    catalog = importlib.import_module(module.__name__ + '.niagara_catalog')
-    playback = importlib.import_module(module.__name__ + '.niagara_playback')
-    operator = module.operators.ARC_OUTFITS_OT_ImportNiagaraFX
-    scene = SimpleNamespace(arc_ns_selected='SelectedFX', arc_ns_catalog_root='',
+    catalog = importlib.import_module(module.__name__ + '.Niagara.niagara')
+    playback = importlib.import_module(module.__name__ + '.Niagara.niagara')
+    operator = module.Shared.operators.ARC_OUTFITS_OT_ImportNiagaraFX
+    scene = SimpleNamespace(arc_import_source='PAK', arc_ns_selected='SelectedFX', arc_ns_catalog_root='',
                             arc_ns_json_path=__file__)
     context = SimpleNamespace(scene=scene)
     reports = []
@@ -97,7 +103,7 @@ def check_fx_actions(module):
     with patch.object(catalog, 'get_entry', return_value=entry), patch.object(
             catalog, 'resolve_entry_path', return_value=''):
         assert operator.execute(action, context) == {'CANCELLED'}
-        assert reports == ['NS json not found: SelectedFX']
+        assert reports == ['NS json not found: SelectedFX. Set a FModel output root or configure Steam Paks and a usmap.']
         assert playback._selected_ns_path(context) is None
     action.use_selected = False
     action.execute = lambda context: {'FINISHED'}
@@ -109,9 +115,9 @@ def check_fx_actions(module):
 
 def check_controls(module):
     import bpy
-    core = importlib.import_module(module.__name__ + '.material_runtime.core')
-    compiler = importlib.import_module(module.__name__ + '.material_runtime.compiler')
-    props = importlib.import_module(module.__name__ + '.material_runtime.shader_parity.props')
+    core = importlib.import_module(module.__name__ + '.Shared.materials.native.core')
+    compiler = importlib.import_module(module.__name__ + '.Weapons.material_runtime.compiler')
+    props = importlib.import_module(module.__name__ + '.Shared.materials.native.shader_parity.props')
     plan = core.MaterialPlan('/Game/Tests/ControlIsolation', 'test', {
         'roughness': core.literal(.5),
         'emission_strength': core.expr('preview_parameter', key='TestGain', default=1., label='Test gain')})
@@ -123,21 +129,27 @@ def check_controls(module):
     mesh.materials.append(material)
     objects = [bpy.data.objects.new(name, mesh) for name in ('Control original', 'Control copy')]
     for obj in objects:
-        module.operators._isolate_material_controls(obj)
+        module.Shared.operators._isolate_material_controls(obj)
     materials = [obj.material_slots[0].material for obj in objects]
     original, copy = materials
     try:
         assert original != copy and original != material
-        module.operators._isolate_material_controls(objects[0])
+        module.Shared.operators._isolate_material_controls(objects[0])
         assert objects[0].material_slots[0].material == original
         copy.node_tree.nodes[values['TestGain'].name].outputs[0].default_value = 3.
         assert values['TestGain'].outputs[0].default_value == 1.
         assert original.node_tree.nodes[values['TestGain'].name].outputs[0].default_value == 1.
         assert copy.node_tree.nodes['DR.Material'].node_tree == material.node_tree.nodes['DR.Material'].node_tree
-        assert all(node.location.y > material.node_tree.nodes['DR.Material'].location.y for node in values.values())
-        with patch.object(module.lighting_looks, 'apply_lighting_look',
+        def world_x(node):
+            x = 0.
+            while node is not None:
+                x += node.location.x; node = node.parent
+            return x
+        # Column layout (graph_layout): control values sit in a column left of the material wrapper.
+        assert all(world_x(node) < world_x(material.node_tree.nodes['DR.Material']) for node in values.values())
+        with patch.object(module.Lighting.lighting_looks, 'apply_lighting_look',
                           side_effect=AssertionError('lighting selection changed scene')):
-            module.lighting_looks.on_lighting_scenario_update(bpy.context.scene, bpy.context)
+            module.Lighting.lighting_looks.on_lighting_scenario_update(bpy.context.scene, bpy.context)
         props.activate()
         for handlers in (bpy.app.handlers.load_post, bpy.app.handlers.depsgraph_update_post,
                          bpy.app.handlers.frame_change_post, bpy.app.handlers.render_pre):

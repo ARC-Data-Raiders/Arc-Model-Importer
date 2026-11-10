@@ -1,6 +1,6 @@
 @echo off
 REM Double-click wrapper: builds the Blender addon zip and syncs to AppData.
-REM Outfits line -> DataRaiders-Outfits ; map line -> DataRaiders-MapImporter
+REM Outfits line -> Arc-Asset-Importer ; map line -> DataRaiders-MapImporter
 REM Pass extra args after the script name, e.g.:
 REM   package_addon.bat -Line outfits
 REM   package_addon.bat -Line map-importer

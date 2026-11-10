@@ -21,11 +21,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-# Load surface_rebuild.glass_opaque and its sibling helpers without the package __init__ (which needs bpy).
+# Load materials.rebuild.glass_opaque and its sibling helpers without the package __init__ (which needs bpy).
 package = types.ModuleType('_sr_glass_pkg')
-package.__path__ = [str(ROOT / 'surface_rebuild')]
+package.__path__ = [str(ROOT / 'Shared/materials/rebuild')]
 sys.modules['_sr_glass_pkg'] = package
-spec = importlib.util.spec_from_file_location('_sr_glass_pkg.glass_opaque', ROOT / 'surface_rebuild/glass_opaque.py')
+spec = importlib.util.spec_from_file_location('_sr_glass_pkg.glass_opaque', ROOT / 'Shared/materials/rebuild/glass_opaque.py')
 glass = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = glass
 spec.loader.exec_module(glass)
@@ -140,7 +140,7 @@ class Socket(SimpleNamespace):
 
 
 class NumericGraph:
-    """Eager stand-in for material_runtime.interop.Graph: sockets are floats and 3-tuples."""
+    """Eager stand-in for materials.native.interop.Graph: sockets are floats and 3-tuples."""
     def __init__(self, images, view=(0., 0., 1.), up=(0., 0., 1.), back=False):
         self.report = {'warnings': []}
         self.images, self.result, self.requested = images, None, []
