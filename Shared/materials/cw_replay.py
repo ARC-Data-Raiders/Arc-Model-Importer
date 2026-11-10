@@ -728,6 +728,22 @@ class Replay:
                 if r is not None and r.name != p._nm and r.name in want:
                     r.name = "~drr%x" % p._ptr
                     STATS["renamed"] += 1
+        def skey(s):
+            coll = s._n._t.outputs if s._o else s._n._t.inputs
+            for i, t in enumerate(coll):
+                if t == s._s:
+                    return i
+            raise ReplayError("socket %r left its node" % (s,))
+        # A fresh commit adds each link as soon as both its nodes exist. Every write costs a
+        # tree update that grows faster than the node count, so links written while the tree
+        # is still small cost less than all of them at full size. Replay order is kept: a
+        # proxy link was made after both its nodes, so the pointer never has to skip ahead.
+        early = []
+        if not stash_log:
+            early = [lk for lk in self.links if not lk._dead
+                     and not lk.from_socket._n._dead and not lk.to_socket._n._dead]
+        e_at = 0
+        e_made = set()
         for p in alive:
             r = pair.get(id(p))
             if r is None:
@@ -752,6 +768,19 @@ class Replay:
                 if r.name != p._nm:
                     raise ReplayError("name %r became %r" % (p._nm, r.name))
                 _sync_node(p._t, r)
+            if early:
+                e_made.add(id(p))
+                while e_at < len(early):
+                    lk = early[e_at]
+                    a, b = lk.from_socket, lk.to_socket
+                    if id(a._n) not in e_made or id(b._n) not in e_made:
+                        break
+                    lk.__dict__["_real"] = real.links.new(pair[id(a._n)].outputs[skey(a)],
+                                                          pair[id(b._n)].inputs[skey(b)])
+                    STATS["links_added"] += 1
+                    e_at += 1
+        if e_at < len(early):
+            raise ReplayError("early links stopped at %d of %d" % (e_at, len(early)))
         # Frames, then locations in one write (parent changes move the stored location).
         for p in alive:
             r = pair[id(p)]
@@ -767,13 +796,7 @@ class Replay:
             i = r_index[pair[id(p)].as_pointer()]
             flat[2 * i], flat[2 * i + 1] = p._t.location
         rnodes.foreach_set("location", flat)
-        # Links in replay order.
-        def skey(s):
-            coll = s._n._t.outputs if s._o else s._n._t.inputs
-            for i, t in enumerate(coll):
-                if t == s._s:
-                    return i
-            raise ReplayError("socket %r left its node" % (s,))
+        # Links in replay order (a fresh commit already added them; they pair up below).
         want_links = []
         for lk in self.links:
             if lk._dead:
@@ -852,12 +875,26 @@ class Replay:
         _ACTIVE.pop(self.real_ptr, None)
 
     def _free_scratch(self):
+        # One batch_remove remaps users once for all scratch materials (one remove each
+        # scans the whole file: about 5 ms per material against 0.4 ms in a batch).
+        live = []
         for m in self.scratch:
             try:
-                bpy.data.materials.remove(m)
-            except (ReferenceError, RuntimeError):
+                m.name
+                live.append(m)
+            except ReferenceError:
                 pass
         self.scratch = []
+        if not live:
+            return
+        try:
+            bpy.data.batch_remove(live)
+        except (ReferenceError, RuntimeError):
+            for m in live:
+                try:
+                    bpy.data.materials.remove(m)
+                except (ReferenceError, RuntimeError):
+                    pass
 
     def abort(self):
         if not self.done:

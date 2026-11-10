@@ -1903,7 +1903,6 @@ def iter_batch_import_instances(context, selected_presets, *, staged: bool = Fal
             parts_total = 0
             from ..Maps import staged_import as _staged_mod
             _view_saved = _staged_mod.enter_solid_viewports()
-            _lazy = _staged_mod.LazyImageBind(set(bpy.data.materials))
             materials.set_batch_material_mode(True)
             # Later colourways of a mesh slot start from the first colourway's flat graph.
             from .materials import cw_replay as _cw_replay
@@ -1936,18 +1935,12 @@ def iter_batch_import_instances(context, selected_presets, *, staged: bool = Fal
                         f"    [{preset_name}] Applied materials on {n_mat} mesh(es)"
                     )
                     pending_links.append((inst_objs, preset_colls[preset_idx]))
-                pass  # lazy bind off: rebind cost 45 s (L2)
                 materials.set_batch_material_mode(False)
-                # Time-sliced bind pass: one material per step.
-                bind_total = _lazy.material_count()
-                for b_idx, b_label in enumerate(_lazy.iter_bind()):
-                    yield ("bind", b_idx + 1, bind_total, b_label)
                 yield ("finish", 0, 5, "binding textures")
                 _stamp_clothing_cache_keys()
                 yield ("finish", 0, 5, "stamping materials")
             finally:
-                # Cancel or error: never leave an unbound image node or a switched viewport.
-                _lazy.bind_all()
+                # Cancel or error: never leave a switched viewport.
                 materials.set_batch_material_mode(False)
                 _cw_replay.STASH_ON[0] = False
                 _cw_replay.SHARE_ON[0] = False

@@ -301,10 +301,17 @@ def ensure_ocm_zone_index(ocm_image, *, force: bool = False):
         print("Arc Raiders: ZoneIndex write/load size mismatch — abort")
         return None
 
-    hist = [0] * _ZONE_COUNT
-    for u in plane:
-        z = max(0, min(_ZONE_COUNT - 1, (u - 16) // 32))
-        hist[z] += 1
+    try:
+        import numpy as np
+
+        zs = np.clip((np.frombuffer(plane, dtype=np.uint8).astype(np.int16) - 16) // 32,
+                     0, _ZONE_COUNT - 1)
+        hist = np.bincount(zs, minlength=_ZONE_COUNT).tolist()
+    except Exception:
+        hist = [0] * _ZONE_COUNT
+        for u in plane:
+            z = max(0, min(_ZONE_COUNT - 1, (u - 16) // 32))
+            hist[z] += 1
     print(
         f"Arc Raiders: ZoneIndex → {os.path.basename(path)} {w}x{h} hist={hist}"
     )
