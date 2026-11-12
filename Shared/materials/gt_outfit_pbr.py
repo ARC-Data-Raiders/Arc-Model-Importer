@@ -2908,15 +2908,47 @@ def _iter_finish_gt_outfit_graph_flat(
     n_orphans = prune_orphan_nodes(nodes)
     if n_orphans:
         print(f"Arc Raiders: GT pruned {n_orphans} unlinked node(s)")
-    # A replay build (cw_replay) writes the flat graph into the real tree here, once.
     from . import cw_replay as _cw_replay
-    nodes, links = _cw_replay.commit(nodes, links)
+    from . import graph_blocks as _graph_blocks
+    bsdf_name = bsdf.name
+    blocks = None
+    collapse_ran = False
+    quiet_done = frame_done = org_done = False
+    rp = _cw_replay.replay_of(nodes)
+    if rp is not None and not rp.done and os.environ.get("DR_CW_FAST", "1") != "0":
+        # Fast path: collapse straight from the replay proxies, so the flat graph (about
+        # 1,500 nodes) never enters the real tree. Only the wrapper shell is committed.
+        try:
+            for n in nodes:
+                _quiet_node(n)
+            quiet_done = True
+            yield "tidy"
+            _frame_gt_nodes(nodes)
+            frame_done = True
+            yield "tidy"
+            _dr_ops.organize(nodes, links)
+            org_done = True
+            yield "tidy"
+            collapse_ran = True
+            blocks = yield from _graph_blocks.iter_collapse_and_arrange(
+                rp.tree, material_name=rp.mat.name)
+        except Exception as exc:
+            import traceback
+            print(f"DR_BLOCKS_ERROR fast {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            blocks = None
+    fast = bool(blocks) and not blocks.get('skipped')
+    # A replay build (cw_replay) writes its graph into the real tree here, once: the
+    # collapsed shell on the fast path, the flat graph otherwise.
+    nodes, links = _cw_replay.commit(nodes, links, collapsed=fast)
+    tree = nodes.id_data
     # Do not run global overlap-nudge: locked decal/ZonePick grids become
     # obstacles and shove Principled/notes tens of thousands of units away.
     # Opening the Shader Editor then allocates a View2D for that huge AABB.
     yield "tail"
-    for n in nodes:
-        _quiet_node(n)
+    if not quiet_done:
+        for n in nodes:
+            _quiet_node(n)
     _purge_unused_gt_datablocks()
     yield "tidy"
     if os.environ.get("DR_LOC_COUNT") == "1":
@@ -2924,22 +2956,21 @@ def _iter_finish_gt_outfit_graph_flat(
         nodes.foreach_get("location", flat)
         nz = [n.name for i, n in enumerate(nodes) if flat[2 * i] or flat[2 * i + 1]]
         print(f"DR_LOC_COUNT nodes={len(nodes)} nonzero={len(nz)} sample={nz[:12]}", flush=True)
-    _frame_gt_nodes(nodes)
-    yield "tidy"
-    _dr_ops.organize(nodes, links)
-    yield "tidy"
+    if not frame_done:
+        _frame_gt_nodes(nodes)
+        yield "tidy"
+    if not org_done:
+        _dr_ops.organize(nodes, links)
+        yield "tidy"
     # Collapse repeated logic into shared block groups and lay the rest out left to right.
     # A failure here must never break the import: the column tidy pass stays as fallback.
-    blocks = None
-    tree = nodes.id_data
-    bsdf_name = bsdf.name
-    try:
-        from . import graph_blocks as _graph_blocks
-        blocks = yield from _graph_blocks.iter_collapse_and_arrange(tree)
-    except Exception as exc:
-        import traceback
-        print(f"DR_BLOCKS_ERROR {type(exc).__name__}: {exc}")
-        traceback.print_exc()
+    if not collapse_ran:
+        try:
+            blocks = yield from _graph_blocks.iter_collapse_and_arrange(tree)
+        except Exception as exc:
+            import traceback
+            print(f"DR_BLOCKS_ERROR {type(exc).__name__}: {exc}")
+            traceback.print_exc()
     if not blocks or blocks.get('skipped'):
         # The flat graph stays (failure or skip): write the deferred locations first.
         end_deferred_locations(tree, flush=True)

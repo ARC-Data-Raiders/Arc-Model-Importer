@@ -239,7 +239,8 @@ def emission_circuit(rows,stages=('Base','Crease','Edge'),overall=1.):
     # Compatibility: retained OverallEmissive was a literal Color socket input,
     # whose RNA assignment clamps negative components to0. Dynamic strengths
     # remain socket expressions; this conversion applies only to that literal.
-    return e('multiply',terms[0],literal(max(0.,float(overall))),name='Emission.OverallAuthoredGain',stage='Light')
+    gain=overall if hasattr(overall,'op') else literal(max(0.,float(overall)))
+    return e('multiply',terms[0],gain,name='Emission.OverallAuthoredGain',stage='Light')
 
 def compress_emissive_strength(value):
     """Authored zone strength -> Blender strength. Up to 1 is kept; above 1 grows as 1+ln(v).
@@ -260,7 +261,10 @@ def build_emission(api,nodes,links,mi_data,colours,zone_eq,albedo,crease,edge):
     bindings={'Albedo':albedo,**{'Zone'+str(row['zone']):zone_eq[row['zone']] for row in rows}}
     if crease is not None:bindings['CreaseFactor']=crease
     if edge is not None:bindings['EdgeFactor']=edge
-    expression=emission_circuit(rows,stages,C._gt_param_float(mi_data,'OverallEmissive',1.))
+    # One bound parameter, so the gain is a wrapper input (Emission panel) and colourways can write it.
+    from . import param_bind
+    bindings['OverallEmissive']=param_bind.bind(nodes,'OverallEmissive',max(0.,float(C._gt_param_float(mi_data,'OverallEmissive',1.))))
+    expression=emission_circuit(rows,stages,binding('OverallEmissive'))
     return StageEmitter(nodes.id_data,bindings,api._dr_ops).emit(expression)
 
 def build_terminal(api,nodes,links,*,albedo,roughness,metallic,specular,n_color,emission,mi_data,zone_eq):
@@ -269,5 +273,5 @@ def build_terminal(api,nodes,links,*,albedo,roughness,metallic,specular,n_color,
     links.new(n_color,nmap.inputs['Color']);specular=build_cloth(api,nodes,links,specular,mi_data,zone_eq,nmap.outputs['Normal'])
     bsdf=ops.new_operation(nodes,'ShaderNodeBsdfPrincipled','GT_Principled',stage='Output',role='Surface.Closure');ops.set_label(bsdf,'GT Principled (full outfit PBR)');bsdf.inputs['IOR'].default_value=1.5
     for source,key in [(albedo,'Base Color'),(roughness,'Roughness'),(metallic,'Metallic'),(specular,'Specular IOR Level'),(nmap.outputs['Normal'],'Normal')]:links.new(source,bsdf.inputs[key])
-    if emission is not None:links.new(emission,bsdf.inputs['Emission Color']);from .emissive_exposure import character_emissive_exposure;bsdf.inputs['Emission Strength'].default_value=character_emissive_exposure()
+    if emission is not None:links.new(emission,bsdf.inputs['Emission Color']);from .emissive_exposure import character_emissive_exposure;bsdf.inputs['Emission Strength'].default_value=character_emissive_exposure();bsdf['dr.pro']='emission'
     out=ops.new_operation(nodes,'ShaderNodeOutputMaterial','GT_MaterialOutput',stage='Output',role='Surface.Output');links.new(bsdf.outputs['BSDF'],out.inputs['Surface']);return bsdf,nmap,out

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import subprocess
 import sys
@@ -24,7 +25,9 @@ from Outfit_Accessories.pak_catalog import read_index  # noqa: E402
 from build_appearance_catalog import SEGMENTS, choose_icon, token  # noqa: E402
 
 GAME_PAKS = "C:/Program Files (x86)/Steam/steamapps/common/Arc Raiders/PioneerGame/Content/Paks"
-ADDON = Path("C:/Users/Silarious/AppData/Roaming/Blender Foundation/Blender/5.1/scripts/addons/Arc-Asset-Importer")
+if not os.environ.get("DATARAIDERS_ADDON_DIR"):
+    sys.exit("Set DATARAIDERS_ADDON_DIR to the installed Arc-Asset-Importer addon folder")
+ADDON = Path(os.environ["DATARAIDERS_ADDON_DIR"])
 INDEX = ADDON / "ArcPak/cache/indexes/pak-index-26439197.bin"
 EXE = ADDON / "ArcPak/ArcPak.Export.exe"
 USMAP = ROOT / "ArcPak/mappings/ArcRaiders_2.3.0_UE5.7.4_CL1438640.usmap"

@@ -332,8 +332,7 @@ class _Nodes:
         r = self._live()
         if r is not None:
             return r.clear()
-        for n in list(self._rp.order):
-            self._rp._remove(n)
+        self._rp._clear()
 
     def get(self, k, default=None):
         r = self._live()
@@ -640,6 +639,24 @@ class Replay:
         tw = p._t
         tw.id_data.nodes.remove(tw)
         p.__dict__["_t"] = None
+
+    def _clear(self):
+        """Drop every proxy node and link at once (one _remove per node scans all links)."""
+        for lk in self.links:
+            lk.__dict__["_dead"] = True
+        for p in self.order:
+            p.__dict__["_dead"] = True
+            p.__dict__["_par"] = None
+            p.__dict__["_t"] = None
+        self.links = []
+        self.in_links = {}
+        self.out_links = {}
+        self.order = []
+        self.byname = {}
+        self.active = None
+        # The twins go with their scratch materials; new nodes start a new scratch tree.
+        self._free_scratch()
+        self.fill = _SCRATCH_CAP
 
     def _sock_links(self, s):
         key = id(s)
@@ -1088,14 +1105,22 @@ def replay_of(nodes):
     return rp
 
 
-def commit(nodes, links):
-    """Commit the replay behind nodes; returns the real (nodes, links). Stashes when batching."""
+def commit(nodes, links, collapsed=False):
+    """Commit the replay behind nodes; returns the real (nodes, links). Stashes when batching.
+
+    collapsed=True: the proxies already hold the collapsed graph (wrapper node and a few
+    others). The real tree is emptied first and no flat stash or shared copy is kept.
+    """
     rp = replay_of(nodes)
     if rp is None:
         return nodes, links
     if rp.done:
         return rp.real.nodes, rp.real.links
     made0 = STATS["created"]
+    if collapsed:
+        if len(rp.real.nodes):
+            rp.real.nodes.clear()
+        rp.stash = None
     try:
         rp.commit()
     except Exception:
@@ -1103,7 +1128,7 @@ def commit(nodes, links):
         traceback.print_exc()
         rp.abort()
         raise
-    key = getattr(rp, "key", None)
+    key = None if collapsed else getattr(rp, "key", None)
     if _share() and key is not None:
         fresh = STATS["created"] - made0
         if _SHARED[0] is None or fresh > _SHARE_REPLACE * max(1, len(rp.log)):

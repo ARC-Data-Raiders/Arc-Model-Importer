@@ -1063,6 +1063,13 @@ def _link_objects_to_collection(objects: list, coll) -> None:
             pass
 
 
+def _bad_folder_message(folder) -> str:
+    """Cause and next step for a folder picker that got no usable folder."""
+    if not folder:
+        return "No folder was picked. Open the folder in the file browser, then confirm."
+    return f"Folder does not exist: {folder}. Pick an existing folder."
+
+
 def _snapshot_entry_skin_choices(entries) -> list:
     """Capture skin state so batch IO discovery can restore after dry-runs."""
     out = []
@@ -2522,7 +2529,7 @@ class ARC_OUTFITS_OT_PickManualOutfitFolder(Operator, bpy_extras.io_utils.Import
     def execute(self, context):
         folder = _picked_folder(self)
         if not os.path.isdir(folder):
-            self.report({'ERROR'}, f"Not a valid folder: {folder}")
+            self.report({'ERROR'}, _bad_folder_message(folder))
             return {'CANCELLED'}
         context.scene.arc_manual_outfit_folder = folder
         found = len(importing.scan_outfit_presets_in_folder(folder))
@@ -2599,7 +2606,7 @@ class ARC_OUTFITS_OT_ImportOutfitFolder(Operator):
     def execute(self, context):
         folder = bpy.path.abspath(self.directory)
         if not os.path.isdir(folder):
-            self.report({'ERROR'}, f"Not a valid folder: {folder}")
+            self.report({'ERROR'}, _bad_folder_message(folder))
             return {'CANCELLED'}
         psks = utils.find_import_models(folder)
         skipped_pskx = []
@@ -2653,7 +2660,7 @@ class ARC_OUTFITS_OT_AssemblePropFolder(Operator):
 
         folder = bpy.path.abspath(self.directory)
         if not os.path.isdir(folder):
-            self.report({'ERROR'}, f"Not a valid folder: {folder}")
+            self.report({'ERROR'}, _bad_folder_message(folder))
             return {'CANCELLED'}
         pioneer = utils.get_pioneer_root() or ""
         stats = prop_assemble.assemble_extraction_elevator_folder(
@@ -2868,7 +2875,7 @@ class ARC_OUTFITS_OT_DeepPathSearch(Operator, bpy_extras.io_utils.ImportHelper):
         if not folder:
             folder = bpy.path.abspath(self.filepath)
         if not os.path.isdir(folder):
-            self.report({'ERROR'}, f"Not a valid folder: {folder}")
+            self.report({'ERROR'}, _bad_folder_message(folder))
             return {'CANCELLED'}
         # Confirm via operator execute = user agreed to the expensive walk.
         granted = utils.set_deep_search_root(folder)
@@ -4168,11 +4175,11 @@ class ARC_OUTFITS_OT_PickManualSkinsFolder(Operator, bpy_extras.io_utils.ImportH
     def execute(self, context):
         entries = context.scene.arc_psk_entries
         if not (0 <= self.entry_index < len(entries)):
-            self.report({'ERROR'}, "Internal error: part entry not found.")
+            self.report({'ERROR'}, "The parts list changed after this menu opened. Load the outfit again, then retry.")
             return {'CANCELLED'}
         folder = _picked_folder(self)
         if not os.path.isdir(folder):
-            self.report({'ERROR'}, f"Not a valid folder: {folder}")
+            self.report({'ERROR'}, _bad_folder_message(folder))
             return {'CANCELLED'}
         entry = entries[self.entry_index]
         entry.manual_skins_folder = folder
@@ -4275,6 +4282,10 @@ class ARC_OUTFITS_OT_ConfirmPSKImport(Operator):
 
     def invoke(self, context, event):
         from ..Outfit_Accessories import properties as props
+        from . import pak_extract
+        if pak_extract.configured_dir(context.scene):
+            # Warm exporter handshake overlaps the user's review of this dialog.
+            pak_extract.prestart_serve()
         props.clear_confirm_dialog_cache()
         self._scan_cache = None
 
@@ -4598,7 +4609,7 @@ class ARC_OUTFITS_OT_PickPioneerRoot(Operator, bpy_extras.io_utils.ImportHelper)
         if not folder:
             folder = bpy.path.abspath(self.filepath)
         if not os.path.isdir(folder):
-            self.report({'ERROR'}, f"Not a valid folder: {folder}")
+            self.report({'ERROR'}, _bad_folder_message(folder))
             return {'CANCELLED'}
         context.scene.arc_pioneer_root = folder
         return {'FINISHED'}
@@ -4635,7 +4646,7 @@ class ARC_OUTFITS_OT_PickFmdexRoot(Operator, bpy_extras.io_utils.ImportHelper):
         if not folder:
             folder = bpy.path.abspath(self.filepath)
         if not os.path.isdir(folder):
-            self.report({'ERROR'}, f"Not a valid folder: {folder}")
+            self.report({'ERROR'}, _bad_folder_message(folder))
             return {'CANCELLED'}
         context.scene.arc_fmdex_root = folder
         fmdex.invalidate_cache()
@@ -5602,7 +5613,7 @@ class ARC_OUTFITS_OT_PickAnimationCache(Operator, bpy_extras.io_utils.ImportHelp
         if not folder:
             folder = bpy.path.abspath(self.filepath)
         if not os.path.isdir(folder):
-            self.report({"ERROR"}, f"Not a valid folder: {folder}")
+            self.report({"ERROR"}, _bad_folder_message(folder))
             return {"CANCELLED"}
         context.scene.arc_animation_cache = folder
         acat.invalidate()

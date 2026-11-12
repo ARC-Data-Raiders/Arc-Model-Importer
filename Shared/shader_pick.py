@@ -143,7 +143,12 @@ def find_zone_mask(material):
     stack = [(tree, nodes, base)]
     for nd in nodes:
         if nd.type == "GROUP" and nd.node_tree is not None:
-            stack.append((nd.node_tree, list(nd.node_tree.nodes), base + (nd,)))
+            sub = list(nd.node_tree.nodes)
+            stack.append((nd.node_tree, sub, base + (nd,)))
+            if nd.node_tree.get(wrapper_tree.STAGE_TAG):     # stage tree: its blocks are one level down
+                for nd2 in sub:
+                    if nd2.type == "GROUP" and nd2.node_tree is not None:
+                        stack.append((nd2.node_tree, list(nd2.node_tree.nodes), base + (nd, nd2)))
     for _t, ns, parents in stack:
         for nd in ns:
             if (nd.name.startswith("GT_mid_x8") and not nd.name.startswith("GT_mid_x8_half")) or nd.name == "DR.LayerInputs.mid.x8" or nd.get("dr.legacy_name") == "GT_mid_x8":
@@ -271,7 +276,7 @@ void main()
   ivec2 size = textureSize(mask, 0);
   ivec2 tc = clamp(ivec2(floor(fract(uvi) * vec2(size))), ivec2(0), size - ivec2(1));
   float id = floor(texelFetch(mask, tc, 0).r * 255.0 + 0.5);
-  if (abs(id - zone) > 0.5) {
+  if (zone >= 0.0 && abs(id - zone) > 0.5) {
     discard;
   }
   vec2 c = floor(gl_FragCoord.xy / cell);
@@ -362,25 +367,27 @@ def _overlay_shader():
     return _OVERLAY_SHADER[0]
 
 
-def draw_zone_overlay(obj, material, zone, view_projection, world, cell=OVERLAY_CELL_PX):
-    """Draw the checker on the texels of ``zone`` on ``obj``'s ``material``. False when there is nothing to draw."""
-    od = overlay_data(obj, material)
+def draw_zone_overlay(obj, material, zone, view_projection, world, cell=OVERLAY_CELL_PX, colours=None):
+    """Draw the checker on the texels of ``zone`` on ``obj``'s ``material``; zone -1 covers the whole
+    object. False when there is nothing to draw."""
+    od = part_overlay_data(obj) if zone < 0 else overlay_data(obj, material)
     if od is None or not zone:
         return False
+    colours = colours or OVERLAY_COLOURS
     import gpu
     from gpu_extras.batch import batch_for_shader
     sh = _overlay_shader()
     if od["batch"] is None:
         od["batch"] = batch_for_shader(sh, "TRIS", {"pos": od["pos"], "uv": od["uv"]})
-    tex = _zone_texture(od["image"], od["kind"])
+    tex = _blank_texture() if od["image"] is None else _zone_texture(od["image"], od["kind"])
     gpu.state.blend_set("ALPHA")
     gpu.state.depth_test_set("LESS_EQUAL")
     gpu.state.depth_mask_set(False)
     try:
         sh.bind()
         sh.uniform_float("mvp", view_projection @ world)
-        sh.uniform_float("colA", OVERLAY_COLOURS[0])
-        sh.uniform_float("colB", OVERLAY_COLOURS[1])
+        sh.uniform_float("colA", colours[0])
+        sh.uniform_float("colB", colours[1])
         sh.uniform_float("zone", float(zone))
         sh.uniform_float("cell", max(float(cell), 2.0))
         sh.uniform_float("bias", OVERLAY_DEPTH_BIAS)
@@ -390,6 +397,173 @@ def draw_zone_overlay(obj, material, zone, view_projection, world, cell=OVERLAY_
         gpu.state.depth_test_set("NONE")
         gpu.state.blend_set("NONE")
     return True
+
+
+# ---------------------------------------------------------------- kept highlight
+# After a click the picked zone (checker on its texels) or part (lighter checker on the whole
+# part) stays marked until it is cleared. It hides while a control is being edited so the
+# checker never covers the change, and comes back HIGHLIGHT_QUIET_S after the last edit.
+HIGHLIGHT_QUIET_S = 1.5
+PART_COLOURS = ((1.0, 0.85, 0.0, 0.32), (0.02, 0.02, 0.02, 0.18))
+_HL = {"pairs": None, "zone": 0, "since": 0.0, "handle": None, "timer": False, "stale": False}
+
+
+def part_overlay_data(obj):
+    """All triangles of ``obj`` (evaluated mesh, local space) for the part highlight. Cached."""
+    if obj is None or obj.type != "MESH":
+        return None
+    key = (obj.name, None)
+    if key in _OVERLAY_CACHE:
+        return _OVERLAY_CACHE[key]
+    out = None
+    me = obj.evaluated_get(bpy.context.evaluated_depsgraph_get()).data
+    me.calc_loop_triangles()
+    nt = len(me.loop_triangles)
+    if nt:
+        tv = np.empty(nt * 3, np.int32); me.loop_triangles.foreach_get("vertices", tv)
+        co = np.empty(len(me.vertices) * 3, np.float32); me.vertices.foreach_get("co", co)
+        out = {"pos": np.ascontiguousarray(co.reshape(-1, 3)[tv]), "uv": np.zeros((nt * 3, 2), np.float32),
+               "image": None, "kind": "", "batch": None}
+    _OVERLAY_CACHE[key] = out
+    return out
+
+
+def _blank_texture():
+    ent = _ZONE_TEX_CACHE.get("")
+    if ent is None:
+        import gpu
+        ent = (0, "", gpu.types.GPUTexture((1, 1), format="R8", data=gpu.types.Buffer("FLOAT", 1, [0.0])))
+        _ZONE_TEX_CACHE[""] = ent
+    return ent[2]
+
+
+def _tag_views():
+    try:
+        for win in bpy.context.window_manager.windows:
+            for area in win.screen.areas:
+                if area.type == "VIEW_3D":
+                    area.tag_redraw()
+    except Exception:
+        pass
+
+
+def highlight_state():
+    """{"pairs": [(object name, material name)], "zone": N (-1 = whole part)} or None."""
+    if not _HL["pairs"]:
+        return None
+    return {"pairs": list(_HL["pairs"]), "zone": _HL["zone"]}
+
+
+def highlight_hidden():
+    """True while the kept highlight is out of the way of an edit."""
+    if not _HL["pairs"]:
+        return False
+    t = _control_ops().last_edit_time()
+    return t > _HL["since"] and time.perf_counter() - t < HIGHLIGHT_QUIET_S
+
+
+def highlight_set(pairs, zone):
+    """Keep the checker on ``pairs`` [(object name, material name)]; zone -1 marks whole parts."""
+    pairs = [(str(o), str(m)) for o, m in pairs]
+    if not pairs:
+        highlight_clear()
+        return
+    clear_overlay_cache()       # the mesh may have been posed since the last pick
+    _HL.update(pairs=pairs, zone=int(zone), since=time.perf_counter(), stale=False)
+    if _HL["handle"] is None and not bpy.app.background:
+        _HL["handle"] = bpy.types.SpaceView3D.draw_handler_add(_hl_draw, (), "WINDOW", "POST_VIEW")
+    _tag_views()
+
+
+def highlight_clear():
+    _HL.update(pairs=None, zone=0, stale=False)
+    if _HL["handle"] is not None:
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(_HL["handle"], "WINDOW")
+        except Exception:
+            pass
+        _HL["handle"] = None
+    _tag_views()
+
+
+def _hl_wake():
+    _HL["timer"] = False
+    if _HL["stale"]:
+        highlight_clear()
+    _tag_views()
+    return None
+
+
+def _hl_later(seconds):
+    if not _HL["timer"]:
+        _HL["timer"] = True
+        bpy.app.timers.register(_hl_wake, first_interval=max(seconds, 0.02))
+
+
+def _hl_draw():
+    pairs = _HL["pairs"]
+    if not pairs or _HL["stale"]:
+        return
+    if highlight_hidden():
+        _hl_later(HIGHLIGHT_QUIET_S - (time.perf_counter() - _control_ops().last_edit_time()) + 0.05)
+        return
+    try:
+        import gpu
+        dg = bpy.context.evaluated_depsgraph_get()
+        view_projection = gpu.matrix.get_projection_matrix() @ gpu.matrix.get_model_view_matrix()
+        cell = OVERLAY_CELL_PX * bpy.context.preferences.system.ui_scale
+        zone = _HL["zone"]
+        done = set()
+        for oname, mname in pairs:
+            obj = bpy.data.objects.get(oname)
+            mat = bpy.data.materials.get(mname)
+            if obj is None or (zone >= 0 and mat is None):
+                _HL["stale"] = True         # the picked part is gone: drop the highlight outside the draw
+                _hl_later(0.02)
+                return
+            if not obj.visible_get():
+                continue
+            world = obj.evaluated_get(dg).matrix_world
+            if zone >= 0:
+                draw_zone_overlay(obj, mat, zone, view_projection, world, cell)
+            elif oname not in done:
+                done.add(oname)
+                draw_zone_overlay(obj, None, -1, view_projection, world, cell, PART_COLOURS)
+    except Exception as exc:
+        _HL["stale"] = True
+        _hl_later(0.02)
+        print(f"Arc Raiders: kept highlight failed: {exc!r}")
+
+
+@bpy.app.handlers.persistent
+def _hl_on_load(*_args):
+    highlight_clear()
+    clear_overlay_cache()
+
+
+def highlight_from_pick(context, obj, material, zone):
+    """Kept highlight for what a click selected in the current mode (none in Whole mode)."""
+    mode = _control_ops().select_mode(context.scene)
+    if mode == "ZONE" and zone and material is not None:
+        highlight_set([(obj.name, material.name)], zone)
+    elif mode == "PART":
+        highlight_set([(obj.name, s.material.name) for s in obj.material_slots if s.material is not None], -1)
+    else:
+        highlight_clear()
+
+
+class ARC_OT_shader_highlight_clear(bpy.types.Operator):
+    """Remove the checker highlight from the picked zone or part (Esc in the viewport does the same)"""
+    bl_idname = "arc.shader_highlight_clear"
+    bl_label = "Clear Highlight"
+
+    @classmethod
+    def poll(cls, context):
+        return highlight_state() is not None
+
+    def execute(self, context):
+        highlight_clear()
+        return {"FINISHED"}
 
 
 # ---------------------------------------------------------------- colour hook
@@ -626,6 +800,10 @@ def hover_writes(context, obj, material, zone, current_key=None):
         for prop, sock in user_controls.cached_material_targets(mat):
             if prop in HOVER_TINT:
                 writes.append((sock, HOVER_TINT[prop]))
+    for ob in objects:          # look values read from the object: no socket to write
+        for prop, slot in user_controls.look_slots(ob):
+            if prop in HOVER_TINT:
+                writes.append((slot, HOVER_TINT[prop]))
     return key, writes
 
 
@@ -652,6 +830,7 @@ def pick_commit(context, obj, hit, cur=None):
         print(f"Arc Raiders: decal pick failed: {exc}")
     info = find_zone_mask(mat)
     _control_ops().select_from_pick(context, obj, mat, z or 0, info.kind if info else "", decal)
+    highlight_from_pick(context, obj, mat, z or 0)
     return mat, z, decal
 
 
@@ -717,7 +896,7 @@ class ARC_OT_pick_shader_zone(bpy.types.Operator):
             return {"RUNNING_MODAL"}
         if event.type == "LEFTMOUSE" and event.value == "PRESS":
             self._update(context, event)
-            cur, hit = self._cur, self._hit
+            cur, hit = self._cur, self._hit      # the kept highlight is set by pick_commit
             self._hover.clear()             # the selection must see the real colours
             if cur:
                 pick_commit(context, cur[0], hit, cur)
@@ -736,6 +915,7 @@ class ARC_OT_pick_shader_zone(bpy.types.Operator):
         self._shown = 0
         self._zone_mode = False
         self._draw_failed = False
+        highlight_clear()           # a new pick replaces the kept highlight
         clear_overlay_cache()       # the mesh may have been posed since the last pick
         self._hover = HoverColour()
         self._handle = bpy.types.SpaceView3D.draw_handler_add(self._draw, (context,), "WINDOW", "POST_VIEW")
@@ -779,7 +959,15 @@ class DecalHandle:
 
     def __init__(self, material, idx, roles, aspect=1.0):
         self.material, self.idx, self.roles, self.aspect = material, idx, roles, aspect
-        self._use = wrapper_tree.find_node(material, f"P:{idx}_UseDecal")
+        # UseDecal is a P: node or a wrapper input (Decals panel): param_bind finds both by key.
+        try:
+            from .materials import param_bind
+            self._use = param_bind.param_sockets(material.node_tree, f"{idx}_UseDecal")
+        except ImportError:     # loaded standalone (tests): the P: node rule below
+            self._use = []
+        if not self._use:
+            node = wrapper_tree.find_node(material, f"P:{idx}_UseDecal")
+            self._use = [node.outputs[0]] if node is not None else []
         self.chain = []   # Mapping nodes upstream of the colour texture, applied first..last
         col = roles.get("color")
         sock = col.inputs["Vector"] if col is not None else None
@@ -817,11 +1005,11 @@ class DecalHandle:
         self._place.inputs["Scale"].default_value = (s, s * r, v[2])
 
     def get_opacity(self):
-        return self._use.outputs[0].default_value if self._use else 1.0
+        return self._use[0].default_value if self._use else 1.0
 
     def set_opacity(self, a):
-        if self._use:
-            self._use.outputs[0].default_value = max(0.0, min(1.0, a))
+        for sock in self._use:
+            sock.default_value = max(0.0, min(1.0, a))
 
     def get_mode(self):
         return self.material.get(f"dr.decal{self.idx}.mode", "UV")
@@ -1104,7 +1292,8 @@ def bench_decal_hover(obj_list, rays, depsgraph=None):
     return times, hits
 
 
-CLASSES = (ARC_OT_set_zone_colour, ARC_OT_pick_shader_zone, ARC_OT_drag_decal)
+CLASSES = (ARC_OT_set_zone_colour, ARC_OT_pick_shader_zone, ARC_OT_drag_decal, ARC_OT_shader_highlight_clear)
+_KEYMAPS: list = []
 
 
 def register():
@@ -1117,9 +1306,26 @@ def register():
     wm = bpy.types.WindowManager
     wm.arc_picked_zone = bpy.props.IntProperty(name="Picked Zone", default=0)
     wm.arc_picked_zone_material = bpy.props.StringProperty(name="Picked Zone Material")
+    if _hl_on_load not in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.append(_hl_on_load)
+    # Esc in the 3D View clears the kept highlight. The operator's poll fails when nothing is
+    # highlighted, so Esc then falls through to Blender as before.
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if kc is not None and not _KEYMAPS:
+        km = kc.keymaps.new(name="3D View", space_type="VIEW_3D")
+        _KEYMAPS.append((km, km.keymap_items.new(ARC_OT_shader_highlight_clear.bl_idname, "ESC", "PRESS")))
 
 
 def unregister():
+    highlight_clear()
+    if _hl_on_load in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.remove(_hl_on_load)
+    for km, kmi in _KEYMAPS:
+        try:
+            km.keymap_items.remove(kmi)
+        except Exception:
+            pass
+    _KEYMAPS.clear()
     wm = bpy.types.WindowManager
     for p in ("arc_picked_zone", "arc_picked_zone_material"):
         if hasattr(wm, p):

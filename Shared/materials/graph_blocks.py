@@ -55,6 +55,7 @@ PIN_PATTERNS = (
     (r'^GT_ZonePick', 'Shared/materials/gt_outfit_pbr.py:733'),
     (r'^DR\.UserControls$', 'Shared/materials/user_controls.py material_targets (per-material live sliders)'),
     (r'^DR\.ZoneOffsets$', 'Shared/materials/user_controls.py zone_offset_targets'),
+    (r'^DR\.Look$', 'Shared/materials/user_controls.py look_linked (look values read from the object)'),
 )
 _PIN_RE = [re.compile(p) for p, _src in PIN_PATTERNS]
 
@@ -739,7 +740,7 @@ WRAPPER_TAG = 'dr.wrapper'
 
 # The parameters a person adjusts to change the look: (key pattern, panel). One list for every
 # outfit. A matching parameter becomes an input of the wrapper node; all others stay inside.
-LOOK_PANELS = ('Colours', 'Surface', 'Wear and dirt', 'Pattern and detail')
+LOOK_PANELS = ('Colours', 'Surface', 'Wear and dirt', 'Pattern and detail', 'Decals', 'Emission')
 LOOK_PATTERNS = (
     (r'^\d+_PatternColor[ABC]$', 0),
     (r'^HueVariationStrength$', 0),
@@ -748,6 +749,8 @@ LOOK_PATTERNS = (
     (r'^(Edge|Crease) (amount|softness|Strength)$', 2),
     (r'^\d+_(Edge|Crease)ColorOverlay$', 2),
     (r'^\d+_(PatternTiling|MediumNormalStrength|DetailTiling)$', 3),
+    (r'^\d+_UseDecal$', 4),
+    (r'^OverallEmissive$', 5),
 )
 _LOOK_RE = [(re.compile(p), panel) for p, panel in LOOK_PATTERNS]
 _CURVE_BL = {'ShaderNodeRGBCurve', 'ShaderNodeVectorCurve', 'ShaderNodeFloatCurve'}
@@ -1081,10 +1084,11 @@ def _fill_diff(nd, d, o):
     return k
 
 
-def _wrap_sig(inner, byn, gnodes, final, look_keys, plan, sel_parent):
+def _wrap_sig(inner, byn, gnodes, final, look_keys, plan, sel_parent, nested=False):
     """Identity of a wrapper's structure and layout inputs, values excluded."""
     src = {
         'r': RECIPE,
+        'nested': bool(nested),
         'nodes': [(n, byn[n].bl_idname, bool(byn[n].hide), _vis(byn[n]), _stage(byn[n]),
                    sel_parent[n].name if n in sel_parent else '') for n in inner],
         'groups': sorted((gn, g['stage'], len(g['ext_src']), len(g['outs']), sorted(g['params']))
@@ -1109,7 +1113,8 @@ def _set_group_params(nd, g):
 
 def _from_template(wsig, wname, snaps, gnodes, look_keys):
     """Copy the stored wrapper of the same structure and write only the differing values.
-    Returns (tree, look_inputs, links, frames, writes) or None."""
+    Generator: yields 'blocks' between the tree copies and the value writes so a staged
+    import can redraw. Returns (tree, look_inputs, links, frames, writes) or None."""
     rec = _template_record(wsig)
     if rec is None:
         return None
@@ -1118,20 +1123,37 @@ def _from_template(wsig, wname, snaps, gnodes, look_keys):
         _WRAP_TEMPLATES.pop(wsig, None)
         return None
     w = tt.copy()
+    made = []
     try:
         w.name = wname
         del w[TEMPLATE_TAG]
         w[WRAPPER_TAG] = 1
         writes = 0
-        nodes = w.nodes
+        trees = [w]
+        mat = wname.split(' · ', 1)[-1]
+        for snode, st in _stage_trees_of(w):
+            c = st.copy()
+            made.append(c)
+            c.name = f'DR Stage · {snode.label} · {mat}'
+            snode.node_tree = c
+            trees.append(c)
+        yield 'blocks'
+
+        def find(name):
+            for t in trees:
+                x = t.nodes.get(name)
+                if x is not None:
+                    return x
+            return None
+
         for n, d in snaps.items():
-            nd = nodes.get(n)
+            nd = find(n)
             o = rec['snaps'].get(n)
             if nd is None or o is None:
                 raise LookupError(n)
             writes += _fill_diff(nd, d, o)
         for gname, g in gnodes.items():
-            nd = nodes.get(gname)
+            nd = find(gname)
             tname, tparams = rec['gparams'][gname]
             if nd is None:
                 raise LookupError(gname)
@@ -1144,13 +1166,17 @@ def _from_template(wsig, wname, snaps, gnodes, look_keys):
                     if tparams.get(i) != (key, value):
                         nd.inputs[i].default_value = value
                         writes += 1
-        if len(w.links) != rec['links']:
-            raise LookupError(f'links {len(w.links)} != {rec["links"]}')
+        total = sum(len(t.links) for t in trees)
+        if total != rec['links']:
+            raise LookupError(f'links {total} != {rec["links"]}')
         look_inputs = []
         for key, ident, label in rec['look']:
             look_inputs.append((key, ident, look_keys[key], label))
     except BaseException as exc:
         bpy.data.node_groups.remove(w)
+        for c in made:
+            if c.users == 0:
+                bpy.data.node_groups.remove(c)
         if isinstance(exc, LookupError):
             print(f'DR_BLOCKS_TEMPLATE_MISS {wname} {exc}', flush=True)
             return None
@@ -1164,6 +1190,20 @@ def _store_template(wsig, w, snaps, gnodes, look_inputs, nlinks, nframes):
     tt[TEMPLATE_TAG] = wsig
     if tt.get(WRAPPER_TAG) is not None:
         del tt[WRAPPER_TAG]
+    # The copy still points at this material's stage trees; the template gets its own.
+    subs = []
+    for i, (snode, st) in enumerate(_stage_trees_of(tt)):
+        c = st.copy()
+        c.name = f'.DR Stage template {wsig[:12]} {i}'
+        snode.node_tree = c
+        subs.append(c)
+    if subs and len(tt.links) + sum(len(c.links) for c in subs) != nlinks:
+        print(f'DR_BLOCKS_TEMPLATE_SKIP {tt.name} links', flush=True)
+        bpy.data.node_groups.remove(tt)
+        for c in subs:
+            if c.users == 0:
+                bpy.data.node_groups.remove(c)
+        return
     rec = {
         'tree': tt.name,
         'snaps': {n: _norm_snap(d) for n, d in snaps.items()},
@@ -1179,6 +1219,461 @@ def _store_template(wsig, w, snaps, gnodes, look_inputs, nlinks, nframes):
             tt['dr.blocks.recipe'] = RECIPE
     except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
         pass
+
+
+# ---- stage trees: one group node per build stage inside the wrapper ----
+# A flat wrapper holds about 650 nodes and its links cross more than 13,000 times, which no
+# column order fixes. So the wrapper's nodes and blocks are split into a few acyclic stage
+# clusters; each cluster becomes its own per-material tree and the wrapper shows one node per stage.
+STAGE_TAG = 'dr.stage_tree'
+STAGE_SMALL = 20        # clusters under this many units fold into a linked neighbour
+
+
+def _stage_trees_of(w):
+    """(group node, stage tree) pairs of a wrapper tree."""
+    return [(nd, nd.node_tree) for nd in w.nodes
+            if nd.bl_idname == 'ShaderNodeGroup' and nd.node_tree is not None and nd.node_tree.get(STAGE_TAG)]
+
+
+def _remove_wrapper(w):
+    """Remove a wrapper tree and the stage trees only it used."""
+    subs = []
+    for _nd, t in _stage_trees_of(w):
+        if t not in subs:
+            subs.append(t)
+    bpy.data.node_groups.remove(w)
+    for t in subs:
+        if t.users == 0:
+            bpy.data.node_groups.remove(t)
+
+
+def _stage_clusters(inner, byn, gnodes, final, sel_parent, out_srcs):
+    """Split the wrapper's nodes and blocks into stage clusters whose quotient graph is acyclic.
+    Returns [{'label', 'stage', 'ents'}] in flow order, or None when nesting does not apply."""
+    ents = list(inner) + list(gnodes)
+    eset = set(ents)
+    stage = {n: _stage(byn[n]) for n in inner}
+    for gn, g in gnodes.items():
+        stage[gn] = g['stage']
+    # A selection frame cannot span trees: its members form one unit.
+    unit = {}
+    members = defaultdict(list)
+    for n in ents:
+        f = sel_parent.get(n)
+        unit[n] = n if f is None else 'F:' + f.name
+        members[unit[n]].append(n)
+    ustage = {}
+    for u, ms in members.items():
+        count = defaultdict(int)
+        for m in ms:
+            count[stage[m]] += 1
+        ustage[u] = min(count, key=lambda s: (-count[s], s))
+    preds = {u: set() for u in members}
+    succ = {u: set() for u in members}
+    for a, _fi, b, _ti, _mu in final:
+        if a in eset and b in eset and unit[a] != unit[b]:
+            preds[unit[b]].add(unit[a])
+            succ[unit[a]].add(unit[b])
+    # A constant that feeds one other stage only belongs to that stage.
+    for u, ms in members.items():
+        n = ms[0]
+        if (len(ms) != 1 or preds[u] or not succ[u] or n in gnodes or n in sel_parent or n in out_srcs
+                or byn[n].bl_idname not in ('ShaderNodeValue', 'ShaderNodeRGB')):
+            continue
+        ss = {ustage[s] for s in succ[u]}
+        if len(ss) == 1:
+            ustage[u] = next(iter(ss))
+    names = sorted(members)
+    key = {u: ('ShaderNodeGroup' if members[u][0] in gnodes else byn[members[u][0]].bl_idname, u) for u in names}
+    order = _topo(names, preds, key)
+    if order is None:
+        return None
+    rank = {}
+    for u in order:
+        rank[u] = max((rank[p] + (1 if ustage[p] != ustage[u] else 0) for p in preds[u]), default=0)
+    raw = defaultdict(list)
+    for u in order:
+        raw[(ustage[u], rank[u])].append(u)
+    merged = _merge_blocks(raw, order, preds, None, None, cap=10 ** 9, small=STAGE_SMALL)
+    cl = {u: k for k, v in merged.items() for u in v}
+    keys = sorted(merged, key=lambda k: (k[1], k[0]))
+    qpreds = {k: set() for k in keys}
+    for u, ps in preds.items():
+        for p in ps:
+            if cl[p] != cl[u]:
+                qpreds[cl[u]].add(cl[p])
+    qorder = _topo(keys, qpreds, {k: (k[1], k[0]) for k in keys})
+    if qorder is None or len(qorder) < 2:
+        return None
+    total = defaultdict(int)
+    for k in qorder:
+        total[k[0]] += 1
+    seen = defaultdict(int)
+    epos = {n: i for i, n in enumerate(ents)}
+    out = []
+    for k in qorder:
+        seen[k[0]] += 1
+        label = k[0] if total[k[0]] == 1 else f'{k[0]} {seen[k[0]]}'
+        es = sorted((m for u in merged[k] for m in members[u]), key=epos.get)
+        out.append({'label': label, 'stage': k[0], 'ents': es})
+    return out
+
+
+def _arrange(t, new, edges, sel_parent, fmap, lab, as_source):
+    """Lay out the nodes ``new`` (name -> node) of tree ``t`` and frame them by label.
+    ``as_source``: Group Input names placed like a parameter value, beside their first consumer.
+    Returns the number of frames made."""
+    lnames = sorted(new)
+    bl = {n: new[n].bl_idname for n in lnames}
+    for n in lnames:
+        nd = new[n]
+        b = bl[n]
+        if b in HIDE_BL and not nd.hide:
+            nd.hide = True
+        if b in ('ShaderNodeValue', 'ShaderNodeRGB') and not nd.label:
+            pk = nd.get('dr.parameter_key')
+            nd.label = str(pk) if pk else (n[2:] if n.startswith('P:') else n)
+        wd = _width_for(b)
+        if abs(nd.width - wd) > 0.5:
+            nd.width = wd
+    wid = {n: _width_for(bl[n]) for n in lnames}
+    hgt = {n: _height(bl[n], new[n].hide, _vis(new[n])) for n in lnames}
+    lbl = {n: ('ShaderNodeValue' if n in as_source else b) for n, b in bl.items()}
+    pos, items = _layout(lnames, lbl, wid, hgt, edges, label=lab, sources=True)
+    nframes = 0
+    for _c, label, members in items:
+        members = [m for m in members if m not in sel_parent]
+        if not members:
+            continue
+        fr = t.nodes.new('NodeFrame')
+        fr.label = label or 'Misc'
+        fr.label_size = 20
+        fr['dr.blocks.frame'] = 1
+        nframes += 1
+        for m in members:
+            new[m].parent = fr
+    sel_abs = {}
+    for n, p in sel_parent.items():
+        if n in new and p.as_pointer() in fmap:
+            new[n].parent = fmap[p.as_pointer()]
+            sel_abs[n] = _abs(p)
+    flat = []
+    for nd in t.nodes:
+        nm = nd.name
+        if nd.bl_idname == 'NodeFrame':
+            flat += [0.0, 0.0] if nd.get('dr.blocks.frame') else [float(nd.location.x), float(nd.location.y)]
+            continue
+        x, y = pos.get(nm, (float(nd.location.x), float(nd.location.y)))
+        off = sel_abs.get(nm)
+        if off is not None:
+            x -= off[0]
+            y -= off[1]
+        flat += [x, y]
+    t.nodes.foreach_set('location', flat)
+    return nframes
+
+
+def _look_interface(w, look_keys):
+    """Create the wrapper's look inputs in panels. Returns [(key, identifier, value, label)]."""
+    look_inputs = []
+    labels = {k: _look_label(k) for k in look_keys}
+    panels = {}
+    used = set()
+    for key in sorted(look_keys, key=lambda k: (_look_panel(k), labels[k][1], labels[k][2])):
+        pi = _look_panel(key)
+        if pi not in panels:
+            panels[pi] = w.interface.new_panel(LOOK_PANELS[pi], default_closed=pi != 0)
+        value = look_keys[key]
+        label, k = labels[key][0], 2
+        while label in used:
+            label = f'{labels[key][0]} {k}'
+            k += 1
+        used.add(label)
+        sock = w.interface.new_socket(
+            name=label, in_out='INPUT', parent=panels[pi],
+            socket_type='NodeSocketColor' if isinstance(value, tuple) else 'NodeSocketFloat')
+        sock.default_value = value
+        look_inputs.append((key, sock.identifier, value, label))
+    return look_inputs
+
+
+def _iter_build_nested(w, mat, clusters, *, byn, outs, gnodes, final, topset, look_nodes, look_keys,
+                       plan, snaps_in, frames, sel_frames, sel_parent):
+    """Build one stage tree per cluster and the wrapper that links them. Generator: yields
+    'blocks' about every SLICE_S; returns (look_inputs, links, frames, wrapper nodes)."""
+    tick = time.perf_counter()
+    nc = len(clusters)
+    cl_of = {}
+    epos = {}
+    for ci, c in enumerate(clusters):
+        for i, e in enumerate(c['ents']):
+            cl_of[e] = ci
+            epos[e] = i
+    c_links = [[] for _ in clusters]        # links inside a cluster
+    c_in = [set() for _ in clusters]        # ('L', look key) or ('X', source, output index)
+    c_in_links = [[] for _ in clusters]     # (input key, node, input index, muted)
+    c_out = [{} for _ in clusters]          # (source, output index) -> farthest consumer cluster
+    for a, fi, b, ti, mu in final:
+        if b in topset:
+            continue
+        cb = cl_of[b]
+        if a in look_nodes:
+            k = ('L', look_nodes[a])
+        else:
+            ca = cl_of[a]
+            if ca == cb:
+                c_links[cb].append((a, fi, b, ti, mu))
+                continue
+            k = ('X', a, fi)
+            c_out[ca][(a, fi)] = max(cb, c_out[ca].get((a, fi), -1))
+        c_in[cb].add(k)
+        c_in_links[cb].append((k, b, ti, mu))
+    direct = []                             # look input straight to a wrapper output
+    for (a, fi), j in plan['out_idx'].items():
+        if a in look_nodes:
+            direct.append((look_nodes[a], j))
+        else:
+            c_out[cl_of[a]][(a, fi)] = nc
+    # Far consumers first: a long link leaves and arrives near the top, short ones nest below it.
+    out_order = [sorted(d, key=lambda k, d=d: (-d[k], epos[k[0]], k[1])) for d in c_out]
+    out_pos = [{k: j for j, k in enumerate(lst)} for lst in out_order]
+    look_labels = {k: _look_label(k) for k in look_keys}
+    look_rank = {k: i for i, k in enumerate(sorted(
+        look_keys, key=lambda k: (_look_panel(k), look_labels[k][1], look_labels[k][2])))}
+
+    def in_key(k):
+        if k[0] == 'L':
+            return (-1, look_rank[k[1]], 0)
+        ca = cl_of[k[1]]
+        return (ca, out_pos[ca][(k[1], k[2])], 0)
+
+    in_order = [sorted(s, key=in_key) for s in c_in]
+    in_pos = [{k: j for j, k in enumerate(lst)} for lst in in_order]
+
+    def src_type(a, fi):
+        stype = gnodes[a]['out_types'][fi] if a in gnodes else outs[a][fi].type
+        return SOCKET_TYPES.get(stype, 'NodeSocketFloat')
+
+    def src_name(a, fi):
+        if a in gnodes:
+            names = gnodes[a]['out_names']
+            return names[fi] if fi < len(names) else gnodes[a]['stage']
+        base = byn[a].label or a
+        return base if len(outs[a]) == 1 else f'{base} · {outs[a][fi].name}'
+
+    frame_cl = {}
+    for n, p in sel_parent.items():
+        if n in cl_of:
+            frame_cl.setdefault(p.as_pointer(), cl_of[n])
+    trees = []
+    nlinks = 0
+    nframes = 0
+    try:
+        for ci, c in enumerate(clusters):
+            t = bpy.data.node_groups.new(f'DR Stage · {c["label"]} · {mat}', 'ShaderNodeTree')
+            trees.append(t)
+            # Same order as the flat build: plain nodes and links, then blocks, then the interface.
+            new = {}
+            fmap = {}
+            for f in frames:
+                if f.as_pointer() in sel_frames and frame_cl.get(f.as_pointer()) == ci:
+                    d = dict(snaps_in[f.name])
+                    d['loc'] = _abs(f)
+                    fmap[f.as_pointer()] = _make_node(t, d, loc=True)
+            for n in c['ents']:
+                if n in gnodes:
+                    continue
+                new[n] = _make_node(t, snaps_in[n])
+                if time.perf_counter() - tick > SLICE_S:
+                    yield 'blocks'
+                    tick = time.perf_counter()
+            wouts = {n: list(nd.outputs) for n, nd in new.items()}
+            wins = {n: list(nd.inputs) for n, nd in new.items()}
+            edges = []
+            later = []
+            for x in c_links[ci]:
+                a, fi, b, ti, mu = x
+                if a in gnodes or b in gnodes:
+                    later.append(x)
+                    continue
+                lk = t.links.new(wouts[a][fi], wins[b][ti])
+                if mu:
+                    lk.is_muted = True
+                nlinks += 1
+                edges.append((a, fi, b, ti))
+                if time.perf_counter() - tick > SLICE_S:
+                    yield 'blocks'
+                    tick = time.perf_counter()
+            for gname in c['ents']:
+                g = gnodes.get(gname)
+                if g is None:
+                    continue
+                nd = t.nodes.new('ShaderNodeGroup')
+                nd.node_tree = g['tree']
+                nd.label = g['stage']
+                nd.name = gname
+                nd['dr.stage'] = 'DR.' + g['stage']
+                _set_group_params(nd, g)
+                new[gname] = nd
+                wouts[gname] = list(nd.outputs)
+                wins[gname] = list(nd.inputs)
+                if time.perf_counter() - tick > SLICE_S:
+                    yield 'blocks'
+                    tick = time.perf_counter()
+            for a, fi, b, ti, mu in later:
+                lk = t.links.new(wouts[a][fi], wins[b][ti])
+                if mu:
+                    lk.is_muted = True
+                nlinks += 1
+                edges.append((a, fi, b, ti))
+                if time.perf_counter() - tick > SLICE_S:
+                    yield 'blocks'
+                    tick = time.perf_counter()
+            for k in in_order[ci]:
+                if k[0] == 'L':
+                    value = look_keys[k[1]]
+                    t.interface.new_socket(
+                        name=look_labels[k[1]][0], in_out='INPUT',
+                        socket_type='NodeSocketColor' if isinstance(value, tuple) else 'NodeSocketFloat')
+                else:
+                    t.interface.new_socket(name=src_name(k[1], k[2]), in_out='INPUT',
+                                           socket_type=src_type(k[1], k[2]))
+            for a, fi in out_order[ci]:
+                t.interface.new_socket(name=src_name(a, fi), in_out='OUTPUT', socket_type=src_type(a, fi))
+            yield 'blocks'
+            tick = time.perf_counter()
+            # One Group Input per source (look inputs, then each upstream stage), so every bundle
+            # of links starts from one place.
+            lab = {n: _frame_label(_stage(nd), n) for n, nd in new.items()}
+            by_src = defaultdict(list)
+            for k in in_order[ci]:
+                by_src[-1 if k[0] == 'L' else cl_of[k[1]]].append(k)
+            gi_sock = {}
+            gi_name = {}
+            for src in sorted(by_src):
+                title = 'Look inputs' if src < 0 else f'From {clusters[src]["label"]}'
+                gi = t.nodes.new('NodeGroupInput')
+                gi.name = f'In:{title}'
+                gi.label = title
+                keep = {in_pos[ci][k] for k in by_src[src]}
+                for j, o in enumerate(gi.outputs):
+                    if j not in keep:
+                        o.hide = True
+                for k in by_src[src]:
+                    gi_sock[k] = gi.outputs[in_pos[ci][k]]
+                    gi_name[k] = gi.name
+                new[gi.name] = gi
+                lab[gi.name] = title
+            for k, b, ti, mu in c_in_links[ci]:
+                lk = t.links.new(gi_sock[k], wins[b][ti])
+                if mu:
+                    lk.is_muted = True
+                nlinks += 1
+                edges.append((gi_name[k], in_pos[ci][k], b, ti))
+                if time.perf_counter() - tick > SLICE_S:
+                    yield 'blocks'
+                    tick = time.perf_counter()
+            if out_order[ci]:
+                gout = t.nodes.new('NodeGroupOutput')
+                gout.name = 'Stage Out'
+                new[gout.name] = gout
+                lab[gout.name] = 'Outputs'
+                for j, (a, fi) in enumerate(out_order[ci]):
+                    t.links.new(wouts[a][fi], gout.inputs[j])
+                    nlinks += 1
+                    edges.append((a, fi, gout.name, j))
+            nframes += _arrange(t, new, edges, sel_parent, fmap, lab, ())
+            t[STAGE_TAG] = 1
+            t['dr.blocks.recipe'] = RECIPE
+            yield 'blocks'
+            tick = time.perf_counter()
+
+        # ---- the wrapper: one node per stage ----
+        new = {}
+        fmap = {}
+        for f in frames:
+            if f.as_pointer() in sel_frames and f.as_pointer() not in frame_cl:
+                d = dict(snaps_in[f.name])
+                d['loc'] = _abs(f)
+                fmap[f.as_pointer()] = _make_node(w, d, loc=True)
+        snode = []
+        lab = {}
+        for ci, c in enumerate(clusters):
+            nd = w.nodes.new('ShaderNodeGroup')
+            nd.node_tree = trees[ci]
+            nd.name = f'DR.Stage.{c["label"]}'
+            nd.label = c['label']
+            nd['dr.stage'] = 'DR.' + c['stage']
+            snode.append(nd)
+            new[nd.name] = nd
+            lab[nd.name] = c['label']
+        edges = []
+        for ci in range(nc):
+            for k in in_order[ci]:
+                if k[0] != 'X':
+                    continue
+                ca = cl_of[k[1]]
+                j = out_pos[ca][(k[1], k[2])]
+                w.links.new(snode[ca].outputs[j], snode[ci].inputs[in_pos[ci][k]])
+                nlinks += 1
+                edges.append((snode[ca].name, j, snode[ci].name, in_pos[ci][k]))
+        yield 'blocks'
+        look_inputs = _look_interface(w, look_keys)
+        ident = {key: idn for key, idn, _v, _l in look_inputs}
+        gins = set()
+
+        def look_input(title, keys, label):
+            gi = w.nodes.new('NodeGroupInput')
+            gi.name = f'In:{title}'
+            gi.label = 'Look inputs'
+            want = {ident[k] for k in keys}
+            socks = {}
+            for o in gi.outputs:
+                if o.identifier in want:
+                    socks[o.identifier] = o
+                else:
+                    o.hide = True
+            new[gi.name] = gi
+            lab[gi.name] = label
+            gins.add(gi.name)
+            return gi, socks
+
+        for ci, c in enumerate(clusters):
+            keys = [k[1] for k in in_order[ci] if k[0] == 'L']
+            if not keys:
+                continue
+            gi, socks = look_input(c['label'], keys, c['label'])
+            for row, key in enumerate(keys):
+                w.links.new(socks[ident[key]], snode[ci].inputs[in_pos[ci][('L', key)]])
+                nlinks += 1
+                edges.append((gi.name, row, snode[ci].name, in_pos[ci][('L', key)]))
+        for name, sock_type in plan['out_plan']:
+            w.interface.new_socket(name=name, in_out='OUTPUT', socket_type=sock_type)
+        gout = w.nodes.new('NodeGroupOutput')
+        gout.name = 'DR Outfit Out'
+        new[gout.name] = gout
+        lab[gout.name] = 'Outputs'
+        if direct:
+            gi, socks = look_input('Outputs', [key for key, _j in direct], 'Outputs')
+            for row, (key, j) in enumerate(direct):
+                w.links.new(socks[ident[key]], gout.inputs[j])
+                nlinks += 1
+                edges.append((gi.name, row, gout.name, j))
+        for (a, fi), j in plan['out_idx'].items():
+            if a in look_nodes:
+                continue
+            ca = cl_of[a]
+            w.links.new(snode[ca].outputs[out_pos[ca][(a, fi)]], gout.inputs[j])
+            nlinks += 1
+            edges.append((snode[ca].name, out_pos[ca][(a, fi)], gout.name, j))
+        yield 'blocks'
+        nframes += _arrange(w, new, edges, {}, fmap, lab, gins)
+    except BaseException:
+        for t in trees:
+            if t.users == 0:
+                bpy.data.node_groups.remove(t)
+        raise
+    return look_inputs, nlinks, nframes, len(new)
 
 
 def collapse_and_arrange(tree, *, material_name=''):
@@ -1317,7 +1812,9 @@ def iter_collapse_and_arrange(tree, *, material_name=''):
         nd = byn[n]
         if nd.bl_idname not in ('ShaderNodeValue', 'ShaderNodeRGB') or not _is_param(nd):
             continue
-        if n in sel_parent or _is_pro_target(nd) or (_identifiers(nd) & bound):
+        pkey = str(nd.get('dr.parameter_key') or n[2:])
+        # A look parameter is found by its key (shader_control_ops Pro toggles), so it may move.
+        if n in sel_parent or (_identifiers(nd) & bound) or (_is_pro_target(nd) and _look_panel(pkey) is None):
             continue
         if any(str(k).startswith(('dr.general.', 'dr.selection.')) for k in nd.keys()):
             continue
@@ -1489,28 +1986,44 @@ def iter_collapse_and_arrange(tree, *, material_name=''):
     wname = f'{WRAPPER_NODE} · {mat}'
     old = bpy.data.node_groups.get(wname)
     if old is not None and old.get(WRAPPER_TAG) and old.users == 0:
-        bpy.data.node_groups.remove(old)
+        _remove_wrapper(old)
     snaps_in = {}
     for f in frames:
         if f.as_pointer() in sel_frames:
             snaps_in[f.name] = _snap_node(f)
     for n in inner:
         snaps_in[n] = _snap_node(byn[n], linked)
-    wsig = _wrap_sig(inner, byn, gnodes, final, look_keys, plan, sel_parent)
+    clusters = None
+    if os.environ.get('DR_GRAPH_STAGES', '1') != '0':
+        clusters = _stage_clusters(inner, byn, gnodes, final, sel_parent,
+                                   {a for a, _fi in plan['out_idx']})
+        if clusters is None:
+            print(f'DR_BLOCKS_FLAT mat={mat} (no acyclic stage split)', flush=True)
+    wsig = _wrap_sig(inner, byn, gnodes, final, look_keys, plan, sel_parent, nested=clusters is not None)
     collapsed = json.dumps(sorted(collapsed_ids))
     tm['sig'] = time.perf_counter() - t0
     yield 'blocks'
     tick = time.perf_counter()
     writes = -1
-    hit = _from_template(wsig, wname, snaps_in, gnodes, look_keys)
+    hit = yield from _from_template(wsig, wname, snaps_in, gnodes, look_keys)
     if hit is not None:
         w, look_inputs, nlinks, nframes, writes = hit
         nodes_w = sum(1 for nd in w.nodes if nd.bl_idname != 'NodeFrame')
         tm['copy'] = time.perf_counter() - t0
+        yield 'blocks'
     else:
         w = bpy.data.node_groups.new(wname, 'ShaderNodeTree')
     try:
-        if hit is None:
+        if hit is None and clusters is not None:
+            look_inputs, nlinks, nframes, nodes_w = yield from _iter_build_nested(
+                w, mat, clusters, byn=byn, outs=outs, gnodes=gnodes, final=final, topset=topset,
+                look_nodes=look_nodes, look_keys=look_keys, plan=plan, snaps_in=snaps_in,
+                frames=frames, sel_frames=sel_frames, sel_parent=sel_parent)
+            tm['nested'] = time.perf_counter() - t0
+            w[WRAPPER_TAG] = 1
+            w['dr.blocks.recipe'] = RECIPE
+            _store_template(wsig, w, snaps_in, gnodes, look_inputs, nlinks, nframes)
+        elif hit is None:
             # Order matters for speed: every node or link added costs a tree update whose price
             # grows with group nodes, interface sockets and Group Input nodes already in the tree.
             # So: plain nodes and their links first, then blocks, then the interface.
@@ -1696,7 +2209,7 @@ def iter_collapse_and_arrange(tree, *, material_name=''):
         # ---- swap: the material tree becomes shader nodes + the wrapper node ----
         snaps = [_snap_node(byn[n], linked) for n in sorted(topset)]
     except BaseException:
-        bpy.data.node_groups.remove(w)
+        _remove_wrapper(w)
         raise
     _swap_top(tree, w, snaps, plan, look_inputs)
     tree['dr.blocks.collapsed'] = collapsed
@@ -1708,7 +2221,7 @@ def iter_collapse_and_arrange(tree, *, material_name=''):
     print(f'DR_BLOCKS mat={mat} nodes {nodes_a}->{nodes_b} wrapper={nodes_w} links {links_a}->{nlinks} '
           f'blocks={created_n + reused_n} reused={reused_n} created={created_n} cycles={cycles} '
           f'frames={nframes} small_left={small_left} params_in={len(movable)} look={len(look_inputs)} '
-          f'template_writes={writes} s={secs:.2f} [{phases}]', flush=True)
+          f'stages={len(_stage_trees_of(w))} template_writes={writes} s={secs:.2f} [{phases}]', flush=True)
     return {'nodes_before': nodes_a, 'nodes_after': nodes_b, 'nodes_wrapper': nodes_w,
             'links_before': links_a, 'links_after': nlinks,
             'blocks': created_n + reused_n, 'reused': reused_n, 'created': created_n, 'cycles': cycles,

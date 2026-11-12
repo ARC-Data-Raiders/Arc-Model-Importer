@@ -326,7 +326,156 @@ def insert(nodes, links, albedo, roughness, metallic, wear=None, crease=None, lo
         out.append(n.outputs[key] if _route(value, n.inputs[key], links) else value)
     for value, key in ((wear, "Wear Mask"), (crease, "Crease Mask")):
         _route(value, n.inputs[key], links)
+    link_look(nodes, links, n)
     return (n, *out)
+
+
+# ---------------------------------------------------------------------------
+# Look values read from the object. A socket write re-evaluates every material tree that holds
+# the socket (about 5 ms per material); an object property write does not touch a node tree.
+# ``DR.Look`` holds one Attribute node per control (object property ``dr_look_<key>`` = offset
+# from the control's default, so an object without the property shows the game look) and feeds
+# the ``DR.UserControls`` inputs. One group is shared by every material: the value comes from
+# the object being shaded, so parts and outfits stay independent.
+# ---------------------------------------------------------------------------
+LOOK_NAME = "DR.Look"
+LOOK_VER = 1
+LOOK_LABEL = "Look"
+LOOK_KEY = {c[1]: "dr_look_" + c[1][len("arc_uc_"):] for c in CONTROLS}     # arc_uc_hue -> dr_look_hue
+
+
+def _look_build(ng):
+    nodes, links = ng.nodes, ng.links
+    have = {s.name for s in ng.interface.items_tree if getattr(s, "in_out", "") == "OUTPUT"}
+    for sock, _prop, _label, _default, _lo, _hi in CONTROLS:
+        if sock not in have:
+            ng.interface.new_socket(sock, in_out="OUTPUT", socket_type="NodeSocketFloat")
+    out = nodes.new("NodeGroupOutput")
+    out.location = (420.0, 0.0)
+    for i, (sock, prop, _label, default, _lo, _hi) in enumerate(CONTROLS):
+        attr = nodes.new("ShaderNodeAttribute")
+        attr.attribute_type = "OBJECT"
+        attr.attribute_name = LOOK_KEY[prop]
+        attr.name = attr.label = LOOK_KEY[prop]
+        attr.hide = True
+        attr.location = (0.0, -44.0 * i)
+        add = nodes.new("ShaderNodeMath")
+        add.operation = "ADD"
+        add.inputs[1].default_value = float(default)
+        add.hide = True
+        add.location = (210.0, -44.0 * i)
+        links.new(attr.outputs["Fac"], add.inputs[0])
+        links.new(add.outputs[0], out.inputs[sock])
+
+
+def ensure_look_group():
+    import bpy
+    ng = bpy.data.node_groups.get(LOOK_NAME)
+    if ng is not None and ng.get("dr_look_ver") == LOOK_VER:
+        return ng
+    if ng is None:
+        ng = bpy.data.node_groups.new(LOOK_NAME, "ShaderNodeTree")
+    else:
+        ng.nodes.clear()
+    _look_build(ng)
+    ng["dr_look_ver"] = LOOK_VER
+    ng["arc_gt_ver"] = LOOK_VER         # shader_control_ops._is_control_tree
+    return ng
+
+
+def link_look(nodes, links, uc_node):
+    """Feed the unlinked look inputs of one User Controls node from a ``DR.Look`` node beside it.
+    Returns the look node, or None when nothing was linked."""
+    todo = [s for s in SOCKETS if s in uc_node.inputs and not uc_node.inputs[s].is_linked]
+    if not todo:
+        return None
+    n = nodes.new("ShaderNodeGroup")
+    n.node_tree = ensure_look_group()
+    n.name = LOOK_NAME
+    n.label = LOOK_LABEL
+    n.width = 140.0
+    n.hide = True
+    n.location = (uc_node.location[0] - 200.0, uc_node.location[1] - 120.0)
+    for s in todo:
+        links.new(n.outputs[s], uc_node.inputs[s])
+    return n
+
+
+class LookSlot:
+    """One look value of one object, shaped like a socket (``default_value``) for callers that
+    save, write and restore values. Holds names only."""
+    __slots__ = ("obj", "prop")
+
+    def __init__(self, obj, prop):
+        self.obj = obj
+        self.prop = prop
+
+    @property
+    def default_value(self):
+        return float(self.obj.get(LOOK_KEY[self.prop], 0.0)) + BY_PROP[self.prop][3]
+
+    @default_value.setter
+    def default_value(self, value):
+        delta = float(value) - BY_PROP[self.prop][3]
+        key = LOOK_KEY[self.prop]
+        if abs(float(self.obj.get(key, 0.0)) - delta) > 1e-7:
+            self.obj[key] = delta
+            self.obj.update_tag(refresh={"OBJECT"})
+
+
+_LOOK_MATS = {}
+
+
+def _is_look(n):
+    return n.type == "GROUP" and n.node_tree is not None and n.node_tree.name == LOOK_NAME
+
+
+def look_linked(mat):
+    """True when ``mat`` reads its look values from the object (a ``DR.Look`` node feeds it)."""
+    if mat is None or getattr(mat, "node_tree", None) is None:
+        return False
+    hit = _LOOK_MATS.get(mat.name)
+    if hit is None:
+        hit = _LOOK_MATS[mat.name] = bool(_find_paths(mat, _is_look))
+    return hit
+
+
+def look_slots(obj):
+    """[(prop, LookSlot)] for an object with at least one look-linked material, else []."""
+    for slot in getattr(obj, "material_slots", ()):
+        if look_linked(slot.material):
+            return [(c[1], LookSlot(obj, c[1])) for c in CONTROLS]
+    return []
+
+
+def look_upgrade(objects):
+    """Old files: link ``DR.Look`` to every User Controls node of the objects' materials and move
+    the socket values onto the objects. Returns materials changed."""
+    changed = 0
+    for obj in objects:
+        moved = {}
+        for slot in getattr(obj, "material_slots", ()):
+            mat = slot.material
+            if mat is None or look_linked(mat):
+                continue
+            did = False
+            for n, path in _find_paths_owned(mat, True):
+                if not _is_uc(n):
+                    continue
+                for sock in SOCKETS:
+                    s = n.inputs.get(sock)
+                    if s is not None and not s.is_linked:
+                        moved.setdefault(BY_SOCKET[sock][1], float(s.default_value))
+                tree = n.id_data
+                did = link_look(tree.nodes, tree.links, n) is not None or did
+            if did:
+                changed += 1
+                _LOOK_MATS.pop(mat.name, None)
+                for k in [k for k in _TARGET_PATHS if k[0] == mat.name]:
+                    del _TARGET_PATHS[k]
+        for prop, value in moved.items():
+            LookSlot(obj, prop).default_value = value
+    return changed
 
 
 def _find_paths(mat, match, limit=64):
@@ -345,7 +494,7 @@ def _find_paths(mat, match, limit=64):
         for n in tree.nodes:
             if match(n):
                 out.append((n, path))
-            elif n.type == "GROUP" and n.node_tree is not None and n.node_tree.name not in (UC_NAME, ZO_NAME):
+            elif n.type == "GROUP" and n.node_tree is not None and n.node_tree.name not in (UC_NAME, ZO_NAME, LOOK_NAME):
                 stack.append((n.node_tree, path + [n]))
     return out
 
@@ -401,6 +550,7 @@ _TARGET_PATHS = {}
 
 def bump_targets():
     _TARGET_PATHS.clear()
+    _LOOK_MATS.clear()
 
 
 def _resolve_chain(mat, chain, own):
@@ -499,9 +649,15 @@ def material_targets(mat, own=False):
     return found
 
 
-def apply(materials, values):
-    """Set ``values`` ({prop: float}) on every material; returns sockets written."""
+def apply(materials, values, objects=()):
+    """Set ``values`` ({prop: float}) on every material; returns values written.
+    ``objects`` whose materials read the look from the object get it as object properties."""
     count = 0
+    for obj in objects:
+        for prop, slot in look_slots(obj):
+            if prop in values:
+                slot.default_value = values[prop]
+                count += 1
     try:
         import bpy
         old = bpy.data.node_groups.get(UC_NAME)
@@ -724,12 +880,48 @@ def _zo_is_mid(n):
     return n.name in _ZO_MID or n.get("dr.legacy_name") == "GT_mid_x8_half"
 
 
-def _zo_mid_group(tree):
+def _zo_mid_chain(tree, level=0):
+    """[group node, ..., mid node] from ``tree`` down to the mid*8 node, or None. Any group is
+    searched one level down; the DR Outfit wrapper and its stage trees are followed further."""
+    for n in tree.nodes:
+        if _zo_is_mid(n):
+            return [n]
     for gn in tree.nodes:
-        if gn.type == "GROUP" and gn.node_tree is not None and gn.node_tree.name not in (UC_NAME, ZO_NAME):
-            if any(_zo_is_mid(n) for n in gn.node_tree.nodes):
-                return gn
+        sub = gn.node_tree if gn.type == "GROUP" else None
+        if sub is None or sub.name in (UC_NAME, ZO_NAME):
+            continue
+        if level == 0 or tree.get("dr.wrapper") or tree.get("dr.stage_tree"):
+            chain = _zo_mid_chain(sub, level + 1) if level < 3 else None
+            if chain:
+                return [gn] + chain
     return None
+
+
+def _zo_mid_group(tree):
+    chain = _zo_mid_chain(tree)
+    return chain[0] if chain and len(chain) > 1 else None
+
+
+def _zo_expose(chain):
+    """Give the group node ``chain[0]`` a "Zone x8" output fed by the mid node at the end of the
+    chain; shared trees on the way down are copied first. Returns the output socket."""
+    gn = chain[0]
+    out = gn.outputs.get(ZO_X8)
+    if out is not None:
+        return out
+    if gn.node_tree.users > 1:
+        gn.node_tree = gn.node_tree.copy()
+    sub = gn.node_tree
+    inner = sub.nodes[chain[1].name]
+    src = inner.outputs[0] if len(chain) == 2 else _zo_expose([inner] + chain[2:])
+    _sock(sub, ZO_X8, "OUTPUT", "NodeSocketFloat")
+    outs = [n for n in sub.nodes if n.type == "GROUP_OUTPUT"]
+    if outs:
+        go = next((n for n in outs if n.is_active_output), outs[0])
+    else:
+        go = sub.nodes.new("NodeGroupOutput")
+    sub.links.new(src, go.inputs[ZO_X8])
+    return gn.outputs[ZO_X8]
 
 
 def zone_supported(mat):
@@ -742,7 +934,7 @@ def zone_supported(mat):
     if host is not mat.node_tree:
         return True                             # weapon graph: the ID texture is the zone source
     tree = mat.node_tree
-    return any(_zo_is_mid(n) for n in tree.nodes) or _zo_mid_group(tree) is not None
+    return _zo_mid_chain(tree) is not None
 
 
 def zone_x8_source(mat, own=False):
@@ -762,24 +954,15 @@ def zone_x8_source(mat, own=False):
             host.links.new(idn.outputs["Color"], wz.inputs["Color"])
             host.links.new(idn.outputs["Alpha"], wz.inputs["Alpha"])
         return wz.outputs[ZO_X8] if wz is not None else None
-    top = next((n for n in tree.nodes if _zo_is_mid(n)), None)
-    if top is not None:
-        return top.outputs[0]
-    gn = _zo_mid_group(tree)
-    if gn is None:
+    chain = _zo_mid_chain(tree)
+    if chain is None:
         return None
-    out = gn.outputs.get(ZO_X8)
+    if len(chain) == 1:
+        return chain[0].outputs[0]
+    out = chain[0].outputs.get(ZO_X8)
     if out is not None or not own:
         return out
-    if gn.node_tree.users > 1:
-        gn.node_tree = gn.node_tree.copy()
-    sub = gn.node_tree
-    mid = next(n for n in sub.nodes if _zo_is_mid(n))
-    _sock(sub, ZO_X8, "OUTPUT", "NodeSocketFloat")
-    outs = [n for n in sub.nodes if n.type == "GROUP_OUTPUT"]
-    go = next((n for n in outs if n.is_active_output), outs[0])
-    sub.links.new(mid.outputs[0], go.inputs[ZO_X8])
-    return gn.outputs[ZO_X8]
+    return _zo_expose(chain)
 
 
 def zone_node(mat, zone, create=False):

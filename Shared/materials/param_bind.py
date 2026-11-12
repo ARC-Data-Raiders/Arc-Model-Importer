@@ -18,7 +18,7 @@ from .. import textures
 
 PARAM_KEY = "dr.parameter_key"
 PARAM_INPUTS = "dr.param_inputs"
-from .wrapper_tree import (WRAPPER_NODE, WRAPPER_TAG, wrapper_node, graph_tree, graph_trees,
+from .wrapper_tree import (WRAPPER_NODE, WRAPPER_TAG, wrapper_node, graph_tree, graph_trees, graph_nodes, NodesView,
                            find_node, own_wrapper)  # noqa: F401  (re-exported)
 
 
@@ -87,14 +87,14 @@ def bind(nodes, key: str, value, *, rgba: bool | None = None):
     node = nodes.get(name)
     if node is None:
         top = nodes.id_data
-        inner = graph_tree(top)
-        if inner is not top:
-            nodes = inner.nodes
-            node = nodes.get(name)
+        trees = nodes.trees if isinstance(nodes, NodesView) else None      # a wrapper_tree.NodesView already spans every level
+        if trees is None:
+            trees = graph_trees(top)
+            if len(trees) > 1:
+                nodes = trees[1].nodes
+                node = find_node(top, name)
     if node is None:
-        socks = [s for k, s in _input_params(nodes.id_data) if k == key]
-        if nodes.id_data is not top:
-            socks += [s for k, s in _input_params(top) if k == key]
+        socks = [s for t in trees for k, s in _input_params(t) if k == key]
         if socks:
             for sock in socks:
                 _write(sock, value)
@@ -270,7 +270,7 @@ def _swap_base_textures(mat, json_path, stats, dry_run):
     import os
     from .clothing import _resolve_mi_texture_path
     from .common import _load_image_cached
-    nodes = [n for n in graph_tree(mat.node_tree).nodes
+    nodes = [n for n in graph_nodes(mat.node_tree)
              if n.bl_idname == "ShaderNodeTexImage" and n.get("dr.texture_param")]
     if not nodes:
         return
@@ -300,7 +300,7 @@ def _swap_base_textures(mat, json_path, stats, dry_run):
 
 def _swap_decals(mat, json_path, stats, dry_run):
     """Rewrite the fixed decal shell slots (gt_outfit_pbr.write_decal_slot) from this MI's decals."""
-    nodes = graph_tree(mat.node_tree).nodes
+    nodes = graph_nodes(mat.node_tree)
     slots = sorted({int(n["dr.decal_slot"]) for n in nodes if n.get("dr.decal_slot") is not None})
     if not slots or dry_run:
         return

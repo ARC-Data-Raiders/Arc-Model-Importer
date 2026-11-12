@@ -56,6 +56,15 @@ def _check_enabled(folder, version):
         raise RuntimeError('reference overlay idle timer is still registered')
     if bpy.app.timers.is_registered(pak_extract._initialize_pak_defaults):
         raise RuntimeError('PAK startup initialization timer is still registered')
+    import threading
+    import time
+    deadline = time.monotonic() + 10
+    for thread in [t for t in threading.enumerate() if t.name == 'ArcPakServePrestart']:
+        thread.join(max(0.0, deadline - time.monotonic()))
+        if thread.is_alive():
+            raise RuntimeError('exporter prestart thread is still running while idle')
+    if pak_extract._SERVE['conn'] is not None or pak_extract._SERVE['proc'] is not None:
+        raise RuntimeError('exporter process is running while idle')
     if fit._load_fit in bpy.app.handlers.load_post:
         raise RuntimeError('character-fit load handler is still registered while idle')
     if fit._changed_fit in bpy.app.handlers.depsgraph_update_post:

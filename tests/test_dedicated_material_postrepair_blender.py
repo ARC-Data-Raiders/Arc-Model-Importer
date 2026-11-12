@@ -17,7 +17,7 @@ def main():
     import argparse,os,tempfile
     arguments=sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []
     parser=argparse.ArgumentParser(description='Verify dedicated material ownership in native Blender')
-    parser.add_argument('--output',default=os.environ.get('DATARAIDERS_TEST_OUTPUT'),help='Result JSON; parent directory is the explicit scratch location')
+    parser.add_argument('--output',default=os.environ.get('DATARAIDERS_TEST_OUTPUT') or (os.path.join(os.environ['DATARAIDERS_TEST_TEMP'],'dedicated_material_postrepair.json') if os.environ.get('DATARAIDERS_TEST_TEMP') else None),help='Result JSON; parent directory is the explicit scratch location')
     options=parser.parse_args(arguments)
     if not options.output:parser.error('--output or DATARAIDERS_TEST_OUTPUT is required')
     output_path=Path(options.output).expanduser().resolve();output_path.parent.mkdir(parents=True,exist_ok=True)

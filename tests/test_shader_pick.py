@@ -254,9 +254,9 @@ class ZoneWriteTests(unittest.TestCase):
 
     def test_operator_execute(self):
         ctx = types.SimpleNamespace(scene=types.SimpleNamespace(arc_shader_scope="WHOLE"))
-        op = sp.ARC_OT_set_zone_colour()
-        op.colour, op.material, op.zone = (1.0, 0.0, 0.0), "M", 1
-        self.assertEqual(op.execute(ctx), {"FINISHED"})
+        # Blender 5 refuses to construct an Operator from Python; run execute on a stand-in self.
+        op = types.SimpleNamespace(colour=(1.0, 0.0, 0.0), material="M", zone=1, report=lambda *a: None)
+        self.assertEqual(sp.ARC_OT_set_zone_colour.execute(op, ctx), {"FINISHED"})
         self.assertEqual(self.calls, [(ctx, "Eq0", (1.0, 0.0, 0.0, 1.0))])
 
 

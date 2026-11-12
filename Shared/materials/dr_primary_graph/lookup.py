@@ -7,9 +7,15 @@ def _restore_selector(nodes,prefix):
     frames=[n for n in nodes if n.bl_idname=='NodeFrame' and n.get('dr.selection.prefix')==prefix]
     if len(frames)!=1:return None
     frame=frames[0]
+    # A collapsed material spreads its nodes over stage trees: the selector lives in its frame's
+    # tree, and can only be extended when its sources are in that tree as well.
+    home=frame.id_data;view=nodes;nodes=home.nodes
     if frame.get('dr.selection.schema')==3:
         from .general import restore_general
-        return restore_general(nodes,prefix,frame)
+        try:return restore_general(nodes,prefix,frame)
+        except LookupError:
+            if view.id_data is home and len(view)==len(nodes):raise
+            return None
     if frame.get('dr.selection.schema')!=2:return None
     bindings=json.loads(frame['dr.selection.bindings'])
     def resolve(reference):
@@ -21,9 +27,14 @@ def _restore_selector(nodes,prefix):
     selector=BalancedSelector.__new__(BalancedSelector)
     selector.nodes=nodes;selector.links=nodes.id_data.links;selector.prefix=prefix;selector.frame=frame
     selector.channel=frame['dr.semantic_id'].removesuffix('.Selection');selector.dtype=bindings['dtype'];selector.hide=False
-    selector.sources={int(z):resolve(v) for z,v in bindings['sources'].items()}
-    selector.factors={int(z):resolve(v) for z,v in bindings['factors'].items()}
-    selector.default=resolve(bindings['default']);selector.results={};selector.raw_results={};selector.weights={};selector.generated=[]
+    try:
+        selector.sources={int(z):resolve(v) for z,v in bindings['sources'].items()}
+        selector.factors={int(z):resolve(v) for z,v in bindings['factors'].items()}
+        selector.default=resolve(bindings['default'])
+    except LookupError:
+        if view.id_data is home and len(view)==len(nodes):raise
+        return None
+    selector.results={};selector.raw_results={};selector.weights={};selector.generated=[]
     for node in nodes:
         if node.parent!=frame:continue
         encoded=node.get('dr.selection.zone_set')
@@ -65,7 +76,9 @@ def _wrapper_nodes(nodes):
     try:node=nodes.get('DR Outfit')
     except (AttributeError,TypeError):return None
     tree=getattr(node,'node_tree',None) if node is not None and node.bl_idname=='ShaderNodeGroup' else None
-    return tree.nodes if tree is not None and tree.get('dr.wrapper') else None
+    if tree is None or not tree.get('dr.wrapper'):return None
+    from ..wrapper_tree import graph_nodes
+    return graph_nodes(nodes.id_data)
 
 def lookup(nodes):
     """Lookup over a material's setup nodes. A collapsed material keeps them in its wrapper tree;

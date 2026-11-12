@@ -95,7 +95,9 @@ def restore_general(nodes,prefix,frame):
     def resolve(ref):
         node=find_node(nodes,ref.get('semantic') or ref['node'])
         if node is None:raise LookupError('Missing general selector source')
-        return next(s for s in node.outputs if s.identifier==ref['identifier'])
+        for s in node.outputs:
+            if s.identifier==ref['identifier']:return s
+        raise LookupError('General selector socket changed')
     selector=GeneralSelector(nodes,nodes.id_data.links,{int(z):resolve(v) for z,v in bindings['sources'].items()},{int(z):resolve(v) for z,v in bindings['factors'].items()},resolve(bindings['default']),dtype=bindings['dtype'],prefix=prefix,frame=frame)
     for node in nodes:
         if node.parent!=frame:continue

@@ -1,3 +1,10 @@
+def _required_env(name, what):
+    import os
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"Set {name} to the {what}")
+    return value
+
 def _benchmark_root():
     import os
     from pathlib import Path
@@ -19,7 +26,7 @@ bpy.ops.object.select_all(action='SELECT');bpy.ops.object.delete(use_global=Fals
 bpy.context.preferences.filepaths.save_version=0
 bpy.context.scene.render.threads_mode='FIXED';bpy.context.scene.render.threads=4
 if SIDE=='A':
- sys.path.insert(0,r'C:/Users/Silarious/AppData/Roaming/Blender Foundation/Blender/5.1/scripts/addons')
+ sys.path.insert(0,_required_env('DATARAIDERS_ADDONS_DIR','Blender scripts/addons folder holding Arc-Asset-Importer'))
  addon=importlib.import_module('Arc-Asset-Importer'); addon.register()
  scene=bpy.context.scene
  scene.arc_pioneer_root=str(PIONEER);scene.arc_pak_dir='';scene['arc_pak_dir_user_cleared']=True;scene.arc_usmap_path=M['usmap']
@@ -27,7 +34,7 @@ if SIDE=='A':
  scene.arc_outfit_color_pipeline='GROUND_TRUTH';scene.arc_include_reference=False
  appearance=importlib.import_module(addon.__name__+'.Outfit_Accessories.appearance')
 else:
- sys.path.insert(0,r'C:/Users/Silarious/Downloads/BETA-ARC_Texturer_Revamped_1.11.0')
+ sys.path.insert(0,_required_env('DATARAIDERS_REVAMPED_DIR','folder holding arc_texturer_revamped 1.11.0'))
  addon=importlib.import_module('arc_texturer_revamped');addon.register()
  bpy.context.scene.arc_revamped.export_root=str(PIONEER)
  index=addon.get_index(PIONEER,refresh=True)

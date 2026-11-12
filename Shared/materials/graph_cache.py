@@ -265,7 +265,7 @@ def _load_file(d, fn):
         target[n] = None
         g = gall[n]
         m = _DUP.match(n)
-        if m is None or m.group(1) not in g0 or depth > 16 or g.get("dr.wrapper"):
+        if m is None or m.group(1) not in g0 or depth > 16 or g.get("dr.wrapper") or g.get("dr.stage_tree"):
             return None     # a wrapper holds one material's values: never merged with another
         h = _hash_of(g)
         # group_hash ignores the .NNN suffix of nested groups, so a parent only matches

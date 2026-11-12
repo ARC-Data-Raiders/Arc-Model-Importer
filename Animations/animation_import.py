@@ -288,14 +288,19 @@ def _import_psa_operator(filepath: str, context, armature) -> None:
         "scene": context.scene,
         "window": context.window,
     }
+    # Same unit rule as the direct path: metre bones need 0.01, or the pose is 100 times too large.
+    op = bpy.ops.psa.import_all if hasattr(bpy.ops.psa, "import_all") else bpy.ops.psa.import_file
+    scale = _psa_translation_scale(armature)
     try:
         with context.temp_override(**override):
-            if hasattr(bpy.ops.psa, "import_all"):
-                bpy.ops.psa.import_all(filepath=filepath)
-            else:
-                bpy.ops.psa.import_file(filepath=filepath)
+            try:
+                op(filepath=filepath, translation_scale=scale)
+            except TypeError:
+                if scale != 1.0:
+                    raise RuntimeError("this PSK/PSA extension version cannot scale translations; update it")
+                op(filepath=filepath)
     except TypeError:
-        bpy.ops.psa.import_file(filepath=filepath)
+        bpy.ops.psa.import_file(filepath=filepath, translation_scale=scale)
 
 
 def import_psa_onto_armature(
@@ -318,7 +323,7 @@ def import_psa_onto_armature(
     if not utils.psk_import_available():
         utils.ensure_psk_addon()
     if not psa_import_available() and not utils.psk_import_available():
-        return False, "Unreal PSK/PSA extension is not enabled", None
+        return False, "The Unreal PSK/PSA extension is not enabled. Enable it in Preferences > Get Extensions, then apply again", None
 
     before_actions = set(bpy.data.actions.keys())
     try:

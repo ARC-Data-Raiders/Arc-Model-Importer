@@ -4,11 +4,11 @@
 
 Read-only source comparison, without launching Blender, installing addons, rendering, committing, syncing, or copying implementation. Findings marked "inferred" require runtime reproduction. No universal or percentage game-image parity is asserted.
 
-New reference: C:/Users/Silarious/Downloads/BETA-ARC_Texturer_Revamped_1.11.0/arc_texturer_revamped. Its __init__.py:1-6 declares version 1.11.0, author Teralix42, minimum Blender 4.2.0. SHA256 of __init__.py: 1261DDF6F666BE1A1C9A0FD28400A617E232E19B635165B1664180D791B8E764.
+New reference: <UserHome>/Downloads/BETA-ARC_Texturer_Revamped_1.11.0/arc_texturer_revamped. Its __init__.py:1-6 declares version 1.11.0, author Teralix42, minimum Blender 4.2.0. SHA256 of __init__.py: 1261DDF6F666BE1A1C9A0FD28400A617E232E19B635165B1664180D791B8E764.
 
-The requested prior C:/Users/Silarious/Downloads/ARC_Importer/arc_texturer_revamped is absent. Located actual established reference: C:/Users/Silarious/Documents/GitHub/ARC_Texturer_Revamped_V1.7_1.7.0/arc_texturer_revamped. Its __init__.py:1-6 declares 1.7.5 and Blender 5.1.0 despite the directory label. This report compares that real prior reference explicitly; it does not silently equate it with a nonexistent path.
+The requested prior <UserHome>/Downloads/ARC_Importer/arc_texturer_revamped is absent. Located actual established reference: <GitHubRoot>/ARC_Texturer_Revamped_V1.7_1.7.0/arc_texturer_revamped. Its __init__.py:1-6 declares 1.7.5 and Blender 5.1.0 despite the directory label. This report compares that real prior reference explicitly; it does not silently equate it with a nonexistent path.
 
-Our reference: C:/Users/Silarious/Documents/GitHub/DataRaiders-BlenderImporter, __init__.py:9 version 2.20.0.
+Our reference: <GitHubRoot>/DataRaiders-BlenderImporter, __init__.py:9 version 2.20.0.
 
 Mandatory documentation read/search completed before code: sibling lookup.json, keywords.tsv, catalog.json, sections/blender-import-paths.md, sections/lighting-look-blender.md and repos/DataRaiders-BlenderImporter.md, plus repository AGENTS.md. Existing documentation records native 2.20.0 limitations and warns against promoting scoped numeric checks into general visual parity.
 

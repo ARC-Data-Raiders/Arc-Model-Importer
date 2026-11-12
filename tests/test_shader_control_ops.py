@@ -221,4 +221,4 @@ class ProToggleTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(argv=["test_shader_control_ops"])   # Blender owns sys.argv
