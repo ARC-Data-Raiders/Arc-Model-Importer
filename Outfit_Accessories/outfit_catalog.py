@@ -116,25 +116,71 @@ def base_item_paths(row, indexed_packages):
     return unique_paths(result)
 
 
-def resolve_pak_outfit_paths(scene, row):
+_DA_RECEIPT_SUFFIX = '.arc-da.json'
+
+
+def _da_candidates(pak_extract, pak_catalog, path):
+    candidates = [os.path.join(pak_extract.cache_dir(), *path.split('/')) + '.json']
+    candidates.append(candidates[0].replace('PioneerGame' + os.sep + 'Content', 'RemappedPlugins' + os.sep + 'Content'))
+    candidates = [pak_catalog.filesystem_path(filename) for filename in candidates]
+    return sorted((filename for filename in candidates if os.path.isfile(filename)),
+                  key=lambda filename: os.stat(filename).st_mtime_ns, reverse=True)
+
+
+def _da_receipt_record(filename, revision, producer):
+    stat = os.stat(filename)
+    return {'revision': revision, 'producer': producer, 'size': stat.st_size, 'mtime_ns': stat.st_mtime_ns}
+
+
+def _da_receipts_current(pak_extract, pak_catalog, base_paths, revision, producer):
+    """True when every DA_OI JSON was written by this exporter for this game build/containers/usmap."""
+    if not revision or producer is None:
+        return False
+    for path in base_paths:
+        candidates = _da_candidates(pak_extract, pak_catalog, path)
+        if not candidates:
+            return False
+        try:
+            with open(candidates[0] + _DA_RECEIPT_SUFFIX, encoding='utf-8') as stream:
+                receipt = json.load(stream)
+            if receipt != _da_receipt_record(candidates[0], revision, producer):
+                return False
+        except (OSError, ValueError):
+            return False
+    return True
+
+
+def resolve_pak_outfit_paths(scene, row, *, force=False):
     from ..Shared import pak_extract; from . import pak_catalog
     pak_extract.load_pak_index(scene, allow_reindex=True)
     packages = pak_extract.indexed_package_paths(scene)
     base_paths = base_item_paths(row, packages)
     parts = None
+    colour_mis = []
     if base_paths:
-        # Metadata is tiny and is refreshed from the selected game, rather than
-        # assuming an old cached DA/CSV is authoritative after a game update.
-        code, log, _meshes = pak_extract.extract_paths(
-            pak_extract.configured_dir(scene), pak_extract.resolve_usmap(scene), base_paths)
-        if code != 0:
-            print('Arc Pak outfit metadata: ' + log[-1200:])
+        # Metadata is refreshed from the selected game unless its receipt names
+        # this game revision (containers, build, depot, usmap) and this exporter.
+        force = force or os.environ.get('DATARAIDERS_FORCE_DA_REFRESH') == '1'
+        revision = pak_extract._extraction_revision(scene)
+        producer = pak_extract._extraction_producer()
+        colour_folders = _colourway_cache_folders(pak_extract, pak_catalog, base_paths)
+        if not force and _da_receipts_current(pak_extract, pak_catalog, base_paths, revision, producer):
+            code = 0
+            pak_extract.utils.set_pak_cache_root(pak_extract.cache_dir())
+        else:
+            # The colourway DA_OI folder rides the same mount. Extracting it later
+            # rewrites the base DA_OI JSON and voids the receipt written below.
+            extra = [package for package, folder in colour_folders if not _has_colourway_json(folder)]
+            code, log, _meshes = pak_extract.extract_paths(
+                pak_extract.configured_dir(scene), pak_extract.resolve_usmap(scene), base_paths + extra)
+            if code != 0:
+                print('Arc Pak outfit metadata: ' + log[-1200:])
+            if extra:
+                from ..Shared import importing
+                for _package, folder in colour_folders:
+                    importing.invalidate_colourway_index(folder)
         for path in base_paths if code == 0 else ():
-            candidates = [os.path.join(pak_extract.cache_dir(), *path.split('/')) + '.json']
-            candidates.append(candidates[0].replace('PioneerGame' + os.sep + 'Content', 'RemappedPlugins' + os.sep + 'Content'))
-            candidates = [pak_catalog.filesystem_path(filename) for filename in candidates]
-            candidates = sorted((filename for filename in candidates if os.path.isfile(filename)),
-                                key=lambda filename: os.stat(filename).st_mtime_ns, reverse=True)
+            candidates = _da_candidates(pak_extract, pak_catalog, path)
             for filename in candidates:
                 try:
                     with open(filename, encoding='utf-8-sig') as stream:
@@ -142,7 +188,45 @@ def resolve_pak_outfit_paths(scene, row):
                     if parts is None:
                         parts = []
                     parts.extend(document_visual_parts(document))
+                    if filename == candidates[0] and revision and producer is not None:
+                        try:
+                            with open(filename + _DA_RECEIPT_SUFFIX, 'w', encoding='utf-8') as stream:
+                                json.dump(_da_receipt_record(filename, revision, producer), stream)
+                        except OSError:
+                            pass
                     break
                 except (OSError, ValueError):
                     continue
-    return row_mesh_paths(row, packages, parts)
+        if code == 0:
+            colour_mis = _missing_colourway_materials(colour_folders)
+    rels = row_mesh_paths(row, packages, parts)
+    # Missing colourway MIs join the mesh extract (one mount, one closure) and
+    # the metadata prefetch; a warm cache adds nothing, so mesh reuse still holds.
+    if not rels or not colour_mis:
+        return rels
+    have = {canonical_package(path).casefold() for path in rels}
+    return list(rels) + [path for path in unique_paths(colour_mis) if path.casefold() not in have]
+
+
+def _colourway_cache_folders(pak_extract, pak_catalog, base_paths):
+    """(cooked folder package, cache folder) for each DA_OI base path's outfit folder."""
+    out = []
+    for path in base_paths:
+        package = path.rsplit('/', 1)[0]
+        folder = pak_catalog.filesystem_path(os.path.join(pak_extract.cache_dir(), *package.split('/')))
+        out.append((package, folder))
+    return out
+
+
+def _has_colourway_json(folder):
+    from ..Shared import importing
+    return importing._folder_has_colourway_json(folder)
+
+
+def _missing_colourway_materials(colour_folders):
+    from ..Shared import importing
+    out = []
+    for _package, folder in colour_folders:
+        if _has_colourway_json(folder):
+            out.extend(importing.colourway_material_packages(folder))
+    return out

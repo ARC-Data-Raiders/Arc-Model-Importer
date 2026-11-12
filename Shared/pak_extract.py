@@ -9,8 +9,10 @@ import os
 import re
 import subprocess
 import hashlib
+import itertools
 import json
 import threading
+import time
 from contextlib import contextmanager
 from functools import lru_cache
 
@@ -39,9 +41,12 @@ class _ArcPakResult:
         self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
 
 
-_SERVE = {"proc": None, "broken": False, "logged": False}
-_SERVE_LOCK = threading.Lock()
+_SERVE = {"proc": None, "conn": None, "broken": False, "logged": False}
+_SERVE_LOCK = threading.Lock()  # guards starting/replacing the serve connection only
+_SERVE_IDS = itertools.count(1)
 _FRESH_RETRY_VERBS = frozenset(("extract", "mesh-metadata", "material-metadata"))
+_OUT_LOCKS = {}
+_OUT_LOCKS_GUARD = threading.Lock()
 
 
 def _serve_log_once(msg):
@@ -61,39 +66,258 @@ def _serve_start(exe):
     return proc
 
 
-def stop_serve():
-    proc, _SERVE["proc"] = _SERVE["proc"], None
-    if proc is not None:
+class _ServeRetired(RuntimeError):
+    pass
+
+
+class _ServeConn:
+    """One warm ArcPak serve process shared by every thread (subprocess IO only, no bpy).
+
+    Requests carry an "id"; one reader thread hands each reply to the caller
+    waiting on that id, so replies may arrive in any order. An exporter that
+    predates ids ignores the field and answers in request order without an id:
+    the reader then matches the oldest pending request and later callers run
+    one at a time (sequential mode).
+    """
+
+    def __init__(self, proc):
+        self.proc = proc
+        self.write_lock = threading.Lock()
+        self.seq_lock = threading.Lock()
+        self.lock = threading.Lock()
+        self.pending = {}  # id -> [Event, reply]; insertion order == write order
+        self.dead = None
+        self.seq = False
+        self.retired = False
+        self.reader = threading.Thread(target=self._read, name="ArcPakServeReader", daemon=True)
+        self.reader.start()
+
+    def usable(self):
+        return self.dead is None and not self.retired and self.proc.poll() is None
+
+    def _read(self):
+        reason = "serve process closed stdout"
         try:
-            proc.stdin.close()
-            proc.wait(2)
-        except Exception:
+            for line in self.proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    reply = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(reply, dict) or "rc" not in reply:
+                    continue
+                rid = reply.get("id")
+                with self.lock:
+                    if rid is None:
+                        self.seq = True
+                        rid = next(iter(self.pending), None)
+                    slot = self.pending.pop(str(rid), None)
+                    close = self.retired and not self.pending
+                if slot is not None:
+                    slot[1] = reply
+                    slot[0].set()
+                if close:
+                    self._close_stdin()
+        except Exception as exc:
+            reason = f"serve reader failed: {exc}"
+        finally:
+            self._fail(reason)
+
+    def _fail(self, reason):
+        with self.lock:
+            if self.dead is None:
+                self.dead = reason
+            slots, self.pending = list(self.pending.values()), {}
+        for slot in slots:
+            slot[0].set()  # reply stays None: the caller raises
+
+    def _close_stdin(self):
+        with self.write_lock:
             try:
-                proc.kill()
+                self.proc.stdin.close()
             except Exception:
                 pass
 
+    def call(self, args, timeout=None):
+        if self.seq:
+            with self.seq_lock:
+                return self._call(args, timeout)
+        return self._call(args, timeout)
 
-def _serve_call(command, start=_serve_start):
+    def _call(self, args, timeout):
+        rid = f"r{next(_SERVE_IDS)}"
+        slot = [threading.Event(), None]
+        with self.write_lock:
+            with self.lock:
+                if self.dead is not None:
+                    raise RuntimeError(f"serve process gone: {self.dead}")
+                if self.retired:
+                    raise _ServeRetired("serve process retired")
+                self.pending[rid] = slot
+            try:
+                self.proc.stdin.write(json.dumps({"id": rid, "args": list(args)}) + "\n")
+                self.proc.stdin.flush()
+            except Exception as exc:
+                with self.lock:
+                    self.pending.pop(rid, None)
+                raise RuntimeError(f"serve stdin write failed: {exc}") from exc
+        if not slot[0].wait(timeout):
+            with self.lock:
+                self.pending.pop(rid, None)
+            raise subprocess.TimeoutExpired(["serve", *args], timeout)
+        reply = slot[1]
+        if reply is None:
+            raise RuntimeError(f"serve process died with request {rid} pending: {self.dead}")
+        return _ArcPakResult(int(reply["rc"]), reply.get("log", ""), "")
+
+    def retire(self):
+        """Take no new requests; close stdin once in-flight replies are in (exe then exits)."""
+        with self.lock:
+            self.retired = True
+            idle = not self.pending
+        if idle:
+            self._close_stdin()
+
+    def stop(self, wait=2):
+        with self.lock:
+            self.retired = True
+        self._close_stdin()
+        try:
+            self.proc.wait(wait)
+        except Exception:
+            try:
+                self.proc.kill()
+            except Exception:
+                pass
+        self._fail("serve stopped")
+
+
+_SERVE_GEN = [0]
+
+
+def _set_conn(conn):
+    _SERVE["conn"], _SERVE["proc"] = conn, (conn.proc if conn is not None else None)
+
+
+def _serve_prestart(generation):
+    """Worker thread: start the warm exporter before the first import (subprocess IO only)."""
+    try:
+        exe = exe_path()
+        if not exe:
+            return
+        with _SERVE_LOCK:
+            conn = _SERVE["conn"]
+            if _SERVE_GEN[0] != generation or _SERVE["broken"] or (conn is not None and conn.usable()):
+                return
+            proc = _serve_start(exe)
+            if _SERVE_GEN[0] != generation:
+                proc.kill()
+                return
+            _set_conn(_ServeConn(proc))
+    except Exception:
+        pass  # first run_arcpak starts serve or falls back as before
+
+
+_PRESTART = {"thread": None, "gen": -1}
+
+
+def prestart_serve():
+    """Warm the exporter at first import intent. Never call from registration:
+    a running exporter locks the installed exe against Blender's ZIP overwrite."""
+    if os.environ.get("ARCPAK_NO_SERVE") == "1" or os.environ.get("ARCPAK_NO_PRESTART") == "1":
+        return
+    generation = _SERVE_GEN[0]
+    conn = _SERVE["conn"]
+    if _SERVE["broken"] or (conn is not None and conn.usable()):
+        return
+    thread = _PRESTART["thread"]
+    if thread is not None and thread.is_alive() and _PRESTART["gen"] == generation:
+        return
+    thread = threading.Thread(target=_serve_prestart, args=(generation,), name="ArcPakServePrestart", daemon=True)
+    _PRESTART["thread"], _PRESTART["gen"] = thread, generation
+    thread.start()
+
+
+def stop_serve():
+    _SERVE_GEN[0] += 1
+    conn = _SERVE["conn"]
+    _set_conn(None)
+    if conn is not None:
+        conn.stop()
+
+
+def _retire_serve(conn):
+    with _SERVE_LOCK:
+        if _SERVE["conn"] is conn:
+            _set_conn(None)
+    conn.retire()
+
+
+def _serve_conn(exe, start=_serve_start):
+    waited = time.perf_counter()
+    with _SERVE_LOCK:
+        waited = time.perf_counter() - waited
+        conn = _SERVE["conn"]
+        if conn is None or not conn.usable():
+            if conn is not None:
+                conn.retire()
+            conn = _ServeConn(start(exe))
+            _set_conn(conn)
+    return conn, waited
+
+
+def _serve_call(command, start=_serve_start, timeout=None):
     """Send one command (argv without exe) to the warm ArcPak; raise on any serve error."""
-    proc = _SERVE["proc"]
-    if proc is None or proc.poll() is not None:
-        proc = _SERVE["proc"] = start(command[0])
-    proc.stdin.write(json.dumps({"args": list(command[1:])}) + "\n")
-    proc.stdin.flush()
-    line = proc.stdout.readline()
-    if not line:
-        raise RuntimeError("serve process closed stdout")
-    reply = json.loads(line)
-    return _ArcPakResult(int(reply["rc"]), reply.get("log", ""), "")
+    for attempt in (0, 1):
+        conn, waited = _serve_conn(command[0], start)
+        if waited >= 0.5:
+            # Usually the prestart thread finishing its ready handshake; the
+            # request then reuses that process instead of starting another.
+            print(f"[ArcPak] serve lock wait_s={waited:.2f} verb={command[1] if len(command) > 1 else ''}")
+        try:
+            return conn, conn.call(command[1:], timeout)
+        except _ServeRetired:
+            if attempt:
+                raise
+
+
+@contextmanager
+def _out_dir_lock(command):
+    """Requests sharing an --out folder run one at a time, in arrival order.
+
+    The exporter shares its folder lock between requests of one serve process,
+    so this keeps the old one-writer-per-folder order for overlapping outputs
+    (prefetch, extract, previews all write the addon cache).
+    """
+    try:
+        out = command[list(command).index("--out") + 1]
+    except (ValueError, IndexError):
+        yield
+        return
+    key = os.path.normcase(os.path.abspath(out))
+    with _OUT_LOCKS_GUARD:
+        lock = _OUT_LOCKS.setdefault(key, threading.Lock())
+    t = time.perf_counter()
+    with lock:
+        t = time.perf_counter() - t
+        if t >= 0.5:
+            print(f"[ArcPak] out-dir wait_s={t:.2f} verb={command[1] if len(command) > 1 else ''}")
+        yield
 
 
 def run_arcpak(command, timeout=600, *, start=_serve_start, fallback=None):
     """Run an ArcPak command via the warm serve process; per-call subprocess on any serve error."""
-    if not _SERVE["broken"] and os.environ.get("ARCPAK_NO_SERVE") != "1":
-        with _SERVE_LOCK:
+    with _out_dir_lock(command):
+        if not _SERVE["broken"] and os.environ.get("ARCPAK_NO_SERVE") != "1":
             try:
-                served = _serve_call(command, start)
+                conn, served = _serve_call(command, start, timeout)
+            except subprocess.TimeoutExpired:
+                _SERVE["broken"] = True
+                stop_serve()
+                _serve_log_once(f"request timed out after {timeout}s")
+                raise
             except Exception as exc:
                 _SERVE["broken"] = True
                 stop_serve()
@@ -104,13 +328,14 @@ def run_arcpak(command, timeout=600, *, start=_serve_start, fallback=None):
                 # The warm process keeps state across requests (mappings, sticky OOM
                 # flag, providers). A cache-writing verb that fails there is retried
                 # once in a fresh process so a success always stamps its meshes.
+                # Other in-flight requests finish on the retired process.
                 print(f"[ArcPak] serve {command[1]} rc={served.returncode}; retrying in a fresh process: "
                       f"{_log_tail(served.stdout or '', 3)}")
-                stop_serve()
-    if fallback is not None:
-        return fallback(command)
-    return subprocess.run(command, capture_output=True, text=True, timeout=timeout,
-                          creationflags=_CREATE_NO_WINDOW)
+                _retire_serve(conn)
+        if fallback is not None:
+            return fallback(command)
+        return subprocess.run(command, capture_output=True, text=True, timeout=timeout,
+                              creationflags=_CREATE_NO_WINDOW)
 
 
 import atexit as _atexit
@@ -640,6 +865,83 @@ def complete_raw_material_metadata(scene, plan, code, log):
     invalidate_index()
 
 
+_PREFETCH = {"job": None}
+
+
+def _prefetch_run(job):
+    """Worker thread: subprocess IO only. The request goes to the same warm serve
+    process as the main thread (one process, one mount); run_arcpak orders it
+    against other requests that write the same cache folder."""
+    try:
+        if job['cancelled']:
+            return
+        proc = run_arcpak(job['plan']['command'])
+        job['result'] = (proc.returncode, ((proc.stdout or '') + '\n' + (proc.stderr or '')).strip())
+    except Exception as exc:
+        job['error'] = exc
+    finally:
+        job['t1'] = time.perf_counter()
+
+
+def _stop_prefetch_proc(job):
+    proc = job.get('proc')
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def stop_material_metadata_prefetch():
+    job, _PREFETCH['job'] = _PREFETCH['job'], None
+    if job is not None:
+        job['cancelled'] = True
+        _stop_prefetch_proc(job)
+
+
+def start_material_metadata_prefetch(scene, meshes, materials=()):
+    """Start the raw material-metadata pass for fresh meshes while the import continues.
+
+    The plan (all bpy/cache reads) is built here on the main thread; the worker
+    only runs the exporter. ensure_cached_material_hierarchy joins it, then
+    validates and commits receipts on the main thread with the usual checks.
+    """
+    if _PREFETCH['job'] is not None or os.environ.get('ARCPAK_NO_PREFETCH') == '1':
+        return
+    try:
+        plan = raw_material_metadata_plan(scene, model_paths=meshes, material_paths=materials)
+    except Exception:
+        return  # the regular path raises the same error where it is needed
+    if plan is None:
+        return
+    job = {'plan': plan, 'proc': None, 'result': None, 'error': None, 'cancelled': False,
+           't0': time.perf_counter(), 't1': None}
+    job['thread'] = threading.Thread(target=_prefetch_run, args=(job,), name='ArcPakMetadataPrefetch', daemon=True)
+    _PREFETCH['job'] = job
+    job['thread'].start()
+
+
+def _join_material_metadata_prefetch(scene):
+    job, _PREFETCH['job'] = _PREFETCH['job'], None
+    if job is None:
+        return
+    t = time.perf_counter()
+    job['thread'].join()
+    wait = time.perf_counter() - t
+    run = (job['t1'] or time.perf_counter()) - job['t0']
+    print(f"[ArcPak] metadata prefetch files={len(job['plan']['files'])} run_s={run:.2f} "
+          f"overlap_s={max(0.0, run - wait):.2f} wait_s={wait:.2f}")
+    if job['error'] is not None or job['result'] is None or job['result'][0]:
+        return  # the regular pass below reruns and reports the failure
+    try:
+        complete_raw_material_metadata(scene, job['plan'], *job['result'])
+    except Exception as exc:
+        print(f"[ArcPak] metadata prefetch rejected, rerunning: {exc}")
+    else:
+        start_pending_previews()
+
+
+_atexit.register(stop_material_metadata_prefetch)
 _HIERARCHY_BATCH = threading.local()
 
 
@@ -668,6 +970,7 @@ def ensure_cached_material_hierarchy(scene, *, model_paths=(), material_paths=()
     if pending is not None:
         pending[0].extend(model_paths); pending[1].extend(material_paths)
         return
+    _join_material_metadata_prefetch(scene)
     plan = raw_material_metadata_plan(scene, model_paths=model_paths, material_paths=material_paths)
     if plan is None:
         return
@@ -714,11 +1017,13 @@ def resolve_pak_folder(path: str) -> str:
     import time as _time
     key = os.path.normcase(os.path.abspath(path)) if path else ''
     now = _time.monotonic()
-    hit = _PAK_FOLDER_CACHE.get(key) if os.environ.get("DR_PAK_FOLDER_CACHE") != "0" else None
-    if hit is not None and now - hit[1] < _PAK_FOLDER_TTL_S and (not hit[0] or os.path.isdir(hit[0])):
+    cache = globals().setdefault('_PAK_FOLDER_CACHE', {})
+    ttl = globals().get('_PAK_FOLDER_TTL_S', 30.0)
+    hit = cache.get(key) if os.environ.get("DR_PAK_FOLDER_CACHE") != "0" else None
+    if hit is not None and now - hit[1] < ttl and (not hit[0] or os.path.isdir(hit[0])):
         return hit[0]
     result = _resolve_pak_folder(path)
-    _PAK_FOLDER_CACHE[key] = (result, now)
+    cache[key] = (result, now)
     return result
 
 
@@ -825,10 +1130,14 @@ def _load_pak_defaults(_unused=None):
 
 
 def register_defaults():
+    # Starts no exporter process: the import operator's invoke calls prestart_serve().
     unregister_defaults()
 
 
 def unregister_defaults():
+    stop_prefetch = globals().get('stop_material_metadata_prefetch')
+    if stop_prefetch:
+        stop_prefetch()
     stop_serve()
     if bpy.app.timers.is_registered(_initialize_pak_defaults):
         bpy.app.timers.unregister(_initialize_pak_defaults)
@@ -1245,14 +1554,28 @@ def ensure_rels(scene, rels: list[str], *, reuse_current: bool = False) -> list[
         paths.append(cooked)
     if not paths:
         return []
+    from ..Outfit_Accessories.pak_catalog import is_mesh
+    mesh_paths = [path for path in paths if is_mesh(path)]
+    extra = [path for path in paths if not is_mesh(path)]
     if reuse_current:
-        meshes = current_extracted_meshes(scene, paths)
+        # Extra non-mesh packages (colourway MIs) never void current meshes.
+        meshes = current_extracted_meshes(scene, mesh_paths or paths)
         if meshes:
             utils.set_pak_cache_root(cache_dir())
+            if mesh_paths and extra:
+                extract_paths(game, usmap, extra)
             return meshes
     code, log, meshes = extract_paths(game, usmap, paths)
     if code or not meshes:
         print(f"Arc Pak: extract rc={code}: {_log_tail(log)}")
+    elif globals().get('start_material_metadata_prefetch'):
+        # Overlap the material-metadata pass with the rest of the import; extra
+        # MI packages extracted here (colourways) join the same plan.
+        out = cache_dir()
+        materials = [os.path.join(out, *path.split("/")) + ".json" for path in extra
+                     if path.rsplit("/", 1)[-1].casefold().startswith("mi_")]
+        globals()['start_material_metadata_prefetch'](
+            scene, meshes, materials=[path for path in materials if os.path.isfile(path)])
     return meshes
 
 

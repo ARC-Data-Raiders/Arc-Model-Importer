@@ -1,8 +1,8 @@
 # Focused runtime failure triage — benchmark 1.11 / 2026-10-28
 
-Read-only analysis of report-A.json and report-B.json plus current source and freshly exported exact mesh/material JSONs under this task. A reports installed DataRaiders-Outfits 2.20.0, Blender 5.1.2, Steam build26159202, mapping ARC-Raiders-CL1430164.usmap. Source inspection uses C:/Users/Silarious/Documents/GitHub/DataRaiders-BlenderImporter, reported identical to installed runtime by the parent task. B uses new Revamped1.11. No Blender process, installation, code change, source copying or fix was performed here.
+Read-only analysis of report-A.json and report-B.json plus current source and freshly exported exact mesh/material JSONs under this task. A reports installed DataRaiders-Outfits 2.20.0, Blender 5.1.2, Steam build26159202, mapping ARC-Raiders-CL1430164.usmap. Source inspection uses <GitHubRoot>/DataRaiders-BlenderImporter, reported identical to installed runtime by the parent task. B uses new Revamped1.11. No Blender process, installation, code change, source copying or fix was performed here.
 
-“Observed” below means recorded in the supplied benchmark JSON, not independently re-rendered. Code explanations are source-inferred unless stated otherwise. Source paths abbreviated A=our repo, B=C:/Users/Silarious/Downloads/BETA-ARC_Texturer_Revamped_1.11.0/arc_texturer_revamped.
+“Observed” below means recorded in the supplied benchmark JSON, not independently re-rendered. Code explanations are source-inferred unless stated otherwise. Source paths abbreviated A=our repo, B=<UserHome>/Downloads/BETA-ARC_Texturer_Revamped_1.11.0/arc_texturer_revamped.
 
 ## Main distinction: failure categories are different
 

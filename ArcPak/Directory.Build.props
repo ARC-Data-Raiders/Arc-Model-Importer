@@ -5,6 +5,14 @@
     <BaseOutputPath>bin\$(MSBuildProjectName)\</BaseOutputPath>
     <BaseIntermediateOutputPath Condition="'$(ArcPakBuildRoot)' != ''">$(ArcPakBuildRoot)/obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
     <BaseOutputPath Condition="'$(ArcPakBuildRoot)' != ''">$(ArcPakBuildRoot)/bin/$(MSBuildProjectName)/</BaseOutputPath>
+    <!-- CUE4Parse source root; override with -p:Cue4ParseRoot=<dir> (e.g. a merged tree). -->
+    <Cue4ParseRoot Condition="'$(Cue4ParseRoot)' == ''">..\..\FModel-Vibe\CUE4Parse</Cue4ParseRoot>
+    <!-- PNG path: Fpng (upstream TextureEncoder + native fpng.dll) when the CUE4Parse root has the perf FpngEncoder; else FastPng (ArcPak ConversionOverrides). -->
+    <ArcPakPng Condition="'$(ArcPakPng)' == '' And Exists('$(MSBuildThisFileDirectory)$(Cue4ParseRoot)\CUE4Parse-Conversion\Textures\FpngEncoder.cs')">Fpng</ArcPakPng>
+    <ArcPakPng Condition="'$(ArcPakPng)' == '' And Exists('$(Cue4ParseRoot)\CUE4Parse-Conversion\Textures\FpngEncoder.cs')">Fpng</ArcPakPng>
+    <ArcPakPng Condition="'$(ArcPakPng)' == ''">FastPng</ArcPakPng>
+    <DefineConstants Condition="'$(ArcPakPng)' == 'Fpng'">$(DefineConstants);ARCPAK_FPNG</DefineConstants>
+    <FpngDllPath Condition="'$(FpngDllPath)' == ''">$(MSBuildThisFileDirectory)fpng.dll</FpngDllPath>
     <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;bin\**</DefaultItemExcludes>
     <!-- Shipped runtime only: no PDBs, no XML docs. -->
     <DebugType>none</DebugType>

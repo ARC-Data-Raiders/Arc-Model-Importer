@@ -34,20 +34,20 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse\**\*.cs"
-             Exclude="..\..\FModel-Vibe\CUE4Parse\CUE4Parse\GameTypes\**\*.cs;
-                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\Wwise\**\*.cs;
-                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\FMod\**\*.cs;
-                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\CriWare\**\*.cs;
-                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\Assets\Exports\Wwise\**\*.cs;
-                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\Assets\Exports\Sound\**\*.cs;
-                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\Assets\Exports\MetaSound\**\*.cs;
-                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\Assets\Exports\CriWare\**\*.cs;
-                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\UE4\Assets\Exports\Component\UAudioComponent.cs;
-                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\obj\**\*.cs;
-                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse\bin\**\*.cs" />
-    <Compile Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse\GameTypes\ArcRaiders\**\*.cs" />
-    <Compile Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse\GameTypes\Embark\**\*.cs" />
-    <Compile Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse\GameTypes\Theia\**\*.cs" />
+    <Compile Include="$(Cue4ParseRoot)\CUE4Parse\**\*.cs"
+             Exclude="$(Cue4ParseRoot)\CUE4Parse\GameTypes\**\*.cs;
+                      $(Cue4ParseRoot)\CUE4Parse\UE4\Wwise\**\*.cs;
+                      $(Cue4ParseRoot)\CUE4Parse\UE4\FMod\**\*.cs;
+                      $(Cue4ParseRoot)\CUE4Parse\UE4\CriWare\**\*.cs;
+                      $(Cue4ParseRoot)\CUE4Parse\UE4\Assets\Exports\Wwise\**\*.cs;
+                      $(Cue4ParseRoot)\CUE4Parse\UE4\Assets\Exports\Sound\**\*.cs;
+                      $(Cue4ParseRoot)\CUE4Parse\UE4\Assets\Exports\MetaSound\**\*.cs;
+                      $(Cue4ParseRoot)\CUE4Parse\UE4\Assets\Exports\CriWare\**\*.cs;
+                      $(Cue4ParseRoot)\CUE4Parse\UE4\Assets\Exports\Component\UAudioComponent.cs;
+                      $(Cue4ParseRoot)\CUE4Parse\obj\**\*.cs;
+                      $(Cue4ParseRoot)\CUE4Parse\bin\**\*.cs" />
+    <Compile Include="$(Cue4ParseRoot)\CUE4Parse\GameTypes\ArcRaiders\**\*.cs" />
+    <Compile Include="$(Cue4ParseRoot)\CUE4Parse\GameTypes\Embark\**\*.cs" />
+    <Compile Include="$(Cue4ParseRoot)\CUE4Parse\GameTypes\Theia\**\*.cs" />
   </ItemGroup>
 </Project>

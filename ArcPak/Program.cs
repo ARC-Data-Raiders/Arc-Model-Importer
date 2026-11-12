@@ -37,7 +37,21 @@ namespace ArcPak;
 /// </summary>
 internal static class Program
 {
-    private const int Workers = 4;
+    // Default min(16, max(4, cores/2)); ARCPAK_WORKERS=<n> overrides (1..64).
+    internal static readonly int WorkerCount = ResolveWorkers();
+    private static int ResolveWorkers()
+    {
+        if (int.TryParse(Environment.GetEnvironmentVariable("ARCPAK_WORKERS"), out var forced) && forced is >= 1 and <= 64) return forced;
+        return Math.Min(16, Math.Max(4, Environment.ProcessorCount / 2));
+    }
+    private static int Workers => WorkerCount;
+#if ARCPAK_FPNG
+    // ARCPAK_FAST_PNG=0 restores the Skia PNG encoder (fpng otherwise; Skia fallback when fpng.dll is absent).
+    private static readonly CUE4Parse_Conversion.Options.EPngEncoder ArcPakPngEncoder =
+        Environment.GetEnvironmentVariable("ARCPAK_FAST_PNG") == "0"
+            ? CUE4Parse_Conversion.Options.EPngEncoder.Skia
+            : CUE4Parse_Conversion.Options.EPngEncoder.Fpng;
+#endif
     private static bool _compressionReady;
 
     public static int Main(string[] args)
@@ -49,7 +63,7 @@ internal static class Program
 
         AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
         {
-            if (e.Exception is OutOfMemoryException) _outOfMemorySeen = 1;
+            if (e.Exception is OutOfMemoryException) Interlocked.Increment(ref _outOfMemorySeen);
         };
         if (args.Length > 0 && args[0] == "serve")
             return Serve();
@@ -84,46 +98,244 @@ internal static class Program
     {
         if (!Serving)
             return new FileUsmapTypeMappingsProvider(usmap);
-        if (!_mappings.TryGetValue(usmap, out var hit))
-            _mappings[usmap] = hit = new FileUsmapTypeMappingsProvider(usmap);
-        return hit;
+        lock (_mappings)
+        {
+            if (!_mappings.TryGetValue(usmap, out var hit))
+                _mappings[usmap] = hit = new FileUsmapTypeMappingsProvider(usmap);
+            return hit;
+        }
+    }
+
+    // Serve-only provider reuse. Key = verb kind + game dir + usmap + container file
+    // signature (+ prepared package set for selective mounts). Requests are serial;
+    // the lock keeps the cache consistent if that ever changes.
+    private const int MaxCachedProviders = 4;
+    private static readonly object _providerLock = new();
+    private static readonly List<(string Key, AbstractVfsFileProvider Provider)> _providers = new();
+
+    internal static string GameSignature(string gameDir)
+    {
+        var sb = new StringBuilder(Path.GetFullPath(gameDir)).Append('|');
+        try
+        {
+            foreach (var file in new DirectoryInfo(gameDir).EnumerateFiles("*", SearchOption.TopDirectoryOnly)
+                         .Where(f => f.Extension is ".utoc" or ".ucas" or ".pak" or ".sig")
+                         .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase))
+                sb.Append(file.Name).Append(':').Append(file.Length).Append(':').Append(file.LastWriteTimeUtc.Ticks).Append(';');
+        }
+        catch (Exception) { sb.Append("unreadable"); }
+        return sb.ToString();
+    }
+
+    private static string ProviderKey(string kind, string gameDir, string usmap, IEnumerable<string>? packages = null)
+    {
+        var sb = new StringBuilder(kind).Append('\n').Append(GameSignature(gameDir)).Append('\n').Append(Path.GetFullPath(usmap));
+        if (packages is not null)
+            foreach (var p in packages.OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+                sb.Append('\n').Append(p);
+        return sb.ToString();
+    }
+
+    private static bool TryCachedProvider(string key, out AbstractVfsFileProvider provider)
+    {
+        provider = null!;
+        if (!Serving) return false;
+        lock (_providerLock)
+        {
+            var at = _providers.FindIndex(e => e.Key == key);
+            if (at < 0) return false;
+            var hit = _providers[at];
+            _providers.RemoveAt(at);
+            _providers.Add(hit);
+            provider = hit.Provider;
+        }
+        Log.Information("Reusing mounted provider ({Files} files)", provider.Files.Count);
+        return true;
+    }
+
+    private static AbstractVfsFileProvider RememberProvider(string key, AbstractVfsFileProvider provider)
+    {
+        if (!Serving) return provider;
+        lock (_providerLock)
+        {
+            while (_providers.Count >= MaxCachedProviders)
+            {
+                RetireProviderLocked(_providers[0].Provider);
+                _providers.RemoveAt(0);
+            }
+            _providers.Add((key, provider));
+        }
+        return provider;
+    }
+
+    private static bool IsCachedProvider(AbstractVfsFileProvider provider)
+    {
+        lock (_providerLock)
+            return _providers.Any(e => ReferenceEquals(e.Provider, provider));
+    }
+
+    private static void DropCachedProviders()
+    {
+        lock (_providerLock)
+        {
+            foreach (var e in _providers) RetireProviderLocked(e.Provider);
+            _providers.Clear();
+        }
+    }
+
+    // Requests in flight (serve). With one request, a dropped provider is disposed at once
+    // (old behaviour); with several, another request may still read it, so disposal waits
+    // until the last in-flight request ends.
+    private static int _inFlight;
+    private static readonly HashSet<AbstractVfsFileProvider> _retired = new(ReferenceEqualityComparer.Instance);
+
+    private static void RetireProviderLocked(AbstractVfsFileProvider provider)
+    {
+        if (_inFlight <= 1) provider.Dispose();
+        else _retired.Add(provider);
+    }
+
+    private static void ReleaseUncachedProvider(AbstractVfsFileProvider provider)
+    {
+        lock (_providerLock)
+            if (!_providers.Any(e => ReferenceEquals(e.Provider, provider)))
+                RetireProviderLocked(provider);
+    }
+
+    private static void BeginRequest() { lock (_providerLock) _inFlight++; }
+
+    private static void EndRequest()
+    {
+        lock (_providerLock)
+        {
+            if (--_inFlight > 0) return;
+            foreach (var p in _retired) p.Dispose();
+            _retired.Clear();
+        }
+    }
+
+    /// <summary>Console.Out/Error target in concurrent serve: each request's writes go to its own buffer.</summary>
+    private sealed class RequestRouter : TextWriter
+    {
+        internal static readonly AsyncLocal<TextWriter?> Current = new();
+        private readonly TextWriter _fallback;
+        internal RequestRouter(TextWriter fallback) => _fallback = fallback;
+        private TextWriter Target => Current.Value ?? _fallback;
+        public override Encoding Encoding => Encoding.UTF8;
+        public override void Write(char value) => Target.Write(value);
+        public override void Write(string? value) => Target.Write(value);
+        public override void Write(char[] buffer, int index, int count) => Target.Write(buffer, index, count);
+        public override void WriteLine(string? value) => Target.WriteLine(value);
+        public override void WriteLine() => Target.WriteLine();
+        public override void Flush() => Target.Flush();
     }
 
     // JSON lines: in {"args":[...]}; out {"rc":N,"log":"..."}. Logs go to a per-request buffer.
+    // A request with "id" (string or number) runs concurrently with other id requests; its reply
+    // echoes the id ({"id":..,"rc":N,"log":".."}) and replies may arrive in any order. A request
+    // without "id" waits for all in-flight requests, then runs alone (old sequential behaviour).
     private static int Serve()
     {
         Serving = true;
         var stdout = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false)) { AutoFlush = true };
         var stdin = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false));
+        var stdoutLock = new object();
+        var idle = new object();
+        var concurrent = 0;
+        RequestRouter? router = null;
         stdout.WriteLine("{\"ready\":true}");
         string? line;
         while ((line = stdin.ReadLine()) != null)
         {
             if (line.Length == 0) continue;
-            var buffer = new StringWriter();
-            int code;
+            System.Text.Json.Nodes.JsonNode? id = null;
+            try
+            {
+                using var probe = System.Text.Json.JsonDocument.Parse(line);
+                if (probe.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                    && probe.RootElement.TryGetProperty("id", out var idEl)
+                    && idEl.ValueKind is System.Text.Json.JsonValueKind.String or System.Text.Json.JsonValueKind.Number)
+                    id = System.Text.Json.Nodes.JsonNode.Parse(idEl.GetRawText());
+            }
+            catch (Exception) { }
+
+            if (id is null)
+            {
+                lock (idle) while (concurrent > 0) Monitor.Wait(idle);
+                router = null;
+                var reply = RunServeRequest(line, null, perRequestLogger: true);
+                stdout.WriteLine(reply);
+                continue;
+            }
+
+            if (router is null)
+            {
+                router = new RequestRouter(TextWriter.Null);
+                Console.SetOut(router);
+                Console.SetError(router);
+                Log.Logger = new LoggerConfiguration().MinimumLevel.Information().WriteTo.Console().CreateLogger();
+            }
+            lock (idle) concurrent++;
+            var reqLine = line;
+            var reqId = id;
+            Task.Run(() =>
+            {
+                string reply;
+                try { reply = RunServeRequest(reqLine, reqId, perRequestLogger: false); }
+                catch (Exception ex)
+                {
+                    reply = new System.Text.Json.Nodes.JsonObject { ["id"] = reqId.DeepClone(), ["rc"] = 1, ["log"] = "ArcPak.Export failed: " + ex }.ToJsonString();
+                }
+                lock (stdoutLock) stdout.WriteLine(reply);
+                lock (idle) { concurrent--; Monitor.PulseAll(idle); }
+            });
+        }
+        lock (idle) while (concurrent > 0) Monitor.Wait(idle);
+        return 0;
+    }
+
+    private static string RunServeRequest(string line, System.Text.Json.Nodes.JsonNode? id, bool perRequestLogger)
+    {
+        var buffer = TextWriter.Synchronized(new StringWriter());
+        int code;
+        if (perRequestLogger)
+        {
             Console.SetOut(buffer);
             Console.SetError(buffer);
             Log.Logger = new LoggerConfiguration().MinimumLevel.Information().WriteTo.Console().CreateLogger();
+        }
+        else RequestRouter.Current.Value = buffer;
+        BeginRequest();
+        try
+        {
+            var oomAtStart = Volatile.Read(ref _outOfMemorySeen);
             try
             {
-                var req = System.Text.Json.JsonDocument.Parse(line);
+                using var req = System.Text.Json.JsonDocument.Parse(line);
                 var args = req.RootElement.GetProperty("args").EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
-                Volatile.Write(ref _outOfMemorySeen, 0);
                 using (OutputDirLock.AcquireForArgs(args))
                     code = RunCommand(args);
-                if (code == 0 && Volatile.Read(ref _outOfMemorySeen) != 0) code = 1;
+                if (code == 0 && Volatile.Read(ref _outOfMemorySeen) != oomAtStart) code = 1;
             }
             catch (Exception ex)
             {
                 buffer.WriteLine("ArcPak.Export failed: " + ex);
                 code = 1;
             }
-            Log.CloseAndFlush();
-            var reply = new System.Text.Json.Nodes.JsonObject { ["rc"] = code, ["log"] = buffer.ToString() };
-            stdout.WriteLine(reply.ToJsonString());
+            // A failed request may leave a provider half-read or memory-starved; remount next time.
+            if (code != 0) DropCachedProviders();
         }
-        return 0;
+        finally
+        {
+            EndRequest();
+            if (perRequestLogger) Log.CloseAndFlush();
+            else RequestRouter.Current.Value = null;
+        }
+        var reply = new System.Text.Json.Nodes.JsonObject();
+        if (id is not null) reply["id"] = id.DeepClone();
+        reply["rc"] = code;
+        reply["log"] = buffer.ToString();
+        return reply.ToJsonString();
     }
 
     private static int RunCommand(string[] args)
@@ -390,9 +602,11 @@ internal static class Program
         if (string.IsNullOrWhiteSpace(indexDir))
             indexDir = outDir;
         Directory.CreateDirectory(indexDir);
+        var setup = Stopwatch.StartNew();
         PrepareCompression(gameDir);
         var provider = (metadataOnly || materialMetadataOnly) ? OpenMetadataProvider(gameDir, usmap, paths, indexPaths, indexDir, materialTextureClosure: materialMetadataOnly)
             : OpenProvider(gameDir, usmap, paths, indexPaths, indexDir);
+        Log.Information("Request setup {Ms} ms (compression, index, mount)", setup.ElapsedMilliseconds);
         try
         {
             if (materialMetadataOnly) return ExportMaterialMetadata(provider, paths, outDir, GameBuild.Read(gameDir), materialFiles, usmap);
@@ -401,7 +615,9 @@ internal static class Program
         }
         finally
         {
-            provider.Dispose();
+            Log.Information("Request total {Ms} ms", setup.ElapsedMilliseconds);
+            if (!Serving) { if (!IsCachedProvider(provider)) provider.Dispose(); }
+            else ReleaseUncachedProvider(provider);
         }
     }
 
@@ -413,12 +629,18 @@ internal static class Program
             // Inherited textures can live outside the root MI's selective
             // container set. Full mount is read-only and metadata-only here;
             // no browser/index/preview writes and no image encoder runs.
+            var fullKey = Serving ? ProviderKey("meta-full", gameDir, usmap) : "";
+            if (TryCachedProvider(fullKey, out var cachedAll))
+            {
+                Log.Information("Material/texture metadata full dependency mount; no mesh/image encoding or preview/index writes");
+                return cachedAll;
+            }
             var all = CreateShell(gameDir);
             all.ReadShaderMaps = false;
             all.MappingsContainer = Program.Mappings(usmap);
             MountEverything(all);
             Log.Information("Material/texture metadata full dependency mount; no mesh/image encoding or preview/index writes");
-            return all;
+            return RememberProvider(fullKey, all);
         }
 
         // Metadata warmup never generates previews, faux browser paths or new indexes.
@@ -427,20 +649,32 @@ internal static class Program
         {
             // Only provider mount selection uses prepared aliases. Keep caller
             // request/model-file pairs in their original exact order.
+            var selKey = Serving ? ProviderKey("meta-sel", gameDir, usmap, prepared) : "";
+            if (TryCachedProvider(selKey, out var cachedSel))
+            {
+                Log.Information("Metadata-only selective mount; no preview/index writes");
+                return cachedSel;
+            }
             var selective = TrySelective(gameDir, usmap, prepared, index, hits);
             if (selective is not null)
             {
                 selective.ReadShaderMaps = false;
                 Log.Information("Metadata-only selective mount; no preview/index writes");
-                return selective;
+                return RememberProvider(selKey, selective);
             }
+        }
+        var metaFullKey = Serving ? ProviderKey("meta-full", gameDir, usmap) : "";
+        if (TryCachedProvider(metaFullKey, out var cachedFull))
+        {
+            Log.Information("Metadata-only full mount; no preview/index writes");
+            return cachedFull;
         }
         var full = CreateShell(gameDir);
         full.ReadShaderMaps = false;
         full.MappingsContainer = Program.Mappings(usmap);
         MountEverything(full);
         Log.Information("Metadata-only full mount; no preview/index writes");
-        return full;
+        return RememberProvider(metaFullKey, full);
     }
 
     private static AbstractVfsFileProvider OpenProvider(
@@ -459,7 +693,9 @@ internal static class Program
             var requested = paths.ToList();
             paths.Clear();
             paths.AddRange(prepared);
-            var selective = TrySelective(gameDir, usmap, paths, index, hits);
+            var selKey = Serving ? ProviderKey("extract-sel", gameDir, usmap, prepared) : "";
+            var reused = TryCachedProvider(selKey, out var cachedSel);
+            var selective = reused ? cachedSel : TrySelective(gameDir, usmap, paths, index, hits);
             if (selective is not null)
             {
                 Log.Information(
@@ -468,7 +704,7 @@ internal static class Program
                     timer.ElapsedMilliseconds);
                 if (prepared.Count != requested.Count)
                     Log.Information("Resolved {Count} package(s)", prepared.Count);
-                return selective;
+                return reused ? selective : RememberProvider(selKey, selective);
             }
 
             Log.Information("Selective mount could not see the asset; reindexing");
@@ -546,7 +782,11 @@ internal static class Program
             meshFormat: EMeshFormat.UEFormat,
             meshQuality: EMeshQuality.Highest,
             exportMaterials: false,
-            exportMorphTargets: false);
+            exportMorphTargets: false
+#if ARCPAK_FPNG
+            , pngEncoder: ArcPakPngEncoder
+#endif
+            );
         var session = new ExportSession { MaxDegreeOfParallelism = Workers };
         var queued = 0;
         var skipped = 0;
@@ -1211,7 +1451,11 @@ internal static class Program
             naniteMeshFormat: ENaniteMeshFormat.NaniteFirst,
             materialDepth: EMaterialDepth.AllLayersNoRef,
             exportMaterials: true,
-            exportMorphTargets: true);
+            exportMorphTargets: true
+#if ARCPAK_FPNG
+            , pngEncoder: ArcPakPngEncoder
+#endif
+            );
         var session = new ExportSession { MaxDegreeOfParallelism = Workers };
         var animSession = new ExportSession { MaxDegreeOfParallelism = Workers };
         var textureMetadataFailures = AttachTextureMetadataWriter(session, provider, outDir, build, usmap);
@@ -1223,10 +1467,20 @@ internal static class Program
         var jsonPackages = new List<(IPackage Package, string Path)>();
         var visitedMaterials = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         ExpandFromFiles(provider, paths);
-
-        foreach (var path in paths)
+        // Load root packages (and their exports) in parallel; queueing below stays sequential in request order.
+        var preloaded = new CUE4Parse.UE4.Assets.IPackage?[paths.Count];
+        var preload = Stopwatch.StartNew();
+        Parallel.For(0, paths.Count, new ParallelOptions { MaxDegreeOfParallelism = Workers }, index =>
         {
-            var package = FindPackage(provider, path);
+            try { preloaded[index] = FindPackage(provider, paths[index]); _ = preloaded[index]?.GetExports().Count(); }
+            catch { preloaded[index] = null; }
+        });
+        Log.Information("Root package preload {Count} in {Ms} ms", paths.Count, preload.ElapsedMilliseconds);
+
+        for (var pathIndex = 0; pathIndex < paths.Count; pathIndex++)
+        {
+            var path = paths[pathIndex];
+            var package = preloaded[pathIndex] ?? FindPackage(provider, path);
             if (package is null)
             {
                 requiredExports.Observe(false);

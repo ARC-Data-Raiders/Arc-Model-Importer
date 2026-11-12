@@ -29,16 +29,31 @@ internal static class MaterialTextureMetadataExport
         var root = Path.GetFullPath(outputRoot);
         var dependencies = new List<MaterialTextureMetadataManifest.Dependency>();
         long metadataBytes = 0;
-        foreach (var texture in textures)
+        // Textures are distinct per closure (grouped by path), so per-texture writes never share a file.
+        // Results land in index order: output equals the sequential loop.
+        var sizes = new long[textures.Length];
+        var slots = new MaterialTextureMetadataManifest.Dependency[textures.Length];
+        try { Parallel.For(0, textures.Length, new ParallelOptions { MaxDegreeOfParallelism = Program.WorkerCount }, index =>
         {
+            var texture = textures[index];
             TextureMetadataExport.Write(texture, root, build.BuildId, build.DepotManifest, mappingHash);
             var path = TextureMetadataExport.MetadataPath(texture, root);
             var relative = Path.GetRelativePath(root,path).Replace('\\','/');
             if (relative.StartsWith("../",StringComparison.Ordinal) || Path.IsPathRooted(relative)) throw new InvalidDataException("Native metadata path escaped output root");
-            var data = File.ReadAllBytes(path);metadataBytes += data.Length;
-            if (metadataBytes > 128L*1024*1024) throw new InvalidDataException("Native texture metadata 128MiB closure budget exceeded");
+            var data = File.ReadAllBytes(path);sizes[index] = data.Length;
             var fact = JsonNode.Parse(data)!.AsObject();
-            dependencies.Add(new MaterialTextureMetadataManifest.Dependency(fact["Package"]!.GetValue<string>(),relative,TextureMetadataDocument.Hash(data)));
+            slots[index] = new MaterialTextureMetadataManifest.Dependency(fact["Package"]!.GetValue<string>(),relative,TextureMetadataDocument.Hash(data));
+        }); }
+        catch (AggregateException error) when (error.InnerExceptions.Count > 0)
+        {
+            // Same exception type and message the sequential loop raised.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerExceptions[0]).Throw();
+        }
+        for (var index = 0; index < slots.Length; index++)
+        {
+            metadataBytes += sizes[index];
+            if (metadataBytes > 128L*1024*1024) throw new InvalidDataException("Native texture metadata 128MiB closure budget exceeded");
+            dependencies.Add(slots[index]);
         }
         var document = MaterialTextureMetadataManifest.Capture(logicalPackage,material.GetPathName(),build.BuildId,
             build.DepotManifest,mappingHash,TextureMetadataExport.ProducerSnapshot(),dependencies);

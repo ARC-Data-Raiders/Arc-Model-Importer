@@ -9,9 +9,26 @@ namespace ArcPak;
 internal sealed class OutputDirLock : IDisposable
 {
     internal const string FileName = ".arcpak.lock";
-    private readonly FileStream _stream;
+    private readonly Held _held;
+    private int _disposed;
 
-    private OutputDirLock(FileStream stream) => _stream = stream;
+    // In-process holders share one file lock per directory, so concurrent serve requests in
+    // this process do not block each other; other processes still wait. Requests that share a
+    // directory must not write the same files.
+    private sealed class Held { internal FileStream Stream = null!; internal int Count; internal string Key = ""; }
+    private static readonly Dictionary<string, Held> _inProcess = new(StringComparer.OrdinalIgnoreCase);
+
+    private OutputDirLock(Held held) => _held = held;
+
+    private static bool TryShare(string key, out OutputDirLock shared)
+    {
+        lock (_inProcess)
+        {
+            if (_inProcess.TryGetValue(key, out var held)) { held.Count++; shared = new OutputDirLock(held); return true; }
+        }
+        shared = null!;
+        return false;
+    }
 
     internal static TimeSpan DefaultWait()
     {
@@ -29,6 +46,7 @@ internal sealed class OutputDirLock : IDisposable
         var logged = false;
         while (true)
         {
+            if (TryShare(path, out var shared)) return shared;
             try
             {
                 var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
@@ -36,7 +54,9 @@ internal sealed class OutputDirLock : IDisposable
                 var pid = System.Text.Encoding.ASCII.GetBytes(Environment.ProcessId.ToString());
                 stream.Write(pid, 0, pid.Length);
                 stream.Flush();
-                return new OutputDirLock(stream);
+                var held = new Held { Stream = stream, Count = 1, Key = path };
+                lock (_inProcess) _inProcess[path] = held;
+                return new OutputDirLock(held);
             }
             catch (IOException) when (DateTime.UtcNow < deadline)
             {
@@ -55,7 +75,16 @@ internal sealed class OutputDirLock : IDisposable
         }
     }
 
-    public void Dispose() => _stream.Dispose();
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        lock (_inProcess)
+        {
+            if (--_held.Count > 0) return;
+            _inProcess.Remove(_held.Key);
+            _held.Stream.Dispose();
+        }
+    }
 
     /// <summary>Locks every distinct directory named by --out or --index-dir (a file value locks its parent), in sorted order.</summary>
     internal static LockSet AcquireForArgs(string[] args)

@@ -3,7 +3,7 @@ import ast,functools,hashlib,json,os,subprocess,sys,tempfile,types,unittest
 from pathlib import Path
 ROOT=Path(os.environ.get('DATARAIDERS_TEST_REPOSITORY',Path(__file__).resolve().parents[1])).resolve()
 PACKAGE='_pak_extract_reuse_probe'
-SELECTED={'_mapping_sha256','_extraction_revision','_installed_material_provenance','game_path','_normalize_asset_path','_package_aliases','_expected_uemodel','_collect_uemodels','complete_extraction','_extraction_producer','current_extracted_meshes','ensure_rels','_finish_extraction','register_defaults','unregister_defaults','_initialize_pak_defaults','_load_pak_defaults','configured_dir','resolve_pak_folder','pak_dir_has_game_files'}
+SELECTED={'_mapping_sha256','_extraction_revision','_installed_material_provenance','game_path','_normalize_asset_path','_package_aliases','_expected_uemodel','_collect_uemodels','complete_extraction','_extraction_producer','current_extracted_meshes','ensure_rels','_finish_extraction','register_defaults','unregister_defaults','_initialize_pak_defaults','_load_pak_defaults','configured_dir','resolve_pak_folder','_resolve_pak_folder','pak_dir_has_game_files'}
 
 def load_pak():
     package=types.ModuleType(PACKAGE);package.__path__=[str(ROOT)];sys.modules[PACKAGE]=package

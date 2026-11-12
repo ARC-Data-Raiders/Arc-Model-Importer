@@ -43,7 +43,13 @@ param(
     [switch]$SyncAppData,
     [string]$AppDataAddon = "",
     [string]$BlenderExe = "",
-    [string]$InstallCheckRoot = ""
+    [string]$InstallCheckRoot = "",
+    # ArcPak exporter source. Cue4ParseRoot (or env ARCPAK_CUE4PARSE_ROOT) = perf CUE4Parse tree:
+    # publish from current sources against it. Without it: copy the prebuilt binaries in ArcPak/.
+    # Either way the packaged CUE4Parse.Arc.dll must carry the perf types, or packaging fails.
+    [string]$Cue4ParseRoot = $env:ARCPAK_CUE4PARSE_ROOT,
+    [ValidateSet("", "Fpng", "FastPng")]
+    [string]$ArcPakPng = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -189,22 +195,49 @@ function Copy-ArcPakRuntime {
     if ($ReleaseLine -eq "map-importer") { return }
     $proj = Join-Path $RepoRoot "ArcPak\ArcPak.Export.csproj"
     if (-not (Test-Path -LiteralPath $proj)) { return }
-    # Always build from current sources. An existing publish/ executable may
-    # predate texture-decoder fixes even when the addon version is unchanged.
+    $arcDir = Join-Path $RepoRoot "ArcPak"
+    $dst = Join-Path $AddonDir "ArcPak"
     $runtimeRoot = Join-Path $env:TEMP ("ArcPak-runtime-" + [guid]::NewGuid().ToString("n"))
     $publish = Join-Path $runtimeRoot "publish"
     $buildRoot = Join-Path $runtimeRoot "build"
     try {
-        Write-Host "Publishing current ArcPak.Export (win-x64 self-contained)..."
-        & dotnet publish $proj -c Release -r win-x64 --self-contained true -m:4 -o $publish "-p:ArcPakBuildRoot=$buildRoot" --nologo
-        if ($LASTEXITCODE -ne 0) { throw "ArcPak.Export publish failed ($LASTEXITCODE)" }
-        $exe = Join-Path $publish "ArcPak.Export.exe"
-        if (-not (Test-Path -LiteralPath $exe)) { throw "ArcPak.Export publish produced no executable" }
-        $dst = Join-Path $AddonDir "ArcPak"
+        if ($Cue4ParseRoot) {
+            # Build from current sources against the perf CUE4Parse tree.
+            $c4p = (Resolve-Path -LiteralPath $Cue4ParseRoot -ErrorAction Stop).Path
+            if (-not (Test-Path -LiteralPath (Join-Path $c4p "CUE4Parse\CUE4Parse.csproj"))) { throw "Cue4ParseRoot has no CUE4Parse\CUE4Parse.csproj: $c4p" }
+            $pngArg = @(); if ($ArcPakPng) { $pngArg = @("-p:ArcPakPng=$ArcPakPng") }
+            Write-Host "Publishing ArcPak.Export against $c4p (png=$(if ($ArcPakPng) { $ArcPakPng } else { 'auto' }))..."
+            & dotnet publish $proj -c Release -r win-x64 --self-contained true -m:4 -o $publish "-p:ArcPakBuildRoot=$buildRoot" "-p:Cue4ParseRoot=$c4p" @pngArg --nologo
+            if ($LASTEXITCODE -ne 0) { throw "ArcPak.Export publish failed ($LASTEXITCODE)" }
+            $src = $publish
+        }
+        elseif ((Test-Path -LiteralPath (Join-Path $arcDir "ArcPak.Export.exe")) -and (Test-Path -LiteralPath (Join-Path $arcDir "CUE4Parse.Arc.dll"))) {
+            # Prebuilt exporter in ArcPak/ (the promoted, measured build).
+            Write-Host "Copying prebuilt ArcPak.Export from $arcDir (no -Cue4ParseRoot)..."
+            $newestSrc = Get-ChildItem -LiteralPath $arcDir -File -Filter *.cs | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+            $built = (Get-Item -LiteralPath (Join-Path $arcDir "ArcPak.Export.dll")).LastWriteTimeUtc
+            if ($newestSrc -and $newestSrc.LastWriteTimeUtc -gt $built) { Write-Warning "ArcPak/$($newestSrc.Name) is newer than prebuilt ArcPak.Export.dll; rebuild with -Cue4ParseRoot to ship it." }
+            $src = $arcDir
+        }
+        else {
+            throw "No ArcPak exporter source: pass -Cue4ParseRoot <perf CUE4Parse tree> (or set ARCPAK_CUE4PARSE_ROOT), or place prebuilt ArcPak.Export.exe + CUE4Parse.Arc.dll in $arcDir."
+        }
+        $exe = Join-Path $src "ArcPak.Export.exe"
+        if (-not (Test-Path -LiteralPath $exe)) { throw "ArcPak.Export source has no executable: $src" }
         New-Item -ItemType Directory -Path $dst -Force | Out-Null
-        Get-ChildItem -LiteralPath $publish -File | Where-Object { $_.Extension -ne ".pdb" -and @("BouncyCastle.Cryptography.dll") -notcontains $_.Name } | ForEach-Object {
+        Get-ChildItem -LiteralPath $src -File | Where-Object { @(".dll", ".exe", ".json") -contains $_.Extension -and @("BouncyCastle.Cryptography.dll") -notcontains $_.Name } | ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dst $_.Name) -Force
         }
+        # Gate: the shipped CUE4Parse must be the perf build.
+        $c4dll = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes((Join-Path $dst "CUE4Parse.Arc.dll")))
+        foreach ($t in @("TheiaKeystream", "PerfCounters")) {
+            if (-not $c4dll.Contains("`0$t`0")) { throw "Packaged CUE4Parse.Arc.dll lacks perf type $t (source $src); use -Cue4ParseRoot <perf CUE4Parse tree>." }
+        }
+        $convDll = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes((Join-Path $dst "CUE4Parse.Conversion.Arc.dll")))
+        $png = if ($convDll.Contains("`0FastPng`0")) { "FastPng" } else { "Fpng" }
+        if ($png -eq "Fpng" -and -not (Test-Path -LiteralPath (Join-Path $dst "fpng.dll"))) { throw "Packaged exporter uses Fpng but fpng.dll is missing" }
+        if ($ArcPakPng -and $png -ne $ArcPakPng) { throw "Packaged exporter PNG path $png != requested $ArcPakPng" }
+        Write-Host "ArcPak exporter: perf CUE4Parse, png=$png"
     }
     finally {
         if (Test-Path -LiteralPath $runtimeRoot) {

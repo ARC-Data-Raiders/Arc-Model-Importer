@@ -24,20 +24,25 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\**\*.cs"
-             Exclude="..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\obj\**\*.cs;
-                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\bin\**\*.cs;
-                      ..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\Sounds\**\*.cs" />
+    <Compile Include="$(Cue4ParseRoot)\CUE4Parse-Conversion\**\*.cs"
+             Exclude="$(Cue4ParseRoot)\CUE4Parse-Conversion\obj\**\*.cs;
+                      $(Cue4ParseRoot)\CUE4Parse-Conversion\bin\**\*.cs;
+                      $(Cue4ParseRoot)\CUE4Parse-Conversion\Sounds\**\*.cs" />
+  </ItemGroup>
+  <!-- ArcPakPng=FastPng: ArcPak-owned TextureEncoder (FastPng PNG path) replaces the FModel-Vibe copy. -->
+  <ItemGroup Condition="'$(ArcPakPng)' != 'Fpng'">
+    <Compile Remove="$(Cue4ParseRoot)\CUE4Parse-Conversion\Textures\TextureEncoder.cs" />
+    <Compile Include="ConversionOverrides\*.cs" />
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\Resources\Detex.dll">
+    <EmbeddedResource Include="$(Cue4ParseRoot)\CUE4Parse-Conversion\Resources\Detex.dll">
       <LogicalName>CUE4Parse_Conversion.Resources.Detex.dll</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\Resources\tegra_swizzle_x64.dll">
+    <EmbeddedResource Include="$(Cue4ParseRoot)\CUE4Parse-Conversion\Resources\tegra_swizzle_x64.dll">
       <LogicalName>CUE4Parse_Conversion.Resources.tegra_swizzle_x64.dll</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="..\..\FModel-Vibe\CUE4Parse\CUE4Parse-Conversion\Resources\crunch.dll">
+    <EmbeddedResource Include="$(Cue4ParseRoot)\CUE4Parse-Conversion\Resources\crunch.dll">
       <LogicalName>CUE4Parse_Conversion.Resources.crunch.dll</LogicalName>
     </EmbeddedResource>
   </ItemGroup>

@@ -2,13 +2,14 @@
 Input geometry is mirrored-Y: A local metres/scale1 or B local centimetres/scale.01.
 Only objects in the supplied collection can become templates. No geometry imports.
 """
-import json, math, re, hashlib
+import json, math, os, re, hashlib
 from pathlib import Path
 
 ROOT_STEM = "SM_ExtractionElevator_01_A"
 FOLDER = "PioneerGame/Content/Pioneer/Environment/Props/Interactables/ExtractionElevator_01"
 BP = "PioneerGame/Content/Pioneer/Core/GameModes/Scavenge/BP_SalvageExtractionPoint_Elevator.json"
-ROTATOR_SOURCE = r"C:/Users/Silarious/Documents/GitHub/FModel-Vibe/CUE4Parse/CUE4Parse/UE4/Objects/Core/Math/FRotator.cs"
+# Path to FModel-Vibe CUE4Parse/CUE4Parse/UE4/Objects/Core/Math/FRotator.cs
+ROTATOR_SOURCE = os.environ.get("DATARAIDERS_ROTATOR_SOURCE", "")
 
 def entries(path):
     data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
@@ -96,6 +97,8 @@ def assemble(collection, export_root):
                   placed=[], skipped=[], unresolved=[], dimension_checks=[], sources={})
     for path in [raw / BP, *sorted((raw / FOLDER).glob("*.json"))]:
         report["sources"][str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if not ROTATOR_SOURCE:
+        raise RuntimeError("Set DATARAIDERS_ROTATOR_SOURCE to FModel-Vibe CUE4Parse FRotator.cs")
     if Path(ROTATOR_SOURCE).is_file():
         report["sources"][ROTATOR_SOURCE] = hashlib.sha256(Path(ROTATOR_SOURCE).read_bytes()).hexdigest()
     # Exact provenance preferred; no fuzzy stem matching or cross-side lookup.

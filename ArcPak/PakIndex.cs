@@ -269,7 +269,26 @@ internal sealed class PakIndex
         }
     }
 
+    // Serve: utoc hashing runs once per game-file signature, not per request.
+    private string? _matchSig;
+    private bool _matchOk;
+
     internal bool Matches(string gameDir)
+    {
+        if (!Program.Serving)
+            return MatchesUncached(gameDir);
+        var sig = Program.GameSignature(gameDir);
+        lock (this)
+        {
+            if (_matchSig == sig)
+                return _matchOk;
+            _matchOk = MatchesUncached(gameDir);
+            _matchSig = sig;
+            return _matchOk;
+        }
+    }
+
+    private bool MatchesUncached(string gameDir)
     {
         List<string> files;
         try
@@ -322,11 +341,15 @@ internal sealed class PakIndex
             var info = new FileInfo(path);
             if (!info.Exists) return TryLoadCore(path);
             var key = Path.GetFullPath(path);
-            if (_loaded.TryGetValue(key, out var hit) && hit.Item1 == info.LastWriteTimeUtc && hit.Item2 == info.Length)
-                return hit.Item3;
-            var index = TryLoadCore(path);
-            _loaded[key] = (info.LastWriteTimeUtc, info.Length, index);
-            return index;
+            // Concurrent serve requests share this cache; the lock also stops two loads of one file.
+            lock (_loaded)
+            {
+                if (_loaded.TryGetValue(key, out var hit) && hit.Item1 == info.LastWriteTimeUtc && hit.Item2 == info.Length)
+                    return hit.Item3;
+                var index = TryLoadCore(path);
+                _loaded[key] = (info.LastWriteTimeUtc, info.Length, index);
+                return index;
+            }
         }
         catch { return TryLoadCore(path); }
     }

@@ -24,8 +24,14 @@
     </ItemGroup>
   </Target>
 
+  <!-- ArcPakPng=Fpng: ship native fpng.dll next to the exe (FpngEncoder loads it; Skia fallback when absent). -->
+  <ItemGroup Condition="'$(ArcPakPng)' == 'Fpng' And Exists('$(FpngDllPath)')">
+    <None Include="$(FpngDllPath)" Link="fpng.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Remove="Tests/**/*.cs" />
+    <Compile Remove="ConversionOverrides/**/*.cs" />
     <InternalsVisibleTo Include="ArcPak.MapExport.Tests" />
     <Compile Include="../../FModel-Vibe/FModel/Exporters/MapPlacement/MapTraversalObject.cs" Link="MapTraversal/MapTraversalObject.cs" />
     <Compile Include="../../FModel-Vibe/FModel/Exporters/MapPlacement/MapPlacementExtractor.cs" Link="MapTraversal/MapPlacementExtractor.cs" />
