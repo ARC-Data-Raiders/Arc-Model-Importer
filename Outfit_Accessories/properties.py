@@ -284,22 +284,21 @@ def make_outfit_preset_items(self, context):
     if cache is not None:
         return list(cache["outfit_preset_items"])
     # Outside the dialog this runs on every redraw of any region that shows the property.
-    # Keep the scan result for the same queue for a few seconds so a redraw costs nothing.
+    # The colourway index underneath is cached on a directory stat signature, so a
+    # rebuild is cheap; hand back the held list object while the items are unchanged
+    # (Blender keeps string pointers into the returned list).
     global _PRESET_ITEMS_IDLE
-    key = confirm_dialog_fingerprint(context)
-    now = time.monotonic()
-    held = _PRESET_ITEMS_IDLE
-    if held is not None and held[0] == key and now - held[1] < _PRESET_ITEMS_IDLE_S:
-        return held[2]
     from ..Shared.importing import queue_supports_outfit_batch
     items = _build_outfit_preset_items(
         context, is_outfit_queue=queue_supports_outfit_batch(context)
     )
-    _PRESET_ITEMS_IDLE = (key, now, items)
+    held = _PRESET_ITEMS_IDLE
+    if held is not None and held == items:
+        return held
+    _PRESET_ITEMS_IDLE = items
     return items
 
 _PRESET_ITEMS_IDLE = None
-_PRESET_ITEMS_IDLE_S = 5.0
 _OUTFIT_SELECTION_UPDATING = False
 _DEFAULT_OUTFIT_KEY = 'ID_PLAYERSKIN_ABYSS'
 
@@ -422,16 +421,39 @@ _MASK_DEBUG_SOURCE_ITEMS = (
 
 _OUTFIT_ENUM_CACHE = {"key": None, "items": None}
 
+# Panel draws call this per redraw; re-stat the CSV at most once per interval.
+_CSV_STAT_INTERVAL_S = 1.0
+_CSV_STAT_MEMO = {}
 
-def make_outfit_selector_items(self, context):
-    """Dynamic EnumProperty items callback for outfit selector."""
-    from ..Shared.importing import load_outfit_csv, get_outfit_csv_path, outfit_row_key, outfit_display_label, default_outfit_csv_path
 
-    csv_path = get_outfit_csv_path(context) if getattr(context, 'scene', None) is not None else default_outfit_csv_path()
+def outfit_csv_state(context):
+    """(csv_path, mtime) for the scene's outfit CSV, re-checked at most once per second."""
+    from ..Shared.importing import get_outfit_csv_path, default_outfit_csv_path
+
+    scene = getattr(context, 'scene', None)
+    custom = getattr(scene, "arc_outfit_csv_path", "") if scene is not None else None
+    now = time.monotonic()
+    memo = _CSV_STAT_MEMO.get(custom)
+    if memo is not None and now - memo[2] < _CSV_STAT_INTERVAL_S:
+        return memo[0], memo[1]
+    csv_path = get_outfit_csv_path(context) if scene is not None else default_outfit_csv_path()
     try:
         mtime = os.path.getmtime(csv_path) if csv_path else 0.0
     except OSError:
         mtime = 0.0
+    _CSV_STAT_MEMO[custom] = (csv_path, mtime, now)
+    return csv_path, mtime
+
+
+def outfit_csv_path_cached(context) -> str:
+    return outfit_csv_state(context)[0]
+
+
+def make_outfit_selector_items(self, context):
+    """Dynamic EnumProperty items callback for outfit selector."""
+    from ..Shared.importing import load_outfit_csv, outfit_row_key, outfit_display_label
+
+    csv_path, mtime = outfit_csv_state(context)
     cache_key = (csv_path, mtime)
     cached = _OUTFIT_ENUM_CACHE
     if cached["key"] == cache_key and cached["items"]:

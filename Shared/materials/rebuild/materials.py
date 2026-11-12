@@ -2,7 +2,19 @@
 import hashlib,json,traceback
 import bpy
 from .graph import Graph
-from .native_catalog_bridge import begin as native_begin, lookup as native_lookup, stamp as native_stamp
+def native_begin(*args, **kwargs):
+    from .native_catalog_bridge import begin
+    return begin(*args, **kwargs)
+
+
+def native_lookup(*args, **kwargs):
+    from .native_catalog_bridge import lookup
+    return lookup(*args, **kwargs)
+
+
+def native_stamp(*args, **kwargs):
+    from .native_catalog_bridge import stamp
+    return stamp(*args, **kwargs)
 from .character import build_character
 from .surfaces import build_surface, build_architecture, build_environment_layers, build_weapon
 from .records import MaterialLibrary

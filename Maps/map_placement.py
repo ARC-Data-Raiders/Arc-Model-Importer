@@ -42,6 +42,28 @@ import mathutils
 from ..Shared import importing
 from ..Shared import utils
 
+# Modal batch timers: 0.0 fires on the next event-loop pass. Work is always queued while
+# the timer exists and every exit removes it, so no idle wakeups remain after a run.
+MODAL_TICK_SECONDS = 0.0
+
+
+def _guarded_modal(op, context, event, body, stop):
+    """Run one modal step; on an exception remove the timer and end the operator."""
+    try:
+        return body(context, event)
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        try:
+            stop(context)
+        except Exception:
+            pass
+        try:
+            op.report({"ERROR"}, f"{getattr(op, 'bl_label', 'Map import')} stopped: {exc}")
+        except Exception:
+            pass
+        return {"CANCELLED"}
+
 CSV_COLUMNS = (
     "actor_name",
     "asset_path",
@@ -6372,6 +6394,9 @@ class ARC_OUTFITS_OT_ImportPlacementBase:
         return True
 
     def modal(self, context, event):
+        return _guarded_modal(self, context, event, self._modal, self.cancel)
+
+    def _modal(self, context, event):
         if event.type in {"ESC"}:
             self.cancel(context)
             extra = ""
@@ -6492,7 +6517,7 @@ class ARC_OUTFITS_OT_ImportPlacementBase:
         if not self._setup(context, mode):
             return {"CANCELLED"}
         wm = context.window_manager
-        self._timer = wm.event_timer_add(0.01, window=context.window)
+        self._timer = wm.event_timer_add(MODAL_TICK_SECONDS, window=context.window)
         wm.modal_handler_add(self)
         self.report(
             {"INFO"},
@@ -6654,11 +6679,11 @@ class ARC_OUTFITS_OT_ImportPlacementInstanced(bpy.types.Operator):
         self._ensure_src_collection_evaluable()
 
         wm = context.window_manager
-        self._timer = wm.event_timer_add(0.01, window=context.window)
+        self._timer = wm.event_timer_add(MODAL_TICK_SECONDS, window=context.window)
         wm.modal_handler_add(self)
         self.report(
             {"INFO"},
-            f"Instanced import: {self._total_rows} placements across "
+            f"Instanced import:{self._total_rows} placements across "
             f"{len(self._asset_keys)} unique assets (ESC to cancel)",
         )
         return {"RUNNING_MODAL"}
@@ -6667,6 +6692,13 @@ class ARC_OUTFITS_OT_ImportPlacementInstanced(bpy.types.Operator):
         return self.invoke(context, None)
 
     def modal(self, context, event):
+        return _guarded_modal(self, context, event, self._modal, self._cleanup)
+
+    def cancel(self, context):
+        # Blender ends the modal itself (file load, window close): free the timer.
+        self._cleanup(context)
+
+    def _modal(self, context, event):
         if event.type == "ESC":
             self._cleanup(context)
             self.report(
@@ -7327,7 +7359,7 @@ class ARC_OUTFITS_OT_ApplyMapMaterials(bpy.types.Operator):
         self._skip_samples = []
         self._ui_tick = 0
         wm = context.window_manager
-        self._timer = wm.event_timer_add(0.01, window=context.window)
+        self._timer = wm.event_timer_add(MODAL_TICK_SECONDS, window=context.window)
         wm.modal_handler_add(self)
         self.report(
             {"INFO"},
@@ -7340,6 +7372,13 @@ class ARC_OUTFITS_OT_ApplyMapMaterials(bpy.types.Operator):
         return self.invoke(context, None)
 
     def modal(self, context, event):
+        return _guarded_modal(self, context, event, self._modal, self._cleanup)
+
+    def cancel(self, context):
+        # Blender ends the modal itself (file load, window close): free the timer.
+        self._cleanup(context)
+
+    def _modal(self, context, event):
         if event.type in {"ESC"}:
             self._cleanup(context)
             self.report(

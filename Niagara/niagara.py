@@ -18,23 +18,38 @@ import json
 from functools import lru_cache
 from pathlib import Path
 import math
-import base64
 import hashlib
 import re
 from dataclasses import dataclass
 import struct
-import zlib
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-import argparse
 import collections
-import glob
 from dataclasses import dataclass,field
 from dataclasses import dataclass,asdict
 import copy
-import argparse,hashlib,json,math,struct,sys
+import hashlib,json,math,struct,sys
 import sys
 import time
+
+
+class _LazyModule:
+    def __init__(self, name):
+        self._name = name
+        self._module = None
+
+    def __getattr__(self, name):
+        if self._module is None:
+            import importlib
+            self._module = importlib.import_module(self._name)
+        return getattr(self._module, name)
+
+
+base64 = _LazyModule('base64')
+zlib = _LazyModule('zlib')
+argparse = _LazyModule('argparse')
+glob = _LazyModule('glob')
+del _LazyModule
 try:
     import bpy
     from bpy.props import BoolProperty, IntProperty, StringProperty

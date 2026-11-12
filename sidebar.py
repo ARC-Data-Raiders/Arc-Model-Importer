@@ -174,15 +174,56 @@ def _draw_outfit_selector_preview(layout, context, icon_id):
     _draw_preview_icon(preview, icon_id)
 
 
+# Draw-path memos: panel redraws must not touch the file system once warm.
+# Found icons stay valid while the owning preview collection object is unchanged;
+# misses are re-checked at most once per interval (previews load on timers).
+_DRAW_MISS_RETRY_S = 1.0
+_ICON_MEMO = {}
+_PATH_MEMO = {}
+
+
+def _icon_memo(key, owner, compute):
+    import time as _time
+
+    hit = _ICON_MEMO.get(key)
+    now = _time.monotonic()
+    if hit is not None and hit[1] is owner and (hit[0] or now - hit[2] < _DRAW_MISS_RETRY_S):
+        return hit[0]
+    icon = int(compute() or 0)
+    _ICON_MEMO[key] = (icon, owner, now)
+    return icon
+
+
+def _path_memo(key, compute):
+    if key in _PATH_MEMO:
+        return _PATH_MEMO[key]
+    value = compute()
+    if len(_PATH_MEMO) > 512:
+        _PATH_MEMO.clear()
+    _PATH_MEMO[key] = value
+    return value
+
+
 def _appearance_preview_icon_id(choice_id: str) -> int:
     if not choice_id or choice_id == "NONE":
         return 0
     try:
         from .Outfit_Accessories import appearance
 
-        return int(appearance.preview_icon_id(choice_id) or 0)
+        return _icon_memo(("choice", choice_id), appearance._PREVIEW_COLLECTION,
+                          lambda: appearance.preview_icon_id(choice_id))
     except Exception:
         return 0
+
+
+def _outfit_preview_icon_cached(context) -> int:
+    from .Outfit_Accessories import appearance
+
+    scene = context.scene
+    key = ("outfit",
+           getattr(scene, "arc_selected_outfit", "") or getattr(scene, "arc_selected_outfit_browse", "") or "",
+           getattr(scene, "arc_outfit_csv_path", ""))
+    return _icon_memo(key, appearance._PREVIEW_COLLECTION, lambda: appearance.outfit_preview_icon_id(context))
 
 
 def _add_or_all(layout, context, key, *, text, icon, op_id, all_text, all_op_id, part=None, extras=()):
@@ -233,7 +274,7 @@ def _draw_hair_section(layout, context, *, facial=False):
         try:
             from .Outfit_Accessories import appearance
 
-            icon_id = int(appearance.bald_preview_icon_id() or 0)
+            icon_id = _icon_memo(("bald",), appearance._PREVIEW_COLLECTION, appearance.bald_preview_icon_id)
         except Exception:
             icon_id = 0
     else:
@@ -490,7 +531,9 @@ def _draw_outfit_tools_content(layout, context):
 
     outfit_sec = _collapsible(layout, "arc_outfit_selector", "Outfit Selector", default_closed=False)
     if outfit_sec is not None:
-        csv_path = importing.get_outfit_csv_path(context)
+        from .Outfit_Accessories.properties import outfit_csv_path_cached
+
+        csv_path = outfit_csv_path_cached(context)
         if not csv_path:
             outfit_sec.label(text="No CSV found — browse Outfit Reference CSV in Settings.", icon="ERROR")
         elif not hasattr(scene, "arc_outfit_search"):
@@ -500,9 +543,7 @@ def _draw_outfit_tools_content(layout, context):
             )
         else:
             try:
-                from .Outfit_Accessories import appearance as _appearance
-
-                outfit_icon = int(_appearance.outfit_preview_icon_id(context) or 0)
+                outfit_icon = _outfit_preview_icon_cached(context)
             except Exception:
                 outfit_icon = 0
             _draw_outfit_selector_preview(outfit_sec, context, outfit_icon)
@@ -580,8 +621,10 @@ def _panel_name():
 
 
 _SC_WHOLE_SWATCHES = (("Eq0", "Primary"), ("Eq1", "Secondary"), ("Eq2", "Accent"), ("Eq3", "Accent 2"))
-_SC_SURFACE = (("arc_uc_wear", "Wear"), ("arc_uc_dirt", "Dirt"), ("arc_uc_wet", "Wetness"),
-               ("arc_uc_snow", "Snow"), ("arc_uc_rust", "Rust"))
+# The look sliders: same order and labels in the Whole, Part and Zone tabs.
+_SC_LOOK = (("arc_uc_hue", "Hue"), ("arc_uc_sat", "Saturation"), ("arc_uc_val", "Value"),
+            ("arc_uc_wear", "Wear"), ("arc_uc_dirt", "Dirt"), ("arc_uc_wet", "Wetness"),
+            ("arc_uc_snow", "Snow"), ("arc_uc_rust", "Rust"))
 
 
 def _sc_palette(scene):
@@ -589,11 +632,42 @@ def _sc_palette(scene):
     return {i.name: i for i in scene.arc_shader_items if i.kind == "COLOR" and i.group == "Palette"}
 
 
-def _sc_surface(box, scene):
+def _sc_look(box, context, sco, root):
+    """The look sliders. An edited control gets its own reset button on its row."""
+    scene = context.scene
+    edited = sco.uc_edited(root, sco.uc_part(context))
     col = box.column(align=True)
-    for prop, label in _SC_SURFACE:
-        if hasattr(scene, prop):
-            col.prop(scene, prop, text=label, slider=True)
+    for prop, label in _SC_LOOK:
+        if not hasattr(scene, prop):
+            continue
+        row = col.row(align=True)
+        row.prop(scene, prop, text=label, slider=True)
+        if prop in edited:
+            row.operator("arc.user_control_reset", text="", icon="LOOP_BACK").prop = prop
+        elif edited:
+            row.label(text="", icon="BLANK1")
+
+
+def _sc_status(context, sco, root, mode):
+    """One plain line: what is selected and what the sliders below change."""
+    if root is None:
+        return "Nothing selected: pick or select an outfit or weapon part", "INFO"
+    scene = context.scene
+    part = sco.uc_part(context)
+    if mode == "WHOLE":
+        return f"{root.name}: sliders change all parts", "OUTLINER_OB_EMPTY"
+    if mode == "PART":
+        if part is None:
+            return f"{root.name}: pick a part to edit it alone", "INFO"
+        return f"Part {part.name}: sliders change this part only", "MESH_DATA"
+    zone = getattr(scene, "arc_shader_pick_zone", 0)
+    if zone and part is not None:
+        from .Shared.shader_pick import OUTFIT_ZONE_NAMES, WEAPON_ZONE_NAMES
+        names = WEAPON_ZONE_NAMES if scene.arc_shader_pick_zone_kind == "weapon" else OUTFIT_ZONE_NAMES
+        return f"Zone {names.get(zone, 'Zone %d' % zone)} on {part.name}: sliders change this part", "COLOR"
+    if part is not None:
+        return f"Part {part.name}: no zone picked, sliders change this part", "MESH_DATA"
+    return f"{root.name}: pick a colour zone or decal", "INFO"
 
 
 def _draw_shader_control_content(layout, context):
@@ -606,14 +680,20 @@ def _draw_shader_control_content(layout, context):
         return
     mode = scene.arc_shader_select_mode
     layout.row(align=True).prop(scene, "arc_shader_select_mode", expand=True)
-    box = layout.box()
-    box.operator("arc.pick_shader_zone", text="Pick in Viewport", icon="EYEDROPPER")
     obj = context.active_object
     root = sco.asset_root(obj) if obj is not None else None
+    text, icon = _sc_status(context, sco, root, mode)
+    layout.label(text=text, icon=icon)
+    box = layout.box()
+    row = box.row(align=True)
+    row.operator("arc.pick_shader_zone", text="Pick in Viewport", icon="EYEDROPPER")
+    from .Shared import shader_pick as _sp
+    if _sp.highlight_state() is not None:
+        row.operator("arc.shader_highlight_clear", text="Clear Highlight", icon="X")
     if root is None:
-        box.label(text="Pick or select an outfit or weapon part", icon="INFO")
+        pass
     elif mode == "WHOLE":
-        _draw_shader_whole(box, scene, root)
+        _draw_shader_whole(box, context, sco, root)
     elif mode == "PART":
         _draw_shader_part(box, context, sco, root)
     else:
@@ -643,8 +723,8 @@ def _draw_shader_control_content(layout, context):
             _draw_shader_advanced(adv, context, sco, root)
 
 
-def _draw_shader_whole(box, scene, root):
-    box.label(text=f"Whole outfit: {root.name}", icon="OUTLINER_OB_EMPTY")
+def _draw_shader_whole(box, context, sco, root):
+    scene = context.scene
     pal = _sc_palette(scene)
     col = box.column(align=True)
     shown = 0
@@ -655,7 +735,7 @@ def _draw_shader_whole(box, scene, root):
             shown += 1
     if not shown:
         box.label(text="No palette colours on this asset", icon="INFO")
-    _sc_surface(box, scene)
+    _sc_look(box, context, sco, root)
     box.operator("arc.shader_reset_outfit", text="Reset Outfit", icon="LOOP_BACK")
 
 
@@ -664,10 +744,7 @@ def _draw_shader_part(box, context, sco, root):
     scene = context.scene
     part = sco.uc_part(context)
     if part is None:
-        box.label(text=f"Outfit: {root.name}", icon="OUTLINER_OB_EMPTY")
-        box.label(text="Pick a part to edit it alone", icon="INFO")
         return
-    box.label(text=f"Part: {part.name}", icon="MESH_DATA")
     pal = _sc_palette(scene)
     col = box.column(align=True)
     shown = 0
@@ -678,10 +755,11 @@ def _draw_shader_part(box, context, sco, root):
         row = col.row(align=True)
         row.label(text=f"{zone}  {OUTFIT_ZONE_NAMES.get(zone, 'Zone %d' % zone)}")
         row.prop(item, "color_value", text="")
+        row.operator("arc.shader_zone_select", text="", icon="RESTRICT_SELECT_OFF").zone = zone
         shown += 1
     if not shown:
         box.label(text="No palette zones on this part", icon="INFO")
-    _sc_surface(box, scene)
+    _sc_look(box, context, sco, root)
     box.operator("arc.shader_reset_part", text="Reset Part", icon="LOOP_BACK")
 
 
@@ -691,14 +769,11 @@ def _draw_shader_zone_edit(box, context, sco, root):
     zone = getattr(scene, "arc_shader_pick_zone", 0)
     decal = getattr(scene, "arc_shader_pick_decal", 0)
     if not zone and not decal:
-        box.label(text=f"Outfit: {root.name}", icon="OUTLINER_OB_EMPTY")
         box.label(text="Pick a colour zone or decal", icon="INFO")
+        if sco.uc_part(context) is not None:
+            _sc_look(box, context, sco, root)
         return
     if zone:
-        from .Shared.shader_pick import OUTFIT_ZONE_NAMES, WEAPON_ZONE_NAMES
-        names = WEAPON_ZONE_NAMES if scene.arc_shader_pick_zone_kind == "weapon" else OUTFIT_ZONE_NAMES
-        obj = context.active_object
-        box.label(text=f"Zone: {names.get(zone, 'Zone %d' % zone)} on {obj.name}", icon="COLOR")
         item = sco.zone_item(scene)
         if item is not None:
             box.prop(item, "color_value", text="Zone colour")
@@ -713,6 +788,8 @@ def _draw_shader_zone_edit(box, context, sco, root):
     if decal:
         op = box.operator("arc.drag_decal", text=f"Move Decal {decal}", icon="EMPTY_ARROWS")
         op.active_slot = decal
+    if sco.uc_part(context) is not None:
+        _sc_look(box, context, sco, root)
     box.operator("arc.shader_zone_reset", text="Reset Zone", icon="LOOP_BACK")
 
 
@@ -738,7 +815,7 @@ def _draw_shader_advanced(layout, context, sco, root):
             row.operator("arc.shader_pick_clear", text="", icon="X")
     pmat = sco.pro_material(context) if hasattr(sco, "pro_material") else None
     if pmat is not None:
-        targets = sco.pro_targets(pmat)
+        targets = sco.pro_available(pmat)
         row = layout.row(align=True)
         for key, label in sco.PRO_TOGGLES:
             sub = row.row(align=True)
@@ -911,8 +988,21 @@ classes = (
     ARC_OUTFITS_PT_MainPanel,
 )
 
+def _resolved_str(path):
+    return _path_memo(("resolve", str(path)), lambda: str(Path(path).resolve()))
+
+
 def draw_arc_preview(layout,context,path):
-    icon=arc_preview_id(path)
+    previews=weapon_ui._PREVIEWS
+    icon=0
+    if previews is not None:
+        cached=previews.get("arc-5x4-512:"+_resolved_str(path))
+        if cached is not None:
+            try:icon=cached.icon_id
+            except Exception:icon=0
+    if not icon:
+        # A miss queues a timer load; retry at most once per interval per path.
+        icon=_icon_memo(("arc",str(path)),previews,lambda:arc_preview_id(path))
     if not icon:return
     prefs=context.preferences.system
     region=context.region
@@ -934,7 +1024,7 @@ def draw_preview(layout,context,path,width_fraction=1.0):
 def draw_gun_preview(layout,context,path):
     region=context.region
     display=region.as_pointer() if region else 0
-    key=str(Path(path).resolve()) if path is not None else None
+    key=_resolved_str(path) if path is not None else None
     texture=_GUN_TEXTURES.get(key)
     if texture is not None:
         try:texture.name
@@ -1010,7 +1100,7 @@ def _draw_arc_content(layout, context):
     selected = arc_catalog_data.by_key(scene.arc_enemy_key)
     if selected:
         _key, _label, filename = selected
-        image_path = _pioneer_image_path(filename)
+        image_path = _path_memo(("pioneer", filename), lambda: _pioneer_image_path(filename))
         if image_path:
             draw_arc_preview(layout, context, image_path)
 

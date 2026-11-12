@@ -12,8 +12,13 @@ import bpy
 from bpy.types import Operator
 
 PLACEHOLDER_NAME = "Arc Loading"
-TICK_SECONDS = 0.05
-TICK_BUDGET_SECONDS = 0.2
+# Timer interval while a step is ready: 0.0 fires on the next event-loop pass, so no
+# wall time is lost between slices; the budget keeps each slice under one ~60 Hz frame.
+TICK_SECONDS = 0.0
+TICK_BUDGET_SECONDS = 0.014
+# Poll interval while the generator only waits on a thread or subprocess (stage "wait").
+POLL_SECONDS = 0.03
+PACK_BUDGET_SECONDS = 0.014
 
 _PENDING_JOB = None   # (presets, finish) queued by the caller before invoke
 _PENDING_GEN = None  # (make_gen(context), finish) for a non-batch generator
@@ -296,7 +301,11 @@ def pack_next() -> bool:
 def _pack_timer():
     if _ACTIVE is not None:
         return 0.5  # another import is running; wait until it ends
-    return 0.01 if pack_next() else None
+    t0 = time.perf_counter()
+    while pack_next():
+        if time.perf_counter() - t0 >= PACK_BUDGET_SECONDS:
+            return 0.0  # more images queued; continue on the next event-loop pass
+    return None
 
 
 def schedule_auto_pack() -> int:
@@ -341,6 +350,7 @@ class StagedRun:
         self.error = None
         self.done = False
         self.cancel_requested = False
+        self.waiting = False     # last event was ("wait", ...): nothing ready, poll slowly
 
     def advance(self, budget=TICK_BUDGET_SECONDS) -> bool:
         """Run steps until the time budget is spent. Returns True when the run ended."""
@@ -356,6 +366,7 @@ class StagedRun:
                 print("STALL_MAX_MS %.0f ticks %d" % (self.max_tick_ms, self.tick_count))
 
     def _advance(self, t0, budget) -> bool:
+        self.waiting = False
         while True:
             s0 = time.perf_counter()
             try:
@@ -372,6 +383,10 @@ class StagedRun:
             self.max_step_s = max(self.max_step_s, step_s)
             self.step_times.append(step_s)
             stage, index, total, label = event
+            if stage == "wait":
+                # Generator polls a thread/subprocess: end the slice, sleep POLL_SECONDS.
+                self.waiting = True
+                return False
             self.stage, self.index, self.total, self.label = stage, index, total, label
             self.steps.append((stage, index, total, label))
             if time.perf_counter() - t0 >= budget:
@@ -384,6 +399,11 @@ class StagedRun:
         except Exception:
             pass
         self.done = True
+
+
+def next_interval(run) -> float:
+    """Timer interval after a slice: next loop pass while work is ready, slow poll while waiting."""
+    return POLL_SECONDS if run is not None and run.waiting else TICK_SECONDS
 
 
 def _publish(wm, run, active: bool) -> None:
@@ -449,6 +469,7 @@ class ARC_OUTFITS_OT_StagedImport(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     _timer = None
+    _timer_step = None
     _run = None
     _finish = None
     _before = None
@@ -476,9 +497,19 @@ class ARC_OUTFITS_OT_StagedImport(Operator):
         wm = context.window_manager
         wm.arc_staged_cancel = False
         _publish(wm, self._run, True)
+        self._timer_step = TICK_SECONDS
         self._timer = wm.event_timer_add(TICK_SECONDS, window=context.window)
         wm.modal_handler_add(self)
         return {'RUNNING_MODAL'}
+
+    def _retime(self, context, step) -> None:
+        """Swap the timer only when the wanted interval changes (ready <-> waiting)."""
+        if self._timer is None or step == self._timer_step:
+            return
+        wm = context.window_manager
+        wm.event_timer_remove(self._timer)
+        self._timer = wm.event_timer_add(step, window=context.window)
+        self._timer_step = step
 
     def modal(self, context, event):
         global _ACTIVE
@@ -495,8 +526,24 @@ class ARC_OUTFITS_OT_StagedImport(Operator):
             return {'RUNNING_MODAL'}
         if run.advance():
             return self._end(context, cancelled=False)
+        self._retime(context, next_interval(run))
         _publish(wm, run, True)
         return {'RUNNING_MODAL'}
+
+    def cancel(self, context):
+        # Blender calls this when it ends the modal itself (file load, window close).
+        # Data may already be replaced, so only free the timer, close the generator and
+        # clear the running flag; no object cleanup or report here.
+        global _ACTIVE
+        if self._run is not None and not self._run.done:
+            self._run.cancel()
+        try:
+            if self._timer is not None:
+                context.window_manager.event_timer_remove(self._timer)
+        except Exception:
+            pass
+        self._timer = None
+        _ACTIVE = None
 
     def _end(self, context, cancelled: bool):
         global _ACTIVE

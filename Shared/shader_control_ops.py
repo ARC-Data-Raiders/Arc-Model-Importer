@@ -1,3 +1,5 @@
+import time as _time
+
 import bpy
 from bpy.props import BoolProperty, IntProperty, EnumProperty, FloatProperty, FloatVectorProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
@@ -70,32 +72,107 @@ def _materials(objects):
     return seen
 
 
-def discover(obj, whole):
+# Per-material discover rows: {(mat name, mat session_uid): [(sock, kind, value, default, node)]}.
+# Names + session_uid only (no ID pointers). _TREE_INDEX maps the session_uid of every tree a
+# material's rows came from (material tree, wrapper, stage and control trees) and of the material
+# itself to the row keys, so a depsgraph update drops only the materials it touched.
+_MAT_ROWS = {}
+_TREE_INDEX = {}
+_LABELS = {}
+_DEFAULTS = {}      # {control tree session_uid: {socket name: interface default}}
+
+
+def _uid(idb):
+    return getattr(idb, "session_uid", None) or id(idb)
+
+
+def _mat_key(mat):
+    return (mat.name, _uid(mat))
+
+
+def clear_discover_cache():
+    _MAT_ROWS.clear()
+    _TREE_INDEX.clear()
+    _DEFAULTS.clear()
+
+
+def _drop_uid(uid):
+    """Drop the rows of every material that used ID *uid*; returns the dropped keys (None = unknown)."""
+    _DEFAULTS.pop(uid, None)
+    keys = _TREE_INDEX.pop(uid, None)
+    if keys is None:
+        return None
+    for key in keys:
+        _MAT_ROWS.pop(key, None)
+    return keys
+
+
+def _mat_rows(mat):
+    key = _mat_key(mat)
+    rows = _MAT_ROWS.get(key)
+    if rows is not None:
+        return rows
+    rows = []
+    uids = {_uid(mat)}
+    for tree in wrapper_tree.graph_trees(mat):
+        uids.add(_uid(tree))
+        for node in tree.nodes:
+            if node.type != "GROUP":
+                continue
+            sub = node.node_tree
+            if not _is_control_tree(sub):
+                continue
+            sub_uid = _uid(sub)
+            uids.add(sub_uid)
+            defaults = _DEFAULTS.setdefault(sub_uid, {})
+            for sock in node.inputs:
+                if sock.type not in {"VALUE", "RGBA"} or sock.is_linked:
+                    continue
+                name = sock.name
+                if name not in defaults:
+                    defaults[name] = _interface_default(sub, name)
+                color = sock.type == "RGBA"
+                value = sock.default_value
+                rows.append((name, "COLOR" if color else "FLOAT",
+                             tuple(value) if color else float(value), defaults[name], node.name))
+    _MAT_ROWS[key] = rows
+    for uid in uids:
+        _TREE_INDEX.setdefault(uid, set()).add(key)
+    return rows
+
+
+def _label(name):
+    hit = _LABELS.get(name)
+    if hit is None:
+        hit = _LABELS[name] = param_labels.label_for(name)
+    return hit
+
+
+def discover(obj, whole, keys_out=None):
+    """Control inputs on the materials of *obj* (or its whole asset). Per-material rows come from
+    _MAT_ROWS; *keys_out* (a set) collects the row keys used."""
     params = {}
     if obj is None:
         return []
     for mat in _materials(_objects(obj, whole)):
-        for node in _nodes(mat):
-            if node.type != "GROUP" or not _is_control_tree(node.node_tree):
-                continue
-            for sock in node.inputs:
-                if sock.type not in {"VALUE", "RGBA"} or sock.is_linked:
-                    continue
-                entry = params.get(sock.name)
-                if entry is None:
-                    label, group = param_labels.label_for(sock.name)
-                    value = sock.default_value
-                    entry = {
-                        "name": sock.name,
-                        "label": label,
-                        "group": group,
-                        "kind": "COLOR" if sock.type == "RGBA" else "FLOAT",
-                        "value": tuple(value) if sock.type == "RGBA" else float(value),
-                        "default": _interface_default(node.node_tree, sock.name),
-                        "targets": [],
-                    }
-                    params[sock.name] = entry
-                entry["targets"].append((mat.name, node.name))
+        mat_name = mat.name
+        if keys_out is not None:
+            keys_out.add(_mat_key(mat))
+        for sock_name, kind, value, default, node_name in _mat_rows(mat):
+            entry = params.get(sock_name)
+            if entry is None:
+                label, group = _label(sock_name)
+                entry = {
+                    "name": sock_name,
+                    "label": label,
+                    "group": group,
+                    "kind": kind,
+                    "value": value,
+                    "default": default,
+                    "targets": [],
+                }
+                params[sock_name] = entry
+            entry["targets"].append((mat_name, node_name))
     order = {g: i for i, g in enumerate(GROUP_ORDER)}
     return sorted(params.values(), key=lambda e: (order.get(e["group"], 99), e["label"]))
 
@@ -109,8 +186,10 @@ def cached_discover(context):
     obj = context.active_object
     key = _key(context.scene, obj)
     if _CACHE.get("key") != key:
+        keys = set()
         _CACHE["key"] = key
-        _CACHE["params"] = discover(obj, key[1])
+        _CACHE["params"] = discover(obj, key[1], keys)
+        _CACHE["scope_keys"] = keys
     return _CACHE["params"]
 
 
@@ -285,6 +364,9 @@ def run_upgrade(context):
         gt_outfit_pbr, gt_outfit_pbr._dr_ops.find_group)
     obj = context.view_layer.objects.active
     if obj is not None:
+        # files from before 2.3.17: look sliders move from material sockets to object properties
+        if user_controls.look_upgrade(_objects(obj, True)):
+            user_controls.bump_targets()
         apply_all(obj)
     _OUTDATED["key"] = None
     _STATE["synced"] = None
@@ -335,7 +417,7 @@ def set_param(context, name, value):
     entry["value"] = value
     default = entry["default"] if entry["default"] is not None else value
     shader_tweaks.record(asset_root(obj), _scope(context), name, value, default)
-    _STATE["self_edit"] = True
+    mark_self_edit()
     return True
 
 
@@ -373,17 +455,103 @@ def _refresh(context):
         uc_sync_scene(context)
 
 
+REFRESH_DELAY = 0.2     # s: one coalesced panel refresh after a burst of graph edits
+
+
+def _deferred_refresh():
+    """Timer: the one coalesced refresh that _on_depsgraph scheduled."""
+    _STATE["dirty"] = False
+    try:
+        ctx = bpy.context
+        if getattr(ctx, "scene", None) is not None:
+            _refresh(ctx)
+    except Exception as exc:
+        print(f"Arc Raiders shader controls: refresh failed: {exc}")
+    return None
+
+
+def _schedule_refresh():
+    _STATE["dirty"] = True
+    try:
+        if not bpy.app.timers.is_registered(_deferred_refresh):
+            bpy.app.timers.register(_deferred_refresh, first_interval=REFRESH_DELAY)
+    except Exception as exc:
+        print(f"Arc Raiders shader controls: refresh timer failed: {exc}")
+
+
+def _cancel_refresh():
+    _STATE["dirty"] = False
+    try:
+        if bpy.app.timers.is_registered(_deferred_refresh):
+            bpy.app.timers.unregister(_deferred_refresh)
+    except Exception:
+        pass
+
+
+def _scope_keys():
+    """Row keys of the materials the current control list was built from (None = not built)."""
+    return _CACHE.get("scope_keys")
+
+
+def _in_active_scope(mat_names):
+    """True when a material called one of *mat_names* sits on the active scope's objects."""
+    try:
+        ctx = bpy.context
+        obj = ctx.active_object
+        if obj is None or ctx.scene is None:
+            return False
+        whole = getattr(ctx.scene, "arc_shader_scope", "WHOLE") == "WHOLE"
+        names = set(mat_names)
+        return any(m.name in names for m in _materials(_objects(obj, whole)))
+    except Exception:
+        return True
+
+
 @bpy.app.handlers.persistent
 def _on_depsgraph(scene, depsgraph=None):
+    """Cheap: drop the touched materials' cached rows, then schedule one deferred refresh when the
+    active scope is affected. Never discovers or rebuilds the panel inside the handler."""
+    self_edit = _STATE.get("self_edit")
+    _STATE["self_edit"] = False
     if depsgraph is not None:
-        hit = any(isinstance(u.id, (bpy.types.Material, bpy.types.NodeTree)) for u in depsgraph.updates)
-        if hit and not _STATE.get("self_edit"):
-            _STATE["updates"] += 1
+        hit = False
+        affects = False
+        unknown = []
+        scope = _scope_keys()
+        for u in depsgraph.updates:
+            idb = u.id
+            if not isinstance(idb, (bpy.types.Material, bpy.types.NodeTree)):
+                continue
+            hit = True
+            idb = getattr(idb, "original", None) or idb
+            keys = _drop_uid(_uid(idb))
+            if affects:
+                continue
+            if keys is None:
+                # Not a tree any cached row came from: a material outside the cache may be newly
+                # in scope (slot change); unrelated node groups cannot change the control list.
+                if isinstance(idb, bpy.types.Material):
+                    if scope is None:
+                        affects = True
+                    else:
+                        unknown.append(idb.name)
+            elif scope is None or not scope.isdisjoint(keys):
+                affects = True
+        if not affects and unknown:
+            affects = _in_active_scope(unknown)
+        if hit and not self_edit:
             clear_zone_caches()
             user_controls.bump_targets()
-    _STATE["self_edit"] = False
+            if affects:
+                _STATE["updates"] += 1
+                _schedule_refresh()
+                return
     try:
-        _refresh(bpy.context)
+        ctx = bpy.context
+        if (not _STATE.get("dirty") and getattr(ctx, "scene", None) is not None
+                and hasattr(ctx.scene, "arc_shader_items")
+                and _STATE.get("synced") != _key(ctx.scene, ctx.active_object)):
+            _schedule_refresh()
     except Exception as exc:
         print(f"Arc Raiders shader controls: refresh failed: {exc}")
 
@@ -481,13 +649,14 @@ def apply_all(obj):
             if mat is not None and mat.name not in seen:
                 seen.add(mat.name)
                 reapply_pro_toggles(mat)
-    _STATE["self_edit"] = True
+    mark_self_edit()
     return skipped
 
 
 def _resync(context):
     _STATE["updates"] += 1
     _STATE["synced"] = None
+    clear_discover_cache()
     clear_zone_caches()
     _refresh(context)
 
@@ -928,11 +1097,98 @@ def pro_state(mat, key):
         return True
 
 
+PRO_TAG = "dr.pro"
+# Toggle -> MI parameter key. The parameter is the game's own switch for the feature.
+_PRO_PARAM = (("decals", "_UseDecal"), ("detail_normal", "_DetailNormalOverride"))
+_PRO_AVAILABLE = {}
+
+
+def _pro_param(key):
+    for toggle, tail in _PRO_PARAM:
+        if key.endswith(tail) and key[:-len(tail)].isdigit():
+            return toggle
+    return None
+
+
+def pro_tagged(mat):
+    """Targets found by tag on a wrapper material: parameter sockets by MI key (P: node outputs
+    and wrapper inputs) and nodes carrying dr.pro. None for a material without a wrapper, where
+    the name rules below apply."""
+    tree = getattr(mat, "node_tree", None)
+    try:
+        if tree is None or wrapper_tree.wrapper_node(tree) is None:
+            return None
+        from .materials import param_bind
+        out = {k: [] for k, _ in PRO_TOGGLES}
+        for key, sock in param_bind._param_sockets(tree):
+            toggle = _pro_param(key)
+            if toggle:
+                out[toggle].append((key, sock))
+        for node in tree.nodes:
+            if node.get(PRO_TAG) in out:
+                out[node[PRO_TAG]].append(node)
+            elif node.type == "BSDF_PRINCIPLED" and (node.inputs["Emission Color"].is_linked or node.get("arc_pro_em")):
+                out["emission"].append(node)        # built before the tag
+    except Exception:
+        return None
+    return out
+
+
+def pro_available(mat):
+    """{toggle: bool} for the panel. Cached per wrapper tree: the draw must not walk the graph."""
+    tree = getattr(mat, "node_tree", None)
+    try:
+        wrap = wrapper_tree.wrapper_node(tree) if tree is not None else None
+        token = (mat.name, wrap.node_tree.name, len(wrap.node_tree.nodes)) if wrap is not None else None
+    except Exception:
+        token = None
+    if token is not None:
+        hit = _PRO_AVAILABLE.get(mat.name)
+        if hit is not None and hit[0] == token:
+            return hit[1]
+    out = {k: bool(v) for k, v in pro_targets(mat).items()}
+    if token is not None:
+        if len(_PRO_AVAILABLE) > 256:
+            _PRO_AVAILABLE.clear()
+        _PRO_AVAILABLE[mat.name] = (token, out)
+    return out
+
+
+def _pro_values_off(mat, toggle, pairs):
+    """Zero the parameter sockets and keep their values on the material for 'on'."""
+    import json
+    slot = f"arc_pro_vals_{toggle}"
+    if not mat.get(slot):
+        mat[slot] = json.dumps({key: float(sock.default_value) for key, sock in pairs})
+    for _key, sock in pairs:
+        sock.default_value = 0.0
+    return len(pairs)
+
+
+def _pro_values_on(mat, toggle, pairs):
+    import json
+    slot = f"arc_pro_vals_{toggle}"
+    raw = mat.get(slot)
+    if not raw:
+        return 0
+    rec = json.loads(raw)
+    n = 0
+    for key, sock in pairs:
+        if key in rec:
+            sock.default_value = rec[key]
+            n += 1
+    del mat[slot]
+    return n
+
+
 def pro_targets(mat):
     out = {k: [] for k, _ in PRO_TOGGLES}
     tree = getattr(mat, "node_tree", None)
     if tree is None:
         return out
+    tagged = pro_tagged(mat)
+    if tagged is not None:
+        return tagged
     for node in _nodes(mat):
         key = pro_classify(node)
         if key:
@@ -1047,6 +1303,18 @@ def apply_pro_toggle(mat, key, on):
     else:
         mat[f"arc_pro_{key}"] = 0
     changed = 0
+    tagged = pro_tagged(mat)
+    if tagged is not None:
+        # Wrapper material: parameter switches and tagged nodes only; no node is muted.
+        pairs = [t for t in tagged[key] if isinstance(t, tuple)]
+        if pairs:
+            changed += (_pro_values_on if on else _pro_values_off)(mat, key, pairs)
+        for node in tagged[key]:
+            if not isinstance(node, tuple) and node.type == "BSDF_PRINCIPLED":
+                (_pro_bsdf_on if on else _pro_bsdf_off)(tree, node)
+                changed += 1
+        mark_self_edit()
+        return changed
     targets = pro_targets(mat)[key]
     gates = [n for n in targets if _pro_is_decal_gate(n)] if key == "decals" else []
     if gates:
@@ -1069,7 +1337,7 @@ def apply_pro_toggle(mat, key, on):
             node.mute = True
             node["arc_pro_muted"] = key
             changed += 1
-    _STATE["self_edit"] = True
+    mark_self_edit()
     return changed
 
 
@@ -1164,13 +1432,23 @@ def _subscribe():
 def _on_undo_redo(*_args):
     """Undo/redo rebuilds every datablock: drop cached control targets and zone caches."""
     _CACHE.clear()
+    clear_discover_cache()
     user_controls.bump_targets()
     clear_zone_caches()
 
 
 @bpy.app.handlers.persistent
+def _on_load_pre(*_args):
+    """Before a file load: no deferred refresh may run against the old file's data."""
+    _cancel_refresh()
+    _CACHE.clear()
+    clear_discover_cache()
+
+
+@bpy.app.handlers.persistent
 def _on_load_post(*_args):
     _CACHE.clear()
+    clear_discover_cache()
     user_controls.bump_targets()
     clear_zone_caches()
     _subscribe()
@@ -1222,8 +1500,17 @@ def param_sockets(objects, name):
 
 
 def mark_self_edit():
-    """A socket write made by the addon itself: keeps the zone caches and the control list."""
+    """A socket write made by the addon itself: keeps the zone caches and the control list.
+    Drops the per-material discover rows, since the write may land before any depsgraph update;
+    the tree index stays so later foreign edits still map to the active scope."""
+    _MAT_ROWS.clear()
     _STATE["self_edit"] = True
+    _STATE["edit_t"] = _time.perf_counter()
+
+
+def last_edit_time():
+    """perf_counter time of the last control write (0.0 = none): the kept highlight hides after it."""
+    return _STATE.get("edit_t", 0.0)
 
 
 def zone_item(scene):
@@ -1329,8 +1616,8 @@ def uc_apply(root, values, part=None):
     if root is None:
         return 0
     objects = [part] if part is not None else _objects(root, True)
-    n = user_controls.apply(_materials(objects), _uc_group_values(root, values))
-    _STATE["self_edit"] = True
+    n = user_controls.apply(_materials(objects), _uc_group_values(root, values), objects)
+    mark_self_edit()
     return n
 
 
@@ -1446,6 +1733,67 @@ class ARC_OT_user_controls_reset(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def uc_edited(root, part=None):
+    """Scene props of the look controls that carry a stored edit: on *part* when given, else on the whole asset."""
+    if root is None:
+        return set()
+    bucket = shader_tweaks.get(root).get(part_scope(part.name) if part is not None else "whole", {})
+    return {prop for sock, prop, *_rest in user_controls.CONTROLS if sock in bucket}
+
+
+class ARC_OT_user_control_reset(bpy.types.Operator):
+    bl_idname = "arc.user_control_reset"
+    bl_label = "Reset Control"
+    bl_description = "Return this one control to the game look (a part goes back to the whole-outfit value)"
+    bl_options = {"REGISTER", "UNDO"}
+    prop: StringProperty(default="", options={"SKIP_SAVE"})
+
+    def execute(self, context):
+        root = _uc_root(context.active_object) if context.active_object is not None else None
+        ctl = user_controls.BY_PROP.get(self.prop)
+        if root is None or ctl is None:
+            return {"CANCELLED"}
+        part = uc_part(context)
+        if part is not None and asset_root(part) is root:
+            shader_tweaks.reset(root, part_scope(part.name), ctl[0])
+            uc_apply(root, uc_values(root, part), part)
+        else:
+            shader_tweaks.reset(root, "whole", ctl[0])
+            if self.prop == _UC_WEAR and _uc_weapon(root):
+                from ..Weapons import weapon_import
+                weapon_import.set_assembly_wear(root)        # back to the tier's game wear
+            uc_apply(root, uc_values(root))
+        uc_sync_scene(context)
+        return {"FINISHED"}
+
+
+class ARC_OT_shader_zone_select(bpy.types.Operator):
+    bl_idname = "arc.shader_zone_select"
+    bl_label = "Select Zone"
+    bl_description = "Edit this colour zone of the part alone (same as picking it in the viewport)"
+    bl_options = {"REGISTER", "UNDO"}
+    zone: IntProperty(default=0, options={"SKIP_SAVE"})
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or self.zone <= 0 or asset_root(obj) is obj:
+            return {"CANCELLED"}
+        pick = _pick_module()
+        found = None
+        for slot in obj.material_slots:
+            info = pick.find_zone_mask(slot.material) if slot.material is not None else None
+            if info is not None:
+                found = (slot.material, info)
+                break
+        if found is None:
+            self.report({"WARNING"}, "This part has no colour zone mask")
+            return {"CANCELLED"}
+        context.scene.arc_shader_select_mode = "ZONE"
+        select_from_pick(context, obj, found[0], self.zone, found[1].kind, 0)
+        pick.highlight_from_pick(context, obj, found[0], self.zone)
+        return {"FINISHED"}
+
+
 # ---------------------------------------------------------------------------
 # Zone/Decal tab: per-zone offsets on the picked part (user_controls.ZO_CHANNELS)
 # ---------------------------------------------------------------------------
@@ -1500,7 +1848,7 @@ def zo_set(context, values):
         v = list(value)[:3] if isinstance(default, tuple) else float(value)
         d = list(default)[:3] if isinstance(default, tuple) else default
         shader_tweaks.record(root, part_scope(part.name), zo_tweak_name(zone, key), v, d)
-    _STATE["self_edit"] = True
+    mark_self_edit()
     return n
 
 
@@ -1534,7 +1882,7 @@ def zo_reset(root, part=None, zone=None):
         for z in ([zone] if zone else range(1, 9)):
             if user_controls.zone_node(mat, z) is not None:
                 user_controls.zone_offsets_set([mat], z, neutral)
-    _STATE["self_edit"] = True
+    mark_self_edit()
 
 
 def zo_sync_scene(context):
@@ -1715,7 +2063,8 @@ def register():
         name="Edit", description="What the colour edits below change", items=SELECT_MODES, default="WHOLE",
         update=_select_mode_update)
     for cls in (ARC_OT_user_controls_set, ARC_OT_user_controls_reset, ARC_OT_shader_zone_reset,
-                ARC_OT_shader_reset_outfit, ARC_OT_shader_reset_part):
+                ARC_OT_shader_reset_outfit, ARC_OT_shader_reset_part, ARC_OT_user_control_reset,
+                ARC_OT_shader_zone_select):
         try:
             bpy.utils.register_class(cls)
         except ValueError:
@@ -1728,6 +2077,8 @@ def register():
         bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph)
     if _on_load_post not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(_on_load_post)
+    if _on_load_pre not in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.append(_on_load_pre)
     for _h in (bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
         if not any(getattr(f, "__name__", "") == "_on_undo_redo" for f in _h):
             _h.append(_on_undo_redo)
@@ -1741,8 +2092,12 @@ def unregister():
     bpy.msgbus.clear_by_owner(_MSGBUS_OWNER)
     if bpy.app.timers.is_registered(_safe_refresh):
         bpy.app.timers.unregister(_safe_refresh)
+    _cancel_refresh()
     if _on_load_post in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_load_post)
+    for f in [f for f in bpy.app.handlers.load_pre if getattr(f, "__name__", "") == "_on_load_pre"
+              and (getattr(f, "__module__", "") or "") == __name__]:
+        bpy.app.handlers.load_pre.remove(f)
     for _h in (bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
         for f in [f for f in _h if getattr(f, "__name__", "") == "_on_undo_redo"]:
             _h.remove(f)
@@ -1769,3 +2124,4 @@ def unregister():
         except RuntimeError:
             pass
     _CACHE.clear()
+    clear_discover_cache()

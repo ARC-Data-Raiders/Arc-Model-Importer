@@ -361,14 +361,13 @@ def _ensure_pak_colourway_folder(character_name: str) -> str:
             )
         except Exception as exc:
             print(f"Arc Pak: colourway extract failed: {exc}")
+        # Extract writes new colourway JSON; drop the index now (dir stat also catches it).
+        invalidate_colourway_index(cache_folder)
     if not _folder_has_colourway_json(cache_folder):
         return ""
     if key not in _PAK_COLOURWAY_MI_DONE:
         _PAK_COLOURWAY_MI_DONE.add(key)
         _extract_colourway_materials(cache_folder)
-    _COLOURWAY_INDEX_CACHE.pop(os.path.abspath(cache_folder), None)
-    parent = os.path.dirname(cache_folder)
-    _COLOURWAY_INDEX_CACHE.pop(os.path.abspath(parent), None)
     return cache_folder
 
 
@@ -385,17 +384,16 @@ def _folder_has_colourway_json(folder: str) -> bool:
     return False
 
 
-def _extract_colourway_materials(folder: str) -> None:
-    """Pull MI packages named by the colourway JSON so the selector can apply them."""
+def colourway_material_packages(folder: str, *, missing_only: bool = True) -> list:
+    """Cooked MI package paths named by the colourway JSONs in ``folder``.
+
+    ``missing_only`` drops packages whose JSON is already in the pak cache.
+    The outfit queue folds these into its mesh extract (one mount, one closure).
+    """
     try:
         from . import pak_extract
     except Exception:
-        return
-    scene = bpy.context.scene
-    game = pak_extract.configured_dir(scene)
-    usmap = pak_extract.resolve_usmap(scene)
-    if not game or not usmap:
-        return
+        return []
     wanted = []
     seen = set()
     for path in _iter_colourway_json_paths(folder):
@@ -411,9 +409,24 @@ def _extract_colourway_materials(folder: str) -> None:
                 continue
             seen.add(cooked.casefold())
             dest = os.path.join(pak_extract.cache_dir(), *cooked.split("/")) + ".json"
-            if os.path.isfile(dest):
+            if missing_only and os.path.isfile(dest):
                 continue
             wanted.append(cooked)
+    return wanted
+
+
+def _extract_colourway_materials(folder: str) -> None:
+    """Pull MI packages named by the colourway JSON so the selector can apply them."""
+    try:
+        from . import pak_extract
+    except Exception:
+        return
+    scene = bpy.context.scene
+    game = pak_extract.configured_dir(scene)
+    usmap = pak_extract.resolve_usmap(scene)
+    if not game or not usmap:
+        return
+    wanted = colourway_material_packages(folder)
     if not wanted:
         return
     try:
@@ -628,21 +641,47 @@ def _skins_slot_root(folder: str) -> str:
     return folder
 
 
+def invalidate_colourway_index(folder: str = "") -> None:
+    """Drop cached colourway indexes for ``folder`` (item or slot root); all when empty."""
+    if not folder:
+        _COLOURWAY_INDEX_CACHE.clear()
+        return
+    folder = os.path.abspath(folder)
+    _COLOURWAY_INDEX_CACHE.pop(folder, None)
+    _COLOURWAY_INDEX_CACHE.pop(os.path.dirname(folder), None)
+    _COLOURWAY_INDEX_CACHE.pop(_skins_slot_root(folder), None)
+
+
+def _colourway_dir_signature(slot_root: str):
+    """(root mtime, (subdir, mtime) in listdir order) from one scandir; NTFS dir mtime moves on add/remove/rename."""
+    try:
+        root_m = os.stat(slot_root).st_mtime_ns
+        subs = []
+        with os.scandir(slot_root) as it:
+            for e in it:
+                if e.is_dir():
+                    subs.append((e.name, e.stat().st_mtime_ns))
+    except OSError:
+        return None
+    # Keep listdir order: index tie-breaks depend on folder visit order.
+    return root_m, tuple(subs)
+
+
 def _index_colourways(slot_root: str) -> dict:
-    """Map normalized item name → [(preset_name, json_path), ...]."""
+    """Map normalized item name → [(preset_name, json_path), ...].
+
+    Cached per slot root on a directory stat signature (no TTL); rebuilt only
+    when a folder gains, loses or renames entries, or on invalidate_colourway_index.
+    """
     slot_root = os.path.abspath(slot_root)
+    sig = _colourway_dir_signature(slot_root)
     cached = _COLOURWAY_INDEX_CACHE.get(slot_root)
-    if cached is not None:
-        return cached
+    if cached is not None and sig is not None and cached[0] == sig:
+        return cached[1]
     best: dict[tuple[str, str], tuple[int, str, str]] = {}
     folders = [slot_root]
-    try:
-        for name in os.listdir(slot_root):
-            full = os.path.join(slot_root, name)
-            if os.path.isdir(full):
-                folders.append(full)
-    except OSError:
-        pass
+    if sig is not None:
+        folders.extend(os.path.join(slot_root, name) for name, _m in sig[1])
     for folder in folders:
         folder_norm = utils.normalize_folder_name(os.path.basename(folder))
         for path in _iter_colourway_json_paths(folder):
@@ -666,7 +705,8 @@ def _index_colourways(slot_root: str) -> dict:
         result.setdefault(item_norm, []).append((preset, path))
     for key in result:
         result[key].sort(key=lambda row: row[0].lower())
-    _COLOURWAY_INDEX_CACHE[slot_root] = result
+    if sig is not None:
+        _COLOURWAY_INDEX_CACHE[slot_root] = (sig, result)
     return result
 
 
