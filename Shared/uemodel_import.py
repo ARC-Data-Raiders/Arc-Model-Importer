@@ -1064,10 +1064,19 @@ def import_uemodel_v10(path: str, *, scale: float = 0.01, import_lods: bool = Fa
         _build_triangle_mesh(mesh, lod.vertices, lod.indices)
         if lod.normals is not None and len(lod.normals) == len(mesh.vertices):
             mesh.polygons.foreach_set("use_smooth", np.ones(len(mesh.polygons), dtype=bool))
-            from .materials.native.deformation import write_corner_normals
+            from .materials.native.deformation import write_corner_normals, NormalTransportUnavailable
             corner_vi = np.empty(len(mesh.loops), dtype=np.int32)
             mesh.loops.foreach_get("vertex_index", corner_vi)
-            write_corner_normals(mesh, np.asarray(lod.normals, dtype=np.float64)[corner_vi])
+            try:
+                write_corner_normals(mesh, np.asarray(lod.normals, dtype=np.float64)[corner_vi])
+            except NormalTransportUnavailable as exc:
+                if "readback exceeds" not in str(exc):
+                    raise
+                # Hair cards with back faces on shared vertices carry normals the fan-space
+                # layer cannot hold. write_corner_normals already restored the previous
+                # state; keep the mesh with smooth face normals instead of rejecting it.
+                mesh["arc_normals_fallback"] = str(exc)
+                print(f"[arc-uemodel] authored normals not stored for {mesh_name}: {exc}")
         mesh["arc_uemodel_lod"] = lod.name
         mesh["arc_uemodel_scale"] = float(scale)
         obj = bpy.data.objects.new(mesh_name, mesh)

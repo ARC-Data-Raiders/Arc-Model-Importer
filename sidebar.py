@@ -878,6 +878,13 @@ class ARC_OUTFITS_PT_MainPanel(bpy.types.Panel):
                 icon="ERROR",
             )
             return
+        # Opening this tab is import intent: validate the material catalog off the UI
+        # thread now so the first import does not stall on it (one-shot, no-op after).
+        try:
+            from .Shared.materials.rebuild import native_catalog_bridge
+            native_catalog_bridge.prewarm()
+        except Exception:
+            pass
 
         from .Maps import staged_import
         staged_import.draw_progress(layout, context)

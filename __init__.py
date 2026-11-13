@@ -4,9 +4,9 @@ Import Arc Raiders models by selecting an outfit folder.
 """
 
 bl_info = {
-    "name": "Arc Asset Importer v2.3.17",
+    "name": "Arc Asset Importer v2.3.18",
     "author": "Silarious / Naryun & Zebulon Core Functions",
-    "version": (2, 3, 17),
+    "version": (2, 3, 18),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Arc Asset Importer",
     "description": "Import Arc Raiders outfits, weapons, animations, and models by selecting content folders.",

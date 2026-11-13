@@ -5088,6 +5088,26 @@ def _queue_folder_psks(context, folder: str):
     return len(psks), skipped
 
 
+def _import_queued_psks_now(op, context):
+    """Import the queued arc_psk_entries inside this call.
+
+    With a window open, confirm_psk_import starts the staged modal run and returns
+    before any mesh exists, so a caller that goes on to rig-fix and bone-snap the new
+    objects would work on an empty list. Mods are a mesh or two; drain the generator.
+    """
+    context.scene.arc_outfit_selections.clear()
+    try:
+        utils.preload_arc_node_groups()
+    except Exception as exc:
+        print(f"Arc Asset Importer: ArcTexturer preload failed (non-fatal): {exc}")
+    gen = _iter_folder_import(context)
+    try:
+        while True:
+            next(gen)
+    except StopIteration as stop:
+        _finish_folder_import(op, context, stop.value)
+
+
 def _find_weapon_armature(context):
     """Prefer selected SK_* armature, else last imported, else any weapon armature."""
     scene = context.scene
@@ -5206,6 +5226,14 @@ class ARC_OUTFITS_OT_ImportWeaponMod(Operator):
 
             stem = entry.get("stem") or ""
             meshes = pak_extract.ensure_rels(scene, [f"Items/WeaponMod/{stem}"]) if stem else []
+            if not meshes and stem:
+                # Item-only mods (magazines) keep their meshes in per-gun visual folders.
+                from ..Weapons import weapon_assets
+                pak_extract.ensure_rels(scene, [f"Items/WeaponMod/{stem}/BP_Item_WeaponMod_{stem}"])
+                for rel in weapon_assets.mod_visual_folders(entry, weapon_assets.pioneer_roots(scene)):
+                    meshes = pak_extract.ensure_rels(scene, [rel])
+                    if meshes:
+                        break
             if not meshes:
                 self.report(
                     {"ERROR"},
@@ -5218,7 +5246,7 @@ class ARC_OUTFITS_OT_ImportWeaponMod(Operator):
                 self.report({"ERROR"}, f"No mesh extracted for {entry.get('name') or stem}")
                 return {"CANCELLED"}
             before = set(bpy.data.objects)
-            bpy.ops.arc_outfits.confirm_psk_import("INVOKE_DEFAULT")
+            _import_queued_psks_now(self, context)
             new_objs = [o for o in bpy.data.objects if o not in before]
             if any(o.type == "ARMATURE" for o in new_objs):
                 rig.fix_rig_all(new_objs, merge=False, model_type="weapon")
@@ -5241,9 +5269,19 @@ class ARC_OUTFITS_OT_ImportWeaponMod(Operator):
         before = set(bpy.data.objects)
         n, _skipped = _queue_folder_psks(context, folder)
         if not n:
+            # Item-only mods (magazines) keep their meshes in per-gun visual folders.
+            from ..Weapons import weapon_assets
+            roots = weapon_assets.pioneer_roots(scene)
+            for rel in weapon_assets.mod_visual_folders(entry, roots):
+                alt = next((str(r / rel) for r in roots if (r / rel).is_dir()), None)
+                if alt:
+                    n, _skipped = _queue_folder_psks(context, alt)
+                if n:
+                    break
+        if not n:
             self.report({"ERROR"}, f"No .psk/.pskx in {folder}")
             return {"CANCELLED"}
-        bpy.ops.arc_outfits.confirm_psk_import("INVOKE_DEFAULT")
+        _import_queued_psks_now(self, context)
         new_objs = [o for o in bpy.data.objects if o not in before]
         if any(o.type == "ARMATURE" for o in new_objs):
             rig.fix_rig_all(new_objs, merge=False, model_type="weapon")

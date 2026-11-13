@@ -18,6 +18,8 @@ internal static class MaterialTextureMetadataExport
         material.AppendReferencedTextures(referenced, onlyRendered: false);
         // Index 0 is a texture parameter overridden to None (colourway skin MIs do this): no texture, not an error.
         referenced.RemoveAll(reference => reference.Index == 0);
+        // Runtime virtual textures (terrain blend on props and the backpack frame) hold no texture data to export.
+        referenced.RemoveAll(reference => string.Equals(reference.ResolvedObject?.Class?.Name.Text, "RuntimeVirtualTexture", StringComparison.Ordinal));
         var resolved = referenced.Select(reference => reference.Load<UUnrealMaterial>()).ToArray();
         var rejected = referenced.Zip(resolved).Where(pair => pair.Second is not UTexture)
             .Select(pair => pair.First + " -> " + (pair.Second?.ExportType ?? "unresolved")).Distinct().ToArray();

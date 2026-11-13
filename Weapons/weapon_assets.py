@@ -540,6 +540,24 @@ def mod_visual(entry,weapon,roots):
     if direct.is_file():return properties(direct,'WeaponModVisualizationAsset').get('Visual')
     return None
 
+def mod_visual_folders(entry,roots):
+    """Content-relative folders of the visuals an item-only mod points at, in game
+    order. Magazine items carry no mesh of their own: the item folder holds the
+    BP_Item, and each VisualAssetOverrides entry names a per-gun-family mesh folder."""
+    stem=entry.get('stem') or ''
+    out=[]
+    for r in roots:
+        bp=long_path(Path(r)/'Items/WeaponMod'/stem/('BP_Item_WeaponMod_'+stem+'.json'))
+        if not bp.is_file():continue
+        for row in exports(bp):
+            if not isinstance(row,dict):continue
+            md=row.get('Properties',{}).get('ModData',{})
+            for asset in [o.get('Asset') for o in md.get('VisualAssetOverrides',[])]+[md.get('VisualizedAsset')]:
+                ref=reference(asset)
+                if ref.startswith('/Game/Pioneer/'):out.append(ref[len('/Game/Pioneer/'):].rsplit('/',1)[0])
+        break
+    return list(dict.fromkeys(out))
+
 def invalidate():
     global _REVISION
     _REVISION+=1

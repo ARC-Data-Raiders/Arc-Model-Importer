@@ -47,9 +47,9 @@ def reviewed_source(manifest=None):
   invalidate_digest_cache(manifest);invalidate_digest_cache(bank)
   identity=(str(manifest.resolve()),digest(manifest),digest(bank))
   if identity[2]!=config['sha256']:raise ValueError('Reviewed native bank SHA mismatch')
-  from ..rebuild.native_catalog_bridge import SCHEMA,LIMITED_SCHEMA,validate_reviewed_limits
+  from ..rebuild.native_catalog_bridge import SCHEMA,LIMITED_SCHEMA,reviewed_limits
   catalog=NativeCatalog.read(bank);payload=catalog.payload;stats=payload.get('statistics',{})
-  if config.get('schema')==LIMITED_SCHEMA and config.get('reviewed_source_complete') is True:limits=validate_reviewed_limits(payload,config)
+  if config.get('schema')==LIMITED_SCHEMA and config.get('reviewed_source_complete') is True:limits=reviewed_limits(catalog,config)
   elif config.get('schema')==SCHEMA and config.get('reviewed_complete') is True and not payload.get('errors') and stats.get('error_count')==0:limits={}
   else:raise ValueError('Current-native metadata requires an explicitly reviewed activation manifest')
   for field in ('build','mapping'):

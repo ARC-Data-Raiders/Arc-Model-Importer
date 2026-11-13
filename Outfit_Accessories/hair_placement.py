@@ -152,6 +152,19 @@ def place_static_hair(obj, scene=None):
                     reference = native
                     break
     if anchor is None:
+        # Pak-direct sessions have no body or head on disk until one is imported, which
+        # left a standalone static style (Buzzcut) at the origin. Extract the shared body
+        # skeleton once; only its head rest bone is read.
+        try:
+            native = appearance.locate_appearance_mesh('Characters/Shared/Bodies/SK_Body') or ''
+        except Exception:
+            native = ''
+        native = os.path.splitext(native)[0] + '.uemodel' if native else ''
+        if native and os.path.isfile(native):
+            anchor = _head_anchor(native)
+            if anchor is not None:
+                reference = native
+    if anchor is None:
         return False, 'No exported human head reference bone available for static hair'
     obj.matrix_world = component @ anchor @ frame.inverted()
     obj['arc_static_hair_anchor'] = [float(value) for row in anchor for value in row]

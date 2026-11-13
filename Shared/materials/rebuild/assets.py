@@ -97,13 +97,24 @@ class AssetIndex:
             raise ResolutionError(f'Export directory does not exist: {self.root}')
         # os.walk already distinguishes files. Resolving every file and the root
         # again performed >120,000 filesystem lookups on the 1.42 export.
+        wanted = {'.json', '.png', '.psk', '.pskx', '.hdr'}
         for directory, _, files in os.walk(self.root):
-            relative = Path(directory).relative_to(self.root)
+            if not files: continue
+            here = Path(directory)
+            relative = here.relative_to(self.root)
+            posix = relative.as_posix()
+            # package() only rewrites the mount prefix and cuts at the first dot, so a
+            # dot-free directory is resolved once instead of once per file (the index is
+            # rebuilt after every extraction).
+            prefix = None if posix == '.' or '.' in posix or "'" in posix else package(posix + '/_')[:-1].casefold()
             for name in files:
                 stem, ext = os.path.splitext(name); ext = ext.lower()
-                if ext not in {'.json', '.png', '.psk', '.pskx', '.hdr'}: continue
-                p = Path(directory) / name
-                key = package((relative / name).as_posix()).casefold()
+                if ext not in wanted: continue
+                p = here / name
+                if prefix is None or "'" in name:
+                    key = package((relative / name).as_posix()).casefold()
+                else:
+                    key = (prefix + name.split('.', 1)[0].casefold()).strip('/')
                 previous = self.paths.get((key, ext))
                 self.paths[(key, ext)] = _prefer_duplicate_export([previous, p]) if previous else p
                 self.names[(stem.casefold(), ext)].append(p)
@@ -115,7 +126,7 @@ class AssetIndex:
                     self.names[(native_stem.casefold(), ext)].append(p)
                 if '/content/' in key:
                     self.content[(key.split('/content/', 1)[1], ext)].append(p)
-                if ext == '.png':
+                if ext == '.png' and stem[-1:].isdigit():
                     # Texture2DArray slices: *_LAYER0 (tooling) or FModel TA_*_0.
                     match = re.match(r'(.+)_LAYER(\d+)$', stem, re.I)
                     from_layer = bool(match)

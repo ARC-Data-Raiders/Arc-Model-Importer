@@ -53,7 +53,7 @@ class Session:
         self.index=index; self.config=config; self.catalog=NativeCatalog.read(bank)
         payload=self.catalog.payload; stats=payload.get('statistics',{})
         self.render_limits={}
-        if config.get('schema')==LIMITED_SCHEMA:self.render_limits=validate_reviewed_limits(payload,config)
+        if config.get('schema')==LIMITED_SCHEMA:self.render_limits=reviewed_limits(self.catalog,config)
         elif payload.get('errors') or stats.get('error_count')!=0: raise ValueError('Partial native catalogs cannot activate')
         for field in ('build','mapping'):
             if config.get(field)!=payload[field]: raise ValueError('Native catalog activation context mismatch: '+field)
@@ -224,6 +224,41 @@ def reviewed_limit_facts(payload):
     identities=[identity(limit['reference']) for limit in limits]
     if len(set(identities))!=len(identities) or set(identities)!=set(affected):raise ValueError('Declared limitation references differ from affected inheritance closure')
     return sorted(limits,key=lambda item:item['reference']),sorted(sources,key=lambda item:item['package']),affected
+
+def reviewed_limits(catalog,config):
+    """validate_reviewed_limits for a shared validated catalog: one walk per (catalog, activation config)."""
+    key=json.dumps(config,sort_keys=True,default=str)
+    cached=getattr(catalog,'_reviewed_limits',None)
+    if cached is not None and cached[0]==key:return cached[1]
+    result=validate_reviewed_limits(catalog.payload,config)
+    catalog._reviewed_limits=(key,result)
+    return result
+
+_WARM={'thread':None}
+def warming():
+    """True while the prewarm thread is still validating the bank. Python work on the
+    main thread then shares the interpreter lock with it and both crawl (measured:
+    4 s prewarm becomes 50 s), so staged imports idle until this returns False."""
+    thread=_WARM['thread']
+    return thread is not None and thread.is_alive()
+def prewarm():
+    """Validate the bundled bank on a worker thread at first import intent so the
+    first material build does not block the UI for the full validation."""
+    if _WARM['thread'] is not None:return
+    def work():
+        try:
+            manifest=activation_path()
+            if not manifest.is_file():return
+            config=json.loads(manifest.read_text(encoding='utf-8-sig'))
+            bank=(manifest.parent/config['catalog']).resolve()
+            if not bank.is_relative_to(manifest.parent.resolve()):return
+            catalog=NativeCatalog.read(bank)
+            if config.get('schema')==LIMITED_SCHEMA:reviewed_limits(catalog,config)
+        except Exception:
+            pass  # the import path repeats every check and reports the error itself
+    import threading
+    _WARM['thread']=threading.Thread(target=work,name='ArcNativeCatalogWarm',daemon=True)
+    _WARM['thread'].start()
 
 def validate_reviewed_limits(payload,config):
     stats=payload.get('statistics',{})

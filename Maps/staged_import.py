@@ -332,6 +332,14 @@ def queue_generator(make_gen, finish) -> None:
     _PENDING_GEN = (make_gen, finish)
 
 
+def _catalog_warming() -> bool:
+    try:
+        from ..Shared.materials.rebuild import native_catalog_bridge
+        return native_catalog_bridge.warming()
+    except Exception:
+        return False
+
+
 class StagedRun:
     """Drives one batch generator in time slices. Records every step for checks."""
 
@@ -356,6 +364,12 @@ class StagedRun:
         """Run steps until the time budget is spent. Returns True when the run ended."""
         if self.done:
             return True
+        if _catalog_warming():
+            # Let the catalog prewarm thread finish alone; see native_catalog_bridge.warming.
+            self.waiting = True
+            if not self.stage:
+                self.stage, self.label = "prepare", "material catalog"
+            return False
         t0 = time.perf_counter()
         try:
             return self._advance(t0, budget)
@@ -433,6 +447,7 @@ STAGE_TEXT = {
     "tidy": "Tidying node graph",
     "bind": "Binding textures",
     "finish": "Finishing",
+    "prepare": "Preparing",
 }
 
 

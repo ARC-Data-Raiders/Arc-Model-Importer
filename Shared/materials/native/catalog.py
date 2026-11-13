@@ -42,6 +42,9 @@ def _from_facts(facts,provenance=()):
     scopes={(entry['association'],int(entry['index'])):entry['parameters'] for entry in facts.get('scopes',())}
     return MaterialRecord(facts['package'],facts['parent'],**{key:facts.get(key,{}) for key in ('scalars','colors','textures','switches','settings')},scopes=scopes,provenance=provenance)
 
+_READ_LOCK=threading.Lock()
+_READ_CACHE={}
+
 def _read(path):
     # Catalog transport may be deterministic stdlib gzip. Schema/fact hashes
     # are validated after decoding; activation binds the compressed file bytes.
@@ -183,7 +186,27 @@ class NativeCatalog:
             mounts={mount:tuple(self.native_root/path for path in root_values(paths)) for mount,paths in self.payload['mounts'].items()}
             self._source_repository=NativeAssetRepository(native_mounts(self.native_root,mounts),build=self.build,mapping=self.mapping,mount_aliases=dict(self.payload.get('mount_aliases',{})),uniform_selectors=serialize(self.payload.get('uniform_selectors',{})),uniform_policy=self.payload.get('uniform_policy','preserve-authored'))
     @classmethod
-    def read(cls,path, *, native_root=None,cached_policy='source-associated'): return cls(_read(path),native_root=native_root,cached_policy=cached_policy)
+    def read(cls,path, *, native_root=None,cached_policy='source-associated'):
+        # Validation freezes and hashes every record (about 6 s for the bundled bank).
+        # A catalog without a native root is immutable after __init__, so one validated
+        # instance per unchanged file serves every session and reviewed-source reader.
+        if native_root is not None: return cls(_read(path),native_root=native_root,cached_policy=cached_policy)
+        target=resolved_io_path(path); stat=target.stat()
+        key=(str(target).casefold(),stat.st_size,stat.st_mtime_ns,getattr(stat,'st_ino',0),cached_policy)
+        with _READ_LOCK:
+            cached=_READ_CACHE.get(cls)
+            if cached is not None and cached[0]==key: return cached[1]
+            # Decoding and freezing allocate about 3M containers. The cyclic collector
+            # rescans them repeatedly (load 7.7 s with it on, 3.6 s with it off) and each
+            # pass stalls every other thread, so pause it for the build.
+            import gc
+            paused=gc.isenabled()
+            if paused: gc.disable()
+            try: result=cls(_read(target),cached_policy=cached_policy)
+            finally:
+                if paused: gc.enable()
+            _READ_CACHE[cls]=(key,result)
+            return result
     def write(self,path):
         target=resolved_io_path(path)
         if self.native_root is not None and target.is_relative_to(self.native_root): raise ValueError('Catalog output must not overwrite the native source corpus')

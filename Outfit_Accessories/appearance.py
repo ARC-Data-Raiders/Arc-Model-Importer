@@ -1697,8 +1697,21 @@ def bone_parent_to_slot(objects: list, master, bone_name: str) -> int:
     return snapped
 
 
-def _copy_backpack_slot_bones_from_strap(master, strap_arm) -> list[str]:
+def _strap_deform_bone_names(strap_objects) -> set[str]:
+    """Vertex group names on the strap meshes: every one needs a bone on the outfit rig."""
+    names: set[str] = set()
+    for obj in strap_objects or ():
+        if _object_alive(obj) and obj.type == "MESH":
+            names.update(g.name for g in obj.vertex_groups)
+    return names
+
+
+def _copy_backpack_slot_bones_from_strap(master, strap_arm, extra_bones=()) -> list[str]:
     """Copy backpackframe / slot_* edit bones from *strap_arm* onto *master*.
+
+    *extra_bones* names the strap's own deform bones (``strap_*`` chains). They
+    are copied with any ancestors the outfit rig lacks, so the harness keeps
+    every weight after it is skinned onto *master*.
 
     Prefer this over ``object.join`` — outfit armatures are often hidden, and
     join fails with \"Active object is not a selected armature\".
@@ -1706,26 +1719,25 @@ def _copy_backpack_slot_bones_from_strap(master, strap_arm) -> list[str]:
     from mathutils import Vector
 
     need = list(_BACKPACK_SLOT_BONES)
-    # Also copy intermediate parents under spine if present on strap only.
     strap_bones = strap_arm.data.bones
     master_bones = master.data.bones
     if "spine_03" not in master_bones:
         return ["Outfit armature missing spine_03 — cannot attach backpack slots"]
 
-    # Collect backpackframe subtree names (strap order is parent-before-child).
-    subtree: list[str] = []
-    for b in strap_bones:
-        if b.name == "backpackframe" or (
-            b.parent and (b.parent.name == "backpackframe" or b.name in need)
-        ):
-            subtree.append(b.name)
-    # Ensure backpackframe first, then direct children we care about.
+    # Wanted bones plus the ancestors the outfit rig lacks.
+    wanted: set[str] = set()
+    for n in list(need) + list(extra_bones or ()):
+        b = strap_bones.get(n)
+        while b is not None and b.name not in master_bones and b.name not in wanted:
+            wanted.add(b.name)
+            b = b.parent
+    # backpackframe first, then strap order (parent-before-child).
     ordered = []
     if "backpackframe" in strap_bones:
         ordered.append("backpackframe")
-    for n in need:
-        if n != "backpackframe" and n in strap_bones and n not in ordered:
-            ordered.append(n)
+    for b in strap_bones:
+        if b.name in wanted and b.name not in ordered:
+            ordered.append(b.name)
 
     # PSK bones use centimeters with a .01 object scale; UEModel bones
     # already use meters. Align component space without applying that scale twice.
@@ -1824,7 +1836,7 @@ def _copy_backpack_slot_bones_from_strap(master, strap_arm) -> list[str]:
     return [f"Added backpack slot bones: {', '.join(created)}"]
 
 
-def ensure_backpack_slot_bones(master, strap_arm=None, *, discard_strap: bool = True) -> tuple[bool, list[str]]:
+def ensure_backpack_slot_bones(master, strap_arm=None, *, discard_strap: bool = True, extra_bones=()) -> tuple[bool, list[str]]:
     """Ensure ``slot_frame`` / ``slot_container`` exist on *master*.
 
     Outfit/body armatures do not ship these bones; they live on
@@ -1836,7 +1848,9 @@ def ensure_backpack_slot_bones(master, strap_arm=None, *, discard_strap: bool = 
     if master is None or not _object_alive(master) or master.type != "ARMATURE":
         return False, ["No target armature for backpack slots"]
     have = {b.name for b in master.data.bones}
-    if all(n in have for n in ("slot_frame", "slot_container", "backpackframe")):
+    if all(n in have for n in ("slot_frame", "slot_container", "backpackframe")) and all(
+        n in have for n in (extra_bones or ())
+    ):
         return True, []
 
     owned_import = False
@@ -1868,7 +1882,7 @@ def ensure_backpack_slot_bones(master, strap_arm=None, *, discard_strap: bool = 
     else:
         before = set()
 
-    copy_msgs = _copy_backpack_slot_bones_from_strap(master, strap_arm)
+    copy_msgs = _copy_backpack_slot_bones_from_strap(master, strap_arm, extra_bones)
     msgs.extend(copy_msgs)
 
     if discard_strap and owned_import:
@@ -1903,8 +1917,12 @@ def adopt_backpack_strap(master, strap_objects: list) -> list[str]:
     meshes = [o for o in alive if o.type == "MESH"]
     if strap_arm is None:
         return ["Backpack strap import has no armature"]
+    # Only names the strap skeleton has: a group with no strap bone never deformed.
+    strap_deform = {
+        n for n in _strap_deform_bone_names(meshes) if n in strap_arm.data.bones
+    }
     ok_bones, msgs = ensure_backpack_slot_bones(
-        master, strap_arm, discard_strap=False,
+        master, strap_arm, discard_strap=False, extra_bones=strap_deform,
     )
     if not ok_bones:
         return msgs
@@ -2435,6 +2453,7 @@ def iter_appearance_parts(context, **kwargs):
     (StopIteration.value) is ``(count, msgs, objs)`` as ``import_appearance_parts`` returns.
     """
     from ..Maps import staged_import
+    from ..Shared.materials import dr_primary_operations as _dr_ops
     defer: list = []
     count, msgs, objs = import_appearance_parts(context, defer_materials=defer, **kwargs)
     staged_import.stage_placeholder([entry[0] for entry in defer])
@@ -2446,7 +2465,22 @@ def iter_appearance_parts(context, **kwargs):
         # Work first, then yield: each step's time covers its own mesh.
         name = obj.name
         staged_import.restore_slots(obj)
-        finish_deferred_materials(obj, path, **mat_kwargs)
+        # GT outfit graphs hand their finish pass to the sink so it runs in slices here,
+        # as the folder import does. Drained inline, one strap finish held the UI 5 to 8 s.
+        staged_import.FINISH_SINK = []
+        try:
+            finish_deferred_materials(obj, path, **mat_kwargs)
+        finally:
+            deferred = staged_import.FINISH_SINK or []
+            staged_import.FINISH_SINK = None
+        for ent in deferred:
+            with _dr_ops.operation_session():
+                for cut in ent["gen"]:
+                    cut = str(cut)
+                    tidy = cut in ("tidy", "blocks")
+                    yield ("tidy" if tidy else "slice", index, total, name if tidy else f"{name} ({cut})")
+                for after in ent["after"]:
+                    after()
         if post is not None:
             post(obj)
         yield ("material", index, total, name)
@@ -2554,7 +2588,7 @@ def import_appearance_parts(
             if head_path:
                 jobs.append(("Head", head_path, "NONE"))
             else:
-                msgs.append("Selected head mesh missing — set PioneerGame Folder or the Paks folder")
+                msgs.append(f"Head '{(head_choice or {}).get('label') or head_id}' has no mesh in the Pioneer folder or the paks{_pak_reason_suffix()}")
     for hair_role, selected_hair_id in (("Hair", hair_id), ("FacialHair", facial_hair_id)):
         if hair_role not in want:
             continue
