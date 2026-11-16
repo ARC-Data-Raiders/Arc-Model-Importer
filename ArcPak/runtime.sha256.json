@@ -1,0 +1,10 @@
+{
+  "schema": "arcpak-runtime-sha256-v1",
+  "note": "Approved A2 perf ArcPak build. package_addon.ps1 fails on mismatch unless -AllowArcPakRebuild.",
+  "files": {
+    "ArcPak.Export.exe": "14cff02e679dad8b1a7236b0f4a1852a7bd6a5f1b383b2f8e5f3ff5949b9d08c",
+    "ArcPak.Export.dll": "1f307f119c7c61be3a83ac07bcea37b177013f0bb568d761f15aca4167aa07de",
+    "CUE4Parse.Arc.dll": "86697f654fdf3364167f90663efe19f7d52a46d021027c1d3b7028c4950c93cb",
+    "CUE4Parse.Conversion.Arc.dll": "9be36a5ff946c8d160fc42f721c4665df4d7d065f6395691a30242cee14249f8"
+  }
+}

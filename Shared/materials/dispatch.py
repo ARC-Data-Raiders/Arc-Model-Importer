@@ -75,6 +75,31 @@ from .environment import (
 )
 
 
+PLACEHOLDER_LABEL = "Placeholder: no game material found"
+
+
+def mark_placeholder(mat):
+    """Flag a default 2-node material left on a slot that found no game material.
+
+    Adds one labelled frame around its nodes (the shader result is unchanged) and sets
+    mat["arc_placeholder"]. Graphs with more than 2 nodes are left alone. Returns True when marked."""
+    nt = getattr(mat, "node_tree", None) if mat is not None else None
+    if nt is None or getattr(mat, "library", None) is not None:
+        return False
+    body = [n for n in nt.nodes if n.bl_idname != "NodeFrame"]
+    if len(body) > 2:
+        return False
+    if mat.get("arc_placeholder") and any(n.bl_idname == "NodeFrame" for n in nt.nodes):
+        return True
+    frame = nt.nodes.new("NodeFrame")
+    frame.name = "DR.Placeholder"
+    frame.label = PLACEHOLDER_LABEL
+    frame.label_size = 20
+    for n in body:
+        n.parent = frame
+    mat["arc_placeholder"] = True
+    return True
+
 
 def _get_or_build_shared_mi_material(
     mi_stem: str,
@@ -216,6 +241,9 @@ def _get_or_build_shared_mi_material(
         mat["arc_mi_stem"] = stem
     except Exception:
         pass
+    from . import material_audit
+    import time as _time
+    started = _time.perf_counter()
     try:
         _dispatch_weapon_slot_material(
             mat,
@@ -230,11 +258,21 @@ def _get_or_build_shared_mi_material(
             f"Arc Asset Importer: Failed shared MI '{stem}' "
             f"({mi_path}): {e}"
         )
+        # The material is removed below; the swallowed record lands on the
+        # slot's next audited material (fallback or importer placeholder).
+        material_audit.record_swallowed('dispatch.shared_mi', e)
         try:
             bpy.data.materials.remove(mat)
         except Exception:
             pass
         return None
+    material_audit.note_build_time(_time.perf_counter() - started)
+    try:
+        flat_mi = _parse_flat_mi_json(mi_path)
+        master, master_error = material_audit.master_for_flat(flat_mi, mi_path)
+        material_audit.audit_material(mat, flat_mi, obj, master_record=master, master_error=master_error)
+    except Exception as exc:
+        material_audit.record_swallowed('dispatch.audit', exc)
     mat["arc_mi_source_signature"] = signature
     _SHARED_MI_MATERIALS[key] = mat
     return mat
@@ -319,6 +357,12 @@ def _dispatch_weapon_slot_material(mat, mi_path: str, psk_path: str, mi_stem_low
         from .native.shared_helpers import UnsupportedHelperGroup
         from .rebuild.native_catalog_bridge import NativeRenderLimitationError
         if isinstance(exc,(UnsupportedHelperGroup,NativeRenderLimitationError)):raise
+        from . import material_audit
+        material_audit.record_swallowed('dispatch.slot_setup', exc)
+        try:
+            mat["arc_audit_fallback"] = "simple"
+        except Exception as exc_tag:
+            material_audit.record_swallowed('dispatch.fallback_tag', exc_tag)
         # Soft-fail: never crash Stage 2 on a single bad MI
         log.error(
             "Material setup failed for '%s' (%s): %s — falling back to simple",
@@ -327,6 +371,7 @@ def _dispatch_weapon_slot_material(mat, mi_path: str, psk_path: str, mi_stem_low
         try:
             _setup_simple_material(mat, mi_path, psk_path)
         except Exception as exc2:
+            material_audit.record_swallowed('dispatch.simple_fallback', exc2)
             log.error("Simple fallback also failed for '%s': %s", mi_path, exc2)
 
 
@@ -729,6 +774,3 @@ def fix_object_materials_from_mi_slots(
         except Exception as e:
             log.error("Failed fixing MI slot '%s' on '%s': %s", mi_stem, obj.name, e)
     return fixed
-
-
-

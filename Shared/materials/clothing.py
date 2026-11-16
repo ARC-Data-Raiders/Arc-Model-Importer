@@ -293,6 +293,7 @@ def clothing_material_cache_key(
 
 _NATIVE_SECTION_TARGETS = {}
 _RESTORING_NATIVE_SECTIONS = set()
+_UNUSED_VP_LOGGED = set()
 
 
 def _native_clothing_sections(psk_path):
@@ -321,7 +322,10 @@ def _native_clothing_sections(psk_path):
     if native_layout is not None:
         from ...Outfit_Accessories.native_material_slots import translate_visual_part_bindings
         bindings, unused = translate_visual_part_bindings(bindings, native_layout)
-        if unused:
+        # Logged once per mesh: every colourway re-reads the same slots, and each log line
+        # costs a file + console write (~0.45 s per call measured in a headless run).
+        if unused and psk_path not in _UNUSED_VP_LOGGED:
+            _UNUSED_VP_LOGGED.add(psk_path)
             utils.get_logger().info("Unused native DA_VP bindings for %s: %s", psk_path, unused)
     for section in result:
         matches = [binding for binding in bindings if (binding["render_index"] == section["index"] if "render_index" in binding
@@ -889,7 +893,7 @@ def outfit_color_pipeline_from_scene() -> str:
         from ...Outfit_Accessories import properties as _props
 
         if hasattr(_props, "ensure_scene_properties"):
-            _props.ensure_scene_properties()
+            _props.ensure_scene_properties(repair=True)
     except Exception:
         pass
     try:
@@ -1535,27 +1539,32 @@ def _gt_wire_colour_n_group(
     if nd_a is None or nd_b is None or nd_c is None:
         return None
     overlay_nd = _dr_stage_candidate.lookup(nodes).get(f"{zone}_BaseColorOverlay")
+    from . import dr_layered_composer as _dlc
+    palette_kw = dict(
+        zone=zone,
+        amt=amt,
+        swatch=swatch_nd,
+        color_a=nd_a,
+        color_b=nd_b,
+        color_c=nd_c,
+        color_a2=nd_a2,
+        color_b2=nd_b2,
+        color_c2=nd_c2,
+        overlay=overlay_nd if overlay_nd is not None else (colours or {}).get(f"{zone}_BaseColorOverlay"),
+        tree_key=mat_key,
+        secondary=False,
+    )
     try:
-        gtree = _gt_pbr.build_gt_colour_n_zone_group(
-            zone=zone,
-            amt=amt,
-            swatch=swatch_nd,
-            color_a=nd_a,
-            color_b=nd_b,
-            color_c=nd_c,
-            color_a2=nd_a2,
-            color_b2=nd_b2,
-            color_c2=nd_c2,
-            overlay=overlay_nd if overlay_nd is not None else (colours or {}).get(f"{zone}_BaseColorOverlay"),
-            tree_key=mat_key,
-            secondary=False,
-        )
+        gtree = _gt_pbr.build_gt_colour_n_zone_group(**palette_kw)
+        palette_vals = _dlc.palette_values(_gt_pbr, **palette_kw)
     except Exception:
         return None
     if gtree is None:
         return None
     g = _dr_ops.new_operation(nodes, 'ShaderNodeGroup', f'GT_ColourN_z{zone}', stage='LayerInputs', role='Palette.g')
     g.node_tree = gtree
+    # One shared zone colour group; this zone's authored colours sit on the instance.
+    _dlc.apply_palette_values(g, palette_vals, amt)
     pass
     _dr_ops.set_label(g, f'Colour {zone} (A/A2 lerp)')
     _gt_attach_local(g, row_parent, loc("fac"))
@@ -1573,10 +1582,20 @@ def _gt_wire_colour_n_group(
     _dr_ops.set_label(amt_nd, f'Amt z{zone}')
     amt_nd.outputs[0].default_value = float(amt)
     _gt_attach_local(amt_nd, row_parent, loc("amt"), hide=True)
+    # "Amt" stays a look control through the shared DR. pass-through (the palette is not one).
     try:
-        links.new(amt_nd.outputs[0], g.inputs["Amt"])
+        amt_tree = _dlc.build_zone_amount(_gt_pbr)
+        amt_g = _dr_ops.new_operation(nodes, 'ShaderNodeGroup', f'GT_amtctl_z{zone}', stage='LayerInputs', role='Palette.amt.control')
+        amt_g.node_tree = amt_tree
+        _dr_ops.set_label(amt_g, f'Amt z{zone}')
+        _gt_attach_local(amt_g, row_parent, loc("amt"), hide=True)
+        links.new(amt_nd.outputs[0], amt_g.inputs["Amt"])
+        links.new(amt_g.outputs["Amt"], g.inputs["Amt"])
     except Exception:
-        pass
+        try:
+            links.new(amt_nd.outputs[0], g.inputs["Amt"])
+        except Exception:
+            pass
     if packed_r is not None:
         try:
             links.new(packed_r, g.inputs["PackedR"])

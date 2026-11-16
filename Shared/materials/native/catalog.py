@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 import hashlib, inspect, json, os, threading, copy, tempfile, gzip
 from collections import OrderedDict
+from types import MappingProxyType
 from .core import MaterialRecord, freeze, serialize, Expr, expression_fingerprint, ignores_alpha_output
 from .assets import NativeAssetRepository,root_values,native_texture_kind,native_resource_kind
 from .defaults import project_uniform_defaults
@@ -26,7 +27,12 @@ def _remembered(key):
 class StaleCatalogError(ValueError): pass
 class NativeMetadataError(ValueError): pass
 
-def _json_hash(value): return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
+_JSON_ENCODER=json.JSONEncoder(sort_keys=True,separators=(',',':'),allow_nan=False)
+_DECODED_JSON_ENCODER=json.JSONEncoder(sort_keys=True,separators=(',',':'),allow_nan=False,check_circular=False)
+
+def _json_hash(value, *, decoded_tree=False):
+    encoder=_DECODED_JSON_ENCODER if decoded_tree else _JSON_ENCODER
+    return hashlib.sha256(encoder.encode(value).encode()).hexdigest()
 
 def _identity(reference,aliases=None):
     package=package_ref(reference,aliases); name=object_name(reference)
@@ -166,18 +172,43 @@ def native_mounts(native_root,extra=None):
         result[mount]=resolved
     if not result: raise ValueError('No declared native content mounts')
     return result
+class _FrozenEntries(Mapping):
+    def __init__(self, entries, *, folded=False, cache=None):
+        self.__entries = entries
+        self.__keys = {key.casefold() if folded else key: key for key in entries}
+        self.__cache = {} if cache is None else cache
+    def __len__(self):
+        return len(self.__keys)
+    def __iter__(self):
+        return iter(self.__keys)
+    def __getitem__(self, key):
+        original = self.__keys[key]
+        if original not in self.__cache:
+            self.__cache[original] = freeze(self.__entries[original])
+        return self.__cache[original]
+
 class NativeCatalog:
-    def __init__(self,payload, *, native_root=None,cached_policy='source-associated'):
+    def __init__(self,payload, *, native_root=None,cached_policy='source-associated',_owned=False):
         if payload.get('format')!=FORMAT or not payload.get('build') or not payload.get('mapping'): raise ValueError('Invalid native catalog schema/build/mapping')
         if cached_policy not in ('source-associated','require-associated','ignore-observations'): raise ValueError('Unknown cached observation policy')
         self.cached_policy=cached_policy
-        self.payload=freeze(payload); self.build=payload['build']; self.mapping=payload['mapping']; self.native_root=resolved_io_path(native_root) if native_root is not None else None
-        self._records={key.casefold():value for key,value in self.payload['records'].items()}
+        if _owned:
+            record_cache = {}
+            texture_cache = {}
+            self.payload=MappingProxyType({key: _FrozenEntries(value, cache=record_cache if key=='records' else texture_cache) if key in ('records','textures') else freeze(value) for key,value in payload.items()})
+            self._records=_FrozenEntries(payload['records'],folded=True,cache=record_cache)
+            self._textures=_FrozenEntries(payload.get('textures',{}),folded=True,cache=texture_cache)
+            self.__validation_payload=payload
+        else:
+            self.payload=freeze(payload)
+            self._records={key.casefold():value for key,value in self.payload['records'].items()}
+            self._textures={key.casefold():value for key,value in self.payload.get('textures',{}).items()}
+            self.__validation_payload=self.payload
+        self.build=payload['build']; self.mapping=payload['mapping']; self.native_root=resolved_io_path(native_root) if native_root is not None else None
         if len(self._records)!=len(self.payload['records']): raise ValueError('Duplicate case-insensitive material identities')
-        self._textures={key.casefold():value for key,value in self.payload.get('textures',{}).items()}
-        for key,entry in self._records.items():
-            if _json_hash(serialize(entry['facts']))!=entry['facts_sha256']: raise ValueError('Catalog facts digest mismatch: '+key)
-            package,_,identity=_identity(key,dict(self.payload.get('mount_aliases',{})))
+        for key,entry in payload['records'].items():
+            if _json_hash(entry['facts'] if _owned else serialize(entry['facts']),decoded_tree=_owned)!=entry['facts_sha256']: raise ValueError('Catalog facts digest mismatch: '+key)
+            package,_,identity=_identity(key,dict(payload.get('mount_aliases',{})))
             if package.casefold()!=entry['facts']['package'].casefold(): raise ValueError('Catalog fact package mismatch: '+key)
             relative=Path(entry['source']['relative_path'])
             if relative.is_absolute() or '..' in relative.parts: raise ValueError('Unsafe catalog source path')
@@ -202,11 +233,14 @@ class NativeCatalog:
             import gc
             paused=gc.isenabled()
             if paused: gc.disable()
-            try: result=cls(_read(target),cached_policy=cached_policy)
+            try: result=cls(_read(target),cached_policy=cached_policy,_owned=True)
             finally:
                 if paused: gc.enable()
             _READ_CACHE[cls]=(key,result)
             return result
+    def validate_reviewed_limits(self, config):
+        from ..rebuild.native_catalog_bridge import validate_reviewed_limits
+        return validate_reviewed_limits(self.__validation_payload, config)
     def write(self,path):
         target=resolved_io_path(path)
         if self.native_root is not None and target.is_relative_to(self.native_root): raise ValueError('Catalog output must not overwrite the native source corpus')
@@ -396,7 +430,10 @@ def material_build_signature(reference,repository, *, catalog=None,roles=None,re
     metadata={}; resources={}
     def fact_for(ref):
         if ref not in metadata:
-            paths=tuple(path for _,path in repository.texture_sources(ref)) if hasattr(repository,'texture_sources') else tuple(path for suffix in ('.arc-texture.json','.json') for path in (repository.resolve_all(ref,suffix) if hasattr(repository,'resolve_all') else tuple(path for ext,path in _material_sources(repository,ref) if ext==suffix)))
+            try:
+                paths=tuple(path for _,path in repository.texture_sources(ref)) if hasattr(repository,'texture_sources') else tuple(path for suffix in ('.arc-texture.json','.json') for path in (repository.resolve_all(ref,suffix) if hasattr(repository,'resolve_all') else tuple(path for ext,path in _material_sources(repository,ref) if ext==suffix)))
+            except FileNotFoundError:
+                paths=()
             dependencies.extend({'kind':'local-image-json','package':ref,'path':str(path),'sha256':digest(path)} for path in paths)
             metadata[ref]=catalog.texture_fact(ref,repository) if catalog is not None else _texture_fact(repository,ref)
         return metadata[ref]

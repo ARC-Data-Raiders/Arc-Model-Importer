@@ -1285,6 +1285,8 @@ NEEDS_TEXTURE = ('six_point', 'smoke', 'fire', 'flame', 'additive')
 def build_material(object_path, kind, resolver):
     """Translated material for a sprite or mesh renderer; None when unresolved (caller keeps its preview; ribbons keep theirs)."""
     import bpy
+    if kind == 'mesh' and str(object_path).split('.')[0] == '/Game/Pioneer/Effects/Materials/Enemies/VisionCone/MI_FX_VisionCone_Turret_Shadowed':
+        return _sibling('shader_tools.dxbc.visioncone').build(object_path, kind, resolver)
     if kind not in ('sprite', 'mesh'):
         return None
     info = resolver.material_info(object_path)
@@ -1312,19 +1314,138 @@ def build_material(object_path, kind, resolver):
     mat['dr_nx_blend'] = info['blend']
     return mat
 
+def _empty_cache_ply(path, ribbon=False):
+    data = path.read_bytes()
+    marker = b'end_header\n'
+    offset = data.index(marker) + len(marker)
+    header = data[:offset].decode('ascii').splitlines()
+    if header[:2] != ['ply', 'format binary_little_endian 1.0'] or not header[2].startswith('element vertex '):
+        return False
+    count = int(header[2].split()[2])
+    properties = header[3:-1]
+    if ribbon:
+        if properties[-2:] != ['element face 0', 'property list uchar int vertex_indices']:
+            return False
+        properties = properties[:-2]
+    if count < 0 or not properties or any(not row.startswith('property float ') or len(row.split()) != 3 for row in properties):
+        return False
+    names = [row.split()[2] for row in properties]
+    if len(set(names)) != len(names) or len(data) != offset + count * len(names) * 4:
+        return False
+    if count == 0:
+        return True
+    rows = np.frombuffer(data, dtype='<f4', offset=offset).reshape(count, len(names))
+    if ribbon:
+        if 'sl_nx' not in names or 'sl_ny' not in names:
+            return False
+        normals = rows[:, [names.index('sl_nx'), names.index('sl_ny')]]
+        return bool(np.isfinite(normals).all() and (np.abs(normals).sum(axis=1) < 0.5).all())
+    if 'nx_valid' not in names:
+        return False
+    valid = rows[:, names.index('nx_valid')]
+    return bool(np.isfinite(valid).all() and (valid <= 0.5).all())
+
+
+def stream_proven_empty_across_cache(cache_dir, manifest, info):
+    if not cache_dir or not isinstance(manifest, dict) or not isinstance(info, dict):
+        return False
+    try:
+        kind = info.get('kind')
+        emitter, ordinal = info.get('emitter'), info.get('ordinal')
+        if kind not in ('sprite', 'mesh', 'ribbon') or type(emitter) is not int or type(ordinal) is not int:
+            return False
+        stream = 'e%d_r%d' % (emitter, ordinal)
+        start, end = manifest.get('frame_start'), manifest.get('frame_end')
+        if type(start) is not int or type(end) is not int or end < start:
+            return False
+        frames = end - start + 1
+        entries = [row for row in manifest.get('streams', ()) if row.get('name') == stream]
+        if len(entries) != 1 or entries[0].get('kind') != kind or entries[0].get('emitter') != emitter or entries[0].get('ordinal') != ordinal:
+            return False
+        stats = manifest['stats']
+        counts = (stats['frames'], stats['max_count'][stream], stats['empty_frames'][stream])
+        if any(type(value) is not int for value in counts) or counts != (frames, 0, frames):
+            return False
+        if kind == 'ribbon' and stats['ribbon_subsegments'][stream] != [0] * frames:
+            return False
+        root = Path(cache_dir).resolve()
+        directory = (root / stream).resolve()
+        if not root.is_dir() or not directory.is_dir() or not directory.is_relative_to(root):
+            return False
+        if json.loads((root / 'cache_manifest.json').read_text(encoding='utf-8')) != manifest:
+            return False
+        for prefix in (('f', 'm') if kind == 'ribbon' else ('f',)):
+            expected = {'%s_%04d.ply' % (prefix, frame) for frame in range(start, end + 1)}
+            if {entry.name for entry in directory.glob(prefix + '_*.ply')} != expected:
+                return False
+            for name in expected:
+                entry = (directory / name).resolve()
+                if not entry.is_relative_to(directory) or not _empty_cache_ply(entry, ribbon=prefix == 'm'):
+                    return False
+        sidecar = directory / 'sidecar.json'
+        binaries = {entry.name for entry in directory.glob('s_*.bin')}
+        if sidecar.exists() or binaries:
+            records = json.loads(sidecar.read_text(encoding='utf-8'))['frames']
+            if [record['frame'] for record in records] != list(range(start, end + 1)) or any(type(record['count']) is not int or record['count'] != 0 for record in records):
+                return False
+            if binaries != {'s_%04d.bin' % frame for frame in range(start, end + 1)}:
+                return False
+            if any((directory / name).stat().st_size != 0 for name in binaries):
+                return False
+    except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
+        return False
+    return True
+
+
 def renderer_materials(roots):
     """Callback for niagara_rigs.build_system: (renderer info, kind, slot, slot material name) -> material or None."""
     resolver = fx_materials_Resolver(roots)
+    context = {}
+
+    def bind_runtime(cache, manifest):
+        context.pop('geometry_context', None)
+        context.update(cache=cache, manifest=manifest)
+
+    def bind_view(view):
+        context['view'] = view
+
+    def bind_geometry(info, objects):
+        if is_empty_stream(info):
+            return
+        overrides = info.get('override_materials', []) if info.get('props', {}).get('bOverrideMaterials') else []
+        if not any(str(path).split('.')[0] == '/Game/Pioneer/Effects/Materials/Enemies/VisionCone/MI_FX_VisionCone_Turret_Shadowed' for path in overrides):
+            return
+        vf = _sibling('shader_tools.dxbc.visioncone_vf')
+        vc = _sibling('shader_tools.dxbc.visioncone')
+        vf.validate_view(context.get('view'), bpy.context.scene)
+        source_context = vc._context(resolver.roots)
+        pin = source_context.get('mesh')
+        if not pin or len(objects) != 1 or objects[0].get('dr_nx_mesh_source') != info['meshes'][0]['object_path']:
+            raise vc.Unsupported('pinned source mesh required for diagnostic VF')
+        receipt = vf.hydrate_mesh(objects[0], _sibling('Shared.uemodel_import'), pin)
+        particles = vf.validate_particles(sys.modules[__name__], context['cache'], context['manifest'], info)
+        context['geometry_context'] = dict(mesh=receipt, particles=particles)
+
+    def is_empty_stream(info):
+        return stream_proven_empty_across_cache(context.get('cache'), context.get('manifest'), info)
 
     def pick(info, kind, slot=None, slot_name=None):
+        if is_empty_stream(info):
+            return None
         if kind == 'mesh':
             over = info.get('override_materials') or []
             path = over[slot] if info['props'].get('bOverrideMaterials') and slot is not None and slot < len(over) else None
             if not path and slot_name:
                 path = '/Game/' + slot_name.split('.')[0]  # basename lookup (no package path on an imported slot)
+            if str(path).split('.')[0] == '/Game/Pioneer/Effects/Materials/Enemies/VisionCone/MI_FX_VisionCone_Turret_Shadowed':
+                resolver.source_runtime = dict(context, renderer=info)
             return build_material(path, 'mesh', resolver) if path else None
         return build_material(info.get('material'), kind, resolver) if info.get('material') else None
     pick.resolver = resolver
+    pick.bind_runtime = bind_runtime
+    pick.bind_view = bind_view
+    pick.bind_geometry = bind_geometry
+    pick.is_empty_stream = is_empty_stream
     return pick
 
 # ---- niagara_ir.py ----
@@ -1546,6 +1667,7 @@ def read_ply(path):
     data=Path(path).read_bytes();end=data.index(b'end_header\n')+len(b'end_header\n');lines=data[:end].decode('ascii').splitlines()
     if lines[1]!='format binary_little_endian 1.0':raise ValueError('ply_format')
     n=int(lines[2].split()[2]);props=[l.split()[2] for l in lines if l.startswith('property float ')]
+    if n<0 or not props or len(set(props))!=len(props) or len(data)-end!=n*len(props)*4:raise ValueError('ply_array_size_or_schema')
     rows=np.frombuffer(data,dtype='<f4',count=n*len(props),offset=end).reshape(n,len(props));return {p:rows[:,i].copy() for i,p in enumerate(props)}
 
 def cross_ue(a,b):return -np.cross(a,b)
@@ -2395,11 +2517,15 @@ def _mesh_branch(g, geo, info, cam, k, entry, mesh_object):
     setp = g.node('GeometryNodeSetPosition')
     g.link(geo, setp.inputs['Geometry'])
     g.link(g.vmath('ADD', g.vmath('ADD', P, g.vmath('SCALE', D, scale=g.attr('camoff'))), pivot), setp.inputs['Position'])
+    source_geometry = setp.outputs[0]
+    if info['props'].get('bOverrideMaterials') and '/Game/Pioneer/Effects/Materials/Enemies/VisionCone/MI_FX_VisionCone_Turret_Shadowed' in [str(path).split('.')[0] for path in info.get('override_materials', [])]:
+        source_geometry = _sibling('shader_tools.dxbc.visioncone').store_cone(g, source_geometry, info, cam, rot, S)
+        source_geometry = _sibling('shader_tools.dxbc.visioncone_vf').store_particles(g, source_geometry, rot, S)
     info_node = g.node('GeometryNodeObjectInfo', transform_space='ORIGINAL')
     info_node.inputs['Object'].default_value = mesh_object
     info_node.inputs['As Instance'].default_value = True
     inst = g.node('GeometryNodeInstanceOnPoints')
-    g.link(setp.outputs[0], inst.inputs['Points'])
+    g.link(source_geometry, inst.inputs['Points'])
     g.link(info_node.outputs['Geometry'], inst.inputs['Instance'])
     g.link(g.attr('nx_rot', 'QUATERNION'), inst.inputs['Rotation'])
     g.link(g.attr('nx_scale', 'FLOAT_VECTOR'), inst.inputs['Scale'])
@@ -2508,7 +2634,8 @@ def build_mesh_tree(name, stream_dir, manifest, info, mesh_objects):
     join = g.node('GeometryNodeJoinGeometry')
     for k, entry in enumerate(info['meshes']):
         g.link(_mesh_branch(g, geo, info, cam, k, entry, mesh_objects[k]), join.inputs[0])
-    _finish(g, join.outputs[0], gin.outputs['Realize'])
+    diagnostic = any(o.get('dr_nx_vf_source') for o in mesh_objects)
+    _finish(g, join.outputs[0], True if diagnostic else gin.outputs['Realize'])
     return tree
 
 
@@ -2721,11 +2848,17 @@ def rigs_build_system(cache_dir, collection=None, mesh_objects=None, material=No
     collection.objects.link(root)
     material = material or preview_material()
     infos = {(r['emitter'], r['ordinal']): r for r in manifest['renderers']}
-    built = {'root': root, 'rigs': [], 'lights': []}
+    bind_runtime = getattr(materials, 'bind_runtime', None)
+    if bind_runtime:
+        bind_runtime(cache_dir, manifest)
+    built = {'root': root, 'rigs': [], 'lights': [], 'unsupported_streams': []}
     for st in manifest['streams']:
         info = infos[(st['emitter'], st['ordinal'])]
         name = '%s_%s_%s' % (manifest['system'], st['name'], info['kind'])
         sdir = cache_dir / st['name']
+        if info['kind'] not in ('light', 'sprite', 'ribbon', 'mesh'):
+            built['unsupported_streams'].append(dict(stream=st['name'], kind=info['kind'], reason='no source-backed playback adapter'))
+            continue
         if info['kind'] == 'light':
             built['lights'].append((st['name'], build_light_pool(name, sdir, manifest, info, root, collection, exposure=fx_exposure_scale())))
             continue
@@ -2736,6 +2869,9 @@ def rigs_build_system(cache_dir, collection=None, mesh_objects=None, material=No
         else:
             objs = [(mesh_objects or {}).get(m['object_path']) or placeholder_mesh_object() for m in info['meshes']]
             if materials:
+                bind_geometry = getattr(materials, 'bind_geometry', None)
+                if bind_geometry:
+                    bind_geometry(info, objs)
                 objs = [_material_variant(o, [materials(info, 'mesh', i, n) for i, n in enumerate(
                     list(o.get('dr_nx_slot_materials') or []) or [s.material.name if s.material else None for s in o.material_slots] or [None])])
                     for o in objs]
@@ -8066,7 +8202,7 @@ def _bake_modules():
 
 def register_properties(assign):
     assign('arc_ns_play_ticks', IntProperty(
-        name='Ticks', description="", default=120, min=1, max=3000))
+        name='Preview Frames', description="Preview Frames: how many frames of the effect to simulate", default=120, min=1, max=3000))
     assign('arc_ns_play_cache_dir', StringProperty(
         name='Cache Folder', description="",
         default='//niagara_cache/', subtype='DIR_PATH'))
@@ -8148,6 +8284,14 @@ def export_collision(context, path, exclude):
     return min(total, MAX_COLLISION_TRIANGLES)
 
 
+def _ui_targets():
+    try:
+        from ..Shared import ui_targets
+        return ui_targets
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _selected_ns_path(context):
     pass
     scene = context.scene
@@ -8216,6 +8360,17 @@ def material_roots(asset_root):
     return [r for r in [asset_root] + list(getattr(utils, '_pak_cache_roots', [])) if r]
 
 
+PREVIEW_CONFIRM_FRAMES = 100
+
+
+def _busy_text(targets):
+    """Message shown while another import job runs (D5)."""
+    try:
+        return targets.job_busy_message() or 'Another import is running'
+    except Exception:  # noqa: BLE001
+        return 'Another import is running'
+
+
 class ARC_OUTFITS_OT_PlayNiagaraFX(Operator):
     """Simulate the selected cooked Niagara system (CPU emitters) and build Geometry Nodes playback rigs.
 
@@ -8223,20 +8378,87 @@ class ARC_OUTFITS_OT_PlayNiagaraFX(Operator):
     translation lands. GPU emitters are not simulated yet.
     """
     bl_idname = 'arc_outfits.play_niagara_fx'
-    bl_label = 'Bake & Play NS Effect'
+    bl_label = 'Bake Scene Preview'
+    bl_description = 'Simulate the chosen effect and play it in the scene. Blender is busy until the bake finishes'
     bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        targets = _ui_targets()
+        if targets is not None and targets.job_active():
+            cls.poll_message_set(_busy_text(targets))
+            return False
+        scene = getattr(context, 'scene', None)
+        if scene is None:
+            return False
+        if (getattr(scene, 'arc_ns_selected', '') or '') in ('', 'NONE') and not (getattr(scene, 'arc_ns_json_path', '') or ''):
+            cls.poll_message_set('Choose an effect first')
+            return False
+        return True
+
+    def invoke(self, context, event):
+        targets = _ui_targets()
+        if targets is not None and targets.job_active():
+            self.report({'WARNING'}, _busy_text(targets))
+            return {'CANCELLED'}
+        frames = int(getattr(context.scene, 'arc_ns_play_ticks', 0) or 0)
+        if frames > PREVIEW_CONFIRM_FRAMES:
+            try:
+                return context.window_manager.invoke_confirm(self, event, title='Bake Scene Preview',
+                                                             message=f'Baking {frames} frames blocks Blender until it finishes',
+                                                             confirm_text='Bake')
+            except TypeError:
+                return context.window_manager.invoke_confirm(self, event)
+        return self.execute(context)
 
     def execute(self, context):
         scene = context.scene
         path = _selected_ns_path(context)
         if not path:
-            self.report({'ERROR'}, 'Select a Niagara system in the catalog (or set NS JSON) first')
+            self.report({'ERROR'}, 'Choose an effect first')
             return {'CANCELLED'}
+        targets = _ui_targets()
+        name = Path(path).stem
+        if targets is not None:
+            if targets.job_active():
+                self.report({'WARNING'}, _busy_text(targets))
+                return {'CANCELLED'}
+            name = targets.clean_name(name) or name
+            try:
+                began = targets.job_begin('effect', 'Baking ' + name, 1, '', cancellable=False)
+            except TypeError:
+                began = targets.job_begin('effect', 'Baking ' + name, 1, '')
+            if not began:
+                self.report({'WARNING'}, _busy_text(targets))
+                return {'CANCELLED'}
+        from ..Shared import ui_lists
+        before = ui_lists.snapshot()
+        result, error = {'CANCELLED'}, ''
+        try:
+            result, error = self._preview(context, path, name)
+            return result
+        finally:
+            ok = 'FINISHED' in result
+            if ok:
+                try:
+                    ui_lists.record_import(name, before)
+                    ui_lists.record_recent('fx', getattr(scene, 'arc_ns_selected', ''))
+                except Exception as exc:  # noqa: BLE001
+                    print(f'Arc Raiders effects: history not recorded for {name}: {exc}')
+            if targets is not None:
+                lines = [] if ok else [f'Failed: {name}: {error or "preview failed"}']
+                try:
+                    targets.job_end(1 if ok else 0, 0 if ok else 1, 0, lines, status='completed' if ok else 'failed')
+                except TypeError:
+                    targets.job_end(1 if ok else 0, 0 if ok else 1, 0, lines)
+
+    def _preview(self, context, path, name):
+        scene = context.scene
         try:
             nc, rigs = _bake_modules()
         except Exception as exc:  # noqa: BLE001
-            self.report({'ERROR'}, f'Niagara bake modules unavailable: {exc}')
-            return {'CANCELLED'}
+            self.report({'ERROR'}, f'Effect preview is unavailable: {exc}')
+            return {'CANCELLED'}, str(exc)
         shim = _existing(scene.arc_ns_play_shim, DEFAULT_SHIM)
         vf = _existing(scene.arc_ns_play_vector_fields, DEFAULT_VECTOR_FIELDS)
         fps = scene.render.fps / scene.render.fps_base
@@ -8259,8 +8481,8 @@ class ARC_OUTFITS_OT_PlayNiagaraFX(Operator):
         try:
             manifest = nc.bake_cache(path, cache_dir, inputs, frame_start=scene.frame_current, fps=float(scene.render.fps), fps_base=float(scene.render.fps_base))
         except Exception as exc:  # noqa: BLE001 - BakeError reasons are user-facing (gpu_emitter, di_unimplemented:...)
-            self.report({'ERROR'}, f'{stem}: bake failed: {exc}')
-            return {'CANCELLED'}
+            self.report({'ERROR'}, f'{name}: preview failed: {exc}')
+            return {'CANCELLED'}, str(exc)
         pass
         asset_root = resolved_asset_root(bpy.path.abspath(getattr(scene, 'arc_ns_asset_root', '') or '') or '') or None
         collection = bpy.data.collections.new('NX_' + stem)
@@ -8269,6 +8491,12 @@ class ARC_OUTFITS_OT_PlayNiagaraFX(Operator):
         built = rigs.build_system(cache_dir, collection, mesh_objects=_mesh_objects(manifest, asset_root, collection),
                                   materials=renderer_materials(material_roots(asset_root)))
         built['root']['dr_nx_math'] = 'svml_shim' if shim else 'reference (approximate)'
+        targets = _ui_targets()
+        if targets is not None:
+            try:
+                targets.stamp([built['root'], *collection.all_objects], targets.new_import_id(), 'effect', name)
+            except Exception as exc:  # noqa: BLE001
+                print(f'Arc Raiders effects: could not tag {name}: {exc}')
         scene.frame_end = max(scene.frame_end, manifest['frame_end'])
         kinds = {}
         for r in manifest['renderers']:
@@ -8278,5 +8506,5 @@ class ARC_OUTFITS_OT_PlayNiagaraFX(Operator):
                                                               '' if shim else ', reference math')
         scene['arc_ns_last_report'] = msg
         self.report({'INFO'}, msg)
-        return {'FINISHED'}
+        return {'FINISHED'}, ''
 

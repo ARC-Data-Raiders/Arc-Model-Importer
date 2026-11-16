@@ -290,6 +290,29 @@ def setup(mat,mi_path,mesh_path='',*,obj=None,**options):
     if not candidate.accepted:return False
     return _setup_prepared(mat,mi_path,candidate,obj,options)
 
+def _group_owned_stages(mat):
+    """Fold each compiled owned graph into plain stage groups once the compiler is done.
+
+    The compiler caches a pristine copy before this runs, so later builds copy the flat graph
+    and the collapse reuses the stage groups it already made for identical content."""
+    nt=getattr(mat,'node_tree',None)
+    if nt is None:return 0
+    from .. import graph_layout
+    from .driven_values import hoist_driven_values,drop_reroutes
+    done=0
+    for tree in {n.node_tree.as_pointer():n.node_tree for n in nt.nodes if n.type=='GROUP' and n.node_tree is not None and n.node_tree.get('independent_owned_graph')}.values():
+        try:
+            _h=hoist_driven_values(tree)  # grouping skips trees that hold drivers
+            # The compiler's own grouping skipped this driven tree and left layout reroutes,
+            # which grouping cannot copy exactly; drop them so the layout routes afresh.
+            if _h:drop_reroutes(tree)
+            graph_layout.finalize_tree(tree,collapse=True,force=True);done+=1
+        except Exception as exc:print('[native_families] stage grouping skipped on %s: %s'%(tree.name,exc))
+    if done:
+        try:graph_layout.finalize_tree(nt,force=True)
+        except Exception as exc:print('[native_families] root layout skipped on %s: %s'%(mat.name,exc))
+    return done
+
 def _setup_prepared(mat,mi_path,candidate,obj,options):
     try:signature=_candidate_signature(candidate)
     except RestartRequired as error:
@@ -302,6 +325,7 @@ def _setup_prepared(mat,mi_path,candidate,obj,options):
         return False
     from ....Weapons.material_runtime.compiler import compile_plan
     compile_plan(candidate.plan,mat,obj,candidate.repository,replace=True,template_key=signature.key)
+    _group_owned_stages(mat)
     clear_character_fallback_provenance(mat)
     mat['dr_native_subtype']=candidate.report.get('subtype','')
     mat['dr_native_family']=candidate.family;mat['arc_mi_path']=str(mi_path);mat['arc_package']=candidate.record.package

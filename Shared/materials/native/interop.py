@@ -19,6 +19,32 @@ def _stage(label):
         if any(word in text for word in words): return stage
     return 'DR.Surface'
 
+# Frame names stay stable ids; labels are plain words. Tags feed graph_layout.finalize_tree.
+_STAGE_LABELS={'DR.Coordinates':'Coordinates','DR.Source':'Textures','DR.LayerInputs':'Layer Inputs','DR.Wear':'Weathering',
+               'DR.Surface':'Surface','DR.Details':'Detail','DR.Light':'Emission','DR.Coverage':'Coverage','DR.Output':'Output'}
+_STAGE_TAGS={'DR.Coordinates':'Coordinates','DR.Source':'Textures','DR.LayerInputs':'Inputs','DR.Wear':'Weathering',
+             'DR.Surface':'Surface','DR.Details':'Detail','DR.Light':'Surface','DR.Coverage':'Mask','DR.Output':'Output'}
+
+def _layout_mod():
+    from .. import graph_layout
+    return graph_layout
+
+def _stage_color(stage):
+    gl=_layout_mod(); role=getattr(gl,'STAGE_ROLE',{}).get(_STAGE_TAGS.get(stage),'surface')
+    return getattr(gl,'ROLE_COLORS',{}).get(role,(.12,.20,.28))
+
+def _tag(node,stage):
+    gl=_layout_mod(); fn=getattr(gl,'tag',None)
+    if fn is not None:
+        name=_STAGE_TAGS.get(stage); fn(node,stage=name,role=getattr(gl,'STAGE_ROLE',{}).get(name))
+
+_ENGINE_DEFAULT_TEXTURES=('defaultnormal','defaulttexture','defaultdiffuse','blacksquaretexture','whitesquaretexture','flatnormal')
+def engine_default_texture_ref(ref):
+    """True for a non-/Game engine or plugin default texture (DefaultNormal, DefaultTexture)."""
+    text=str(ref or '').replace('\\','/').strip()
+    if not text.startswith('/') or text.casefold().startswith('/game/'): return False
+    return text.rsplit('/',1)[-1].split('.',1)[0].casefold() in _ENGINE_DEFAULT_TEXTURES
+
 def authored_srgb_decode(info):
     """True when a native texture record leaves SRGB at its engine default on an sRGB-capable encoding.
 
@@ -45,11 +71,29 @@ class Graph:
             if not any(s.name=='Shader' and s.in_out=='OUTPUT' for s in self.tree.interface.items_tree): self.tree.interface.new_socket(name='Shader',in_out='OUTPUT',socket_type='NodeSocketShader')
             self._state={'frames':{},'serial':0,'uv':{},'images':{},'oriented':set(),'orientation_cache':{},'samples':{},'world_normals':set(),'finished':False}
         self.n=self.tree.nodes; self.l=self.tree.links
+    def _frame(self,stage):
+        # Frames are cached by name, never as bpy references: finish() runs finalize_tree, which
+        # replaces stage frames; a cached NodeFrame then dangles and parenting to it corrupts memory.
+        # Live references are a build-time fast path only; finish() drops them.
+        live=None if self._state['finished'] else self._state.setdefault('frame_refs',{})
+        if live is not None and stage in live: return live[stage]
+        frames=self._state['frames']; name=frames.get(stage)
+        f=self.n.get(name) if name else None
+        if f is None or f.bl_idname!='NodeFrame':
+            f=None
+            if name:
+                key=getattr(_layout_mod(),'TAG_STAGE',None); want=_STAGE_TAGS.get(stage)
+                if key and want: f=next((n for n in self.n if n.bl_idname=='NodeFrame' and n.get(key)==want),None)
+            if f is None:
+                f=self.n.new('NodeFrame'); f.name=stage; f.label=_STAGE_LABELS.get(stage,stage); f.label_size=20
+                f.use_custom_color=True; f.color=_stage_color(stage); _tag(f,stage)
+            frames[stage]=f.name
+        if live is not None: live[stage]=f
+        return f
     def node(self,typ,label='',**attrs):
         stage=self._stage
-        if stage not in self._state['frames']:
-            f=self.n.new('NodeFrame'); f.name=stage; f.label=stage; f.use_custom_color=True; f.color=(.12,.20,.28); self._state['frames'][stage]=f
-        result=self.n.new(typ); result.parent=self._state['frames'][stage]
+        frame=self._frame(stage)
+        result=self.n.new(typ); result.parent=frame; _tag(result,stage)
         self._state['serial']+=1; result.name=stage+'.'+typ.removeprefix('ShaderNode')+'.'+str(self._state['serial']).zfill(4)
         result.label=str(label) or typ.removeprefix('ShaderNode')
         for key,value in attrs.items():
@@ -93,6 +137,15 @@ class Graph:
             result=self.combine(*value); result.node.label=str(label); return result
         if kind in ('vector2','float2'): raise ValueError('Vector2 parameter requires explicit promotion to three components')
         return self.color(value,label) if kind in ('color','rgba','float4','nodesocketcolor') or isinstance(value,(tuple,list)) else self.value(value,label)
+    def time(self,label='Time (seconds)'):
+        socket=self.value(0.,label)
+        curve=socket.driver_add('default_value')
+        curve.driver.type='SCRIPTED'
+        for name,path in (('fps','render.fps'),('fps_base','render.fps_base')):
+            variable=curve.driver.variables.new(); variable.name=name; variable.type='SINGLE_PROP'
+            variable.targets[0].id_type='SCENE'; variable.targets[0].id=self.bpy.context.scene; variable.targets[0].data_path=path
+        curve.driver.expression='frame * fps_base / max(fps, 1)'
+        return socket
     def math(self,op,a,b=0,c=0,label=''):
         n=self.node('ShaderNodeMath',label,operation=op)
         for i,v in enumerate((a,b,c)):
@@ -164,21 +217,45 @@ class Graph:
         self.report.setdefault('missing_textures',[]).append({'reference':str(ref),'reason':str(error)})
         if required: raise FileNotFoundError(str(ref)) from error
         return None
+    def _unset_image(self,uv,label,srgb):
+        """Empty texture reference = parameter unset: never raise, sample a neutral stand-in.
+
+        approximate: the engine would sample the master default (DefaultTexture /
+        DefaultNormal); with no default in the records the input is skipped. RGB is
+        mid grey (colour) or flat normal (data), alpha 0 so masks and decal opacity drop out.
+        """
+        name=str(label) or 'texture'
+        self.report.setdefault('unset_textures',[]).append(name)
+        self.report.setdefault('warnings',[]).append('approximate: unset texture parameter skipped: '+name)
+        role='color' if srgb is None or srgb is True else 'data'
+        key='DR_unset_texture_'+role
+        image=self._state['images'].get(key)
+        if image is None:
+            image=next((im for im in self.bpy.data.images if im.get('independent_image_key')==key),None)
+            if image is None:
+                image=self.bpy.data.images.new(key,1,1,alpha=True)
+                image.pixels[:]=(.5,.5,.5,0.) if role=='color' else (.5,.5,1.,0.)
+                image.colorspace_settings.name='Non-Color'; image['independent_image_key']=key
+            if image.alpha_mode!='CHANNEL_PACKED': image.alpha_mode='CHANNEL_PACKED'
+            self._state['images'][key]=image
+        return self.sample_image(image,uv,'Unset · '+name,{'reference':'','role':role,'image_key':key,'unset':True})
     def image(self,ref,uv=None,layer=None,srgb=None,label='',required=True):
-        if ref is None or ref=='': return self._missing(ref,required,FileNotFoundError('Missing exact texture reference'))
-        native_info=self.index.texture_info(ref) if hasattr(self.index,'texture_info') else None
-        native_info={} if native_info is None else native_info
-        if srgb is None:
-            if 'SRGB' in native_info: srgb=bool(native_info['SRGB'])
-            else:
-                srgb=True; self.report.setdefault('warnings',[]).append('Native SRGB metadata absent; engine default-color sampling: '+str(ref))
-        elif srgb is False and authored_srgb_decode(native_info):
-            # A native sidecar omits SRGB only when it is the engine default (true). The
-            # shipping sampler decodes such a texture before the material reads it, so a
-            # builder's linear-mask assumption (T_Swirly_Noise rust breakup) never wins.
-            srgb=True; self.report.setdefault('notes',[]).append('Authored sRGB texture decoded as colour: '+str(ref))
-        role='color' if srgb is True else 'normal' if srgb=='normal' else 'data'
+        if ref is None or ref=='':
+            if not required: return self._missing(ref,False,FileNotFoundError('Missing exact texture reference'))
+            return self._unset_image(uv,label,srgb)
+        sampling_role='albedo' if srgb is None or srgb is True else 'data'
         try:
+            native_info=self.index.texture_info(ref) if hasattr(self.index,'texture_info') else None
+            native_info={} if native_info is None else native_info
+            if srgb is None:
+                if 'SRGB' in native_info: srgb=bool(native_info['SRGB'])
+                else:
+                    srgb=True; self.report.setdefault('warnings',[]).append('Native SRGB metadata absent; engine default-color sampling: '+str(ref))
+            elif srgb is False and authored_srgb_decode(native_info):
+                srgb=True; self.report.setdefault('notes',[]).append('Authored sRGB texture decoded as colour: '+str(ref))
+            elif srgb is True and native_info.get('SRGB',True) is False:
+                srgb=False; self.report.setdefault('notes',[]).append('Authored linear texture sampled raw: '+str(ref))
+            role='color' if srgb is True else 'normal' if srgb=='normal' else 'data'
             reference=package_ref(ref,getattr(self.index,'mount_aliases',None))
             if layer is not None and hasattr(layer,'is_output'): raise NotImplementedError('Dynamic slice must be expanded into explicit authored-source samples')
             if layer is not None and hasattr(self.index,'array_reference'): reference=self.index.array_reference(reference,int(layer)); layer=None
@@ -203,16 +280,22 @@ class Graph:
                 # alpha of 0 (CX mask, CR roughness) would blacken the colour the material reads.
                 if image.alpha_mode!='CHANNEL_PACKED': image.alpha_mode='CHANNEL_PACKED'
                 self._state['images'][key]=image
-            return self.sample_image(image,uv,label,{'reference':reference,'role':role,'image_key':key,'native':native_info,'filter':'nearest' if native_info.get('Filter') in ('TF_Nearest','TextureFilter::TF_Nearest','nearest') else 'linear','address':'clamp' if native_info.get('AddressX') in ('TA_Clamp','TextureAddress::TA_Clamp','clamp') and native_info.get('AddressY') in ('TA_Clamp','TextureAddress::TA_Clamp','clamp') else 'repeat'})
-        except (FileNotFoundError,KeyError) as error: return self._missing(ref,required,error)
+            return self.sample_image(image,uv,label,{'reference':reference,'role':role,'sampling_role':sampling_role,'image_key':key,'native':native_info,'filter':'nearest' if native_info.get('Filter') in ('TF_Nearest','TextureFilter::TF_Nearest','nearest') else 'linear','address':'clamp' if native_info.get('AddressX') in ('TA_Clamp','TextureAddress::TA_Clamp','clamp') and native_info.get('AddressY') in ('TA_Clamp','TextureAddress::TA_Clamp','clamp') else 'repeat'})
+        except (FileNotFoundError,KeyError) as error:
+            if engine_default_texture_ref(ref):
+                # Plugin/engine default textures (/MeshModelingToolsetExp/Textures/DefaultNormal) are not
+                # in the Pioneer paks; sample the same neutral stand-in as an unset parameter.
+                self.report.setdefault('warnings',[]).append('approximate: engine default texture not exported, neutral stand-in: '+str(ref))
+                return self._unset_image(uv,label or str(ref).rsplit('/',1)[-1],'data' if 'normal' in str(ref).casefold() else srgb)
+            return self._missing(ref,required,error)
     def sample_image(self,img,uv=None,label='',info=None):
         logical_uv=self.uv() if uv is None else uv
         metadata={} if info is None else info
-        sample_key=(img.as_pointer(),logical_uv.as_pointer(),metadata.get('filter','linear'),metadata.get('address','repeat'))
+        sample_key=(img.as_pointer(),logical_uv.as_pointer(),metadata.get('filter','linear'),metadata.get('address','repeat'),metadata.get('sampling_role'))
         if sample_key in self._state['samples']: return self._state['samples'][sample_key]
         with self.block('Source'):
             n=self.node('ShaderNodeTexImage',label); n.image=img
-            n.interpolation='Closest' if metadata.get('filter')=='nearest' else 'Linear'
+            n.interpolation='Cubic' if metadata.get('sampling_role')=='albedo' else 'Closest' if metadata.get('filter')=='nearest' else 'Linear'
             n.extension='EXTEND' if metadata.get('address')=='clamp' else 'REPEAT'
             self.set(n.inputs['Vector'],self.orient_uv(logical_uv))
             r,g,b=self.split(n.outputs['Color'])
@@ -224,18 +307,23 @@ class Graph:
             if 'flat_normal' not in self._state:
                 with self.block('Normal details'): self._state['flat_normal']=self.combine(0.,0.,1.)
             return self._state['flat_normal']
+        from .normal_math import ensure
         with self.block('Normal details'):
-            if isinstance(tex,dict): x,y=tex['r'],tex['g']
-            else: x,y,_=self.split(tex)
-            x=self.mul(self.sub(self.mul(x,2),1),strength); y=self.mul(self.sub(self.mul(y,2),1),strength)
-            z=self.math('SQRT',self.math('MAXIMUM',self.sub(1,self.add(self.mul(x,x),self.mul(y,y))),0))
-            return self.vector('NORMALIZE',self.combine(x,y,z))
+            if isinstance(tex,dict): horizontal,vertical=tex['r'],tex['g']
+            else: horizontal,vertical,_=self.split(tex)
+            node=self.node('ShaderNodeGroup','Decode tangent normal')
+            node.node_tree=ensure('decode',self.bpy)
+            for key,value in (('Red',horizontal),('Green',vertical),('Strength',strength)):
+                self.set(node.inputs[key],value)
+            return node.outputs['Normal']
     def rnm(self,a,b):
+        from .normal_math import ensure
         with self.block('Normal details'):
-            ax,ay,az=self.split(a); bx,by,bz=self.split(b)
-            t=self.combine(ax,ay,self.add(az,1)); u=self.combine(self.mul(bx,-1),self.mul(by,-1),bz)
-            amount=self.div(self.vector('DOT_PRODUCT',t,u),self.add(az,1))
-            return self.vector('NORMALIZE',self.vector('SUBTRACT',self.vector('SCALE',t,scale=amount),u))
+            node=self.node('ShaderNodeGroup','Reorient detail normal')
+            node.node_tree=ensure('rnm',self.bpy)
+            self.set(node.inputs['Base'],a)
+            self.set(node.inputs['Detail'],b)
+            return node.outputs['Normal']
     def normal_to_world(self,normal,uv_channel=0):
         with self.block('Normal details'):
             x,y,z=self.split(normal)
@@ -287,6 +375,20 @@ class Graph:
         return {'color':color,**channels,'node':color.node,'info':{'projection_status':'legacy-compatible','weights':weights,'coordinates':coordinates}}
     def _layout(self):
         arrange(self.tree)
+    def _retarget_albedo(self,target):
+        """Point arc_albedo_target at the tagged node wherever stage grouping moved it."""
+        pending=[self.tree]; seen=set()
+        while pending:
+            tree=pending.pop()
+            if tree is None or tree.as_pointer() in seen: continue
+            seen.add(tree.as_pointer())
+            for n in tree.nodes:
+                if n.get('dr_albedo_target'):
+                    target=dict(target,tree=tree.name,node=n.name)
+                    self.mat['arc_albedo_node']=n.name; self.mat['arc_albedo_target']=json.dumps(target,sort_keys=True)
+                    return target
+                if n.type=='GROUP': pending.append(n.node_tree)
+        return target
     def finish(self,color,roughness=.5,metallic=0,normal=None,specular=.5,emission=None,cloth=0,alpha=1,emission_strength=1,response=None):
         if self._state['finished']: raise RuntimeError('Graph has already been committed')
         # Shared User Controls group between game values and the BSDF (neutral defaults are exact).
@@ -344,10 +446,28 @@ class Graph:
         for n in previous: root.nodes.remove(n)
         for old in groups.values():
             if old!=self.tree and old.users==0: self.bpy.data.node_groups.remove(old)
-        wrapper.name='DR.Material'; wrapper.label='DR native material flow'; out.name='DR.Output'; out.label='DR.Output'
-        self._state['finished']=True
+        wrapper.name='DR.Material'; wrapper.label='Arc Native Look'; out.name='DR.Output'; out.label='Material Output'
+        self._state['finished']=True; self._state.pop('frame_refs',None)
         from .. import graph_layout as _graph_layout
-        _graph_layout.tidy_tree(root)
+        _tag=getattr(_graph_layout,'tag',None)
+        if _tag is not None:
+            _tag(wrapper,stage='Look',role='surface'); _tag(out,stage='Output',role='output')
+        _finalize=getattr(_graph_layout,'finalize_tree',None)
+        if _finalize is not None:
+            # Builder done: fold the owned flow into plain stage groups. Node refs taken
+            # before this point are stale; late callers only add new nodes through block().
+            try:
+                from .driven_values import hoist_driven_values
+                hoist_driven_values(self.tree)  # grouping skips trees that hold drivers
+                _finalize(self.tree,collapse=True,force=True)
+                # Grouping moved the cached sockets; a late image() must build fresh ones.
+                for key in ('uv','samples','orientation_cache'): self._state[key]={}
+                self._state['oriented']=set(); self._state['world_normals']=set(); self._state.pop('flat_normal',None)
+                self._retarget_albedo(target)
+            except Exception as exc:
+                self.report.setdefault('warnings',[]).append('Stage grouping skipped: '+str(exc))
+        (_finalize or _graph_layout.tidy_tree)(root)
+        root['arc_layout_ver']=getattr(_graph_layout,'LAYOUT_VER',1)
         seen=set(); pending=[root]; unique_count=0
         while pending:
             current=pending.pop(); key=current.as_pointer()
@@ -368,11 +488,3 @@ def triplanar_reference(position,normal,size=100):
     x,y,z=(position[0]*scale,-position[1]*scale,position[2]*scale)
     absolute=tuple(abs(v) for v in normal); denominator=max(sum(absolute),1e-8)
     return ((y,z,0.),(x,z,0.),(x,y,0.)),tuple(v/denominator for v in absolute)
-
-
-
-
-
-
-
-

@@ -25,8 +25,10 @@ spec = importlib.util.spec_from_file_location(
 addon = importlib.util.module_from_spec(spec)
 sys.modules[PACKAGE] = addon
 spec.loader.exec_module(addon)
-catalog = importlib.import_module(PACKAGE + ".niagara_catalog")
-niagara = importlib.import_module(PACKAGE + ".niagara_fx")
+# niagara_catalog.py and niagara_fx.py were merged into Niagara/niagara.py (commit 5f70ddb).
+catalog = importlib.import_module(PACKAGE + ".Niagara.niagara")
+niagara = catalog
+operators = importlib.import_module(PACKAGE + ".Shared.operators")
 pak = importlib.import_module(PACKAGE + ".Shared.pak_extract")
 
 
@@ -42,7 +44,8 @@ class Scene(dict):
 
 class NiagaraOperatorModeTests(unittest.TestCase):
     def setUp(self):
-        scratch = Path(os.environ["DR_NIAGARA_TEST_ROOT"])
+        scratch = Path(os.environ.get("DR_NIAGARA_TEST_ROOT") or os.environ.get("DATARAIDERS_TEST_TEMP") or tempfile.gettempdir())
+        scratch.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=scratch)
         self.root = Path(self.temp.name)
         self.entry = catalog.get_entry("NS_Break_WindowBlinds")
@@ -54,7 +57,7 @@ class NiagaraOperatorModeTests(unittest.TestCase):
             use_selected=True, filepath="",
             report=lambda level, message: self.reports.append(message),
         )
-        self.operator = addon.operators.ARC_OUTFITS_OT_ImportNiagaraFX
+        self.operator = operators.ARC_OUTFITS_OT_ImportNiagaraFX
 
     def tearDown(self):
         self.temp.cleanup()
@@ -95,7 +98,8 @@ class NiagaraOperatorModeTests(unittest.TestCase):
         self.assertEqual(result, {"FINISHED"})
         extraction.assert_called_once()
         self.assertEqual(Path(imported[0][0]), expected)
-        self.assertEqual(self.scene.arc_ns_json_path, str(expected))
+        # Catalog imports must not overwrite Settings > Effect File.
+        self.assertEqual(self.scene.arc_ns_json_path, "")
 
     def test_files_mode_skips_pak_even_when_pak_folder_is_configured(self):
         self.scene.arc_import_source = "FILES"
@@ -122,7 +126,7 @@ class NiagaraOperatorModeTests(unittest.TestCase):
              patch.object(niagara, "import_ns_json", return_value=(fake_root, {}, [])):
             result = self.operator.execute(self.action, self.context)
         self.assertEqual(result, {"FINISHED"})
-        self.assertEqual(self.scene.arc_ns_json_path, str(source))
+        self.assertEqual(self.scene.arc_ns_json_path, "")
 
 
 if __name__ == "__main__":

@@ -63,7 +63,7 @@ class AppearanceFeedbackTests(unittest.TestCase):
 
     def test_facial_color_registered_and_cleaned_up(self):
         source = (ROOT / "Outfit_Accessories/properties.py").read_text(encoding="utf-8-sig")
-        self.assertEqual(source.count('"arc_appearance_facial_hair_color"'), 3)
+        self.assertEqual(source.count('"arc_appearance_facial_hair_color"'), 4)  # register, cleanup, sync, tooltip
 
     def test_missing_selected_preview_queues_without_discovery(self):
         bpy = self.modules["bpy"]

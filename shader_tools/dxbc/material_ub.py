@@ -164,7 +164,7 @@ def unary(op, a):
         return Value('Float', np.floor(x))
     raise NotImplementedError(op)
 
-def _run(ops, parameter):
+def _run(ops, parameter, texture_dimensions=None):
     stack = []
     for o in ops:
         op = o['op']
@@ -196,6 +196,26 @@ def _run(ops, parameter):
             idx = [(0 if n0 == 1 and i != 255 else i) for i in o['indices'][:o['count']]]
             comps = [a.comps[i] if i < n0 else 0 for i in idx]
             stack.append(Value(a.kind, comps, a.note))
+        elif op in ('TextureSize', 'TexelSize'):
+            if texture_dimensions is None:
+                raise Unsupported('missing observed texture dimensions')
+            supplied = texture_dimensions(o)
+            try:
+                unconverted = np.asarray(supplied, dtype=object)
+            except (TypeError, ValueError, OverflowError) as error:
+                raise Unsupported('invalid observed texture dimensions') from error
+            if unconverted.shape != (3,) or any(isinstance(value, (bool, np.bool_)) for value in unconverted):
+                raise Unsupported('invalid observed texture dimensions')
+            observed = np.asarray(supplied)
+            if observed.dtype.kind not in ('i', 'u', 'f'):
+                raise Unsupported('invalid observed texture dimensions')
+            dimensions = observed.astype(np.float64)
+            if dimensions.shape != (3,) or not np.isfinite(dimensions).all() or (dimensions <= 0).any() or (dimensions != np.floor(dimensions)).any():
+                raise Unsupported('invalid observed texture dimensions')
+            values = dimensions.astype(F)
+            if not np.isfinite(values).all():
+                raise Unsupported('unrepresentable observed texture dimensions')
+            stack.append(Value('Float', values if op == 'TextureSize' else F(1) / values))
         elif op == 'RuntimeVirtualTextureUniform':
             stack.append(Value('Unresolved', np.zeros(4), f"RVT(texture={o['texture']},vector={o['vector']})"))
         else:
@@ -204,7 +224,7 @@ def _run(ops, parameter):
         raise ValueError('stack not singular')
     return stack[0]
 
-def _evaluate_raw(path, resource):
+def _evaluate_raw(path, resource, texture_dimensions=None):
     d = json.load(gzip.open(path))
     chain = d['chain']
     u = chain[0]['json']['LoadedMaterialResources'][resource]['LoadedShaderMap']['Content']['MaterialCompilationOutput']['UniformExpressionSet']
@@ -241,7 +261,8 @@ def _evaluate_raw(path, resource):
     for k, pre in enumerate(u['UniformPreshaders']):
         ops = decode(data, pd['Names'], pre['OpcodeOffset'], pre['OpcodeSize'])
         params = sorted({o['parameter'] for o in ops if o['op'] == 'Parameter'})
-        result = run(ops, lambda index: Value('Float', resolved[index]['value']))
+        result = run(ops, lambda index: Value('Float', resolved[index]['value']),
+                     lambda operation: _observed_texture_dimensions(chain, operation, texture_dimensions))
         for fi in range(pre['NumFields']):
             field = u['UniformPreshaderFields'][pre['FieldIndex'] + fi]
             t = field['Type']
@@ -283,14 +304,42 @@ class Unsupported(Exception):
     pass
 
 
-def run(ops, parameter):
+def _observed_texture_dimensions(chain, operation, observations):
+    if observations is None:
+        raise Unsupported('missing observed texture dimensions')
+    info = operation['parameter']
+    unnamed = (info['name'], info['index'], info['association']) == ('None', -1, 2)
+    if info['association'] != 0 and not unnamed:
+        raise Unsupported('texture dimension association')
+    texture = None
+    for link in chain[:-1]:
+        for entry in link['json']['Properties'].get('TextureParameterValues', []):
+            parameter = entry['ParameterInfo']
+            if (parameter['Name'], parameter['Index'], parameter['Association'].split('::')[-1]) == (info['name'], info['index'], 'GlobalParameter') and entry.get('ParameterValue'):
+                texture = entry['ParameterValue']['ObjectPath'].rsplit('.', 1)[0]
+                break
+        if texture is not None:
+            break
+    if texture is None:
+        base = chain[-1]['json']
+        references = (base.get('CachedExpressionData') or base['Properties']['CachedExpressionData'])['ReferencedTextures']
+        if type(operation['texture']) is not int or not 0 <= operation['texture'] < len(references):
+            raise Unsupported('invalid observed texture reference')
+        reference = references[operation['texture']]
+        texture = (reference['ObjectPath'] if isinstance(reference, dict) else reference).rsplit('.', 1)[0]
+    if texture not in observations:
+        raise Unsupported('missing observed texture dimensions: ' + texture)
+    return observations[texture]
+
+
+def run(ops, parameter, texture_dimensions=None):
     try:
-        return _run(ops, parameter)
+        return _run(ops, parameter, texture_dimensions)
     except NotImplementedError as error:
         raise Unsupported(str(error)) from error
 
 
-def evaluate(shadermaps_path):
+def evaluate(shadermaps_path, texture_dimensions=None):
     d = json.load(gzip.open(shadermaps_path))
     chain = d["chain"]
     resources = chain[0]["json"]["LoadedMaterialResources"]
@@ -300,7 +349,7 @@ def evaluate(shadermaps_path):
         if n["ParameterInfo"]["Association"].split("::")[-1] != "GlobalParameter":
             raise Unsupported("association:" + n["ParameterInfo"]["Association"])
     try:
-        d, u, resolved, buffer, origin, unresolved = _evaluate_raw(shadermaps_path, ri)
+        d, u, resolved, buffer, origin, unresolved = _evaluate_raw(shadermaps_path, ri, texture_dimensions)
         computed = layout_hash(u["UniformBufferLayoutInitializer"])
     except (NotImplementedError, KeyError) as error:
         raise Unsupported(str(error)) from error

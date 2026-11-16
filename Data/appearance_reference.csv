@@ -73,7 +73,7 @@ backpack,backpack|Occult,65ef0952c1f4b6ce,Occult,Occult,BackpackContainer,Charac
 backpack,backpack|OxygenTank,8e6a933bccd58754,Oxygen Tank,OxygenTank,BackpackContainer,Characters/Backpacks/Containers/OxygenTank/OxygenTank/SM_OxygenTank_OxygenTank.pskx,1,OxygenTank
 backpack,backpack|Portmanteau,ab3f67bf30106435,Portmanteau,Portmanteau,BackpackContainer,Characters/Backpacks/Containers/Portmanteau/Bag/SM_Portmanteau_Bag.pskx,1,Portmanteau
 backpack,backpack|RollupBackpack,5939022510db6603,Rollup Backpack,RollupBackpack,BackpackContainer,Characters/Backpacks/Containers/RollupBackpack/Backpack/SM_RollupBackpack_Backpack.pskx,1,Rollupbackpack
-backpack,backpack|Scout,d3d7482bd4d25dd2,Scout,Scout,BackpackContainer,,0,Scout
+backpack,backpack|Scout,d3d7482bd4d25dd2,Scout,Scout,BackpackContainer,Characters/Backpacks/Containers/Scout/ScoutContainer/SK_Scout_ScoutContainer.psk,1,Scout
 backpack,backpack|Seasack,1ff34dc306bbf08b,Seasack,Seasack,BackpackContainer,Characters/Backpacks/Containers/Seasack/Seasack/SK_Seasack_Seasack.psk,1,Seasack
 backpack,backpack|SurvivalBag,632746a5b28187f0,Survival Bag,SurvivalBag,BackpackContainer,Characters/Backpacks/Containers/SurvivalBag/Props/SK_SurvivalBag_Props.psk,1,Survival
 backpack,backpack|TacticalBag,cc6cb21048cc7a7a,Tactical Bag,TacticalBag,BackpackContainer,Characters/Backpacks/Containers/TacticalBag/TacticalBag/SM_TacticalBag_TacticalBag.pskx,1,TacticalBag
@@ -81,7 +81,7 @@ backpack,backpack|TechBag,9397fe8590dcb69a,Tech Bag,TechBag,BackpackContainer,Ch
 backpack,backpack|TennisBag,c19c56cca87aaf7b,Tennis Bag,TennisBag,BackpackContainer,Characters/Backpacks/Containers/TennisBag/TennisBag/SM_TennisBag_TennisBag.pskx,1,TennisBag
 backpack,backpack|Toolbox,78386a1db3c0144d,Toolbox,Toolbox,BackpackContainer,Characters/Backpacks/Containers/Toolbox/Toolbox/SM_Toolbox_Toolbox.pskx,1,Toolbox
 backpack,backpack|TrashPile,629a30625cca4543,Trash Pile,TrashPile,BackpackContainer,Characters/Backpacks/Containers/TrashPile/TrashPileBag/SM_TrashPile_TrashPileBag.pskx,1,TrashPileBag
-backpack,backpack|TreasureChest,5ae3873862d695ea,Treasure Chest,TreasureChest,BackpackContainer,,0,TreasureChest
+backpack,backpack|TreasureChest,5ae3873862d695ea,Treasure Chest,TreasureChest,BackpackContainer,Characters/Backpacks/Containers/TreasureChest/Treasurechest/SM_TreasureChest_Treasurechest.pskx,1,TreasureChest
 backpack,backpack|TreasureHunterBackpack,a1f77ca4df88ae57,Treasure Hunter Backpack,TreasureHunterBackpack,BackpackContainer,Characters/Backpacks/Containers/TreasureHunterBackpack/TreasureHunterBackpack/SM_TreasureHunterBackpack_TreasureHunterBackpack.pskx,1,TreasureHunterBackpack
 backpack,backpack|Trunk,4d48c51e9c3b7113,Trunk,Trunk,BackpackContainer,Characters/Backpacks/Containers/Trunk/Trunk/SM_Trunk_Trunk.pskx,1,Trunk
 backpack,backpack|Tvoltpack,0ad2ebd84d046b9b,Tvoltpack,Tvoltpack,BackpackContainer,Characters/Backpacks/Containers/Tvoltpack/Backpack/SK_Tvoltpack_Backpack.psk,1,Tvoltpack

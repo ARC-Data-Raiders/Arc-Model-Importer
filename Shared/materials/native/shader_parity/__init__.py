@@ -54,7 +54,7 @@ def apply_uemodel_slots(obj, uemodel_path):
             canonical = pak_catalog.canonical_path(path)
         except ValueError:
             continue
-        mi_json = os.path.join(pak_extract.cache_dir(), *canonical.split("/")) + ".json"
+        mi_json = os.path.join(pak_extract.cache_path(), *canonical.split("/")) + ".json"
         if not os.path.isfile(mi_json) or not planned(mi_json):
             continue
         mat = dispatch._get_or_build_shared_mi_material(canonical.rsplit("/", 1)[-1], mi_json, uemodel_path, obj=obj)

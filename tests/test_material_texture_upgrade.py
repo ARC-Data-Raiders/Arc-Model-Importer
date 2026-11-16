@@ -5,7 +5,7 @@ from unittest.mock import patch
 ROOT=Path(os.environ.get('DATARAIDERS_TEST_REPOSITORY',Path(__file__).resolve().parents[1])).resolve()
 STAGE=ROOT
 PACKAGE='_warm_material_metadata_upgrade_probe'
-SELECTED={'_mapping_sha256','_extraction_revision','mesh_cache_is_current','_material_companion','_raw_material_record','_material_hierarchy_dependencies','_raw_material_digest','_material_dependency_signature','_material_receipt_root','material_hierarchy_is_current','_write_material_receipt','_installed_material_provenance','raw_material_metadata_plan','complete_raw_material_metadata','ensure_cached_material_hierarchy','saved_material_package','extraction_command'}
+SELECTED={'_mapping_sha256','_extraction_revision','mesh_cache_is_current','_material_companion','_raw_material_record','_material_hierarchy_dependencies','_raw_material_digest','_material_dependency_signature','_material_receipt_root','material_hierarchy_is_current','_write_material_receipt','_installed_material_provenance','raw_material_metadata_plan','complete_raw_material_metadata','ensure_cached_material_hierarchy','saved_material_package','extraction_command','_join_material_metadata_prefetch'}
 
 def load_pak(source_root=None):
     source_root=Path(source_root or STAGE)
@@ -14,7 +14,9 @@ def load_pak(source_root=None):
     asset=types.ModuleType(PACKAGE+'.Shared.materials.rebuild.assets');asset.invalidate_index=lambda:None;sys.modules[asset.__name__]=asset
     path=source_root/'Shared/pak_extract.py';tree=ast.parse(path.read_text(encoding='utf-8'));nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in SELECTED]
     if {n.name for n in nodes}!=SELECTED:raise AssertionError('metadata function coverage changed')
-    module=types.ModuleType(PACKAGE+'.Shared.pak_extract');module.__package__=PACKAGE+'.Shared';module.__dict__.update(os=os,re=__import__('re'),subprocess=subprocess,hashlib=hashlib,json=json,lru_cache=functools.lru_cache,_CREATE_NO_WINDOW=0,_log_tail=lambda value:value[-1000:])
+    module=types.ModuleType(PACKAGE+'.Shared.pak_extract');module.__package__=PACKAGE+'.Shared';module.__dict__.update(os=os,re=__import__('re'),subprocess=subprocess,hashlib=hashlib,json=json,lru_cache=functools.lru_cache,_CREATE_NO_WINDOW=0,_log_tail=lambda value:value[-1000:],time=__import__('time'),_PREFETCH={'job':None},start_pending_previews=lambda:None)
+    # run_arcpak's serve path needs a live exporter; its per-call fallback is the subprocess.run the tests patch.
+    module.run_arcpak=lambda command,timeout=600,**kw:module.subprocess.run(command,capture_output=True,text=True,timeout=timeout,creationflags=0)
     exec(compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)]+nodes,type_ignores=[])),str(path),'exec'),module.__dict__);return module
 
 def write_json(path,value):

@@ -38,18 +38,18 @@ def profile(mi_path):
     with open(mi_path, encoding='utf-8-sig') as fh:
         data = json.load(fh)
     s, c, t = dict(_SCALARS), dict(_COLORS), dict(_TEXTURES)
-    flat = data if isinstance(data, dict) and 'Parameters' in data else {}
+    flat = data if isinstance(data, dict) and ('Parameters' in data or ('Type' not in data and 'Exports' not in data)) else {}
     props = {} if flat else (utils.first_ue_export(data, 'MaterialInstanceConstant') or {}).get('Properties') or {}
     for item in props.get('ScalarParameterValues', []):
         s[item['ParameterInfo']['Name']] = float(item['ParameterValue'])
     for item in props.get('VectorParameterValues', []):
         c[item['ParameterInfo']['Name']] = tuple(float(item['ParameterValue'].get(k, 1)) for k in 'RGBA')
     for item in props.get('TextureParameterValues', []):
-        t[item['ParameterInfo']['Name']] = (item.get('ParameterValue') or {}).get('ObjectPath', '')
-    params = flat.get('Parameters') or {}
+        t[item['ParameterInfo']['Name']] = fur_shells.textures._material_ref_path(item.get('ParameterValue'))
+    params = flat.get('Parameters') or flat
     s.update({k: float(v) for k, v in (params.get('Scalars') or {}).items()})
     c.update({k: tuple(float(v.get(ch, 1)) for ch in 'RGBA') for k, v in (params.get('Colors') or {}).items()})
-    t.update({k: v for k, v in (flat.get('Textures') or {}).items() if k in _TEXTURES})
+    t.update({k: fur_shells.textures._material_ref_path(v) for k, v in (flat.get('Textures') or {}).items() if k in _TEXTURES})
     bpo = props.get('BasePropertyOverrides') or (params.get('Properties') or {}).get('BasePropertyOverrides') or {}
     return {'scalars': s, 'colors': c, 'textures': t, 'clip': float(bpo.get('OpacityMaskClipValue', .3333)),
             'two_sided': bool(bpo.get('TwoSided', False))}
@@ -68,6 +68,8 @@ def setup_material(mat, mi_path):
     p = profile(mi_path)
     s, c, t = p['scalars'], p['colors'], p['textures']
     c = {k: _stencil_grade(v) if k in ('RootColor', 'TipColor', 'FresnelColor') else v for k, v in c.items()}
+    from .fur_controls import material_overrides, color_control, value_control
+    saved = material_overrides(mat)
     mat.use_nodes = True
     mat.node_tree.nodes.clear()
     g = fur_shells._Graph(mat, mi_path)
@@ -94,9 +96,9 @@ def setup_material(mat, mi_path):
     rim = g.v('SCALE', rim, g.m('MULTIPLY', g.m('MULTIPLY', uy, .2), mask))
     # PS 68-79: root->tip by sat(index/(ShellCount+1)) + 1-G; Color at strand*ColorTiling * ColorTint.
     factor = g.m('ADD', g.sat(g.m('DIVIDE', index, s['ShellCount'] + 1)), g.m('SUBTRACT', 1, green))
-    tint = g.lerp_color(g.color(c['RootColor']), g.color(c['TipColor']), factor)
+    tint = g.lerp_color(color_control(g, 'Root Color', c['RootColor'], saved), color_control(g, 'Tip Color', c['TipColor'], saved), factor)
     color = g.sample(t['Color'], g.v('SCALE', strand, s['ColorTiling']), 'Native Color', data='furmask' in t['Color'].lower())['color']
-    albedo = g.clamp_color(g.v('ADD', rim, g.v('MULTIPLY', g.v('MULTIPLY', color, g.color(c['ColorTint'])), tint)))
+    albedo = g.clamp_color(g.v('ADD', rim, g.v('MULTIPLY', g.v('MULTIPLY', color, color_control(g, 'Color Tint', c['ColorTint'], saved)), tint)))
     # PS 81-82: the cooked bias is 0.12 for Roughness 0.56 / SubSurfaceScattering 0.88 (1-SSS; no MI separates them yet).
     rough = g.sat(g.m('ADD', g.m('SUBTRACT', 1, g.m('MULTIPLY', gradient, mask)), 1 - s['SubSurfaceScattering']))
     # PS 83-95: keep mask*sat(G+1-MaskAlphaCutoff)/(index*AlphaCutoff) * edge fade >= clip; index 0 divides by 0 and is kept.
@@ -107,6 +109,7 @@ def setup_material(mat, mi_path):
     keep = g.m('GREATER_THAN', g.m('MULTIPLY', ratio, fade), p['clip'] - 1e-6)
     alpha = g.m('MAXIMUM', g.m('LESS_THAN', index, .5), keep, 'Native masked shell cutoff')
     bsdf = g.nodes.new('ShaderNodeBsdfPrincipled'); bsdf.label = 'Native dry weapon fur (BSDF approximation)'
+    rough = g.sat(g.m('ADD', rough, value_control(g, 'Roughness Offset', 0., saved)))
     for name, value in [('Base Color', albedo), ('Roughness', rough), ('Metallic', min(max(s['Metallic'], 0.), 1.)),
                         ('Specular IOR Level', g.m('MINIMUM', g.m('MULTIPLY', mask, mask), 1)), ('Alpha', alpha)]:
         g.put(bsdf.inputs[name], value)
@@ -174,5 +177,10 @@ def apply_shell_offsets(obj):
         arm = next((x for x in obj.modifiers if x.type == 'ARMATURE'), None)
         if arm:
             obj.modifiers.move(list(obj.modifiers).index(mod), list(obj.modifiers).index(arm))
+    from .fur_controls import ensure_length_control
+    ensure_length_control(mod)
+    arm = next((item for item in obj.modifiers if item.type == 'ARMATURE'), None)
+    if arm and list(obj.modifiers).index(mod) > list(obj.modifiers).index(arm):
+        obj.modifiers.move(list(obj.modifiers).index(mod), list(obj.modifiers).index(arm))
     obj['arc_weapon_fur_max_offset_m'] = float(np.linalg.norm(offset, axis=1).max())
     return int((np.linalg.norm(offset, axis=1) > 0).sum())

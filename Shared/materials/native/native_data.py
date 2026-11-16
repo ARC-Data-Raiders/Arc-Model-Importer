@@ -4,6 +4,7 @@ source/namespace-unverified; catalog facts do not certify its image association.
 """
 from pathlib import Path
 from threading import RLock
+from collections.abc import Mapping
 import json,sys,os
 from .loaded_identity import require_loaded_identity
 from .catalog import NativeCatalog
@@ -61,13 +62,22 @@ def reviewed_source(manifest=None):
   if manifest_identity is not None and bank_identity is not None:_CACHE[(manifest_identity,bank_identity)]=result
   return result
 
+class _ProjectedFacts(Mapping):
+ def __init__(self, entries, project):
+  from ..rebuild.assets import package
+  self._entries=entries;self._project=project;self._keys={package(key).casefold():key for key in entries};self._cache={}
+ def __iter__(self):return iter(self._keys)
+ def __len__(self):return len(self._keys)
+ def __getitem__(self,key):
+  if key not in self._cache:self._cache[key]=self._project(self._entries[self._keys[key]])
+  return self._cache[key]
+
 def current_metadata(source=None):
  source=reviewed_source() if source is None else source
  if source is None:return {'materials':{},'textures':{},'provenance':{'kind':'local-export-only','diagnostic':'No reviewed current-native bank activated; local FModel observations only'}}
  if 'metadata' in source:return source['metadata']
  from ..rebuild.assets import package
- materials={}
- for key,entry in source['catalog'].payload['records'].items():
+ def material(entry):
   facts=serialize(entry['facts']);full=facts['package'];parent=facts['parent'];record={'package':package(full),'parent':'' if parent.casefold()==full.casefold() else package(parent),'name':full.rsplit('/',1)[-1]}
   for kind in ('textures','scalars','switches','settings'):record[kind]=facts[kind]
   record['colors']={name:tuple(value) for name,value in facts['colors'].items()}
@@ -78,16 +88,17 @@ def current_metadata(source=None):
    for kind,values in scope['parameters'].items():record[kind].update({prefix+name:value for name,value in values.items()})
   record['native_fact_sources']=[{**source['provenance'],'package':full,'source':serialize(entry['source']),'facts_sha256':entry['facts_sha256'],'semantic_sha256':entry['semantic_sha256']}]
   if full.casefold() in source['limits']:record['_native_render_limit']=list(source['limits'][full.casefold()])
-  materials[package(full).casefold()]=record
- textures={package(ref).casefold():{**serialize(fact['properties']),'Type':fact['type'],'NativeTextureKind':fact.get('native_texture_kind'),'NativeResourceKind':fact.get('resource_kind'),'source':serialize(fact['source']),**({'ArrayLayerCount':fact['slice_count'],'Mips':[{'SizeZ':fact['slice_count']}]} if 'slice_count' in fact else {})} for ref,fact in source['catalog'].payload['textures'].items()}
- source['metadata']={'materials':materials,'textures':textures,'provenance':source['provenance']};return source['metadata']
+  return record
+ def texture(fact):
+  return {**serialize(fact['properties']),'Type':fact['type'],'NativeTextureKind':fact.get('native_texture_kind'),'NativeResourceKind':fact.get('resource_kind'),'source':serialize(fact['source']),**({'ArrayLayerCount':fact['slice_count'],'Mips':[{'SizeZ':fact['slice_count']}]} if 'slice_count' in fact else {})}
+ source['metadata']={'materials':_ProjectedFacts(source['catalog'].payload['records'],material),'textures':_ProjectedFacts(source['catalog'].payload['textures'],texture),'provenance':source['provenance']};return source['metadata']
 
 def current_presets():
  source=reviewed_source()
  if source is None:return {}
  if 'presets' in source:return source['presets']
  from ..rebuild.assets import package
- data=current_metadata()['materials'];prefix='/Game/Pioneer/MaterialLibrary/M_Presets/';result={}
+ data=current_metadata(source)['materials'];prefix='/Game/Pioneer/MaterialLibrary/M_Presets/';result={}
  def merged(ref,chain=()):
   key=package(ref).casefold()
   if key in chain:raise ValueError('Native preset parent cycle')
@@ -100,8 +111,9 @@ def current_presets():
   if record['parent']:value=merged(record['parent'],chain+(key,))
   for kind in value:value[kind].update(record[kind])
   return value
- for full,entry in source['catalog'].payload['records'].items():
+ for full in source['catalog'].payload['records']:
   if not full.startswith(prefix) or '/' in full[len(prefix):]:continue
+  entry=source['catalog'].payload['records'][full]
   name=full[len(prefix):]
   if full.casefold() in source['limits']:
    result[name]={'name':name,'package':full,'_native_render_limit':list(source['limits'][full.casefold()]),'source_provenance':source['provenance']};continue

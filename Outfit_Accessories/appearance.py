@@ -12,6 +12,8 @@ import hashlib
 import json
 import os
 import re
+import sys
+import time
 from typing import Iterable
 
 import bpy
@@ -27,6 +29,12 @@ _APPEARANCE_CSV_CACHE: dict = {}
 _PREVIEW_COLLECTION = None
 _PREVIEW_FAILED: set[str] = set()
 _PREVIEW_PENDING: dict[str, str] = {}
+_LOW_RESOLUTION_PENDING: dict[str, str] = {}
+_LOW_RESOLUTION_PRIORITY: set[str] = set()
+_PREVIEW_GENERATION = 0
+_PREVIEW_PATH_GENERATION = 0
+_PREVIEW_PRIORITY: set[str] = set()
+_PREVIEW_RETRY_AFTER: dict[str, float] = {}
 _ICON_SCAN_CACHE: dict = {}
 _OUTFIT_PREVIEW_JOBS: dict = {}
 _OUTFIT_PREVIEW_READY: dict = {}
@@ -107,6 +115,9 @@ def invalidate_cache() -> None:
     _CHOICE_BY_ID.clear()
     _APPEARANCE_CSV_CACHE.clear()
     _ICON_SCAN_CACHE.clear()
+    _PAK_GEAR_RETRY.clear()
+    _GEAR_INDEX["index"] = None
+    _prepare_browse_choices()
 
 
 def default_appearance_csv_path() -> str:
@@ -394,6 +405,8 @@ def register_previews() -> None:
         import bpy.utils.previews as _previews
 
         _PREVIEW_COLLECTION = _previews.new()
+        if not bpy.app.timers.is_registered(_prepare_browse_choices):
+            bpy.app.timers.register(_prepare_browse_choices, first_interval=0.01)
     except Exception as exc:
         print(f"Arc Raiders: appearance preview collection unavailable: {exc}")
         _PREVIEW_COLLECTION = None
@@ -401,9 +414,19 @@ def register_previews() -> None:
 
 def unregister_previews() -> None:
     global _PREVIEW_COLLECTION, _OUTFIT_PREVIEW_EXECUTOR
+    from . import preview_assets
+    preview_assets.unregister()
+    if bpy.app.timers.is_registered(_prepare_browse_choices):
+        bpy.app.timers.unregister(_prepare_browse_choices)
     if bpy.app.timers.is_registered(_prepare_sidebar_previews):
         bpy.app.timers.unregister(_prepare_sidebar_previews)
+    if bpy.app.timers.is_registered(_prepare_low_resolution_previews):
+        bpy.app.timers.unregister(_prepare_low_resolution_previews)
+    _LOW_RESOLUTION_PENDING.clear()
+    _LOW_RESOLUTION_PRIORITY.clear()
     _PREVIEW_PENDING.clear()
+    _PREVIEW_PRIORITY.clear()
+    _PREVIEW_RETRY_AFTER.clear()
     for timer, future in _OUTFIT_PREVIEW_JOBS.values():
         if bpy.app.timers.is_registered(timer):
             bpy.app.timers.unregister(timer)
@@ -448,17 +471,70 @@ def _gear_icon_spec(choice: dict) -> tuple[str, str]:
     return "", ""
 
 
+def _prepare_packaged_preview_paths():
+    global _PREVIEW_PATH_GENERATION
+    _PREVIEW_PATH_GENERATION += 1
+    folder = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'ui_icons', 'appearance')
+    try:
+        with os.scandir(folder) as entries:
+            _CACHE['packaged_preview_paths'] = {os.path.splitext(entry.name)[0]: entry.path for entry in entries
+                                                if entry.name.endswith(('.avif', '.png', '.webp')) and entry.is_file()}
+    except OSError:
+        _CACHE['packaged_preview_paths'] = {}
+
+
+def _prepare_browse_choices():
+    _prepare_packaged_preview_paths()
+    load_appearance_csv()
+    list_head_choices()
+    _list_all_hair_choices()
+    list_hair_color_choices()
+    for kind in _GEAR_KINDS:
+        list_gear_choices(kind)
+    _appearance_browse_manifest()
+    return None
+
+
 def _packaged_appearance_preview(stem: str) -> str:
     """AVIF icon under ``assets/ui_icons/appearance`` named by its game texture stem."""
     if not stem or os.path.basename(stem) != stem or "/" in stem or "\\" in stem:
         return ""
-    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "ui_icons", "appearance", stem + ".avif")
-    return path if os.path.isfile(path) else ""
+    paths = _CACHE.get('packaged_preview_paths')
+    if paths is None:
+        if not bpy.app.timers.is_registered(_prepare_browse_choices):
+            bpy.app.timers.register(_prepare_browse_choices, first_interval=0.01)
+        return ''
+    return paths.get(stem, '')
 
 
 def _browse_icon_file_for_choice(choice: dict) -> str:
     filename = _appearance_browse_manifest().get("icons", {}).get((choice or {}).get("id"), "")
     return _packaged_appearance_preview(filename)
+
+
+def browser_preview_path(context, kind: str, ident: str) -> str:
+    '''Resolve bundled previews without scene changes or extraction.'''
+    if kind != 'weapon':
+        return ''
+    from ..Weapons import weapon_assets, weapon_catalog
+    entry = weapon_catalog.weapon_by_key(ident)
+    if not entry:
+        return ''
+    levels = weapon_assets.bundled().get('weapons', {}).get(entry['stem'], {}).get('quality_levels', [0, 1, 2, 3])
+    tier = str(levels[0]) if len(levels) == 1 else '3'
+    path = weapon_assets.bundled_preview(entry, 'OFF', tier=tier)
+    if not path or not path.is_file():
+        path = weapon_assets.bundled_preview(entry, 'OFF')
+    return str(path or '')
+
+
+def preview_image_size(icon_id: int) -> tuple[int, int]:
+    '''Return loaded preview dimensions, or zeroes for an unknown ID.'''
+    if icon_id and _PREVIEW_COLLECTION is not None:
+        for preview in _PREVIEW_COLLECTION.values():
+            if preview.icon_id == icon_id:
+                return tuple(preview.image_size)
+    return (0, 0)
 
 
 def _icon_skin_dirs(segment: str) -> list[str]:
@@ -574,72 +650,196 @@ def _icon_file_for_choice(choice: dict) -> str:
 
 
 def _crop_sidebar_preview(preview):
-    """Trim only the UI thumbnail; preserve source art and reference cards."""
-    import numpy as np
+    """Trim and cap only the UI thumbnail, without changing source artwork."""
+    from . import preview_cache
     width, height = preview.image_size
     if not width or not height:
-        return
-    pixels = np.asarray(preview.image_pixels_float[:], dtype=np.float32).reshape(height, width, 4)
-    visible = pixels[:, :, 3] > 1.0 / 255.0
-    if np.all(visible):
-        corners = pixels[[0, 0, -1, -1], [0, -1, 0, -1], :3]
-        background = np.median(corners, axis=0)
-        edge = np.concatenate((pixels[0, :, :3], pixels[-1, :, :3], pixels[:, 0, :3], pixels[:, -1, :3]))
-        tolerance = 2.0 / 255.0
-        if (np.max(np.abs(corners - background)) <= tolerance
-                and np.mean(np.max(np.abs(edge - background), axis=1) <= tolerance) > 0.98):
-            visible &= np.max(np.abs(pixels[:, :, :3] - background), axis=2) > tolerance
-    ys, xs = np.nonzero(visible)
-    if not len(xs):
-        return
-    # Keep the actual artwork rectangle. Re-padding it into a square adds
-    # avoidable vertical margins to Blender's already-square icon widget.
-    cropped = np.ascontiguousarray(pixels[ys.min():ys.max()+1, xs.min():xs.max()+1])
-    h, w = cropped.shape[:2]
-    preview.image_size = (w, h)
-    preview.image_pixels_float = cropped.ravel()
+        return None
+    rgba = preview_cache.thumbnail(preview.image_pixels[:], width, height)
+    height, width = rgba.shape[:2]
+    preview.image_size = (width, height)
+    preview.image_pixels = rgba.view("int32").ravel().tolist()
+    return rgba
 
 
+def _load_low_resolution_thumbnail(thumbnail):
+    global _PREVIEW_GENERATION
+    key = os.path.normcase(thumbnail)
+    if time.monotonic() < _PREVIEW_RETRY_AFTER.get(key, 0):
+        return 0
+    register_previews()
+    if _PREVIEW_COLLECTION is None:
+        return 0
+    if key not in _PREVIEW_COLLECTION:
+        try:
+            from . import preview_assets
+            pixels = preview_assets.thumbnail_pixels(thumbnail)
+            if pixels is not None:
+                import numpy as np
+                dimensions, rgba = pixels
+                preview = _PREVIEW_COLLECTION.new(key)
+                preview.image_size = dimensions
+                preview.image_pixels = np.frombuffer(rgba, dtype=np.int32).tolist()
+            else:
+                preview = _PREVIEW_COLLECTION.load(key, thumbnail, 'IMAGE')
+            if not all(preview.image_size):
+                raise ValueError('Empty bundled thumbnail')
+            _PREVIEW_GENERATION += 1
+            _PREVIEW_RETRY_AFTER.pop(key, None)
+        except Exception:
+            if key in _PREVIEW_COLLECTION:
+                del _PREVIEW_COLLECTION[key]
+            _PREVIEW_RETRY_AFTER[key] = time.monotonic() + 2.0
+            return 0
+    return int(_PREVIEW_COLLECTION[key].icon_id)
 
-def _preview_icon_id_for_path(path: str) -> int:
-    """Return a cached icon; prepare missing images outside panel drawing."""
+
+def _low_resolution_icon_id(path, *, prepare=False, priority=False):
+    from . import preview_assets
+    thumbnail = preview_assets.low_resolution_path(path)
+    if not thumbnail:
+        return 0
+    key = os.path.normcase(thumbnail)
+    if _PREVIEW_COLLECTION is not None and key in _PREVIEW_COLLECTION:
+        return int(_PREVIEW_COLLECTION[key].icon_id)
+    if time.monotonic() < _PREVIEW_RETRY_AFTER.get(key, 0):
+        return 0
+    if prepare:
+        _LOW_RESOLUTION_PENDING.pop(key, None)
+        _LOW_RESOLUTION_PRIORITY.discard(key)
+        return _load_low_resolution_thumbnail(thumbnail)
+    _LOW_RESOLUTION_PENDING.setdefault(key, thumbnail)
+    if priority:
+        _LOW_RESOLUTION_PRIORITY.add(key)
+    if not bpy.app.timers.is_registered(_prepare_low_resolution_previews):
+        bpy.app.timers.register(_prepare_low_resolution_previews, first_interval=0.001)
+    return 0
+
+
+def _tag_preview_redraw():
+    manager = getattr(bpy.context, 'window_manager', None)
+    for window in getattr(manager, 'windows', ()):
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+    icon_browser = sys.modules.get(__package__ + '.icon_browser')
+    if icon_browser is not None:
+        icon_browser._tag_browser_redraw(bpy.context)
+
+
+def _prepare_low_resolution_previews():
+    deadline = time.perf_counter() + 0.012
+    prepared = 0
+    while _LOW_RESOLUTION_PENDING:
+        key = next((pending for pending in _LOW_RESOLUTION_PENDING if pending in _LOW_RESOLUTION_PRIORITY), next(iter(_LOW_RESOLUTION_PENDING)))
+        thumbnail = _LOW_RESOLUTION_PENDING.pop(key)
+        _LOW_RESOLUTION_PRIORITY.discard(key)
+        _load_low_resolution_thumbnail(thumbnail)
+        prepared += 1
+        if prepared >= 15 or time.perf_counter() >= deadline:
+            break
+    if prepared:
+        _tag_preview_redraw()
+    return 0.001 if _LOW_RESOLUTION_PENDING else None
+
+
+def _preview_icon_id_for_path(path: str, *, priority=True) -> int:
+    if not path:
+        return 0
+    from . import preview_assets
+    if preview_assets.low_resolution_path(path):
+        return _low_resolution_icon_id(path)
+    return _queued_preview_icon_id_for_path(path, priority=priority)
+
+
+def _queued_preview_icon_id_for_path(path: str, *, priority=True) -> int:
+    """Read memory immediately; schedule disk/decode work outside drawing."""
     if not path:
         return 0
     key = os.path.normcase(path)
     if key in _PREVIEW_FAILED:
-        return 0
+        if time.monotonic() < _PREVIEW_RETRY_AFTER.get(key, 0):
+            return 0
+        _PREVIEW_FAILED.discard(key)
     if _PREVIEW_COLLECTION is not None and key in _PREVIEW_COLLECTION:
         try:
             return int(_PREVIEW_COLLECTION[key].icon_id)
         except Exception:
             _PREVIEW_FAILED.add(key)
+            _PREVIEW_RETRY_AFTER[key] = time.monotonic() + 2.0
             return 0
-    _PREVIEW_PENDING[key] = path
+    _PREVIEW_PENDING.setdefault(key, path)
+    if priority:
+        _PREVIEW_PRIORITY.add(key)
     if not bpy.app.timers.is_registered(_prepare_sidebar_previews):
-        bpy.app.timers.register(_prepare_sidebar_previews, first_interval=0.01)
+        bpy.app.timers.register(_prepare_sidebar_previews, first_interval=0.001)
     return 0
 
 
 def _prepare_sidebar_previews():
+    global _PREVIEW_GENERATION
+    from . import preview_cache
+    if _LOW_RESOLUTION_PRIORITY:
+        return 0.001
     if not _PREVIEW_PENDING:
         return None
-    key = next(iter(_PREVIEW_PENDING))
-    path = _PREVIEW_PENDING.pop(key)
-    try:
-        register_previews()
-        if _PREVIEW_COLLECTION is None or not os.path.isfile(path):
+    register_previews()
+    deadline = time.perf_counter() + 0.012
+    prepared = 0
+    while _PREVIEW_PENDING:
+        key = next((pending for pending in _PREVIEW_PENDING if pending in _PREVIEW_PRIORITY), next(iter(_PREVIEW_PENDING)))
+        source = _PREVIEW_PENDING.pop(key)
+        _PREVIEW_PRIORITY.discard(key)
+        cached = ""
+        try:
+            if _PREVIEW_COLLECTION is None:
+                raise RuntimeError("Preview collection unavailable")
+            try:
+                cached = preview_cache.cache_path(source)
+            except OSError:
+                pass
+            retained = cached and os.path.isfile(cached)
+            if retained:
+                try:
+                    preview = _PREVIEW_COLLECTION.load(key, cached, "IMAGE")
+                    if not all(preview.image_size):
+                        raise ValueError("Empty cached preview image")
+                except Exception:
+                    if key in _PREVIEW_COLLECTION:
+                        del _PREVIEW_COLLECTION[key]
+                    try:
+                        os.remove(cached)
+                    except OSError:
+                        pass
+                    retained = False
+            if not retained:
+                preview = _PREVIEW_COLLECTION.load(key, source, "IMAGE")
+                if not all(preview.image_size):
+                    raise ValueError("Empty preview image")
+                rgba = _crop_sidebar_preview(preview)
+                if cached and rgba is not None:
+                    try:
+                        preview_cache.store(cached, rgba)
+                    except OSError:
+                        pass
+            _PREVIEW_FAILED.discard(key)
+            _PREVIEW_RETRY_AFTER.pop(key, None)
+        except Exception:
+            if _PREVIEW_COLLECTION is not None and key in _PREVIEW_COLLECTION:
+                del _PREVIEW_COLLECTION[key]
+            if cached and os.path.isfile(cached):
+                try:
+                    os.remove(cached)
+                except OSError:
+                    pass
             _PREVIEW_FAILED.add(key)
-        elif key not in _PREVIEW_COLLECTION:
-            preview = _PREVIEW_COLLECTION.load(key, path, "IMAGE")
-            _crop_sidebar_preview(preview)
-    except Exception:
-        _PREVIEW_FAILED.add(key)
-    manager = getattr(bpy.context, "window_manager", None)
-    for window in getattr(manager, "windows", ()):
-        for area in window.screen.areas:
-            if area.type == "VIEW_3D":
-                area.tag_redraw()
-    return 0.01 if _PREVIEW_PENDING else None
+            _PREVIEW_RETRY_AFTER[key] = time.monotonic() + 2.0
+        prepared += 1
+        if prepared >= 4 or time.perf_counter() >= deadline:
+            break
+    _PREVIEW_GENERATION += 1
+    _tag_preview_redraw()
+    return 0.001 if _PREVIEW_PENDING else None
 
 
 def bald_preview_icon_id() -> int:
@@ -684,6 +884,20 @@ def _outfit_preview_stems(row: dict) -> list[str]:
     return stems
 
 
+def _bundled_outfit_preview(row):
+    from .outfit_catalog import NPC_PREVIEW_STEMS
+    npc = NPC_PREVIEW_STEMS.get(row.get("ST"))
+    if npc:
+        portrait = _packaged_appearance_preview(npc)
+        if portrait:
+            return portrait
+    for stem in _outfit_preview_stems(row):
+        bundled = _shipped_outfit_preview_path(stem)
+        if bundled:
+            return bundled
+    return ""
+
+
 def _queue_missing_outfit_preview(context, row, *, allow_extract=False):
     """Resolve retained selected artwork; extraction requires an explicit import."""
     scene = context.scene
@@ -700,7 +914,7 @@ def _queue_missing_outfit_preview(context, row, *, allow_extract=False):
     _OUTFIT_PREVIEW_ATTEMPTED.add(key)
 
     def finish():
-        global _OUTFIT_PREVIEW_EXECUTOR
+        global _OUTFIT_PREVIEW_EXECUTOR, _PREVIEW_GENERATION, _PREVIEW_PATH_GENERATION
         try:
             future = _OUTFIT_PREVIEW_JOBS[key][1]
             if future is None:
@@ -732,6 +946,8 @@ def _queue_missing_outfit_preview(context, row, *, allow_extract=False):
             source = future.result()
             if source:
                 _OUTFIT_PREVIEW_READY[ready_key] = source
+                _PREVIEW_GENERATION += 1
+                _PREVIEW_PATH_GENERATION += 1
                 for window in bpy.context.window_manager.windows:
                     for area in window.screen.areas:
                         area.tag_redraw()
@@ -766,18 +982,18 @@ def outfit_preview_icon_id(context) -> int:
         return 0
     try:
         from ..Shared import importing as _importing
+        from . import properties
 
-        csv_path = _importing.get_outfit_csv_path(context)
-        rows = _importing.load_outfit_csv(csv_path)
+        csv_path, _mtime = properties.outfit_csv_state(context)
+        rows = properties._CSV_ROWS_MEMO.get(csv_path, ())
         row = _importing.find_outfit_row(rows, key)
     except Exception:
         return 0
     if not row:
         return 0
-    for stem in _outfit_preview_stems(row):
-        bundled = _shipped_outfit_preview_path(stem)
-        if bundled:
-            return _preview_icon_id_for_path(bundled)
+    bundled = _bundled_outfit_preview(row)
+    if bundled:
+        return _preview_icon_id_for_path(bundled)
     return _preview_icon_id_for_path(_queue_missing_outfit_preview(context, row))
 
 
@@ -1114,7 +1330,7 @@ def list_hair_color_choices() -> list[dict]:
 
 def make_hair_color_enum_items(self, context):
     choices = list_hair_color_choices()
-    items = [("NONE", "From style MI", "Use ColorA/B on the hairstyle MI (e.g. *_Black)")]
+    items = [("NONE", "Original Color", "Keep the color that ships with the hairstyle")]
     for i, choice in enumerate(choices):
         items.append((choice["id"], choice["label"], choice.get("path") or "", i + 1))
     return items
@@ -1167,7 +1383,7 @@ def make_head_enum_items(self, context):
 def make_hair_enum_items(self, context):
     choices = list_hair_choices()
     legacy_numbers = {choice["id"]: i + 1 for i, choice in enumerate(_list_all_hair_choices())}
-    items = [("NONE", "None / bald", "Skip hair import")]
+    items = [("NONE", "Select a Style...", "Skip hair import")]
     ready = sum(1 for c in choices if c.get("has_mesh"))
     missing = len(choices) - ready
     for i, choice in enumerate(choices):
@@ -1178,7 +1394,7 @@ def make_hair_enum_items(self, context):
     elif missing and ready:
         items[0] = (
             "NONE",
-            "None / bald",
+            "Select a Style...",
             f"{ready} importable · {missing} JSON-only (no mesh)",
         )
     return items
@@ -1186,7 +1402,7 @@ def make_hair_enum_items(self, context):
 
 def make_facial_hair_enum_items(self, context):
     numbers = {choice["id"]: i + 1 for i, choice in enumerate(_list_all_hair_choices())}
-    items = [("NONE", "None", "Skip facial hair import", 0)]
+    items = [("NONE", "Select a Style...", "Skip facial hair import", 0)]
     for choice in list_facial_hair_choices():
         label = choice["label"].removeprefix("Facial · ")
         items.append((choice["id"], label, choice.get("path") or "No mesh exported", numbers[choice["id"]]))
@@ -1199,7 +1415,8 @@ def list_gear_choices(kind: str) -> list[dict]:
     if kind not in _GEAR_KINDS:
         return []
     cache_key = f"gear:{kind}"
-    if cache_key in _CACHE:
+    retry = _PAK_GEAR_RETRY.get(kind)
+    if cache_key in _CACHE and (retry is None or time.monotonic() < retry):
         return _CACHE[cache_key]
     choices = _choices_from_csv(kind) or []
     for choice in choices:
@@ -1209,8 +1426,156 @@ def list_gear_choices(kind: str) -> list[dict]:
                 choice = dict(choice)
                 choice["label"] = f"{label} (no mesh)"
                 choice = _register_choice(choice)
+    extra = _pak_gear_choices(kind, choices)
+    if extra is None:
+        # Index not readable yet: serve the CSV list, retry the pak merge later.
+        _CACHE[cache_key] = choices
+        _PAK_GEAR_RETRY[kind] = time.monotonic() + 30.0
+        return choices
+    _PAK_GEAR_RETRY.pop(kind, None)
+    choices = choices + extra
     _CACHE[cache_key] = choices
     return choices
+
+
+_PAK_GEAR_ROOTS = {
+    "backpack": ("Characters/Backpacks/Containers/", "BackpackContainer"),
+    "attachment": ("Characters/Backpacks/Attachments/", "BackpackAttachment"),
+    "charm": ("Characters/Backpacks/Charms/", "BackpackCharm"),
+    "raider_tool": ("Characters/RaiderTool/", "RaiderTool"),
+}
+_PAK_CONTENT_PREFIX = "PioneerGame/Content/Pioneer/"
+_PAK_GEAR_RETRY: dict[str, float] = {}
+
+
+_GEAR_INDEX: dict = {"index": None, "pending": False}
+
+
+def _load_gear_pak_index():
+    """Timer: read the index off the draw path, then let gear lists merge it."""
+    _GEAR_INDEX["pending"] = False
+    try:
+        from ..Shared import pak_extract
+        index = pak_extract.load_pak_index(bpy.context.scene)
+    except Exception:
+        index = None
+    if index:
+        _GEAR_INDEX["index"] = index
+        for kind in _PAK_GEAR_ROOTS:
+            _CACHE.pop(f"gear:{kind}", None)
+            _PAK_GEAR_RETRY.pop(kind, None)
+        try:
+            for window in bpy.context.window_manager.windows:
+                for area in window.screen.areas:
+                    if area.type == "VIEW_3D":
+                        area.tag_redraw()
+        except Exception:
+            pass
+    return None
+
+
+def _gear_pak_index():
+    """Current build's ArcPak index, or None. Never reads disk or reindexes here.
+
+    Enum callbacks run inside draw, so the first miss queues one timer that loads
+    the index; lists served before that merge pak items on the next retry.
+    """
+    index = _GEAR_INDEX["index"]
+    if index:
+        return index
+    if not _GEAR_INDEX["pending"]:
+        try:
+            bpy.app.timers.register(_load_gear_pak_index, first_interval=0.2)
+            _GEAR_INDEX["pending"] = True
+        except Exception:
+            pass
+    return None
+
+
+def pak_gear_items(index, kind: str) -> dict[str, dict]:
+    """Group indexed gear meshes by item folder; pure, testable without bpy data.
+
+    Returns {folder_casefold: {"folder", "mesh", "icon_stem"}}. ``mesh`` is the
+    package path chosen for import; ``icon_stem`` names the Items/.../Skins
+    folder that holds the item's data asset and UI icon.
+    """
+    from . import pak_catalog
+    root, segment = _PAK_GEAR_ROOTS[kind]
+    mesh_prefix = (_PAK_CONTENT_PREFIX + root).casefold()
+    skins_prefix = (_PAK_CONTENT_PREFIX + "Items/Characters/Skins/" + segment + "/").casefold()
+    skins: dict[str, str] = {}
+    meshes: dict[str, list[str]] = {}
+    for path in index["paths"]:
+        low = path.casefold()
+        if low.startswith(skins_prefix):
+            rest = path[len(skins_prefix):].split("/")
+            if len(rest) >= 2 and rest[-1].casefold().startswith("da_oi_"):
+                skins.setdefault(rest[0].casefold(), rest[0])
+        elif low.startswith(mesh_prefix) and pak_catalog.is_mesh(path):
+            folder = path[len(mesh_prefix):].split("/")[0]
+            meshes.setdefault(folder, []).append(path)
+    result = {}
+    for folder, paths in meshes.items():
+        def rank(p):
+            parts = p[len(mesh_prefix):].split("/")
+            sub = parts[1].casefold() if len(parts) > 2 else ""
+            return (sub not in skins and sub != folder.casefold(), not parts[-1].casefold().startswith("sk_"), len(p), p.casefold())
+        mesh = min(paths, key=rank)
+        parts = mesh[len(mesh_prefix):].split("/")
+        stems = [parts[1]] if len(parts) > 2 else []
+        stems += [folder, folder + "_A"]
+        icon_stem = next((skins[s.casefold()] for s in stems if s.casefold() in skins), "")
+        if not icon_stem:
+            icon_stem = next((v for k, v in sorted(skins.items()) if k.startswith(folder.casefold())), folder)
+        result.setdefault(folder.casefold(), {"folder": folder, "mesh": mesh, "icon_stem": icon_stem})
+    return result
+
+
+def _pak_gear_choices(kind: str, existing: list[dict]) -> list[dict] | None:
+    """Indexed gear folders the packaged CSV lacks, appended after CSV rows.
+
+    Appending keeps every existing enum number stable in saved scenes.
+    """
+    if kind not in _PAK_GEAR_ROOTS:
+        return []
+    if time.monotonic() < _PAK_GEAR_RETRY.get(kind, 0.0):
+        return None
+    index = _gear_pak_index()
+    if not index:
+        return None
+    root = _PAK_GEAR_ROOTS[kind][0].casefold()
+    known = set()
+    for choice in existing:
+        rel = str(choice.get("rel_path") or "").replace("\\", "/").casefold()
+        if rel.startswith(root):
+            known.add(rel[len(root):].split("/")[0])
+    extra = []
+    for folder_key, item in sorted(pak_gear_items(index, kind).items()):
+        if folder_key in known:
+            continue
+        folder = item["folder"]
+        rel = item["mesh"][len(_PAK_CONTENT_PREFIX):]
+        leaf = rel.rsplit("/", 1)[-1].casefold()
+        rel += ".psk" if leaf.startswith("sk_") else ".pskx"
+        key = f"{kind}|{folder}"
+        extra.append({
+            "id": _choice_id(key),
+            "label": _humanize(folder),
+            "path": "",
+            "folder": folder,
+            "has_mesh": True,
+            "segment": _PAK_GEAR_ROOTS[kind][1],
+            "kind": kind,
+            "icon_stem": item["icon_stem"],
+            "rel_path": rel,
+            "key": key,
+            "source": "pak",
+        })
+    if extra:
+        _apply_gear_display_names(kind, extra)
+        for choice in extra:
+            _register_choice(choice)
+    return extra
 
 
 def list_backpack_colorways(choice_id=None) -> list[dict]:
@@ -1248,6 +1613,8 @@ def _make_gear_enum_items(kind: str, empty_label: str):
         choices = list_gear_choices(kind)
         items = [("NONE", "None", f"Skip {kind.replace('_', ' ')} import")]
         for i, choice in enumerate(choices):
+            if not choice.get("has_mesh"):
+                continue
             tip = choice.get("path") or choice.get("rel_path") or "No mesh on disk"
             items.append((choice["id"], choice["label"], tip[:60], i + 1))
         if not choices:
@@ -1540,10 +1907,10 @@ def _mesh_from_pak(rel: str) -> str:
         from ..Shared import pak_extract
 
         if not pak_extract.configured_dir(bpy.context.scene):
-            _mesh_from_pak.last_reason = "Paks folder is not set"
+            _mesh_from_pak.last_reason = "The game folder is not set"
             return ""
         if not pak_extract.resolve_usmap(bpy.context.scene):
-            _mesh_from_pak.last_reason = "usmap is missing"
+            _mesh_from_pak.last_reason = "The game mappings file is missing"
             return ""
         meshes = pak_extract.ensure_rels(bpy.context.scene, [rel])
     except Exception as exc:
@@ -1836,6 +2203,61 @@ def _copy_backpack_slot_bones_from_strap(master, strap_arm, extra_bones=()) -> l
     return [f"Added backpack slot bones: {', '.join(created)}"]
 
 
+def _slot_bone_donor(master):
+    """Armature other than *master* that has every backpack slot bone."""
+    for obj in bpy.data.objects:
+        if obj is master or not _object_alive(obj) or obj.type != "ARMATURE":
+            continue
+        names = obj.data.bones
+        if "spine_03" in names and all(n in names for n in _BACKPACK_SLOT_BONES):
+            return obj
+    return None
+
+
+def _backpack_carriers() -> list:
+    """Armatures with a backpack container bone-parented to ``slot_container``."""
+    out = []
+    for obj in bpy.data.objects:
+        if not _object_alive(obj) or obj.type != "ARMATURE":
+            continue
+        for child in obj.children:
+            role = str(child.get("arc_assembly_role") or "")
+            if child.parent_type == "BONE" and child.parent_bone == "slot_container" and (
+                role == "Backpack" or not role
+            ):
+                out.append(obj)
+                break
+    return out
+
+
+def gear_target_armature(context):
+    """Rig an attachment / charm / raider tool belongs on.
+
+    These hang on the backpack. A selected rig without a backpack would put
+    them on that rig's rest-pose sockets, away from the posed character that
+    wears the pack, so the backpack carrier wins: same import slot first,
+    then the lowest slot.
+    """
+    from . import import_layout as _layout
+
+    picked = find_target_armature(context)
+    carriers = _backpack_carriers()
+    if picked is not None and picked in carriers:
+        return picked
+    if carriers:
+        slot = _layout.slot_of_object(picked) if picked is not None else None
+        same = [c for c in carriers if slot is not None and _layout.slot_of_object(c) == slot]
+        if same:
+            return same[0]
+
+        def _slot_key(o):
+            s = _layout.slot_of_object(o)
+            return 10 ** 9 if s is None else s
+
+        return min(carriers, key=_slot_key)
+    return picked or _reusable_strap_armature(require_empty_backpack=False)
+
+
 def ensure_backpack_slot_bones(master, strap_arm=None, *, discard_strap: bool = True, extra_bones=()) -> tuple[bool, list[str]]:
     """Ensure ``slot_frame`` / ``slot_container`` exist on *master*.
 
@@ -1848,13 +2270,17 @@ def ensure_backpack_slot_bones(master, strap_arm=None, *, discard_strap: bool = 
     if master is None or not _object_alive(master) or master.type != "ARMATURE":
         return False, ["No target armature for backpack slots"]
     have = {b.name for b in master.data.bones}
-    if all(n in have for n in ("slot_frame", "slot_container", "backpackframe")) and all(
+    if all(n in have for n in _BACKPACK_SLOT_BONES) and all(
         n in have for n in (extra_bones or ())
     ):
         return True, []
 
     owned_import = False
     strap_objs: list = []
+    if (strap_arm is None or not _object_alive(strap_arm)) and not extra_bones:
+        # Another rig in the scene already carries the slot bones (same
+        # skeleton): copy from it instead of importing a throwaway strap.
+        strap_arm = _slot_bone_donor(master)
     if strap_arm is None or not _object_alive(strap_arm):
         strap_path = resolve_backpack_strap_mesh() or locate_appearance_mesh(_BACKPACK_STRAP_RELS[0])
         if not strap_path:
@@ -1902,7 +2328,7 @@ def ensure_backpack_slot_bones(master, strap_arm=None, *, discard_strap: bool = 
                     pass
 
     have = {b.name for b in master.data.bones} if _object_alive(master) else set()
-    ok_bones = all(n in have for n in ("slot_frame", "slot_container", "backpackframe"))
+    ok_bones = all(n in have for n in _BACKPACK_SLOT_BONES)
     return ok_bones, msgs
 
 
@@ -1965,6 +2391,28 @@ def merge_into_armature(
         if _object_alive(o) and o.type == "ARMATURE" and o != master
     ]
     meshes = [o for o in new_objects if _object_alive(o) and o.type == "MESH"]
+    from mathutils import Matrix
+    from ..Animations.animation_import import _psa_translation_scale
+
+    bpy.context.view_layer.update()
+    aligned_meshes = {}
+    master_units = _psa_translation_scale(master)
+    for arm in new_arms:
+        original_world = arm.matrix_world.copy()
+        aligned_world = master.matrix_world @ Matrix.Scale(master_units / _psa_translation_scale(arm), 4)
+        delta = aligned_world @ original_world.inverted()
+        for mesh in meshes:
+            if mesh.find_armature() == arm:
+                aligned_meshes[mesh] = delta @ mesh.matrix_world
+        arm.matrix_world = aligned_world
+    if snap_skinned_world:
+        component = master.matrix_world @ Matrix.Scale(
+            master_units / importing.ue_import_unit_scale(bpy.context.scene), 4,
+        )
+        for mesh in meshes:
+            if mesh not in aligned_meshes and not _mesh_is_skinned(mesh):
+                aligned_meshes[mesh] = component @ mesh.matrix_world
+    bpy.context.view_layer.update()
     if new_arms:
         from collections import Counter
 
@@ -1986,9 +2434,6 @@ def merge_into_armature(
         master = bpy.context.active_object
         alive_meshes = [m for m in meshes if _object_alive(m)]
         rig.cleanup_duplicate_bones(master, shared, alive_meshes)
-    # Skinned parts import at world origin with their own armature; after join the
-    # master may sit on an offset pad — snap mesh world = master so they land on
-    # the outfit. Static backpack/frame gear is bone-parented separately.
     master_mw = master.matrix_world.copy()
     for obj in meshes:
         if not _object_alive(obj):
@@ -1997,6 +2442,12 @@ def merge_into_armature(
             if mod.type == "ARMATURE":
                 mod.object = master
                 mod.use_deform_preserve_volume = True
+        if obj in aligned_meshes:
+            obj.parent = master
+            obj.parent_type = "OBJECT"
+            obj.matrix_parent_inverse = Matrix.Identity(4)
+            obj.matrix_world = aligned_meshes[obj]
+            continue
         if not snap_skinned_world or not _mesh_is_skinned(obj):
             try:
                 if obj.parent is None or (
@@ -2134,10 +2585,17 @@ def _import_uemodel_outfit(mesh_path: str) -> list:
     scale = importing.ue_import_unit_scale()
     try:
         # Skeletal meshes: [armature, *meshes] with WEIGHTS groups (PSK route parity).
-        return uemodel_import.import_uemodel_skinned(mesh_path, scale=scale) or []
+        objs = uemodel_import.import_uemodel_skinned(mesh_path, scale=scale) or []
     except Exception as exc:
-        print(f"[arc-uemodel] skinned import failed ({mesh_path}): {exc}")
-        return uemodel_import.try_import_uemodel_v10(mesh_path, scale=scale) or []
+        print(f"[arc-uemodel] skinned import failed ({mesh_path}): {type(exc).__name__}: {exc!r}")
+        objs = uemodel_import.try_import_uemodel_v10(mesh_path, scale=scale) or []
+        if not objs:
+            uemodel_import.set_import_error(
+                f"skinned: {type(exc).__name__}: {exc!r}; fallback: {uemodel_import.last_import_error()}")
+        return objs
+    uemodel_import.set_import_error(
+        "" if objs else "import_uemodel_v10 produced no meshes (no LOD with vertices and indices)")
+    return objs
 
 
 def _import_colored_hair(path, hair_mi, colour_json, import_slot):
@@ -2317,8 +2775,12 @@ def import_appearance_mesh(path: str, *, body_variant: str = "NONE", hair_mi: st
                     )
             except Exception:
                 tip = " — re-export as ActorX .psk if this is a skeletal mesh"
+            from ..Shared import uemodel_import as _uem
+
+            reason = _uem.last_import_error()
             return False, (
                 f"Could not import {os.path.basename(path)}{tip}"
+                + (f" — reason: {reason}" if reason else "")
             ), []
         from ..Shared.operators import apply_materials_to_object
 
@@ -2455,7 +2917,8 @@ def iter_appearance_parts(context, **kwargs):
     from ..Maps import staged_import
     from ..Shared.materials import dr_primary_operations as _dr_ops
     defer: list = []
-    count, msgs, objs = import_appearance_parts(context, defer_materials=defer, **kwargs)
+    removers: list = []
+    count, msgs, objs = import_appearance_parts(context, defer_materials=defer, replace_out=removers, **kwargs)
     staged_import.stage_placeholder([entry[0] for entry in defer])
     yield ("mesh", 1, 1, f"{sum(1 for o in objs if _object_alive(o) and o.type == 'MESH')} mesh(es) imported")
     total = len(defer)
@@ -2489,9 +2952,15 @@ def iter_appearance_parts(context, **kwargs):
     if any(str(o.get("arc_assembly_role") or "") in {"BackpackFrame", "BackpackStrap"} for o in alive):
         # Same pass as the sync path, run once real materials exist.
         from . import backpack_instances
+        from . import gear_cache as _gear_cache
+        _gear_cache.capture_pending(alive)
         shared = backpack_instances.share_backpack_data(alive, scene=context.scene)
         if shared["meshes_linked"] or shared["materials_linked"]:
             msgs.append("Shared identical backpack data: " + str(shared["meshes_linked"]) + " meshes, " + str(shared["materials_linked"]) + " materials")
+    # Replace: the old part goes only after the staged finish succeeds; cancel or failure keep it.
+    for remove_old in removers:
+        if not staged_import.after_success(remove_old):
+            msgs.extend(remove_old())
     return count, msgs, objs
 
 
@@ -2504,8 +2973,15 @@ def import_appearance_parts(
     standalone: bool = False,
     layout_slot: int | None = None,
     defer_materials: list | None = None,
+    replace_out: list | None = None,
+    explicit_plan: bool = False,
 ) -> tuple[int, list[str], list]:
     """Import body/head/hair from scene props for the given *roles*.
+
+    *explicit_plan* (operator destination plan): use *attach_to* /
+    *replace_selected* / *standalone* exactly as given, with no armature
+    rediscovery or auto-attach. Replace is transactional: the old part is
+    removed only after the new part imported; on failure only new objects go.
 
     *roles* is a set of ``"Body"`` / ``"Head"`` / ``"Hair"``. When omitted,
     imports whichever dropdowns are non-NONE (body always if Body requested).
@@ -2553,13 +3029,13 @@ def import_appearance_parts(
         colour_id = hair_color_choice(scene, hair_role)
         colour_path = resolve_hair_color_path(colour_id, scene) if colour_id != "NONE" else ""
         if colour_id != "NONE" and not colour_path:
-            msgs.append(f"{hair_role}: Selected Hair Color MI could not be loaded from the Pioneer folder or Paks")
+            msgs.append(f"{hair_role}: the selected hair color could not be loaded from the game files")
             want.discard(hair_role)
         hair_colours[hair_role] = colour_path
     do_replace = (
         bool(replace_selected)
         if replace_selected is not None
-        else bool(getattr(scene, "arc_appearance_replace_selected", False))
+        else getattr(scene, "arc_part_mode", "ADD") == "REPLACE"
     )
 
     jobs: list[tuple[str, str, str]] = []  # role, path, body_variant|hair hint
@@ -2671,23 +3147,25 @@ def import_appearance_parts(
                 "Characters/Backpacks/Frames/Default" + _pak_reason_suffix()
             )
 
-    if not standalone and attach_to is None and any(r in _GEAR_ATTACH_BONE or r == "BackpackStrap" for r, _p, _v in jobs):
+    if not explicit_plan and not standalone and attach_to is None and any(r in _GEAR_ATTACH_BONE or r == "BackpackStrap" for r, _p, _v in jobs):
         # Same pad as the outfit: hang the rack on slot bones instead of the feet.
         if any(r == "Backpack" for r, _p, _v in jobs):
             attach_to = armature_on_first_slot_missing("Backpack")
         else:
             # Accessories belong to the selected/existing rack, including one
             # already carrying a container. Only a new backpack needs a free pad.
-            attach_to = find_target_armature(context) or _reusable_strap_armature(require_empty_backpack=False)
+            attach_to = gear_target_armature(context)
 
     if not jobs:
         return 0, msgs or ["Nothing selected to import"], []
 
     prefer_slot = layout_slot
+    replace_victims: list = []
+    pad_arm = None
     if do_replace:
         # Prefer the outfit armature even when not merging (Add off) so we can
         # find the old part on that pad from a clothing-mesh selection.
-        pad_arm = attach_to if attach_to is not None else find_target_armature(context)
+        pad_arm = attach_to if (attach_to is not None or explicit_plan) else find_target_armature(context)
         if pad_arm is not None:
             from . import import_layout as _layout
 
@@ -2714,13 +3192,16 @@ def import_appearance_parts(
                     f"(select the outfit/part, or turn Replace Selected off)"
                 )
                 return 0, msgs, []
-            if victims:
-                msgs.extend(remove_appearance_objects(victims, keep_armature=pad_arm))
+            # Transactional: keep the old part until the new one imported.
+            replace_victims.extend(v for v in victims if v not in replace_victims)
 
     before = set(bpy.data.objects)
     # Track slot role per imported batch (Hair vs FacialHair).
     placed_roles: list[str] = []
     role_meshes: dict[str, list] = {}
+    failed_roles: set = set()
+    done_roles: set = set()
+    requested_roles = [r for r, _p, _v in jobs]
     for role, path, variant in jobs:
         hair_mi = "NONE"
         body_variant = "NONE"
@@ -2745,16 +3226,26 @@ def import_appearance_parts(
             _part = backpack_parts.get(os.path.normcase(os.path.abspath(path)))
             if _part:
                 post_material = lambda o, _p=_part: _bc.apply_material_bindings(o, _p)
-        ok, msg, objs = import_appearance_mesh(
-            path,
-            body_variant=body_variant,
-            hair_mi=hair_mi, import_slot=layout_slot,
-            hair_colour_json=hair_colours.get(role),
-            defer_materials=defer_materials,
-            post_material=post_material,
-        )
+        from . import gear_cache as _gear_cache
+
+        def _do_import(path=path, body_variant=body_variant, hair_mi=hair_mi, role=role, post_material=post_material):
+            return import_appearance_mesh(
+                path,
+                body_variant=body_variant,
+                hair_mi=hair_mi, import_slot=layout_slot,
+                hair_colour_json=hair_colours.get(role),
+                defer_materials=defer_materials,
+                post_material=post_material,
+            )
+
+        if role in _gear_cache.ROLES:
+            # Straps + frame never change: reuse the cached build while the pak source matches.
+            ok, msg, objs = _gear_cache.import_cached(role, path, _do_import, import_slot=layout_slot)
+        else:
+            ok, msg, objs = _do_import()
         if not ok:
             msgs.append(f"{role}: {msg}")
+            failed_roles.add(role)
             continue
         for obj in objs:
             if not _object_alive(obj):
@@ -2793,12 +3284,42 @@ def import_appearance_parts(
         role_meshes.setdefault(slot_role, []).extend(
             o for o in alive if o.type == "MESH"
         )
+        if any(o.type == "MESH" for o in alive):
+            done_roles.add(role)
         placed_roles.append(slot_role)
         label = "Facial Hair" if slot_role == "FacialHair" else role
         msgs.append(f"{label}: {os.path.basename(path)}")
     imported = [o for o in bpy.data.objects if o not in before and _object_alive(o)]
     if not new_objects:
         new_objects = imported
+
+    if do_replace and replace_victims:
+        new_meshes = [o for o in new_objects if _object_alive(o) and o.type == "MESH"]
+        # Every requested role must have imported its own mesh; any new mesh is not enough.
+        missing = [r for r in requested_roles if r in failed_roles or (
+            r not in done_roles and r not in ("BackpackFrame", "BackpackStrap", "CharmConnector"))]
+        if not new_meshes or missing:
+            # Failed replace: drop only what this call created, keep the old part.
+            for obj in [o for o in imported if _object_alive(o)]:
+                try:
+                    bpy.data.objects.remove(obj, do_unlink=True)
+                except Exception:
+                    pass
+            msgs.append("Replace failed: the new part did not import, the old part was kept")
+            return 0, msgs, []
+        # The old part stays until attach and finalize (and, staged, every material) succeed.
+        replace_old = [o for o in replace_victims if _object_alive(o) and o not in new_objects]
+    else:
+        replace_old = []
+
+    def _rollback_replace(reason):
+        for obj in [o for o in imported if _object_alive(o)]:
+            try:
+                bpy.data.objects.remove(obj, do_unlink=True)
+            except Exception:
+                pass
+        msgs.append(f"Replace failed: {reason}, the old part was kept")
+        return 0, msgs, []
 
     needs_backpack_slots = any(
         r in _GEAR_ATTACH_BONE for r in placed_roles
@@ -2844,6 +3365,8 @@ def import_appearance_parts(
                     msgs.append(f"{role_name} → bone '{bone_name}' ({n})")
             msgs.append(f"Attached to armature '{attach_to.name}'")
         except Exception as exc:
+            if replace_old:
+                return _rollback_replace(f"attach failed ({exc})")
             msgs.append(f"Attach failed: {exc}")
     elif needs_backpack_slots and new_objects:
         # No outfit in the scene: hang gear on the strap skeleton's rest pose.
@@ -2991,6 +3514,8 @@ def import_appearance_parts(
     if defer_materials is None and any(role in {"BackpackFrame", "BackpackStrap"} for role in placed_roles):
         # Staged path shares after the last material step (iter_appearance_parts).
         from . import backpack_instances
+        from . import gear_cache as _gear_cache
+        _gear_cache.capture_pending(new_objects)
         shared = backpack_instances.share_backpack_data(new_objects, scene=context.scene)
         if shared["meshes_linked"] or shared["materials_linked"]:
             msgs.append("Shared identical backpack data: " + str(shared["meshes_linked"]) + " meshes, " + str(shared["materials_linked"]) + " materials")
@@ -3002,6 +3527,13 @@ def import_appearance_parts(
     mesh_count = sum(
         1 for o in new_objects if _object_alive(o) and o.type == "MESH"
     )
+    if replace_old:
+        def _remove_old(_old=replace_old, _arm=pad_arm):
+            return remove_appearance_objects([o for o in _old if _object_alive(o)], keep_armature=_arm)
+        if replace_out is not None:
+            replace_out.append(_remove_old)
+        else:
+            msgs.extend(_remove_old())
     return mesh_count, msgs, [o for o in new_objects if _object_alive(o)]
 
 

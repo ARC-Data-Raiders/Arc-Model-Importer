@@ -1,7 +1,7 @@
 """Ship appearance UI icons as AVIF named by the original game texture stem.
 
 Source: installed Steam paks through ArcPak.Export.exe (static pak reads only).
-Output: assets/ui_icons/appearance/<T_UI_Icon_stem>.avif, long side <= 512, never upscaled.
+Output: assets/ui_icons/appearance/<T_UI_Icon_stem>.avif, long side <= 256, never upscaled.
 Rewrites the `icons` map in assets/appearance_browse.json to stems.
 
 Example: py -3.14 -B scripts/build_ui_icons_appearance.py --scratch "Z:/.../appearance" --remove-old
@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from Outfit_Accessories.pak_catalog import read_index  # noqa: E402
+from Outfit_Accessories.outfit_catalog import NPC_PREVIEW_STEMS  # noqa: E402
 from build_appearance_catalog import SEGMENTS, choose_icon, token  # noqa: E402
 
 GAME_PAKS = "C:/Program Files (x86)/Steam/steamapps/common/Arc Raiders/PioneerGame/Content/Paks"
@@ -30,13 +31,13 @@ if not os.environ.get("DATARAIDERS_ADDON_DIR"):
 ADDON = Path(os.environ["DATARAIDERS_ADDON_DIR"])
 INDEX = ADDON / "ArcPak/cache/indexes/pak-index-26439197.bin"
 EXE = ADDON / "ArcPak/ArcPak.Export.exe"
-USMAP = ROOT / "ArcPak/mappings/ArcRaiders_2.3.0_UE5.7.4_CL1438640.usmap"
+USMAP = ADDON / "ArcPak/mappings/ArcRaiders_2.3.0_UE5.7.4_CL1438640.usmap"
 OUT_DIR = ROOT / "assets/ui_icons/appearance"
 BROWSE = ROOT / "assets/appearance_browse.json"
 REFERENCE = ROOT / 'Data/appearance_reference.csv'
 OUTFIT_REFERENCE = ROOT / 'Data/outfit_reference.csv'
 OLD_FOLDERS = ["assets/appearance_previews", "assets/outfit_previews", "assets/hair_previews"]
-MAX_SIDE = 512
+MAX_SIDE = 256
 CHUNK = 100
 # Choice IDs whose game icon name does not follow the label. Each target is confirmed by its DA_OI item ref.
 CHOICE_STEM_OVERRIDES = {
@@ -61,7 +62,7 @@ def extract(paths: list[str], scratch: Path) -> dict[str, Path]:
             cmd.extend(["--path", path])
         result = subprocess.run(cmd, capture_output=True, text=True, creationflags=0x08000000)
         if result.returncode != 0:
-            raise SystemExit(f"ArcPak extract failed rc={result.returncode}: {result.stderr[-400:]}")
+            raise SystemExit(f"ArcPak extract failed rc={result.returncode}: {result.stdout[-1200:]} {result.stderr[-400:]}")
     return {path: out / (path + ".png") for path in paths}
 
 
@@ -69,10 +70,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scratch", type=Path, required=True)
     parser.add_argument("--remove-old", action="store_true")
+    parser.add_argument("--npc-only", action="store_true")
     args = parser.parse_args()
 
     index = read_index(str(INDEX))
     icon_paths = [p for p in index["paths"] if p.rsplit("/", 1)[-1].startswith("T_UI_Icon_")]
+    npc_icons = {stem: "PioneerGame/Content/Pioneer/UI/Assets/Images/NPC/miniature_portraits/" + stem
+                 for stem in NPC_PREVIEW_STEMS.values()}
     candidates: dict[str, list[tuple[str, str]]] = {}
     for path in icon_paths:
         segment = segment_of(path)
@@ -116,7 +120,7 @@ def main() -> None:
         else:
             outfit_missing.append(row["ST"])
 
-    needed = sorted(set(chosen.values()) | set(outfit_icons.values()))
+    needed = sorted(set(npc_icons.values()) if args.npc_only else set(chosen.values()) | set(outfit_icons.values()) | set(npc_icons.values()))
     pngs = extract(needed, args.scratch)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -127,12 +131,13 @@ def main() -> None:
         image = Image.open(pngs[path]).convert("RGBA")
         if max(image.size) > MAX_SIDE:
             image.thumbnail((MAX_SIDE, MAX_SIDE), Image.Resampling.LANCZOS)
-        image.save(OUT_DIR / (stem + ".avif"), "AVIF", quality=60, speed=6)
+        image.save(OUT_DIR / (stem + ".avif"), "AVIF", quality=85, speed=6, subsampling="4:4:4")
         stems[path] = stem
 
-    browse = json.loads(BROWSE.read_text(encoding="utf-8"))
-    browse["icons"] = {choice: stems[path] for choice, path in chosen.items()}
-    BROWSE.write_text(json.dumps(browse, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+    if not args.npc_only:
+        browse = json.loads(BROWSE.read_text(encoding="utf-8"))
+        browse["icons"] = {choice: stems[path] for choice, path in chosen.items()}
+        BROWSE.write_text(json.dumps(browse, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
 
     before = sum(f.stat().st_size for folder in OLD_FOLDERS for f in (ROOT / folder).glob("*.png"))
     after = sum(f.stat().st_size for f in OUT_DIR.glob("*.avif"))
@@ -140,7 +145,7 @@ def main() -> None:
     for row in rows:
         if row["id"] in chosen:
             counts[row["kind"]] = counts.get(row["kind"], 0) + 1
-    if args.remove_old:
+    if args.remove_old and not args.npc_only:
         for folder in OLD_FOLDERS:
             for f in (ROOT / folder).glob("*.png"):
                 f.unlink()
@@ -148,6 +153,7 @@ def main() -> None:
         "avif_files": len(list(OUT_DIR.glob("*.avif"))),
         "choice_icons_by_kind": counts,
         "outfit_icons": len(outfit_icons),
+        "npc_icons": len(npc_icons),
         "outfit_missing_rows": outfit_missing,
         "missing_choices": missing,
         "png_before_mb": round(before / 1048576, 2),

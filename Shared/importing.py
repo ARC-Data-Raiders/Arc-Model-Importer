@@ -435,7 +435,7 @@ def _extract_colourway_materials(folder: str) -> None:
         print(f"Arc Pak: colourway material extract failed: {exc}")
 
 
-def colorways_for_outfit_row(root: str, row: dict) -> list:
+def colorways_for_outfit_row(root: str, row: dict, *, allow_extract=True) -> list:
     """Return ``[(preset_name, json_path), ...]`` for a CSV outfit row.
 
     Scans ``Items/Characters/Skins/Outfit/<Item/UI Folder>`` (and Model Folder
@@ -463,7 +463,12 @@ def colorways_for_outfit_row(root: str, row: dict) -> list:
             if presets:
                 return presets
     for folder_name in folders:
-        pak_folder = _ensure_pak_colourway_folder(folder_name)
+        if allow_extract:
+            pak_folder = _ensure_pak_colourway_folder(folder_name)
+        else:
+            from . import pak_extract
+            pak_folder = os.path.join(pak_extract.cache_dir(), "PioneerGame", "Content", "Pioneer",
+                                      "Items", "Characters", "Skins", "Outfit", folder_name)
         if not pak_folder:
             continue
         presets = scan_outfit_presets_in_folder(pak_folder)
@@ -1539,7 +1544,8 @@ def collect_psks_for_outfit_row(root: str, item_ui_folders: list) -> tuple:
                 psks.append(psk)
                 continue
             if _part_folder_has_uemodel(part_folder):
-                missing.append(f"{key} (.uemodel only — re-export as ActorX .psk)")
+                # Export-folder scan reads .psk/.pskx only; Pak extraction imports .uemodel.
+                missing.append(f"{key} (.uemodel only; set the Paks folder to import it from the game)")
             else:
                 missing.append(f"{key} (no .psk)")
     return psks, missing
@@ -1577,7 +1583,7 @@ def collect_psks_from_model_folder(root: str, model_folder_name: str) -> tuple:
         part_folder = os.path.join(char_dir, part)
         key = f"{model_folder_name}/{part}"
         if _part_folder_has_uemodel(part_folder):
-            missing.append(f"{key} (.uemodel only — re-export as ActorX .psk)")
+            missing.append(f"{key} (.uemodel only; set the Paks folder to import it from the game)")
         else:
             # Skip empty/non-mesh dirs (no SK_/DA_VP_ sidecar).
             try:

@@ -290,7 +290,7 @@ def _corner_errors(expected,actual):
     return out
 
 
-def write_corner_normals(mesh,normals,*,bpy_module=None):
+def write_corner_normals(mesh,normals,*,bpy_module=None,approximate_ok=False):
     """Write display corner normals in Blender's fan-space custom normal storage.
 
     Fan-space normals (mesh.normals_split_custom_set, an INT16_2D custom_normal
@@ -316,12 +316,12 @@ def write_corner_normals(mesh,normals,*,bpy_module=None):
     _require_float_normal_capability(bpy_module)
     old=mesh.attributes.get('custom_normal')
     previous=_corner_normal_array(mesh) if old else None
+    sharp_snapshot=None
     try:
         if old is not None and old.data_type=='FLOAT_VECTOR':mesh.attributes.remove(old)
         mesh.normals_split_custom_set(values);mesh.update()
         stored=mesh.attributes.get('custom_normal')
         if stored is None or stored.data_type=='FLOAT_VECTOR':raise NormalTransportUnavailable('Blender did not store fan-space custom normals')
-        errors=_corner_error_array(values,_corner_normal_array(mesh).astype(np.float64))
         nf=len(mesh.polygons)
         areas=np.empty(nf,np.float32);mesh.polygons.foreach_get('area',areas);areas=areas.astype(np.float64)
         starts=np.empty(nf,np.int32);mesh.polygons.foreach_get('loop_start',starts)
@@ -329,15 +329,74 @@ def write_corner_normals(mesh,normals,*,bpy_module=None):
         floor=DEGENERATE_FACE_AREA_RATIO*float(areas.sum())/max(nf,1)
         keep=areas>floor
         corner=np.repeat(starts[keep],totals[keep])+(np.arange(int(totals[keep].sum()))-np.repeat(np.cumsum(totals[keep])-totals[keep],totals[keep]))
+        errors=_corner_error_array(values,_corner_normal_array(mesh).astype(np.float64))
         checked=errors[corner]
+        first_error=float(checked.max()) if len(checked) else 0.
+        sharpened=0;repair_passes=0
+        # Blender tags a fan space invalid when a fan edge lies within
+        # LNOR_SPACE_TRIGO_THRESHOLD of the fan's auto normal; its corners read
+        # back the auto normal (measured r30: 2-32 corners per flagged prop, 9-156
+        # deg, all other corners exact). Marking the edges at those vertices sharp
+        # splits them into single-face fans whose frame is always valid.
+        while len(checked) and float(checked.max())>CORNER_NORMAL_TOLERANCE_DEGREES and repair_passes<NORMAL_REPAIR_PASSES:
+            if sharp_snapshot is None and getattr(mesh,'edges',None):
+                sharp_snapshot=_sharp_edges(mesh,len(mesh.edges)).copy() if mesh.attributes.get('sharp_edge') is not None else False
+            added=_sharpen_corner_vertices(mesh,corner[checked>CORNER_NORMAL_TOLERANCE_DEGREES])
+            if not added:break
+            sharpened+=added;repair_passes+=1
+            mesh.normals_split_custom_set(values);mesh.update()
+            stored=mesh.attributes.get('custom_normal')
+            errors=_corner_error_array(values,_corner_normal_array(mesh).astype(np.float64))
+            checked=errors[corner]
         error=float(checked.max()) if len(checked) else 0.
-        if error>CORNER_NORMAL_TOLERANCE_DEGREES:raise NormalTransportUnavailable('fan-space corner normal readback exceeds %.1f degree: %s'%(CORNER_NORMAL_TOLERANCE_DEGREES,error))
+        approximate=error>CORNER_NORMAL_TOLERANCE_DEGREES
+        # approximate: static meshes (no armature) keep the fan-space set Blender stored
+        # even when some corners read back off (fan frames cannot hold every authored
+        # normal); posed/skinned transport stays strict.
+        if approximate and not approximate_ok:raise NormalTransportUnavailable('fan-space corner normal readback exceeds %.1f degree: %s'%(CORNER_NORMAL_TOLERANCE_DEGREES,error))
     except Exception:
         current=mesh.attributes.get('custom_normal')
         if current is not None:mesh.attributes.remove(current)
+        _restore_sharp_edges(mesh,sharp_snapshot)
         if previous is not None:mesh.normals_split_custom_set(previous)
         mesh.update();raise
-    return {'storage':'custom_normal:CORNER:'+stored.data_type,'corner_count':len(values),'max_normal_angle_degrees':error,'unchecked_degenerate_corners':len(errors)-len(checked),'legacy_fallback':False}
+    return {'storage':'custom_normal:CORNER:'+stored.data_type,'corner_count':len(values),'max_normal_angle_degrees':error,'unrepaired_max_normal_angle_degrees':first_error,'sharpened_edges':sharpened,'repair_passes':repair_passes,'unchecked_degenerate_corners':len(errors)-len(checked),'legacy_fallback':False,'normals_approximate':bool(approximate)}
+
+
+NORMAL_REPAIR_PASSES=2
+
+
+def _sharpen_corner_vertices(mesh,corners):
+    """Mark every edge touching the vertices of `corners` sharp; return newly sharpened count."""
+    import numpy as np
+    edges=getattr(mesh,'edges',None)
+    if not edges or not len(corners):return 0
+    nl=len(mesh.loops);ne=len(edges)
+    loop_vertex=np.empty(nl,np.int32);mesh.loops.foreach_get('vertex_index',loop_vertex)
+    edge_vertex=np.empty(ne*2,np.int32);edges.foreach_get('vertices',edge_vertex)
+    hit=np.isin(edge_vertex.reshape(-1,2),np.unique(loop_vertex[np.asarray(corners,np.int64)])).any(axis=1)
+    current=_sharp_edges(mesh,ne)
+    added=int((hit&~current).sum())
+    if added:
+        attr=mesh.attributes.get('sharp_edge')
+        if attr is None:attr=mesh.attributes.new('sharp_edge','BOOLEAN','EDGE')
+        attr.data.foreach_set('value',current|hit)
+    return added
+
+
+def _sharp_edges(mesh,ne):
+    import numpy as np
+    current=np.zeros(ne,bool);attr=mesh.attributes.get('sharp_edge')
+    if attr is not None:attr.data.foreach_get('value',current)
+    return current
+
+
+def _restore_sharp_edges(mesh,snapshot):
+    if snapshot is None:return
+    attr=mesh.attributes.get('sharp_edge')
+    if attr is None:return
+    if snapshot is False:mesh.attributes.remove(attr)
+    else:attr.data.foreach_set('value',snapshot)
 
 
 def _vector_array(values,name):

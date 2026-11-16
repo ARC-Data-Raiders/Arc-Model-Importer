@@ -189,18 +189,65 @@ def read_body_parameters(mi_path):
     return read_character_parameters(mi_path, BODY_SCALARS)
 
 
+def arrange_flow(nodes, links, members, origin=(0.0, 0.0), title=None, col_w=240.0, row_h=170.0):
+    """Topological column layout for a set of nodes. Layout only: no links or values change."""
+    members = [n for n in members if n is not None and n.bl_idname != "NodeFrame"]
+    if not members:
+        return None
+    key = {n.as_pointer(): i for i, n in enumerate(members)}
+    preds = [set() for _ in members]
+    for lk in links:
+        a, c = key.get(lk.from_node.as_pointer()), key.get(lk.to_node.as_pointer())
+        if a is not None and c is not None and a != c:
+            preds[c].add(a)
+    depth = [0] * len(members)
+    for _ in range(len(members)):
+        changed = False
+        for i, ps in enumerate(preds):
+            d = max((depth[p] + 1 for p in ps), default=0)
+            if d != depth[i] and d < len(members):
+                depth[i], changed = d, True
+        if not changed:
+            break
+    rows = {}
+    frame = None
+    if title:
+        frame = nodes.new("NodeFrame")
+        frame.label = str(title)[:63]
+        frame.label_size = 20
+    ox, oy = origin
+    for i, n in enumerate(members):
+        r = rows.get(depth[i], 0)
+        rows[depth[i]] = r + 1
+        if frame is not None and n.parent is None:
+            n.parent = frame
+        n.location = (ox + depth[i] * col_w, oy - r * row_h)
+    return frame
+
+
 class ResponseGraph:
     def __init__(self, nodes, links, prefix="Body_"):
         self.nodes, self.links, self.prefix = nodes, links, prefix
+        self.made = []
+        # Optional plain stage name; collapse_into_groups groups tagged nodes by it.
+        self.stage = None
 
     def node(self, kind, label):
         node = self.nodes.new(kind)
         node.name = self.prefix + label
         node.label = label
+        if self.stage:
+            node["arc_stage"] = self.stage
         # Keep generated helpers legible without invoking the global graph nudge.
-        i = len(self.nodes)
+        # Provisional spot; arrange() replaces it with a left-to-right flow by link depth.
+        i = len(self.made)
         node.location = (-1600 + (i % 7) * 230, -750 - (i // 7) * 190)
+        self.made.append(node)
         return node
+
+    def arrange(self, origin=(-1600.0, -750.0), title=None):
+        """Place helpers in columns by link depth (inputs left, results right), in one frame."""
+        return arrange_flow(self.nodes, self.links, self.made, origin, title)
 
     def put(self, socket, value):
         if hasattr(value, "node"):
@@ -253,10 +300,10 @@ class ResponseGraph:
             self.put(socket, value)
         return node.outputs[0]
 
-    def texture(self, image, uv, label):
+    def texture(self, image, uv, label, *, albedo=False):
         node = self.node("ShaderNodeTexImage", label)
         node.image = image
-        node.interpolation = "Linear"
+        node.interpolation = "Cubic" if albedo else "Linear"
         self.put(node.inputs["Vector"], uv)
         return node
 
@@ -307,13 +354,30 @@ def image_for_role(path, non_color=False):
         except ReferenceError:
             pass
         _ROLE_IMAGES.pop(key, None)
+    count = len(bpy.data.images)
     image = bpy.data.images.load(path, check_existing=True)
+    owned = len(bpy.data.images) > count
     if image.colorspace_settings.name != space:
-        image = image.copy()
+        if image.users:
+            image = image.copy()
+            owned = True
         image.colorspace_settings.name = space
     image.alpha_mode = "CHANNEL_PACKED"
+    if owned:
+        image["arc_character_role_owned"] = True
     _ROLE_IMAGES[key] = image
     return image
+
+
+def replace_role_image(node, image):
+    previous = node.image
+    node.image = image
+    if previous is None or previous is image:
+        return
+    if (previous.get("arc_character_role_owned") and previous.users == 0
+            and not previous.use_fake_user and not previous.is_dirty
+            and not previous.packed_file):
+        bpy.data.images.remove(previous)
 
 
 def build_body_response(nodes, links, principled, albedo_node, normal_image=None, micro_image=None,
@@ -328,7 +392,7 @@ def build_body_response(nodes, links, principled, albedo_node, normal_image=None
     uv = uv.outputs[0]
     if albedo_node is not None:
         g.put(albedo_node.inputs["Vector"], uv)
-        albedo_node.interpolation = "Linear"
+        albedo_node.interpolation = "Cubic"
         albedo_node.extension = "EXTEND"
         albedo_node.image.alpha_mode = "CHANNEL_PACKED"
         color = albedo_node.outputs["Color"]
@@ -373,5 +437,6 @@ def build_body_response(nodes, links, principled, albedo_node, normal_image=None
     principled.inputs["IOR"].default_value = 1.5
     principled.inputs["Specular Tint"].default_value = (1, 1, 1, 1)
     principled.inputs["Coat Weight"].default_value = 0
+    g.arrange(title="Skin response")
     return {"color": color if albedo_node is not None else None, "roughness": rough, "specular": specular,
             "tangent_normal": normal, "world_normal": world_normal}

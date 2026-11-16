@@ -8,7 +8,7 @@ Command (per run, all catalog textures listed in a texture file):
     --out <dds_root> --texture-file <list>
   list lines: /Game/Pioneer/UI/Assets/Images/ARC/<stem>
 
-Encode: RGBA kept, LANCZOS fit to long side 512, never upscale, AVIF quality 60 speed 6.
+Encode: RGBA kept, LANCZOS fit to long side 256, never upscale, AVIF quality 85 speed 6.
 Output: assets/arc_browser/<stem>.avif. Old PNGs are removed after all AVIFs are written.
 
 Usage: python tools/build_arc_previews.py --dds-root <dir containing Game/Pioneer/UI/Assets/Images/ARC>
@@ -25,8 +25,8 @@ from PIL import Image
 REPO = Path(__file__).resolve().parent.parent
 OUT_DIR = REPO / "assets" / "arc_browser"
 CATALOG = REPO / "arc_catalog_data.py"
-MAX_SIDE = 512
-AVIF_QUALITY = 60
+MAX_SIDE = 256
+AVIF_QUALITY = 85
 AVIF_SPEED = 6
 DDS_SUBDIR = Path("Game/Pioneer/UI/Assets/Images/ARC")
 
@@ -68,7 +68,7 @@ def encode(dds: Path, dest: Path) -> tuple[int, int]:
     scale = min(1.0, MAX_SIDE / max(width, height))
     if scale < 1.0:
         img = img.resize((round(width * scale), round(height * scale)), Image.LANCZOS)
-    img.save(dest, format="AVIF", quality=AVIF_QUALITY, speed=AVIF_SPEED)
+    img.save(dest, format="AVIF", quality=AVIF_QUALITY, speed=AVIF_SPEED, subsampling="4:4:4")
     return img.size
 
 

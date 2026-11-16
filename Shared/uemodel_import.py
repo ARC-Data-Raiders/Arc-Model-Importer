@@ -1045,6 +1045,28 @@ def ensure_uemodel_shape_keys(obj, path: str, *, scale: float | None = None,
     return _apply_lod_shape_keys(obj, lod)
 
 
+def write_static_corner_normals(mesh, corner_normals) -> dict:
+    """Authored normals on an imported mesh; never fails the import.
+
+    Over-tolerance readback keeps the stored custom normals; a host that cannot
+    store them leaves Blender's auto normals. Both stamp mesh["normals_approximate"].
+    """
+    from .materials.native.deformation import write_corner_normals, NormalTransportUnavailable
+    try:
+        report = write_corner_normals(mesh, corner_normals, approximate_ok=True)
+    except NormalTransportUnavailable as exc:
+        report = {"normals_approximate": True, "storage": "auto", "reason": str(exc)}
+        print(f"[arc-uemodel] custom normals unavailable, auto normals kept: {exc}")
+    if report.get("normals_approximate"):
+        mesh["normals_approximate"] = True
+    # Readback facts for the audit (max corner error after the sharp-edge fan repair).
+    if "max_normal_angle_degrees" in report:
+        mesh["normals_max_angle_deg"] = float(report["max_normal_angle_degrees"])
+    if report.get("sharpened_edges"):
+        mesh["normals_sharpened_edges"] = int(report["sharpened_edges"])
+    return report
+
+
 def import_uemodel_v10(path: str, *, scale: float = 0.01, import_lods: bool = False) -> list:
     """Import a v10 (or v7+ attribute-header) UEModel into the current collection."""
     name, _version, lods = parse_uemodel(path, scale=scale)
@@ -1064,19 +1086,9 @@ def import_uemodel_v10(path: str, *, scale: float = 0.01, import_lods: bool = Fa
         _build_triangle_mesh(mesh, lod.vertices, lod.indices)
         if lod.normals is not None and len(lod.normals) == len(mesh.vertices):
             mesh.polygons.foreach_set("use_smooth", np.ones(len(mesh.polygons), dtype=bool))
-            from .materials.native.deformation import write_corner_normals, NormalTransportUnavailable
             corner_vi = np.empty(len(mesh.loops), dtype=np.int32)
             mesh.loops.foreach_get("vertex_index", corner_vi)
-            try:
-                write_corner_normals(mesh, np.asarray(lod.normals, dtype=np.float64)[corner_vi])
-            except NormalTransportUnavailable as exc:
-                if "readback exceeds" not in str(exc):
-                    raise
-                # Hair cards with back faces on shared vertices carry normals the fan-space
-                # layer cannot hold. write_corner_normals already restored the previous
-                # state; keep the mesh with smooth face normals instead of rejecting it.
-                mesh["arc_normals_fallback"] = str(exc)
-                print(f"[arc-uemodel] authored normals not stored for {mesh_name}: {exc}")
+            write_static_corner_normals(mesh, np.asarray(lod.normals, dtype=np.float64)[corner_vi])
         mesh["arc_uemodel_lod"] = lod.name
         mesh["arc_uemodel_scale"] = float(scale)
         obj = bpy.data.objects.new(mesh_name, mesh)
@@ -1095,14 +1107,32 @@ def import_uemodel_v10(path: str, *, scale: float = 0.01, import_lods: bool = Fa
     return created
 
 
+_LAST_IMPORT_ERROR = ""
+
+
+def set_import_error(reason: str) -> None:
+    global _LAST_IMPORT_ERROR
+    _LAST_IMPORT_ERROR = str(reason or "")
+
+
+def last_import_error() -> str:
+    """Why the last UEModel import produced nothing ('' after a success)."""
+    return _LAST_IMPORT_ERROR
+
+
 def try_import_uemodel_v10(path: str, *, scale: float = 0.01, import_lods: bool = False) -> list:
-    """Best-effort import; prints the reason and returns [] on failure."""
+    """Best-effort import; records + prints the reason and returns [] on failure."""
+    import traceback
     try:
         objs = import_uemodel_v10(path, scale=scale, import_lods=import_lods)
-        if not objs:
-            print(f"[arc-uemodel] v10 import produced no meshes: {path}")
-        return objs
     except Exception as exc:
-        print(f"[arc-uemodel] v10 import failed ({path}): {exc}")
+        tb = traceback.format_exc()
+        set_import_error(f"{type(exc).__name__}: {exc!r}\n{tb[-1500:]}")
+        print(f"[arc-uemodel] v10 import failed ({path}): {type(exc).__name__}: {exc!r}\n{tb}")
         return []
-
+    if not objs:
+        set_import_error("v10 import produced no meshes (no LOD with vertices and indices)")
+        print(f"[arc-uemodel] v10 import produced no meshes: {path}")
+        return []
+    set_import_error("")
+    return objs

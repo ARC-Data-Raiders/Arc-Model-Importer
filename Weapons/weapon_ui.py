@@ -18,7 +18,23 @@ _ASCENDED_ENUM_PENDING=False
 _LEGACY_ENUMS={}
 _PROPS=('arc_weapon_browser_key','arc_weapon_ascended','arc_weapon_include_ascended','arc_weapon_position','arc_weapon_last_assembly','arc_weapon_tier')
 # Item QualityLevel 0..3 is shown in game as tier I..IV.
-TIERS=(('3','IV',''),('2','III',''),('1','II',''),('0','I',''))
+TIERS=(('0','I','Tier I, least worn: almost no wear'),('1','II','Tier II, light wear'),('2','III','Tier III, heavy wear'),('3','IV','Tier IV, most worn: the most wear'))
+_TIER_CAPTIONS={'0':'Tier I: least worn','1':'Tier II: light wear','2':'Tier III: heavy wear','3':'Tier IV: most worn'}
+
+def tier_caption(key):
+    """Caption line for the chosen tier, shown under the tier row."""
+    return _TIER_CAPTIONS.get(str(key),'')
+
+def display_label(key):
+    """Clean weapon name for a catalog key, for search pickers."""
+    return catalog.display_label(key)
+
+def _targets():
+    try:
+        from ..Shared import ui_targets
+        return ui_targets
+    except Exception:
+        return None
 
 def browser_key_get(self):
     key=getattr(self,'arc_weapon_key','NONE')
@@ -38,7 +54,7 @@ def ascended_items(self,context):
     variants=assets.bundled_variants(entry) if entry else []
     key=(getattr(scene,'arc_weapon_key','NONE'),assets._REVISION)
     if key not in _ENUMS:
-        items=[('OFF','Off','',0)]
+        items=[('OFF','Standard','The regular weapon, no ascended variant',0)]
         items.extend((v['id'],variant_label(v),'',assets.enum_number(v['id'])) for v in variants)
         _ENUMS[key]=items
     return _ENUMS[key]
@@ -75,7 +91,7 @@ def legacy_ascended_items(self,context):
 def register_ascended_property():
     global _ASCENDED_ENUM_READY,_ASCENDED_ENUM_PENDING
     if _ASCENDED_ENUM_READY and hasattr(bpy.types.Scene,'arc_weapon_ascended'):return
-    bpy.types.Scene.arc_weapon_ascended=EnumProperty(name='Ascended Varient',items=legacy_ascended_items,default=0)
+    bpy.types.Scene.arc_weapon_ascended=EnumProperty(name='Ascended Variant',description='Alternate skin of the weapon to import',items=legacy_ascended_items,default=0)
     # addon_utils.enable() runs register() with bpy.data restricted. Defer
     # scene migration until Blender returns to its normal event loop.
     _ASCENDED_ENUM_PENDING=True
@@ -88,7 +104,7 @@ def _finish_ascended_registration():
     if scenes is None:return 0.1
     try:
         saved=[(scene,scene.arc_weapon_ascended or 'OFF') for scene in scenes]
-        bpy.types.Scene.arc_weapon_ascended=EnumProperty(name='Ascended Varient',items=ascended_items,default=0,update=variant_changed)
+        bpy.types.Scene.arc_weapon_ascended=EnumProperty(name='Ascended Variant',description='Alternate skin of the weapon to import',items=ascended_items,default=0,update=variant_changed)
         for scene,selection in saved:
             valid={item[0] for item in ascended_items(scene,None)}
             scene.arc_weapon_ascended=selection if selection in valid else 'OFF'
@@ -98,45 +114,22 @@ def _finish_ascended_registration():
     return None
 
 def preview_id(path):
-    global _PREVIEWS
-    if path is None or not Path(path).is_file():return 0
-    if _PREVIEWS is None:
-        from bpy.utils import previews
-        _PREVIEWS=previews.new()
-    key=str(Path(path).resolve())
-    if key not in _PREVIEWS:
-        preview=_PREVIEWS.load(key,key,'IMAGE')
-        _crop_preview(preview)
-    return _PREVIEWS[key].icon_id
-
-def _crop_preview(preview):
-    # Work on the UI thumbnail only; keep the original game PNG untouched.
-    # Alpha bounds preserve even faint authored edges/shadows. Leave a small
-    # transparent border so the silhouette does not touch the sidebar edges.
-    import numpy as np
-    width,height=preview.image_size
-    if not width or not height:return
-    pixels=np.asarray(preview.image_pixels_float[:],dtype=np.float32).reshape(height,width,4)
-    ys,xs=np.nonzero(pixels[:,:,3]>0)
-    if not len(xs):return
-    pad=max(1,round(max(xs.max()-xs.min()+1,ys.max()-ys.min()+1)*.02))
-    left=max(0,int(xs.min())-pad);right=min(width,int(xs.max())+pad+1)
-    bottom=max(0,int(ys.min())-pad);top=min(height,int(ys.max())+pad+1)
-    if (left,bottom,right,top)==(0,0,width,height):return
-    cropped=np.ascontiguousarray(pixels[bottom:top,left:right])
-    preview.image_size=(right-left,top-bottom)
-    preview.image_pixels_float=cropped.ravel()
+    if path is None:return 0
+    from ..Outfit_Accessories import appearance
+    return appearance._preview_icon_id_for_path(str(path))
 
 def arc_preview_id(path):
     if path is None:return 0
-    path=str(Path(path).resolve())
+    from ..Outfit_Accessories import preview_assets, appearance
+    original=str(Path(path).resolve())
+    path=str(preview_assets.source_preview_path(original))
     key='arc-5x4-512:'+path
     if _PREVIEWS is not None and key in _PREVIEWS:return _PREVIEWS[key].icon_id
     if not Path(path).is_file():return 0
     _ARC_PENDING.add(path)
     if not bpy.app.timers.is_registered(_prepare_arc_previews):
         bpy.app.timers.register(_prepare_arc_previews,first_interval=0.0)
-    return 0
+    return appearance._low_resolution_icon_id(original)
 
 def _prepare_arc_previews():
     if getattr(bpy.data,'images',None) is None:return 0.1
@@ -144,6 +137,8 @@ def _prepare_arc_previews():
     path=next(iter(_ARC_PENDING))
     _ARC_PENDING.discard(path)
     _load_arc_preview(path)
+    from ..Outfit_Accessories import appearance
+    appearance._PREVIEW_GENERATION += 1
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
             if area.type=='VIEW_3D':area.tag_redraw()
@@ -298,76 +293,194 @@ def ensure_registered():
     return False
 
 
+def has_weapon_selection(context):
+    """Cheap check for buttons that edit an imported weapon (selection, else last import)."""
+    targets=_targets()
+    if targets is not None:return targets.resolve(context,'weapon') is not None
+    selected=context.selected_objects
+    if not selected:
+        o=context.scene.objects.get(getattr(context.scene,'arc_weapon_last_assembly','') or '')
+        return bool(o and o.get('arc_weapon_assembly'))
+    for o in selected[:64]:
+        while o is not None:
+            if o.get('arc_weapon_assembly'):return True
+            o=o.parent
+    return False
+
+def _weapon_poll(cls,context):
+    if has_weapon_selection(context):return True
+    targets=_targets()
+    cls.poll_message_set(targets.poll_message('weapon') if targets else 'Select an imported weapon first')
+    return False
+
+def _job_active():
+    targets=_targets()
+    return bool(targets and targets.job_active())
+
 class ARC_OT_update_weapon_position(bpy.types.Operator):
+    """Move the selected weapon to the position chosen above"""
     bl_idname='arc_outfits.update_weapon_position'
-    bl_label='Update Position'
+    bl_label='Apply Position'
+    bl_description='Move the selected weapon to the position chosen above'
     bl_options={'REGISTER','UNDO'}
+    poll=classmethod(_weapon_poll)
     def execute(self,context):
         roots=weapon_position.roots_for_selection(context)
-        if not roots:self.report({'ERROR'},'Select an imported weapon assembly');return {'CANCELLED'}
+        if not roots:self.report({'ERROR'},'Select an imported weapon first');return {'CANCELLED'}
         mode=context.scene.arc_weapon_position
         for root in roots:weapon_position.apply(root,mode)
         missed=[r.name for r in roots if r.get('arc_weapon_position')!=mode]
         if missed:self.report({'WARNING'},'No icon capture data for '+', '.join(missed)+'; left horizontal');return {'FINISHED'}
-        self.report({'INFO'},'Updated '+str(len(roots))+' weapon position(s)');return {'FINISHED'}
+        self.report({'INFO'},'Updated position of '+roots[0].name);return {'FINISHED'}
 
 class ARC_OT_set_weapon_tier(bpy.types.Operator):
     """Apply the selected tier's wear (CustomPrimitiveData 1) to selected weapon assemblies"""
     bl_idname='arc_outfits.set_weapon_tier'
-    bl_label='Set Weapon Tier'
+    bl_label='Apply Wear Tier'
+    bl_description='Show the chosen wear tier on the selected weapon'
     bl_options={'REGISTER','UNDO'}
+    poll=classmethod(_weapon_poll)
     def execute(self,context):
         return weapon_import.apply_tier(self,context,int(context.scene.arc_weapon_tier))
 
+class ARC_OT_apply_weapon_wear_position(bpy.types.Operator):
+    """Apply the chosen wear tier and position to the weapon being edited"""
+    bl_idname='arc_outfits.apply_weapon_wear_position'
+    bl_label='Apply Wear and Position'
+    bl_description='Show the chosen wear tier and move the weapon to the chosen position'
+    bl_options={'REGISTER','UNDO'}
+    poll=classmethod(_weapon_poll)
+    def execute(self,context):
+        roots=weapon_position.roots_for_selection(context)
+        if not roots:self.report({'ERROR'},'Select an imported weapon first');return {'CANCELLED'}
+        level=int(context.scene.arc_weapon_tier)
+        mode=context.scene.arc_weapon_position
+        for root in roots:
+            weapon_import.set_assembly_wear(root,level)
+            weapon_position.apply(root,mode)
+        tier=weapon_import.TIER_LABELS[max(0,min(3,level))]
+        missed=[r.name for r in roots if r.get('arc_weapon_position')!=mode]
+        if missed:
+            self.report({'WARNING'},'Tier '+tier+' applied. No icon capture data for '+', '.join(missed)+'; left horizontal')
+            return {'FINISHED'}
+        self.report({'INFO'},'Tier '+tier+' and position applied to '+roots[0].name)
+        return {'FINISHED'}
+
+def _redraw_sidebars(context):
+    try:
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type=='VIEW_3D':area.tag_redraw()
+    except Exception:
+        pass
+
 class ARC_OT_add_all_weapons(bpy.types.Operator):
     bl_idname='arc_outfits.add_all_weapons'
-    bl_label='Add All Weapons'
+    bl_label='Import All Weapons'
     bl_options={'REGISTER','UNDO'}
     _timer=None
     @classmethod
-    def poll(cls,context):return _ACTIVE_BATCH is None
+    def poll(cls,context):
+        if _ACTIVE_BATCH is None and not _job_active():return True
+        cls.poll_message_set('Another import is running')
+        return False
+    bl_description='Import every weapon in the list, one after another. Takes several minutes; Esc or Cancel stops it'
+    def invoke(self,context,event):return context.window_manager.invoke_props_dialog(self,title='Import all %d weapons?'%len(catalog.weapons()),confirm_text='Import All Weapons')
+    def draw(self,context):
+        col=self.layout.column()
+        col.label(text='Imports every weapon. This can take several minutes',icon='QUESTION')
+        col.label(text='Press Esc or Cancel to stop')
+        col.prop(context.scene,'arc_weapon_include_ascended',text='Include Ascended Variants')
     def _step(self,context):
         entry,variant=self._queue.pop(0)
+        name=entry.get('name') or entry.get('key') or '?'
+        targets=_targets()
+        if targets:targets.job_step(self._total-len(self._queue)-1,name)
         try:
             root=weapon_import.import_weapon(context,entry,variant,skin='')
             self._added.append(root.name)
-        except Exception as exc:self._errors.append({'weapon':entry['name'],'variant':variant,'error':str(exc)})
-        context.window_manager.progress_update(len(self._added)+len(self._errors))
+        except Exception as exc:self._errors.append({'weapon':name,'variant':variant,'error':str(exc)})
+        done=len(self._added)+len(self._errors)
+        if targets:targets.job_step(done,name)
+        context.window_manager.progress_update(done)
     def _finish(self,context,cancelled=False):
         global _ACTIVE_BATCH
+        if _ACTIVE_BATCH is not self:return {'CANCELLED'}
         _ACTIVE_BATCH=None
-        if self._timer:context.window_manager.event_timer_remove(self._timer);self._timer=None
-        context.window_manager.progress_end()
-        report={'added':self._added,'errors':self._errors,'cancelled':cancelled}
-        context.scene['arc_weapon_batch_report']=json.dumps(report)
-        text=bpy.data.texts.get('Weapon Batch Report') or bpy.data.texts.new('Weapon Batch Report');text.clear();text.write(json.dumps(report,indent=2))
-        self.report({'WARNING'} if self._errors else {'INFO'},f"Added {len(self._added)} weapon assemblies; {len(self._errors)} unavailable"+(' (stopped)' if cancelled else ''))
+        try:
+            if self._timer:context.window_manager.event_timer_remove(self._timer);self._timer=None
+            context.window_manager.progress_end()
+        finally:
+            lines=['Failed: %s%s: %s'%(e['weapon'],'' if e['variant']=='OFF' else ' ('+e['variant']+')',e['error']) for e in self._errors]
+            # R5: unattempted items are left, not skipped; job_end keeps the planned total.
+            skipped=0
+            if cancelled:lines.append('Stopped with %d left'%len(self._queue))
+            targets=_targets()
+            if targets:
+                status='cancelled' if cancelled else ('failed' if self._errors and not self._added else 'completed')
+                try:targets.job_end(len(self._added),len(self._errors),skipped,lines,status=status,left=len(self._queue) if cancelled else None)
+                except TypeError:targets.job_end(len(self._added),len(self._errors),skipped,lines)
+            if self._added and getattr(self,'_snap',None) is not None:
+                try:
+                    from ..Shared import ui_lists
+                    ui_lists.record_import('All Weapons',self._snap)
+                except Exception as exc:print('Arc import: history not recorded:',exc)
+            _redraw_sidebars(context)
+        self.report({'WARNING'} if self._errors or cancelled else {'INFO'},f"Imported {len(self._added)} weapons; {len(self._errors)} failed"+(' (stopped)' if cancelled else ''))
         return {'FINISHED'}
     def execute(self,context):
         global _ACTIVE_BATCH
-        _ACTIVE_BATCH=self
-        self._queue=[];self._added=[];self._errors=[]
+        if _ACTIVE_BATCH is not None or _job_active():
+            targets=_targets()
+            self.report({'ERROR'},(targets.job_busy_message() if targets else '') or 'Another import is running');return {'CANCELLED'}
+        self._queue=[];self._added=[];self._errors=[];self._cancel=False
+        try:
+            from ..Shared import ui_lists
+            self._snap=ui_lists.snapshot()
+        except Exception:self._snap=None
         roots=assets.pioneer_roots(context.scene)
         for entry in catalog.weapons():
             self._queue.append((entry,'OFF'))
             if context.scene.arc_weapon_include_ascended:
                 self._queue.extend((entry,v['id']) for v in assets.variants(entry,roots))
-        context.window_manager.progress_begin(0,len(self._queue))
-        if bpy.app.background:
-            while self._queue:self._step(context)
-            return self._finish(context)
-        self._timer=context.window_manager.event_timer_add(.05,window=context.window)
-        context.window_manager.modal_handler_add(self);return {'RUNNING_MODAL'}
+        self._total=len(self._queue)
+        targets=_targets()
+        if targets and not targets.job_begin('weapon','Importing all weapons',self._total,'arc_outfits.cancel_add_all_weapons'):
+            self.report({'ERROR'},'Another import is running');return {'CANCELLED'}
+        _ACTIVE_BATCH=self
+        try:
+            context.window_manager.progress_begin(0,self._total)
+            if bpy.app.background:
+                while self._queue and not self._cancel:self._step(context)
+                return self._finish(context,self._cancel)
+            self._timer=context.window_manager.event_timer_add(.05,window=context.window)
+            context.window_manager.modal_handler_add(self);return {'RUNNING_MODAL'}
+        except BaseException:
+            self._finish(context,True);raise
     def modal(self,context,event):
-        if event.type=='ESC':return self._finish(context,True)
-        if event.type=='TIMER' and event.timer==self._timer:
-            if self._queue:self._step(context)
-            if not self._queue:return self._finish(context)
-            if context.area:context.area.tag_redraw()
-        return {'RUNNING_MODAL'}
+        if self._cancel or event.type=='ESC':return self._finish(context,True)
+        if event.type=='TIMER' and event.timer is self._timer:
+            try:
+                if self._queue:self._step(context)
+                if not self._queue:return self._finish(context)
+            except BaseException:
+                self._finish(context,True);raise
+            _redraw_sidebars(context)
+        return {'PASS_THROUGH'} if event.type!='TIMER' else {'RUNNING_MODAL'}
     def cancel(self,context):self._finish(context,True)
 
-CLASSES=(ARC_OT_update_weapon_position,ARC_OT_set_weapon_tier,ARC_OT_add_all_weapons)
+class ARC_OT_cancel_add_all_weapons(bpy.types.Operator):
+    bl_idname='arc_outfits.cancel_add_all_weapons'
+    bl_label='Cancel'
+    bl_description='Stop importing all weapons after the current one'
+    bl_options={'INTERNAL'}
+    @classmethod
+    def poll(cls,context):return _ACTIVE_BATCH is not None
+    def execute(self,context):
+        if _ACTIVE_BATCH is not None:_ACTIVE_BATCH._cancel=True
+        return {'FINISHED'}
+
+CLASSES=(ARC_OT_update_weapon_position,ARC_OT_set_weapon_tier,ARC_OT_apply_weapon_wear_position,ARC_OT_add_all_weapons,ARC_OT_cancel_add_all_weapons)
 
 def register():
     for cls in CLASSES:
@@ -377,7 +490,7 @@ def register():
         bpy.utils.register_class(cls)
     register_ascended_property()
     set_gun_preview_save_handler(False)
-    for name,prop in [('arc_weapon_browser_key',EnumProperty(name='Weapon',items=catalog.weapon_enum_items,get=browser_key_get,set=browser_key_set)),('arc_weapon_include_ascended',BoolProperty(name='Include Ascended Varients',default=False)),('arc_weapon_position',EnumProperty(name='Gun Position',items=weapon_position.POSITIONS,default='HORIZONTAL')),('arc_weapon_last_assembly',StringProperty(options={'HIDDEN'})),('arc_weapon_tier',EnumProperty(name='Weapon Tier',items=TIERS,default='3'))]:
+    for name,prop in [('arc_weapon_browser_key',EnumProperty(name='Weapon',description='Weapon to import',items=catalog.weapon_enum_items,get=browser_key_get,set=browser_key_set)),('arc_weapon_include_ascended',BoolProperty(name='Include Ascended Variants',description='Also import every alternate skin. Takes longer',default=False)),('arc_weapon_position',EnumProperty(name='Gun Position',description='How the weapon is placed: flat, on a mock body, or as in its icon',items=weapon_position.POSITIONS,default='HORIZONTAL')),('arc_weapon_last_assembly',StringProperty(options={'HIDDEN'})),('arc_weapon_tier',EnumProperty(name='Weapon Tier',description='How worn the weapon looks',items=TIERS,default='3'))]:
         if not hasattr(bpy.types.Scene,name):setattr(bpy.types.Scene,name,prop)
 
 def unregister():

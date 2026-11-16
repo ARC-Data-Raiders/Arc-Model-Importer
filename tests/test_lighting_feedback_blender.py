@@ -23,6 +23,8 @@ grade = importlib.import_module(pkg.__name__ + ".Lighting.lighting_grade")
 looks = importlib.import_module(pkg.__name__ + ".Lighting.lighting_looks")
 report = {}
 sky = importlib.import_module(pkg.__name__ + ".Lighting.lighting_sky")
+# draw_sky_controls moved from Lighting/lighting_sky.py to sidebar.py (commit 5f70ddb).
+draw_sky_controls = getattr(sky, "draw_sky_controls", None) or importlib.import_module(pkg.__name__ + ".sidebar").draw_sky_controls
 
 scene = bpy.context.scene
 for window in bpy.context.window_manager.windows:
@@ -46,6 +48,24 @@ report["viewport_world"] = {"ok": bool(views) and all(
     for shading in views)}
 
 scene.render.engine = "CYCLES"
+# Global rule: Cycles renders run on GPU only (OptiX first, then CUDA), never CPU.
+cycles_prefs = bpy.context.preferences.addons["cycles"].preferences
+gpu_devices = []
+for backend in ("OPTIX", "CUDA"):
+    try:
+        cycles_prefs.compute_device_type = backend
+    except TypeError:
+        continue
+    cycles_prefs.refresh_devices()
+    gpu_devices = [d for d in cycles_prefs.devices if d.type == backend]
+    if gpu_devices:
+        break
+if not gpu_devices:
+    raise SystemExit("No OptiX/CUDA GPU device found; refusing CPU render")
+for device in cycles_prefs.devices:
+    device.use = device in gpu_devices
+scene.cycles.device = "GPU"
+print("CYCLES_GPU", cycles_prefs.compute_device_type, [d.name for d in gpu_devices])
 scene.cycles.samples = 1
 scene.cycles.use_denoising = False
 scene.render.resolution_x = 2048
@@ -172,9 +192,8 @@ class Layout:
     def prop(self, owner, prop, **kwargs):
         controls.append(kwargs.get("text"))
 
-if hasattr(sky, "draw_sky_controls"):
-    sky.draw_sky_controls(Layout(), scene)
-report["sky_controls"] = {"ok": controls == ["Rotation", "Extra_Contrast", "Overall Intensity", "Saturation"],
+draw_sky_controls(Layout(), scene)
+report["sky_controls"] = {"ok": controls == ["Rotation", "Extra Contrast", "Overall Intensity", "Saturation"],
                           "controls": list(controls)}
 actual_sky = render_sky("sky_after")
 if baseline_pixels is not None:
@@ -235,8 +254,7 @@ cat.find_texture = forbidden
 try:
     lut_items = looks.make_lighting_look_items(scene, bpy.context)
     sky_items = looks.make_lighting_hdri_items(scene, bpy.context)
-    if hasattr(sky, "draw_sky_controls"):
-        sky.draw_sky_controls(Layout(), scene)
+    draw_sky_controls(Layout(), scene)
     report["package_only_browsing"] = {"ok": bool(lut_items) and bool(sky_items)}
 finally:
     cat.ensure_textures = original_fetch

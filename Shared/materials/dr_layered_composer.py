@@ -80,24 +80,57 @@ class StageEmitter:
             output=n.outputs[0]
         self.memo[id(item)]=(item,output);return output
 
-def build_palette(api,*,zone,amt,swatch,color_a,color_b,color_c,overlay,tree_key,secondary=False,color_a2=None,color_b2=None,color_c2=None):
+PALETTE_GROUP='Arc Outfit · Zone Colour'
+PALETTE_VER='shared palette v1'
+# (circuit binding, plain socket name); per-zone values live on each instance's inputs.
+PALETTE_INPUTS=[('Swatch','Zone swatch'),('ColorA','Colour A'),('ColorA2','Colour A2'),('ColorB','Colour B'),('ColorB2','Colour B2'),('ColorC','Colour C'),('ColorC2','Colour C2'),('Overlay','Colour overlay')]
+
+def palette_values(api,*,swatch,color_a,color_b,color_c,overlay,color_a2=None,color_b2=None,color_c2=None,**_):
+    """Per-instance input values of the shared zone colour group, keyed by socket name."""
+    rgba=api._as_rgba
+    raw={'Swatch':swatch,'ColorA':color_a,'ColorA2':color_a2 if color_a2 is not None else color_a,'ColorB':color_b,'ColorB2':color_b2 if color_b2 is not None else color_b,'ColorC':color_c,'ColorC2':color_c2 if color_c2 is not None else color_c,'Overlay':overlay}
+    return {sock:rgba(raw[key]) for key,sock in PALETTE_INPUTS}
+
+def apply_palette_values(node,values,amt=None):
+    for sock,value in values.items():
+        s=node.inputs.get(sock)
+        if s is not None:s.default_value=value
+    if amt is not None and node.inputs.get('Amt') is not None:node.inputs['Amt'].default_value=float(amt)
+
+def build_palette(api,*,zone=None,amt=1.,tree_key=None,**_values):
+    """One shared zone colour group for every outfit zone and material (U2).
+    The authored colours are instance inputs (see palette_values); the maths is unchanged."""
     import bpy
-    # Identity/default/public parameter contract retained; implementation differs.
-    rgba=api._as_rgba;source_key=str(tree_key or 'mat')
-    payload={'schema':5,'source_key':source_key,'zone':int(zone),'amt':float(amt),'swatch':rgba(swatch),'overlay':rgba(overlay),'a':rgba(color_a),'b':rgba(color_b),'c':rgba(color_c),'a2':rgba(color_a2 if color_a2 is not None else color_a),'b2':rgba(color_b2 if color_b2 is not None else color_b),'c2':rgba(color_c2 if color_c2 is not None else color_c),'secondary':bool(secondary)}
-    identity=json.dumps(payload,sort_keys=True,separators=(',',':'));digest=hashlib.sha256(identity.encode()).hexdigest()[:20];key=''.join(ch for ch in source_key if ch.isalnum() or ch in '_-')[:20] or 'mat';name=f'GT_Colour{int(zone)}_{key}_{digest}'
-    ops=api._dr_ops;tree=ops.find_group(bpy.data.node_groups,name)
-    if tree is not None and tree.get('arc_gt_identity')==identity:return ops.finish_definition(tree)
-    tree=ops.new_group(bpy.data.node_groups,name,'ShaderNodeTree');tree['arc_gt_ver']=5;tree['arc_gt_source_key']=source_key;tree['arc_gt_zone']=int(zone)
-    for key,direction,type,default in [('ColorMask','INPUT','NodeSocketColor',(1.,1.,1.,1.)),('PackedR','INPUT','NodeSocketFloat',0.),('Amt','INPUT','NodeSocketFloat',float(amt)),('Colour','OUTPUT','NodeSocketColor',None)]:api._gt_ng_sock(tree,key,direction,type,default)
-    gi=ops.new_operation(tree.nodes,'NodeGroupInput',stage='Source',role=f'Palette.Zone{zone}.Input');go=ops.new_operation(tree.nodes,'NodeGroupOutput',stage='Output',role=f'Palette.Zone{zone}.Output')
+    tree=bpy.data.node_groups.get(PALETTE_GROUP);ops=api._dr_ops
+    if tree is not None and tree.get('arc_gt_identity')==PALETTE_VER:return tree
+    if tree is not None:tree.name=PALETTE_GROUP+' old'
+    tree=bpy.data.node_groups.new(PALETTE_GROUP,'ShaderNodeTree')  # no arc_gt_ver: its colour inputs are per-zone values, never shared schema controls
+    tree['dr.legacy_group_key']=PALETTE_GROUP;tree['dr.semantic_id']='DR.LayerInputs.Definition.Colour'
+    for key,direction,type,default in [('ColorMask','INPUT','NodeSocketColor',(1.,1.,1.,1.)),('PackedR','INPUT','NodeSocketFloat',0.),('Amt','INPUT','NodeSocketFloat',1.)]+[(sock,'INPUT','NodeSocketColor',(1.,1.,1.,1.)) for _k,sock in PALETTE_INPUTS]+[('Colour','OUTPUT','NodeSocketColor',None)]:api._gt_ng_sock(tree,key,direction,type,default)
+    gi=ops.new_operation(tree.nodes,'NodeGroupInput',stage='Source',role='Palette.Zone.Input');go=ops.new_operation(tree.nodes,'NodeGroupOutput',stage='Output',role='Palette.Zone.Output')
     bindings={key:gi.outputs[key] for key in ('ColorMask','PackedR','Amt')}
-    # Preserve established control order and compatibility labels/aliases.
-    controls=[('Swatch',f'{zone}_ColorMaskSwatch',payload['swatch']),('Canvas','white canvas',(1.,1.,1.,1.)),('ColorA','ColorA',payload['a']),('ColorA2','ColorA2',payload['a2']),('ColorB','ColorB',payload['b']),('ColorB2','ColorB2',payload['b2']),('ColorC','ColorC',payload['c']),('ColorC2','ColorC2',payload['c2']),('Overlay',f'{zone}_BaseColorOverlay',payload['overlay'])]
-    for key,label,value in controls:
-        n=ops.new_operation(tree.nodes,'ShaderNodeRGB',stage='LayerInputs',role=f'Palette.Zone{zone}.Control.{key}');ops.set_label(n,label);n.outputs[0].default_value=value;bindings[key]=n.outputs[0]
+    bindings.update({key:gi.outputs[sock] for key,sock in PALETTE_INPUTS})
+    canvas=ops.new_operation(tree.nodes,'ShaderNodeRGB',stage='LayerInputs',role='Palette.Zone.Control.Canvas');ops.set_label(canvas,'White canvas');canvas.outputs[0].default_value=(1.,1.,1.,1.);bindings['Canvas']=canvas.outputs[0]
     emitter=StageEmitter(tree,bindings,ops);tree.links.new(emitter.emit(palette_circuit()),go.inputs['Colour'])
-    tree['arc_gt_identity']=identity;tree['dr.composer']='clamped source contributions and balanced sum';tree['dr.composer.source_sha256']=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    tree['arc_gt_identity']=PALETTE_VER;tree['dr.composer']='clamped source contributions and balanced sum';tree['dr.composer.source_sha256']=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    return ops.finish_definition(tree)
+
+AMOUNT_GROUP='DR.Zone Amount'
+
+def build_zone_amount(api):
+    """Shared pass-through that keeps each zone's "Amt" a look control (DR. tree) now that the
+    palette group itself is not a control tree."""
+    import bpy
+    tree=bpy.data.node_groups.get(AMOUNT_GROUP);ops=api._dr_ops
+    if tree is not None and tree.get('arc_gt_identity')==PALETTE_VER:return tree
+    if tree is not None:tree.name=AMOUNT_GROUP+' old'
+    tree=bpy.data.node_groups.new(AMOUNT_GROUP,'ShaderNodeTree')
+    tree['dr.legacy_group_key']=AMOUNT_GROUP;tree['dr.semantic_id']='DR.LayerInputs.Definition.ZoneAmount'
+    api._gt_ng_sock(tree,'Amt','INPUT','NodeSocketFloat',1.);api._gt_ng_sock(tree,'Amt','OUTPUT','NodeSocketFloat',None)
+    gi=ops.new_operation(tree.nodes,'NodeGroupInput',stage='Source',role='Palette.Amount.Input');go=ops.new_operation(tree.nodes,'NodeGroupOutput',stage='Output',role='Palette.Amount.Output')
+    gi.location=(-200.,0.);go.location=(200.,0.)
+    tree.links.new(gi.outputs['Amt'],go.inputs['Amt'])
+    tree['arc_gt_identity']=PALETTE_VER
     return ops.finish_definition(tree)
 
 
@@ -208,12 +241,31 @@ def cloth_circuit():
     result=e('add',e('multiply',binding('Specular'),e('subtract',literal(1.),binding('Cloth'),name='Cloth.DielectricWeight'),name='Cloth.Dielectric'),e('multiply',grazing,binding('Cloth'),name='Cloth.Fabric'),name='Cloth.Combined')
     return clamp(result,'Cloth.Specular')
 
-def build_cloth(api,nodes,links,specular,mi_data,zone_eq,world_normal):
+def cloth_factor(api,nodes,links,mi_data,zone_eq):
     from . import clothing as C
     # ShadeAsCloth is a zone scalar; mi_params drops it (_MI_KEEP_TOKENS), which left cloth shading off.
     values={zone:api._value(nodes,f'GT_z{zone}_ShadeAsCloth',f'{zone}_ShadeAsCloth',C._mi_layer_float((mi_data or {}).get('zone_scalars'),zone,'ShadeAsCloth',0.),0,0) for zone in range(1,9)}
     zero=api._value(nodes,'GT_Cloth_Default','Dry cloth default',0.,0,0)
-    cloth=api.mux_by_zone(nodes,links,None,values,dtype='FLOAT',start=zero,prefix='GT_mux_Cloth',zone_eq=zone_eq,x_fn=api.colour_col_x,y=0.)
+    return api.mux_by_zone(nodes,links,None,values,dtype='FLOAT',start=zero,prefix='GT_mux_Cloth',zone_eq=zone_eq,x_fn=api.colour_col_x,y=0.)
+
+# Layered_4 compiles as a Substrate slab: ShadeAsCloth weights the slab's fuzz layer, a sheen lobe
+# tinted by the zone albedo. Principled Sheen is Blender's fuzz equivalent.
+SHEEN_ROUGHNESS=.8
+
+def build_sheen(api,nodes,links,bsdf,cloth,albedo):
+    links.new(cloth,bsdf.inputs['Sheen Weight']);links.new(albedo,bsdf.inputs['Sheen Tint'])
+    bsdf.inputs['Sheen Roughness'].default_value=SHEEN_ROUGHNESS
+
+def fuzz_specular_circuit():
+    # With the fuzz lobe carrying the grazing response, cloth only fades the dielectric specular.
+    result=e('multiply',binding('Specular'),e('subtract',literal(1.),binding('Cloth'),name='Cloth.DielectricWeight'),name='Cloth.Dielectric')
+    return clamp(result,'Cloth.Specular')
+
+def build_cloth(api,nodes,links,specular,mi_data,zone_eq,world_normal,cloth=None,fuzz=False):
+    if cloth is None:cloth=cloth_factor(api,nodes,links,mi_data,zone_eq)
+    if fuzz:
+        emitter=StageEmitter(nodes.id_data,{'Specular':specular,'Cloth':cloth},api._dr_ops);result=emitter.emit(fuzz_specular_circuit())
+        api._dr_ops.set_identity(result.node,'GT_Cloth_SpecularClamp',stage='Surface',role='Cloth.Specular.Output');return result
     geometry=api._dr_ops.new_operation(nodes,'ShaderNodeNewGeometry','GT_Cloth_View',stage='Source',role='Cloth.View')
     emitter=StageEmitter(nodes.id_data,{'Specular':specular,'Cloth':cloth,'Incoming':geometry.outputs['Incoming'],'WorldNormal':world_normal},api._dr_ops);result=emitter.emit(cloth_circuit())
     api._dr_ops.set_identity(result.node,'GT_Cloth_SpecularClamp',stage='Surface',role='Cloth.Specular.Output');return result
@@ -270,8 +322,10 @@ def build_emission(api,nodes,links,mi_data,colours,zone_eq,albedo,crease,edge):
 def build_terminal(api,nodes,links,*,albedo,roughness,metallic,specular,n_color,emission,mi_data,zone_eq):
     """Source→normal transport→cloth response→closure→output, without rewiring."""
     ops=api._dr_ops;nmap=ops.new_operation(nodes,'ShaderNodeNormalMap','GT_NormalMap',stage='Details',role='Surface.NormalTransport')
-    links.new(n_color,nmap.inputs['Color']);specular=build_cloth(api,nodes,links,specular,mi_data,zone_eq,nmap.outputs['Normal'])
+    links.new(n_color,nmap.inputs['Color']);cloth=cloth_factor(api,nodes,links,mi_data,zone_eq)
+    specular=build_cloth(api,nodes,links,specular,mi_data,zone_eq,nmap.outputs['Normal'],cloth,fuzz=True)
     bsdf=ops.new_operation(nodes,'ShaderNodeBsdfPrincipled','GT_Principled',stage='Output',role='Surface.Closure');ops.set_label(bsdf,'GT Principled (full outfit PBR)');bsdf.inputs['IOR'].default_value=1.5
     for source,key in [(albedo,'Base Color'),(roughness,'Roughness'),(metallic,'Metallic'),(specular,'Specular IOR Level'),(nmap.outputs['Normal'],'Normal')]:links.new(source,bsdf.inputs[key])
+    build_sheen(api,nodes,links,bsdf,cloth,albedo)
     if emission is not None:links.new(emission,bsdf.inputs['Emission Color']);from .emissive_exposure import character_emissive_exposure;bsdf.inputs['Emission Strength'].default_value=character_emissive_exposure();bsdf['dr.pro']='emission'
     out=ops.new_operation(nodes,'ShaderNodeOutputMaterial','GT_MaterialOutput',stage='Output',role='Surface.Output');links.new(bsdf.outputs['BSDF'],out.inputs['Surface']);return bsdf,nmap,out

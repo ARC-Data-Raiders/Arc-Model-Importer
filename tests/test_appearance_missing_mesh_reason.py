@@ -44,7 +44,7 @@ class MissingMeshReasonTests(unittest.TestCase):
 
     def test_pak_failure_reason_is_reported(self):
         self.assertEqual(self.ns['locate_appearance_mesh']('Characters/Shared/Bodies/SK_Body'), '')
-        self.assertEqual(self.ns['_pak_reason_suffix'](), ' (usmap is missing)')
+        self.assertEqual(self.ns['_pak_reason_suffix'](), ' (The game mappings file is missing)')
 
     def test_non_pak_source_is_reported(self):
         self.scene.arc_import_source = 'DISK'

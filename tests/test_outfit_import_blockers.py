@@ -62,8 +62,10 @@ class DecalOverrideTests(unittest.TestCase):
     def test_zero_colour_override_keeps_the_decal_artwork(self):
         # Driftcoat's T_Patch_02_Color_C keeps its chevron artwork at ColorOverride 0 (master default).
         text = (ROOT / 'Shared/materials' / 'gt_outfit_pbr.py').read_text(encoding='utf-8')
-        self.assertIn('tint_fac = float(color_override)', text)
+        # tint_fac became a clamped 'override' in commit 2c88423; zero must still stay zero.
+        self.assertIn('override = max(0.0, min(1.0, float(decal.get("color_override", 0.0))))', text)
         self.assertIsNone(re.search(r'tint_fac < 0\.01:\s*\n\s*tint_fac = 1\.0', text))
+        self.assertIsNone(re.search(r'override < 0\.01:\s*\n\s*override = 1\.0', text))
 
 
 class ReceiptLongPathTests(unittest.TestCase):
@@ -145,7 +147,8 @@ class BatchedHierarchyTests(unittest.TestCase):
         import threading
         self.calls = []
         ns = {'threading': threading, 'contextmanager': contextlib.contextmanager,
-              'raw_material_metadata_plan': lambda scene, **kw: self.calls.append(kw)}
+              'raw_material_metadata_plan': lambda scene, **kw: self.calls.append(kw),
+              '_join_material_metadata_prefetch': lambda scene: None}
         tree = ast.parse((ROOT / 'Shared/pak_extract.py').read_text(encoding='utf-8'))
         nodes = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name in ('batched_material_hierarchy', 'ensure_cached_material_hierarchy'))
                  or (isinstance(n, ast.Assign) and any(getattr(t, 'id', '') == '_HIERARCHY_BATCH' for t in n.targets))]

@@ -13,6 +13,15 @@ def load_ui(root):
     module.assets = SimpleNamespace(invalidate=lambda: None)
     sys.modules[module.__name__] = module
     exec(compile(tree, str(source), 'exec'), module.__dict__)
+    if not hasattr(module, 'draw_gun_preview'):
+        # Commit 5f70ddb moved draw_gun_preview into sidebar.py; it reads state from Weapons.weapon_ui.
+        import bpy
+        sidebar = root / 'sidebar.py'
+        nodes = [node for node in ast.parse(sidebar.read_text(encoding='utf-8-sig')).body
+                 if isinstance(node, ast.FunctionDef) and node.name == 'draw_gun_preview']
+        namespace = {'bpy': bpy, '_lazy': lambda name: module, '_resolved_str': lambda path: str(Path(path).resolve())}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(sidebar), 'exec'), namespace)
+        module.draw_gun_preview = namespace['draw_gun_preview']
     return module
 
 
@@ -42,7 +51,10 @@ def main():
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     root = Path(__file__).resolve().parents[1]
     ui = load_ui(root)
-    paths = sorted((root / 'assets/weapon_browser/generated').glob('*.png'))
+    # Generated previews ship as AVIF since commit 5f70ddb; sample evenly to keep the run short.
+    generated = root / 'assets/weapon_browser/generated'
+    paths = sorted([*generated.glob('*.png'), *generated.glob('*.avif')])
+    paths = paths[::max(1, len(paths) // 24)]
     assert len(paths) > 1
     initial_images = set(bpy.data.images)
     initial_textures = set(bpy.data.textures)

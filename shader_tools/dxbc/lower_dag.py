@@ -1,12 +1,63 @@
 import struct
 from . import lower_blender as lb
+from . import volume
+
+
+def _reciprocal_zero_bits(node):
+    if node['op'] != 'const' or node['args'][0] not in (0, 0x80000000):
+        return None
+    return -1 if node['args'][0] else 1
+
+
+def _reciprocal_match(nodes, target):
+    if target['op'] != 'sat':
+        return None
+    product = nodes[target['args'][0]]
+    if product['op'] != 'mul':
+        return None
+    for numerator, reciprocal in (product['args'], product['args'][::-1]):
+        reciprocal = nodes[reciprocal]
+        if reciprocal['op'] != 'div':
+            continue
+        unit, denominator = (nodes[index] for index in reciprocal['args'])
+        if unit['op'] != 'const' or unit['args'] != [0x3F800000]:
+            continue
+        sign = _reciprocal_zero_bits(denominator)
+        branches = []
+        if sign is not None:
+            branches.append((None, sign))
+        elif denominator['op'] in ('movc', 'select'):
+            for branch in (1, 2):
+                sign = _reciprocal_zero_bits(nodes[denominator['args'][branch]])
+                if sign is not None:
+                    branches.append((branch, sign))
+        if branches:
+            return numerator, denominator['id'], branches
+    return None
+
+
+def _reciprocal_correction(blender, tree, nodes, memo, dependencies, target, value):
+    numerator, denominator, branches = _reciprocal_match(nodes, target)
+    total = 0.0
+    for branch, sign in branches:
+        gate = 1.0
+        if branch is not None:
+            key = dependencies[(denominator, 'float')][0]
+            condition = memo[key]
+            if key[1] != 'mask':
+                condition = blender.nonzero_idiom(tree, condition)
+            gate = condition if branch == 1 else blender.math(tree, 'SUBTRACT', 1.0, condition)
+        comparison = blender.math(tree, 'GREATER_THAN' if sign > 0 else 'LESS_THAN',
+                                  memo[(numerator, 'float')], 0.0)
+        total = blender.math(tree, 'ADD', total, blender.math(tree, 'MULTIPLY', gate, comparison))
+    return blender.math(tree, 'ADD', blender.sat(tree, value), total, label='reciprocal zero branch')
 
 
 class Unsupported(Exception):
     pass
 
 
-def lower(nt,dag,sources,images,outputs,mode):
+def lower(nt,dag,sources,images,outputs,mode,samplers=None):
     nodes=dag['nodes']
     errors={}
     demands=set()
@@ -65,6 +116,9 @@ def lower(nt,dag,sources,images,outputs,mode):
             else:deps=[(args[0],'float')]
         elif op=='sample':
             if len(args)<3 or not isinstance(args[-1],dict) or args[-1]['slot'] not in images:fail(n,'unsupported:sample_form')
+            elif isinstance(images[args[-1]['slot']],volume.Volume):
+                if len(args)<4 or (samplers or {}).get((args[-1]['slot'],args[-1].get('sampler'))) != volume.POLICY or args[-1].get('volume_opcode','sample_indexable(texture3d)(float,float,float,float)') != 'sample_indexable(texture3d)(float,float,float,float)':fail(n,'unsupported:volume_sampler_or_coordinates')
+                else:deps=[(args[0],'float'),(args[1],'float'),(args[2],'float')]
             else:deps=[(args[0],'float'),(args[1],'float')]
         elif op=='sincos':
             if len(args)!=2 or not isinstance(args[-1],dict) or args[-1].get('result') not in [0,1]:fail(n,'unsupported:sincos_form')
@@ -90,7 +144,10 @@ def lower(nt,dag,sources,images,outputs,mode):
         return value
     def production_sample(n,args):
         meta=n['args'][-1]
-        key=(meta['slot'],n['args'][0],n['args'][1])
+        policy=(samplers or {}).get((meta['slot'],meta.get('sampler')))
+        if policy not in (None,'bilinear_clamp'):
+            raise Unsupported('unsupported:sampler_policy:'+str(policy))
+        key=(meta['slot'],meta.get('sampler'),policy,n['args'][0],n['args'][1])
         if key not in samples:
             vec=nt.nodes.new('ShaderNodeCombineXYZ')
             for i,value in enumerate([args[0],lb.math(nt,'SUBTRACT',1.0,args[1],label='sample'),0.0]):
@@ -99,7 +156,7 @@ def lower(nt,dag,sources,images,outputs,mode):
             tex=nt.nodes.new('ShaderNodeTexImage')
             tex.image=images[meta['slot']]
             tex.interpolation='Linear'
-            tex.extension='REPEAT'
+            tex.extension='EXTEND' if policy=='bilinear_clamp' else 'REPEAT'
             nt.links.new(vec.outputs[0],tex.inputs['Vector'])
             sep=nt.nodes.new('ShaderNodeSeparateColor')
             nt.links.new(tex.outputs['Color'],sep.inputs[0])
@@ -129,7 +186,11 @@ def lower(nt,dag,sources,images,outputs,mode):
         elif op=='sincos':value=lb.sincos(nt,values[0],args[-1]['result'])
         elif op=='sample':
             meta=args[-1]
-            value=lb.sample(nt,images[meta['slot']],*values,meta['component'],cache=samples,slot=meta['slot']) if mode=='check' else production_sample(n,values)
+            if isinstance(images[meta['slot']],volume.Volume):
+                value=volume.lower(nt,images[meta['slot']],values,meta['component'],samples,meta['slot'],meta.get('sampler'))
+            else:value=lb.sample(nt,images[meta['slot']],*values,meta['component'],cache=samples,slot=meta['slot']) if mode=='check' else production_sample(n,values)
+        elif op == 'sat' and _reciprocal_match(nodes, n) is not None:
+            value = _reciprocal_correction(lb, nt, nodes, memo, dependencies, n, values[0])
         else:value=(functions[op] if op in functions else getattr(lb,op))(nt,*values)
         value=socket(value)
         memo[(ident,context)]=value

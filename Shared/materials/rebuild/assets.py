@@ -139,6 +139,23 @@ class AssetIndex:
                         if from_layer or idx not in self.arrays[base]:
                             self.arrays[base][idx] = p
 
+    def ensure(self, path):
+        """Register one on-disk file a cached inventory predates; return its package."""
+        p = Path(path)
+        if not p.is_file():
+            return ''
+        ext = p.suffix.lower()
+        try:
+            key = package(p.resolve().relative_to(self.root).as_posix()).casefold()
+        except ValueError:
+            return ''
+        if (key, ext) not in self.paths:
+            self.paths[(key, ext)] = p
+            self.names[(p.stem.casefold(), ext)].append(p)
+            if '/content/' in key:
+                self.content[(key.split('/content/', 1)[1], ext)].append(p)
+        return key
+
     def resolve(self, reference, ext='.json', context=None):
         key = package(reference).casefold()
         exact = self.paths.get((key, ext))
@@ -193,7 +210,14 @@ class AssetIndex:
                 return chosen
         if candidates:
             from ..native.repository import digest
-            if len({digest(path) for path in candidates})>1:raise ResolutionError('Ambiguous basename requires exact reference: '+str(reference))
+            if len({digest(path) for path in candidates})>1:
+                if mounts=={'engine'}:
+                    # /Engine helper materials (BasicShapeMaterial, BlackUnlitMaterial) exist at several engine paths.
+                    # Pick deterministically by full object path; the note makes the audit flag it as info.
+                    chosen=sorted(candidates,key=lambda p:relative_package(p,self.root).casefold())[0]
+                    self.resolution_notes[(str(reference),str(context))]='engine_helper_material: basename '+str(reference)+' picked '+relative_package(chosen,self.root)+' by object path order of '+str(len(candidates))
+                    return chosen
+                raise ResolutionError('Ambiguous basename requires exact reference: '+str(reference))
             return _prefer_duplicate_export(candidates)
         return None
 
@@ -275,8 +299,17 @@ def _prefer_duplicate_export(candidates):
     return sorted(candidates, key=rank)[0]
 
 
+def _index_identity(root):
+    identity = str(Path(root).expanduser().resolve())
+    if identity.startswith('\\\\?\\UNC\\'):
+        identity = '\\\\' + identity[8:]
+    elif identity.startswith('\\\\?\\'):
+        identity = identity[4:]
+    return identity.casefold()
+
+
 def get_index(root, refresh=False):
-    key = str(Path(root).resolve()).casefold()
+    key = _index_identity(root)
     if refresh or key not in _INDEX:
         _INDEX[key] = AssetIndex(root)
     return _INDEX[key]
@@ -296,7 +329,7 @@ def invalidate_index(root=None):
         i = lower.index('content')
         if i == len(parts)-1 or lower[i+1] == 'pioneer':
             target = Path(*parts[:i])
-    identity = str(target).casefold()
+    identity = _index_identity(target)
     for key, index in list(_INDEX.items()):
-        if key == identity or str(index.root).casefold() == identity:
+        if key == identity or _index_identity(index.root) == identity:
             del _INDEX[key]

@@ -18,6 +18,49 @@ def empty(key=''):
             'textures': {}, 'scalars': {}, 'colors': {}, 'switches': {}, 'settings': {}}
 
 
+# Engine placeholder masters (no Pioneer sidecar): rendered as neutral grey with an info flag.
+ENGINE_DEFAULTS = {'engine/content/enginematerials/worldgridmaterial', 'engine/content/enginematerials/defaultmaterial'}
+# Legacy root masters routed by base name into existing families (no native route).
+LEGACY_DECAL_BASES = {'m_defereddecal_x_01', 'm_meshdecal_colorsimple_deffered_01', 'm_raidermarks_01_a'}
+MASKED_CA_BASES = {'m_south_swamp_tiling_01', 'm_cablesimpleplane_01', 'm_grounddebrispreset_cr+noh+a', 'm_wires_01_lod',
+                   'm_rrs_win_01', 'mm_cables_raider_flags', 'm_tbg_grass_01', 'm_rsr_ceiling_01_pads_a'}
+VT_BLEND_BASES = {'m_fzt_nature_01', 'm_scalingpipepreset'}
+PARAMETER_ONLY_BASES = {'m_tarmacpatches_01', 'm_water_01'}
+# prop-audit R7: fallback roots with >=5 slots, routed by root base name (approximate builders).
+NAMED_CA_BASES = {'baseflattenmaterial', 'm_res_door_l_01', 'm_revealpostits', 'm_meshterrain', 'm_meshterrain_02',
+                  'm_simpledecalfrontend', 'm_tbg_backdropmaterialpreset_01', 'm_decal', 'm_fx_decal_parent',
+                  'm_moss_01', 'm_grounddebrispreset', 'm_base_a', 'm_fakeinterior_01'}
+CONSTANT_BASES = {'m_mcp_floorlines_01_a', 'm_cablegenerator', 'm_tarpconstruction_01', 'm_visor_tinted'}
+# prop-audit W5: masters that sample fixed (non-parameter) maps; generic_families.FIXED_MAPS holds them.
+FIXED_MAP_BASES = {'m_railguncables', 'm_debrispile_07_groundplane', 'm_wires_01', 'm_swampgrass_01'}
+INVISIBLE_BASES = {'m_fx_meshradialblur', 'm_fanlightfunction', 'm_fx_volumescorchmarkdecal'}
+
+
+_ENGINE_CANONICAL = {'engine/content/enginematerials/worldgridmaterial': 'Engine/Content/EngineMaterials/WorldGridMaterial',
+                     'engine/content/enginematerials/defaultmaterial': 'Engine/Content/EngineMaterials/DefaultMaterial'}
+
+
+def engine_default_key(name):
+    """Canonical engine package for an /Engine default material: full path or bare engine basename."""
+    key = package(name).casefold()
+    if key in _ENGINE_CANONICAL:
+        return _ENGINE_CANONICAL[key]
+    if key and '/' not in key:
+        for low, canonical in _ENGINE_CANONICAL.items():
+            if low.rsplit('/', 1)[-1] == key:
+                return canonical
+    return None
+
+
+def engine_default_record(key):
+    record = empty(key)
+    if record['package'].casefold() not in ENGINE_DEFAULTS:
+        return None
+    record['master'] = record['package']
+    record['family'] = 'engine_default'
+    return record
+
+
 def scoped_key(info):
     association = str(info.get('Association','GlobalParameter')).rsplit('::',1)[-1]
     scope = 'Global' if association == 'GlobalParameter' else ('Layer' if association == 'LayerParameter' else 'Blend') + str(info.get('Index',0))
@@ -131,7 +174,8 @@ def merge(parent, child):
     result = dict(child)
     for k in ['textures', 'scalars', 'colors', 'switches', 'settings']:
         result[k] = dict(parent.get(k, {}))
-        result[k].update(child.get(k, {}))
+        result[k].update({name: value for name, value in child.get(k, {}).items()
+                          if k != 'textures' or value not in (None, '')})
     return result
 
 
@@ -170,7 +214,19 @@ class MaterialLibrary:
         if current is not self.native:
             self.native=current
             self._data=None if current is None else {package(entry['facts']['package']).casefold():{'package':package(entry['facts']['package'])} for entry in current.catalog.payload['records'].values()}
-        if self.native is None:
+        engine = engine_default_key(key)
+        # /Engine defaults have no Pioneer sidecar: only an exact catalog entry may load natively.
+        engine_local = bool(engine)
+        if engine and self.native is not None and engine.casefold() in self._data:
+            try:
+                record = self.native.legacy_record(engine)
+            except (FileNotFoundError, ResolutionError):
+                record = None  # catalog entry without mounted engine sources
+            if record is not None:
+                record['family'] = classify(record)
+                from .head_records import augment
+                return augment(record)
+        if self.native is None and not engine_local:
             from .native_catalog_bridge import raw_session
             owner=None if getattr(self.index,'compatibility_mode',False) else raw_session(self.index)
             record=owner.legacy_record_if_authoritative(key) if owner is not None else None
@@ -178,7 +234,7 @@ class MaterialLibrary:
                 record['family']=classify(record)
                 from .head_records import augment
                 return augment(record)
-        if self.native is not None:
+        if self.native is not None and not engine_local:
             # Reload current source association; do not reuse flattened memo values.
             record = self.native.legacy_record(key)
             record['family'] = classify(record)
@@ -192,8 +248,20 @@ class MaterialLibrary:
         if cached and cached.get('_native_render_limit'):
             from .native_catalog_bridge import NativeRenderLimitationError
             raise NativeRenderLimitationError('Current native preset/hierarchy has deferred expression bindings: '+key)
-        path = self.index.resolve(key, '.json')
+        if engine:
+            # Engine defaults resolve by exact path only; never by an ambiguous basename.
+            key, low = engine, engine.casefold()
+            cached = self.data.get(low)
+            path = self.index.paths.get((low, '.json'))
+        else:
+            path = self.index.resolve(key, '.json')
         if not cached and not path:
+            fallback = engine_default_record(key)
+            if fallback is not None:
+                fallback['native_source_mode'] = 'engine-default'
+                fallback['native_source_diagnostics'] = []
+                self.memo[low] = fallback
+                return fallback
             raise ResolutionError('Material metadata missing: ' + key)
         local = raw_record(json.loads(path.read_text(encoding='utf-8-sig')), key) if path else None
         record = dict(cached) if cached else empty(key)
@@ -226,6 +294,9 @@ class MaterialLibrary:
         return record
 
     def slot(self, name, mesh_path=None):
+        engine = engine_default_key(name)
+        if engine:
+            return self.load(engine)
         if self.native is None:
             from .native_catalog_bridge import raw_session
             owner=None if getattr(self.index,'compatibility_mode',False) else raw_session(self.index)
@@ -326,11 +397,13 @@ def classify(r):
     if 'weaponpreset' in master or 'Weapon ID' in t:
         return 'weapon'
     base = master.rsplit('/',1)[-1]
+    if package(r.get('master', r.get('parent', ''))).casefold() in ENGINE_DEFAULTS:
+        return 'engine_default'
     if base == 'm_enemypreset_ox+tiling+detail':
         return 'enemy_tile'
     if base == 'm_vehiclestack':
         return 'vehicle'
-    if base == 'm_fx_meshradialblur':
+    if base in INVISIBLE_BASES:
         return 'fx_invisible'
     if base == 'm_fx_cloud_lightvector':
         return 'fx_cloud'
@@ -338,20 +411,33 @@ def classify(r):
         return 'background_decal'
     if base == 'm_glassopaque_nx_01':
         return 'glass_opaque'
-    if base == 'm_sanddune':
+    if base in ('m_sanddune', 'm_sanddune_floor'):
         return 'sand_dune'
     if base == 'm_fzt_snowpiles_01':
         return 'snow_pile'
     if base == 'm_fzt_snow_01':
         return 'fzt_snow'
-    if base == 'm_masterlight_lightbulb_01':
+    if base in ('m_masterlight_lightbulb_01', 'm_masterlight_lightbulb_swing_01'):
         return 'lightbulb'
+    if base in ('m_masterlight_emissive_01', 'm_blockout_flickerlight'):
+        return 'light_emissive'
     if base == 'm_fx_lightbeam_master_01':
         return 'fx_lightbeam'
     if base == 'm_fx_fogsheet_master_01':
         return 'fx_fogsheet'
-    if 'decalpreset' in base:
+    if 'decalpreset' in base or base in LEGACY_DECAL_BASES:
         return 'decal'
+    # Root-master routes into existing generic families (prop-audit R3); each builder warns `approximate:`.
+    if base in MASKED_CA_BASES or base in NAMED_CA_BASES:
+        return 'masked_na'
+    if base == 'm_snowskirt_decal_01':
+        return 'snow_pile_basic'
+    if base in VT_BLEND_BASES:
+        return 'vt_blend'
+    if base in PARAMETER_ONLY_BASES or base in CONSTANT_BASES or base in FIXED_MAP_BASES:
+        return 'parameterless'
+    if base == 'm_hme_monitorimageseq_01':
+        return 'graphic_atlas'
     if 'windowpane' in base:
         return 'window'
     if base == 'm_proppreset_translucent+reflection+detail':
@@ -370,4 +456,34 @@ def classify(r):
         return 'architecture'
     if any(k in t for k in ['CR', 'NOM', 'NOH', 'NOX', 'Diffuse', 'BaseColor', 'Albedo', 'Color', 'Normal', 'Normals']):
         return 'surface'
+    # Tileable Metal / Harvester trim share PropTrim's CR + NMX parameter contract (native refusal lands here).
+    if 'CR Texture' in t and 'NXX/NMX Texture' in t:
+        return 'prop_trim'
+    # Generic texture-contract families (generic_families.py); master bases cover MIs that inherit every map.
+    if 'DecalTrimsheet' in t or base == 'm_enemypreset_masked_nao+detail':
+        return 'nao_decal'
+    if ('CR_1' in t and 'NOH_1' in t) or ('0. CR 1' in t and '0. NOH 1' in t) or base in ('m_cr_noh_parallax_vtblend_01', 'm_tarmac_02'):
+        return 'vt_blend'
+    if 'ColorAlpa' in t or 'ColorAlpha' in t or 'NormalRoughness' in t or base == 'm_decal_canr':
+        return 'canr_decal'
+    if ('BC' in t and 'NA' in t) or base == 'm_proppreset_masked+na+detail':
+        return 'masked_na'
+    if 'Detail NCR' in t or base == 'm_res_architecturetrim_01':
+        return 'detail_ncr_trim'
+    if base.startswith('m_brokenglasssdf') or ('NDD' in t and 'NC' in t):
+        return 'broken_glass'
+    if ('Trim sheet' in t and 'CH' in t) or base == 'm_concretetrim_uxr':
+        return 'concrete_trim'
+    if ('Base Texture' in t and 'HolesNXX' in t) or base.startswith('m_trimpreset_rusty'):
+        return 'rusty_trim'
+    if 'Graphic Atlas' in t or base == 'm_graphic_atlas_01':
+        return 'graphic_atlas'
+    if base.startswith('m_blockoutpreset'):
+        return 'blockout'
+    if 'BaseTextrue' in t or base == 'm_snowpile_01':
+        return 'snow_pile_basic'
+    if ('Variation Mask' in t and 'LargeScaleVariation' in t) or base == 'm_proppreset_nr+vpo+detail':
+        return 'nr_vpo_detail'
+    if not t:
+        return 'parameterless'
     return 'fallback'

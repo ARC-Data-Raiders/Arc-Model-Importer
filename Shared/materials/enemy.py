@@ -205,18 +205,6 @@ def _setup_enemy_decal_material(mat, mi_path: str, psk_path: str):
     elif normal_out is not None:
         links.new(normal_out, principled.inputs["Normal"])
 
-    # Leftover textures (unconnected) for inspection — skip already wired
-    handled = {node.image.filepath for node in nodes if getattr(node, "image", None)}
-    row_u = -550
-    for param, (fpath, img) in tex_lookup.items():
-        if fpath in handled:
-            continue
-        node = nodes.new("ShaderNodeTexImage")
-        node.image = img
-        node.label = param
-        node.interpolation = "Cubic"
-        node.location = (COL_TEX - 350, row_u)
-        row_u -= 300
 
 
 
@@ -952,7 +940,35 @@ def setup_enemy_material(obj, psk_path: str) -> int:
             mi_stem, mi_path, psk_path, (slot_name or mi_stem).lower(), obj=obj
         )
         if material is None:
+            from .dispatch import mark_placeholder
+            mark_placeholder(target.material)
             continue
+        old = target.material
         target.material = material
+        _adopt_slot_name(old, material)
         wired += 1
     return wired
+
+
+def _adopt_slot_name(old, new):
+    """Drop the importer's unused default slot material so the built MI keeps its plain name.
+
+    The mesh importer leaves a 2-node material named after the MI; the shared build then
+    lands on "<MI>.001". Only an unused, unbuilt default with the same base name is removed."""
+    if old is None or new is None or old == new:
+        return False
+    try:
+        if old.users or old.library is not None or old.get("arc_mi_path") or old.get("dr_control_owner"):
+            return False
+        base = re.sub(r"\.\d{3}$", "", new.name)
+        if re.sub(r"\.\d{3}$", "", old.name) != base:
+            return False
+        nt = old.node_tree
+        if nt is not None and sum(n.bl_idname != "NodeFrame" for n in nt.nodes) > 2:
+            return False
+        bpy.data.materials.remove(old)
+        if new.name != base and bpy.data.materials.get(base) is None:
+            new.name = base
+        return True
+    except (ReferenceError, AttributeError):  # freed or non-ID slot material
+        return False

@@ -309,6 +309,24 @@ def _mi_tex_params(mi: dict) -> set:
     return {p for p, _ in (mi.get("textures") or [])}
 
 
+LIGHTBULB_MASTERS = ("m_masterlight_lightbulb_01", "m_masterlight_lightbulb_swing_01")
+
+
+def _is_lightbulb_master_mi(mi: dict) -> bool:
+    """MI of a lightbulb master: parent base name, or the master's texture params (Lightbulb + GlassTexture)."""
+    parent = str(mi.get("parent") or "").lower().replace("\\", "/").rsplit("/", 1)[-1].split(".", 1)[0]
+    return parent in LIGHTBULB_MASTERS or {"Lightbulb", "GlassTexture"} <= _mi_tex_params(mi)
+
+
+def _is_blockout_preset_mi(mi: dict) -> bool:
+    """W6b: root master (or direct parent) is exactly M_BlockoutPreset; M_BlockoutPreset_Glow is a separate light master."""
+    for ref in (mi.get("root_master"), mi.get("parent")):
+        base = str(ref or "").lower().replace("\\", "/").rsplit("/", 1)[-1].split(".", 1)[0]
+        if base == "m_blockoutpreset":
+            return True
+    return False
+
+
 
 def _blend_mode_str(mi: dict) -> str:
     bm = mi.get("blend_mode")
@@ -837,7 +855,16 @@ def classify_mi_family(mi: dict, mi_stem_lower: str = "", slot_lower: str = "") 
     # procedural enemy ScanDisplay LED grid selected by a "screen" name.
     if "Flipbook" in _mi_tex_params(mi):
         return FAMILY_FLIPBOOK
-    if _is_weapon_emissive_light_mi(stem):
+    # R17: a DecalPreset master is a decal even when the MI stem carries a "Light"
+    # shade token (MI_Decal_Leaks_*_Light); routing by master, not MI name.
+    if parent_l.rsplit("/", 1)[-1].startswith("m_decalpreset"):
+        return FAMILY_DECAL
+    # R37: lightbulb masters (M_MasterLight_Lightbulb_*, Lightbulb + GlassTexture params) have a dedicated
+    # builder (rebuild/lightbulb.py). A "_Light_" stem (MI_Frigate_01_Ext_Light_A) must not take the
+    # name-based authored-light route ahead of it: such MIs fall through like the other lightbulb MIs.
+    # W6b: M_BlockoutPreset MIs use "Light" as a shade (MI_Blockout_Metal_Light_Gray: BaseColor 828282, no
+    # emissive params); route by master before the name-stem light rule.
+    if _is_weapon_emissive_light_mi(stem) and not _is_lightbulb_master_mi(mi) and not _is_blockout_preset_mi(mi):
         return FAMILY_EMISSIVE
     if _is_enemy_scan_display_mi(mi, stem, slot):
         return FAMILY_SCAN
@@ -945,4 +972,3 @@ def _needs_map_decal_mask_rebuild(mat, mi_path: str = "") -> bool:
         if leaf.endswith("_x"):
             return True
     return False
-

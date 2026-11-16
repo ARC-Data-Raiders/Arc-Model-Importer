@@ -3,13 +3,15 @@ import ast,functools,hashlib,json,os,subprocess,sys,tempfile,types,unittest
 from pathlib import Path
 ROOT=Path(os.environ.get('DATARAIDERS_TEST_REPOSITORY',Path(__file__).resolve().parents[1])).resolve()
 PACKAGE='_pak_extract_reuse_probe'
-SELECTED={'_mapping_sha256','_extraction_revision','_installed_material_provenance','game_path','_normalize_asset_path','_package_aliases','_expected_uemodel','_collect_uemodels','complete_extraction','_extraction_producer','current_extracted_meshes','ensure_rels','_finish_extraction','register_defaults','unregister_defaults','_initialize_pak_defaults','_load_pak_defaults','configured_dir','resolve_pak_folder','_resolve_pak_folder','pak_dir_has_game_files'}
+SELECTED={'_mapping_sha256','_extraction_revision','_installed_material_provenance','game_path','_normalize_asset_path','_package_aliases','_expected_uemodel','_collect_uemodels','complete_extraction','_extraction_producer','current_extracted_meshes','ensure_rels','_finish_extraction','register_defaults','unregister_defaults','_initialize_pak_defaults','_load_pak_defaults','configured_dir','resolve_pak_folder','_resolve_pak_folder','pak_dir_has_game_files','_prefs_pak_dir','_report_extract_failure'}
 
 def load_pak():
     package=types.ModuleType(PACKAGE);package.__path__=[str(ROOT)];sys.modules[PACKAGE]=package
     path=ROOT/'Shared/pak_extract.py';tree=ast.parse(path.read_text(encoding='utf-8'));nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in SELECTED]
     if {n.name for n in nodes}!=SELECTED:raise AssertionError('reuse function coverage changed')
-    module=types.ModuleType(PACKAGE+'.Shared.pak_extract');module.__package__=PACKAGE+'.Shared';module.__dict__.update(os=os,re=__import__('re'),json=json,hashlib=hashlib,subprocess=subprocess,lru_cache=functools.lru_cache,_log_tail=lambda value:value[-1000:],stop_serve=lambda:None)
+    module=types.ModuleType(PACKAGE+'.Shared.pak_extract');module.__package__=PACKAGE+'.Shared';module.__dict__.update(os=os,re=__import__('re'),json=json,hashlib=hashlib,subprocess=subprocess,lru_cache=functools.lru_cache,_log_tail=lambda value,limit=6:value[-1000:],threading=__import__('threading'),stop_serve=lambda:None)
+    # Shared/prefs.py stub: no add-on preferences in the probe, so get() returns the default.
+    module.prefs=types.SimpleNamespace(get=lambda key,default=None:default,remember=lambda key,value:None,set_value=lambda key,value:None,register=lambda:None,unregister=lambda:None)
     module.bpy=types.SimpleNamespace(app=types.SimpleNamespace(handlers=types.SimpleNamespace(persistent=lambda function:function)))
     exec(compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)]+nodes,type_ignores=[])),str(path),'exec'),module.__dict__);return module
 
@@ -25,6 +27,9 @@ class ReuseCurrentExtraction(unittest.TestCase):
         pak.configured_dir=lambda scene:str(self.game);pak.resolve_usmap=lambda scene:str(mapping);pak.cache_dir=lambda:str(self.cache);pak.exe_path=lambda:str(self.exe)
         self.finished=[];self.published=[];pak.utils=types.SimpleNamespace(set_pak_cache_root=self.published.append)
         pak.textures=types.SimpleNamespace(clear_clothing_path_caches=lambda:self.finished.append('textures'))
+        # _finish_extraction does `from . import textures`; register the stub so the real module never loads.
+        textures=types.ModuleType(PACKAGE+'.Shared.textures');textures.clear_clothing_path_caches=pak.textures.clear_clothing_path_caches;sys.modules[textures.__name__]=textures
+        if PACKAGE+'.Shared' in sys.modules:sys.modules[PACKAGE+'.Shared'].textures=textures
         common=types.ModuleType(PACKAGE+'.Shared.materials.common');common.clear_material_session_caches=lambda:self.finished.append('materials');sys.modules[common.__name__]=common
         assets=types.ModuleType(PACKAGE+'.Shared.materials.rebuild.assets');assets.invalidate_index=lambda root:self.finished.append(('index',root));sys.modules[assets.__name__]=assets
         pak.appearance=types.SimpleNamespace(_ICON_SCAN_CACHE={'warm':'retained'});self.extracted=[];pak.extract_paths=self.fake_extract
@@ -86,8 +91,10 @@ class ReuseCurrentExtraction(unittest.TestCase):
         pak._load_pak_defaults();pak.reconcile_pak_dir.assert_not_called()
     def test_explicit_action_resolves_and_validates_configured_path(self):
         pak=load_pak();pak.bpy.path=types.SimpleNamespace(abspath=lambda value:value)
-        self.assertEqual(pak.configured_dir(types.SimpleNamespace(arc_pak_dir=str(self.game))),str(self.game))
-        self.assertEqual(pak.configured_dir(types.SimpleNamespace(arc_pak_dir=str(self.game/'missing'))),'')
+        class Scene(dict):
+            def __init__(self,folder):super().__init__();self.arc_pak_dir=folder
+        self.assertEqual(pak.configured_dir(Scene(str(self.game))),str(self.game))
+        self.assertEqual(pak.configured_dir(Scene(str(self.game/'missing'))),'')
 
 def importlib_metadata():
     import importlib;return importlib.import_module(PACKAGE+'.Shared.material_texture_metadata')

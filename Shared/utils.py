@@ -26,7 +26,7 @@ _DECAL_LAYERMASK_GATE_GROUP = "Decal LayerMask Gate"
 _DECAL_LAYER_MASK_GROUP = "Decal LayerMask"
 _CURVATURE_ID_OVERRIDE_GROUP = "CurvatureID_Override"
 _VISOR_GROUP = "Visor"
-_DEBUG_LOG_PATH = os.path.join(_ADDON_DIR, "arc_raiders_debug.log")
+_DEBUG_LOG_PATH = ""  # set by get_logger(); see log_path()
 _PERF_LOG_NAME = "arc_outfits_perf.log"
 # Final builds: leave False. Set True to re-enable %TEMP%/arc_outfits_perf.log drill-down.
 _PERF_LOGGING_ENABLED = False
@@ -35,33 +35,119 @@ _IO_POOL_DEFAULT_WORKERS = 6
 _ACTIVE_PERF = None  # type: ignore[var-annotated]
 
 
+_LOG_FILE_NAME = "arc_raiders_debug.log"
+_LOG_MAX_BYTES = 1_000_000
+_LOG_BACKUPS = 3
+_LOG_FORMAT = ("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S")
+
+
+def _log_dir_candidates():
+    """Per-user log folders, best first: %LOCALAPPDATA%/<addon folder>/logs, then TEMP."""
+    folder = os.path.basename(_ADDON_DIR) or "Arc-Asset-Importer"
+    out = []
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        out.append(os.path.join(local, folder, "logs"))
+    temp = os.environ.get("TEMP") or os.environ.get("TMP")
+    if temp:
+        out.append(os.path.join(temp, folder, "logs"))
+    return out
+
+
+def _wanted_log_level() -> int:
+    """DEBUG when ARC_IMPORTER_DEBUG=1 or add-on prefs log_level == 'DEBUG'; else INFO."""
+    if os.environ.get("ARC_IMPORTER_DEBUG", "").strip() == "1":
+        return logging.DEBUG
+    try:
+        from . import prefs as _prefs
+
+        if str(_prefs.get("log_level", "INFO") or "INFO").upper() == "DEBUG":
+            return logging.DEBUG
+    except Exception:
+        pass
+    return logging.INFO
+
+
+def _open_log_file_handler(fmt):
+    from logging.handlers import RotatingFileHandler
+
+    for folder in _log_dir_candidates():
+        path = os.path.join(folder, _LOG_FILE_NAME)
+        try:
+            os.makedirs(folder, exist_ok=True)
+            fh = RotatingFileHandler(path, maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUPS,
+                                     encoding="utf-8", delay=True)
+        except OSError:
+            continue
+        fh.setFormatter(fmt)
+        return fh, path
+    return None, ""
+
+
 def get_logger() -> logging.Logger:
-    """Logger that writes to the addon debug file and stderr (System Console)."""
-    global _LOGGER
+    """Logger that writes to a rotating per-user log file and stderr (System Console).
+
+    Handlers live on the process-global ``arc_raiders`` logger and are tagged, so a
+    module reload or addon disable/enable reuses them instead of stacking duplicates.
+    """
+    global _LOGGER, _DEBUG_LOG_PATH
     if _LOGGER is not None:
         return _LOGGER
     log = logging.getLogger("arc_raiders")
-    log.setLevel(logging.DEBUG)
-    if not log.handlers:
-        fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S")
+    log.setLevel(_wanted_log_level())
+    fmt = logging.Formatter(*_LOG_FORMAT)
+    file_handlers = []
+    stream_handlers = []
+    for h in list(log.handlers):
+        if getattr(h, "_arc_importer", "") == "file":
+            file_handlers.append(h)
+        elif getattr(h, "_arc_importer", "") == "stream":
+            stream_handlers.append(h)
+        elif isinstance(h, logging.FileHandler) or type(h) is logging.StreamHandler:
+            # Untagged handlers from an older build (FileHandler inside the addon dir).
+            log.removeHandler(h)
+            try:
+                h.close()
+            except Exception:
+                pass
+    for extra in file_handlers[1:] + stream_handlers[1:]:
+        log.removeHandler(extra)
         try:
-            fh = logging.FileHandler(_DEBUG_LOG_PATH, encoding="utf-8")
-            fh.setLevel(logging.DEBUG)
-            fh.setFormatter(fmt)
-            log.addHandler(fh)
-        except OSError:
+            extra.close()
+        except Exception:
             pass
+    if file_handlers:
+        _DEBUG_LOG_PATH = getattr(file_handlers[0], "baseFilename", "") or ""
+    else:
+        fh, _DEBUG_LOG_PATH = _open_log_file_handler(fmt)
+        if fh is not None:
+            fh._arc_importer = "file"
+            log.addHandler(fh)
+    if not stream_handlers:
         sh = logging.StreamHandler()
-        sh.setLevel(logging.DEBUG)
         sh.setFormatter(fmt)
+        sh._arc_importer = "stream"
         log.addHandler(sh)
     log.propagate = False
     _LOGGER = log
     return log
 
 
-def debug_log_path() -> str:
+def apply_log_level() -> int:
+    """Re-read ARC_IMPORTER_DEBUG / prefs log_level and apply it; returns the level."""
+    level = _wanted_log_level()
+    get_logger().setLevel(level)
+    return level
+
+
+def log_path() -> str:
+    """Current log file path, or "" when no writable log folder was found."""
+    get_logger()
     return _DEBUG_LOG_PATH
+
+
+def debug_log_path() -> str:
+    return log_path() or "(no log file: LOCALAPPDATA and TEMP not writable)"
 
 
 def perf_log_path() -> str:
@@ -476,11 +562,25 @@ _PATH_MISS_NOTE = None  # (root, tuple(rel_parts)) of last fast-path miss
 
 
 def get_pioneer_root():
+    """Scene folder when it exists, else the add-on preference folder, else the scene value."""
     try:
-        root = bpy.context.scene.arc_pioneer_root
-        return bpy.path.abspath(root) if root else ""
+        raw = bpy.context.scene.arc_pioneer_root
+        root = bpy.path.abspath(raw) if raw else ""
     except Exception:
-        return ""
+        root = ""
+    try:
+        from . import prefs as _prefs
+    except Exception:
+        return root
+    if root and os.path.isdir(root):
+        _prefs.remember("pioneer_root", root)
+        return root
+    pref = _prefs.get("pioneer_root", "")
+    if pref:
+        pref = bpy.path.abspath(pref)
+        if os.path.isdir(pref):
+            return pref
+    return root
 
 
 def get_deep_search_root() -> str:

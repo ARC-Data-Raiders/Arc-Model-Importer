@@ -20,6 +20,8 @@ class RawMaterialTests(unittest.TestCase):
    'saved_material_package':lambda path:catalog.canonical_path(str(path).replace('\\','/').split('/RemappedPlugins/Content/',1)[-1] if False else 'RemappedPlugins/Content/'+str(path).replace('\\','/').split('/RemappedPlugins/Content/',1)[1]),
    'textures':types.SimpleNamespace(authored_visual_part_materials=lambda model:[]),'_log_tail':lambda text:text}
   for name in ('_material_companion','_raw_material_record','_material_hierarchy_dependencies','_raw_material_digest','_material_dependency_signature','_material_receipt_root','_write_material_receipt','complete_raw_material_metadata','material_hierarchy_is_current','_installed_material_provenance','raw_material_metadata_plan','extraction_command','_mapping_sha256','_extraction_revision'):load(name,self.ns)
+  # pak_extract now imports textures lazily (`from . import textures` inside the plan); bind the same stub object.
+  sys.modules['raw_fixture.Shared.textures']=self.ns['textures'];sys.modules['raw_fixture.Shared'].textures=self.ns['textures'];self.addCleanup(sys.modules.pop,'raw_fixture.Shared.textures',None)
   self.ns['_installed_material_provenance']=lambda game:('25979580','922241259843304590')
   FAKE={'arcpak':{'assembly_name':'fixture','sha256':'0'}};mtm.producer_signature=lambda exe:FAKE;mtm.closure_dependencies=lambda *args,**kw:[];self.fake=FAKE;write=self.ns['_write_material_receipt']
   self.ns['_write_material_receipt']=lambda f,rev,deps,**kw:write(f,rev,deps,**{'producer':FAKE,'metadata_revision':mtm.metadata_revision(rev,FAKE),'mapping_sha':self.mapping_sha(),**kw})

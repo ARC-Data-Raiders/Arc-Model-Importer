@@ -152,6 +152,11 @@ def _shared_weights(nodes):
     context=_BUILD.get()
     return None if context is None else context.state(nodes).setdefault('shared_weights',{})
 
+def zone_pick_label(zones):
+    """Frame title naming the zones this selector picks from."""
+    nums=sorted(zones)
+    text='Pick zone '+', '.join(str(z) for z in nums) if nums else 'Pick zone'
+    return text if len(text)<=63 else text[:60]+'...'
 class BalancedSelector:
     def __init__(self,nodes,links,sources,factors,default,*,dtype,prefix,origin=(0.,0.),hide=False):
         self.nodes=nodes;self.links=links;self.sources=sources;self.factors=factors;self.default=default
@@ -159,7 +164,7 @@ class BalancedSelector:
         self.results={};self.raw_results={};self.weights={};self.generated=[]
         # Locations wait for build(): each write would re-run the whole tree update.
         self.placed={}
-        self.frame=self.make('NodeFrame',self.channel+'.Selection','Select authored zone')
+        self.frame=self.make('NodeFrame',self.channel+'.Selection',zone_pick_label(sources))
         self.place(self.frame,origin);self.frame.use_custom_color=True;self.frame.color=(.12,.22,.29)
         self.frame['dr.selection.schema']=2;self.frame['dr.selection.prefix']=prefix;self.frame['dr.selection.zones']=json.dumps(sorted(sources))
         self.frame['dr.selection.contract']='one-hot shared selector; raw balanced tree plus one unmatched/default guard'
@@ -281,7 +286,7 @@ def _zone_group(dtype,zones,prefix):
     inner.sources={z:gi.outputs['S%d'%z] for z in zones};inner.factors={z:gi.outputs['F%d'%z] for z in zones}
     inner.default=gi.outputs['Default'];inner.results={};inner.raw_results={};inner.weights={};inner.generated=[]
     inner.placed=None;inner._inner=True
-    inner.frame=gn.new('NodeFrame');inner.frame.label='Select authored zone'
+    inner.frame=gn.new('NodeFrame');inner.frame.label=zone_pick_label(zones)
     out=inner.result(zones)
     gl.new(out,go.inputs[0])
     group['dr.zone_select.version']=1
@@ -313,6 +318,67 @@ def _zone_index_group(dtype,zones,prefix,width):
         gl.new(gi.outputs['ZoneIndex'],cmp.inputs[0]);gl.new(cmp.outputs[0],inner.inputs['F%d'%z])
     group['dr.zone_select.version']=1
     return group
+
+_LABEL_WORDS={'col':'Colour','rough':'Roughness','metal':'Metallic','n':'Normal','nBase':'Base Normal',
+'nCrease':'Crease Normal','nEdge':'Edge Normal','Cloth':'Cloth','HueStrength':'Hue Strength','HueTile':'Hue Tiling',
+'nMedium':'Medium Normal','MediumFactor':'Medium Mask','crease':'Crease','edge':'Edge','colortex':'Colour Texture',
+'bts':'Base Texture Strength','ets':'Edge Texture Strength','cts':'Crease Texture Strength',
+'creaseOv':'Crease Overlay','creaseOvA':'Crease Overlay Alpha','edgeOv':'Edge Overlay','edgeOvA':'Edge Overlay Alpha',
+'cRough':'Crease Roughness','eRough':'Edge Roughness','cMetal':'Crease Metallic','eMetal':'Edge Metallic'}
+CHAIN_ZONE='dr.chain.zone'
+CHAIN_PREFIX='dr.chain.prefix'
+
+def attribute_label(prefix):
+    """Plain attribute name for a selection prefix: 'GT_mux_col' -> 'Colour'."""
+    key=str(prefix).removeprefix('GT_mux_').removeprefix('GT_')
+    if key in _LABEL_WORDS:return _LABEL_WORDS[key]
+    words=re.sub(r'(?<=[a-z0-9])(?=[A-Z])','_',key).replace('_',' ').split()
+    return ' '.join(w[:1].upper()+w[1:] for w in words) or 'Value'
+
+def chain_value(zones,values,factors,default):
+    """Pure model of the chain: out_0=default; out_k=mix(out_(k-1),values[k],clamp(factor_k))."""
+    out=default
+    for z in sorted(zones):
+        if values.get(z) is None:continue
+        f=max(0.,min(1.,float(factors.get(z,0.))))
+        if isinstance(out,(tuple,list)):out=tuple(a*(1.-f)+b*f for a,b in zip(out,values[z]))
+        else:out=out*(1.-f)+values[z]*f
+    return out
+
+def build_chain(nodes,links,zone_idx,zone_socks,*,dtype,start,prefix,x_fn=None,y=None,col0=None,y_fn=None,hide_mix=True,zone_eq=None):
+    """Layer stack: out_0=start; out_k=mix(out_(k-1), value_k, zone_k). One Mix per zone, tagged
+    with its zone so the graph layout can put it in that zone's layer."""
+    if dtype not in ('FLOAT','VECTOR','RGBA'):raise ValueError('Unsupported chain selection dtype '+str(dtype))
+    sources={z:zone_socks[z] for z in range(1,9) if zone_socks.get(z) is not None}
+    if not sources:return start
+    if start is None:raise TypeError('Nonempty typed selection requires a start socket')
+    channel=semantic_channel(prefix);label=attribute_label(prefix);first=min(sources);out=start;node=None
+    for z in sorted(sources):
+        x=float(x_fn(z)) if x_fn else float(col0 or 0.)+260.*(z-first)
+        yy=float(y) if y is not None else float(y_fn(z)) if y_fn else 0.
+        factor=zone_eq.get(z) if zone_eq else None
+        if factor is None and not zone_eq and zone_idx is not None:
+            cmp_=nodes.new('ShaderNodeMath');identify(cmp_,channel+'.Chain.Mask.'+str(z),label='zone == '+str(z))
+            cmp_.operation='COMPARE';cmp_.inputs[1].default_value=float(z);cmp_.inputs[2].default_value=.45
+            cmp_.hide=True;cmp_[CHAIN_ZONE]=z;cmp_['arc_layout_lock']=1;cmp_.location=(x-200.,yy+60.)
+            links.new(zone_idx,cmp_.inputs[0]);factor=cmp_.outputs[0]
+        if factor is None:
+            val=nodes.new('ShaderNodeValue');identify(val,channel+'.Chain.Implicit.'+str(z),label='Implicit first source')
+            val.outputs[0].default_value=1. if z==first else 0.;val[CHAIN_ZONE]=z;val['arc_layout_lock']=1;val.location=(x-200.,yy+60.)
+            factor=val.outputs[0]
+        node=nodes.new('ShaderNodeMix');node.data_type=dtype
+        if dtype=='RGBA':node.blend_type='MIX';node.clamp_result=False
+        node.clamp_factor=True
+        identify(node,channel+'.Chain.'+str(z),label=label)
+        node[CHAIN_ZONE]=z;node[CHAIN_PREFIX]=prefix;node['arc_layout_lock']=1
+        f,a,b,res=_mix_sockets(node,dtype)
+        links.new(factor,f);links.new(out,a);links.new(sources[z],b)
+        add_alias(node,prefix+'_z'+str(z));node['dr.result_identifier']=res.identifier
+        node.location=(x,yy)
+        if node.hide!=hide_mix:node.hide=hide_mix
+        out=res
+    node['dr.chain.root']=1
+    return out
 
 def build_balanced(nodes,links,zone_idx,zone_socks,*,dtype,start,prefix,x_fn=None,y=None,col0=None,y_fn=None,hide_mix=True,zone_eq=None):
     """Return (socket, reason). No graph mutation occurs for ineligible masks."""

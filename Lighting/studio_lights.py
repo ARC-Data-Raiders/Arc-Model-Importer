@@ -32,6 +32,9 @@ def rigs() -> dict[str, dict[str, Any]]:
                 continue
             if rig.get("schema") == "arc-studio-lights-v1" and rig.get("lights"):
                 _CACHE[str(rig.get("id") or name[:-5])] = rig
+    if not _CACHE.get("outfit_inspect"):
+        from . import inspect_lights  # code-built rig, placed against the active character
+        _CACHE[inspect_lights.RIG_ID] = inspect_lights.rig_stub()
     return _CACHE
 
 
@@ -85,6 +88,9 @@ def import_rig(scene, rig_id: str, *, world: bool = True, view: bool = True, cam
     rig = rigs().get(rig_id)
     if not rig:
         return False, f"Studio light rig '{rig_id}' not found in assets/studio_lights"
+    if rig.get("builder") == "inspect":
+        from . import inspect_lights
+        return inspect_lights.build(scene, camera=camera, context=context)
     label = str(rig.get("label") or rig_id)
     cname = f"Arc Studio Lights: {label}"
     old = bpy.data.collections.get(cname)

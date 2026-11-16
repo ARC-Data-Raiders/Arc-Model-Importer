@@ -18,9 +18,19 @@ def make_layout(evidence):
     package=evidence['target'];obj='/Game/'+package.split('/Content/',1)[1];obj+='.'+package.rsplit('/',1)[-1]
     return {'schema':M.SCHEMA,'version':1,'source':{'package':package,'object_path':obj,'build_id':'25979580','depot_manifest':''},'materials':slots,'lods':lods}
 
+def _purge_long_children(folder):
+    # Deep fixtures pass MAX_PATH; TemporaryDirectory.cleanup alone fails with WinError 145 on Windows.
+    import shutil
+    root=os.path.abspath(folder)
+    if os.name=='nt' and not root.startswith('\\\\?\\'):root='\\\\?\\'+root
+    for name in os.listdir(root) if os.path.isdir(root) else ():
+        child=os.path.join(root,name)
+        shutil.rmtree(child) if os.path.isdir(child) else os.remove(child)
+
 class NativeMaterialSlotTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.addCleanup(_purge_long_children,self.temp.name)
         self.data=make_layout(json.loads((FIXTURES/'gwranger_native_material_slots_current.json').read_text(encoding='utf-8-sig')))
         self.path=Path(self.temp.name)/'SK_GWRanger_UpperBody.uemodel'
         def string(text):

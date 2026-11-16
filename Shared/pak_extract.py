@@ -21,7 +21,8 @@ from bpy.props import BoolProperty, CollectionProperty, IntProperty, StringPrope
 from bpy.types import Operator, OperatorFileListElement
 from bpy_extras.io_utils import ImportHelper
 
-from ..Outfit_Accessories import appearance; from . import textures, utils
+from ..Outfit_Accessories import appearance; from . import utils
+from . import prefs
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 DEFAULT_PAK_DIR = r"C:\Program Files (x86)\Steam\steamapps\common\Arc Raiders"
@@ -307,35 +308,83 @@ def _out_dir_lock(command):
         yield
 
 
+def _builder_texture_packages(out_dir):
+    """Missing exact texture dependencies selected by imported material builders."""
+    presets = "PioneerGame/Content/Pioneer/MaterialLibrary/M_Presets/"
+    detail = "PioneerGame/Content/Pioneer/MaterialLibrary/Textures/Breakup/T_Generic_02_GRM"
+    sand = "PioneerGame/Content/Pioneer/Environment/South/Dunes/"
+    dependencies = {
+        presets + "M_DecalPreset_Masked_A+Detail": detail,
+        presets + "M_DecalPreset_Transluscient_A+Detail_ColourNoise": detail,
+        sand + "Meshes/Dune_Spline/M_SandDune": sand + "Textures/T_South_Base_Sand_Dunes_04_CH",
+        sand + "Meshes/Dune_Prop_01/M_SandDune": sand + "Textures/T_South_Base_Sand_Dunes_04_CH",
+    }
+    missing = set()
+    for master, texture in dependencies.items():
+        if not os.path.isfile(os.path.join(out_dir, master + ".arc-material.json")):
+            continue
+        if not all(os.path.isfile(os.path.join(out_dir, texture + extension))
+                   for extension in (".png", ".arc-texture.json")):
+            missing.add(texture)
+    return sorted(missing)
+
+
 def run_arcpak(command, timeout=600, *, start=_serve_start, fallback=None):
-    """Run an ArcPak command via the warm serve process; per-call subprocess on any serve error."""
+    """Export cooked packages and exact builder-selected fallback dependencies."""
     with _out_dir_lock(command):
-        if not _SERVE["broken"] and os.environ.get("ARCPAK_NO_SERVE") != "1":
-            try:
-                conn, served = _serve_call(command, start, timeout)
-            except subprocess.TimeoutExpired:
-                _SERVE["broken"] = True
-                stop_serve()
-                _serve_log_once(f"request timed out after {timeout}s")
-                raise
-            except Exception as exc:
-                _SERVE["broken"] = True
-                stop_serve()
-                _serve_log_once(exc)
+        result = _run_arcpak_request(command, timeout, start=start, fallback=fallback)
+        if result.returncode or len(command) < 2 or command[1] != "extract" or "--out" not in command:
+            return result
+        out_dir = command[list(command).index("--out") + 1]
+        missing = _builder_texture_packages(out_dir)
+        if not missing:
+            return result
+        supplement = []
+        arguments = iter(command)
+        for argument in arguments:
+            if argument == "--path":
+                next(arguments)
             else:
-                if served.returncode == 0 or len(command) < 2 or command[1] not in _FRESH_RETRY_VERBS:
-                    return served
-                # The warm process keeps state across requests (mappings, sticky OOM
-                # flag, providers). A cache-writing verb that fails there is retried
-                # once in a fresh process so a success always stamps its meshes.
-                # Other in-flight requests finish on the retired process.
-                print(f"[ArcPak] serve {command[1]} rc={served.returncode}; retrying in a fresh process: "
-                      f"{_log_tail(served.stdout or '', 3)}")
-                _retire_serve(conn)
-        if fallback is not None:
-            return fallback(command)
-        return subprocess.run(command, capture_output=True, text=True, timeout=timeout,
-                              creationflags=_CREATE_NO_WINDOW)
+                supplement.append(argument)
+        for reference in missing:
+            supplement.extend(("--path", reference))
+        fetched = _run_arcpak_request(supplement, timeout, start=start, fallback=fallback)
+        stdout = (result.stdout or "") + "\nbuilder texture dependencies " + ",".join(missing) + "\n" + (fetched.stdout or "")
+        stderr = "\n".join(value for value in (result.stderr, fetched.stderr) if value)
+        unresolved = _builder_texture_packages(out_dir) if fetched.returncode == 0 else []
+        if unresolved:
+            stderr += "\nBuilder texture dependencies not written: " + ",".join(unresolved)
+        return _ArcPakResult(fetched.returncode or int(bool(unresolved)), stdout, stderr)
+
+
+def _run_arcpak_request(command, timeout=600, *, start=_serve_start, fallback=None):
+    """Caller holds the output lock across the request and its dependent fetch."""
+    if not _SERVE["broken"] and os.environ.get("ARCPAK_NO_SERVE") != "1":
+        try:
+            conn, served = _serve_call(command, start, timeout)
+        except subprocess.TimeoutExpired:
+            _SERVE["broken"] = True
+            stop_serve()
+            _serve_log_once(f"request timed out after {timeout}s")
+            raise
+        except Exception as exc:
+            _SERVE["broken"] = True
+            stop_serve()
+            _serve_log_once(exc)
+        else:
+            if served.returncode == 0 or len(command) < 2 or command[1] not in _FRESH_RETRY_VERBS:
+                return served
+            # The warm process keeps state across requests (mappings, sticky OOM
+            # flag, providers). A cache-writing verb that fails there is retried
+            # once in a fresh process so a success always stamps its meshes.
+            # Other in-flight requests finish on the retired process.
+            print(f"[ArcPak] serve {command[1]} rc={served.returncode}; retrying in a fresh process: "
+                  f"{_log_tail(served.stdout or '', 3)}")
+            _retire_serve(conn)
+    if fallback is not None:
+        return fallback(command)
+    return subprocess.run(command, capture_output=True, text=True, timeout=timeout,
+                          creationflags=_CREATE_NO_WINDOW)
 
 
 import atexit as _atexit
@@ -782,6 +831,7 @@ def raw_material_metadata_plan(scene, *, model_paths=(), material_paths=()):
             return os.path.commonpath((root, os.path.normcase(os.path.abspath(display_path(path))))) == root
         except ValueError:
             return False
+    from . import textures
     files = list(material_paths)
     for model in dict.fromkeys(model_paths):
         if not owned(model):
@@ -979,8 +1029,12 @@ def ensure_cached_material_hierarchy(scene, *, model_paths=(), material_paths=()
     start_pending_previews()
 
 
+def cache_path() -> str:
+    return os.path.join(_addon_dir(), "ArcPak", "cache")
+
+
 def cache_dir() -> str:
-    path = os.path.join(_addon_dir(), "ArcPak", "cache")
+    path = cache_path()
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -1102,6 +1156,14 @@ def reconcile_pak_dir(scene, *, restore_default: bool = False) -> None:
     if scene is None or not hasattr(scene, "arc_pak_dir"):
         return
     current = getattr(scene, "arc_pak_dir", "") or ""
+    if current and resolve_pak_folder(bpy.path.abspath(current)):
+        prefs.remember("pak_dir", bpy.path.abspath(current))
+        return
+    saved = _prefs_pak_dir()
+    if saved and (current or restore_default or not scene.get("arc_pak_dir_user_cleared")):
+        scene.arc_pak_dir = saved
+        scene["arc_pak_dir_user_cleared"] = False
+        return
     has = default_pak_has_files()
     if current and not resolve_pak_folder(bpy.path.abspath(current)):
         scene.arc_pak_dir = ""
@@ -1115,8 +1177,25 @@ def reconcile_pak_dir(scene, *, restore_default: bool = False) -> None:
 
 def configured_dir(scene) -> str:
     """Resolve the configured Steam/game folder to its Paks directory."""
+    """Order: valid scene value, then the add-on preference, then nothing (reconcile_pak_dir
+    owns the Steam default). A user-cleared scene skips the preference."""
     path = bpy.path.abspath(getattr(scene, "arc_pak_dir", "") or "") if scene is not None else ""
-    return resolve_pak_folder(path) if path else ""
+    resolved = resolve_pak_folder(path) if path else ""
+    if resolved:
+        prefs.remember("pak_dir", path)
+        return resolved
+    scene_get = getattr(scene, "get", None)
+    if callable(scene_get) and scene_get("arc_pak_dir_user_cleared") and not path:
+        return ""
+    saved = _prefs_pak_dir()
+    return resolve_pak_folder(saved) if saved else ""
+
+
+def _prefs_pak_dir() -> str:
+    """Preference pak dir when it still resolves to a Paks folder, else ''."""
+    saved = prefs.get("pak_dir", "") or ""
+    saved = bpy.path.abspath(saved) if saved else ""
+    return saved if saved and resolve_pak_folder(saved) else ""
 
 
 def _initialize_pak_defaults():
@@ -1132,6 +1211,7 @@ def _load_pak_defaults(_unused=None):
 def register_defaults():
     # Starts no exporter process: the import operator's invoke calls prestart_serve().
     unregister_defaults()
+    prefs.register()
 
 
 def unregister_defaults():
@@ -1144,6 +1224,7 @@ def unregister_defaults():
     for handler in list(bpy.app.handlers.load_post):
         if getattr(handler, "__module__", "") == __name__ and getattr(handler, "__name__", "") == "_load_pak_defaults":
             bpy.app.handlers.load_post.remove(handler)
+    prefs.unregister()
 
 
 def game_path(rel: str) -> str:
@@ -1168,10 +1249,22 @@ def game_path(rel: str) -> str:
 
 
 def resolve_usmap(scene) -> str:
-    chosen = bpy.path.abspath(getattr(scene, "arc_usmap_path", "") or "")
+    """Order: scene file, then the add-on preference file, then the bundled usmap."""
+    chosen = bpy.path.abspath(getattr(scene, "arc_usmap_path", "") or "") if scene is not None else ""
+    bundled = bundled_usmap()
     if chosen and os.path.isfile(chosen):
-        return chosen
-    return bundled_usmap()
+        if os.path.normcase(os.path.abspath(chosen)) != os.path.normcase(os.path.abspath(bundled or "")):
+            prefs.remember("usmap_path", chosen)
+            return chosen
+        saved = _prefs_usmap()
+        return saved or chosen
+    return _prefs_usmap() or bundled
+
+
+def _prefs_usmap() -> str:
+    saved = prefs.get("usmap_path", "") or ""
+    saved = bpy.path.abspath(saved) if saved else ""
+    return saved if saved and os.path.isfile(saved) else ""
 
 
 def _normalize_asset_path(path: str) -> str:
@@ -1411,7 +1504,7 @@ def ensure_pak_browser(scene) -> tuple[dict, str]:
     from ..Outfit_Accessories import pak_catalog
     index = load_pak_index(scene, allow_reindex=True)
     if index is None:
-        raise RuntimeError("No current Pak mesh index. Load / Refresh Paks in Settings.")
+        raise RuntimeError("The asset list is not ready. Choose the Arc Raiders game folder first")
     return index, pak_catalog.browser_tree(index, cache_dir(), configured_dir(scene))
 
 
@@ -1467,6 +1560,7 @@ def complete_extraction(out_dir, paths, code, log, revision):
 
 def _finish_extraction(out_dir):
     utils.set_pak_cache_root(out_dir)
+    from . import textures
     textures.clear_clothing_path_caches()
     from .materials.common import clear_material_session_caches
     from .materials.rebuild.assets import invalidate_index
@@ -1522,7 +1616,38 @@ def extract_paths(game_dir: str, usmap: str, asset_paths: list[str]) -> tuple[in
     proc = run_arcpak(command)
     log = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
     meshes = complete_extraction(out_dir, paths, proc.returncode, log, _extraction_revision())
+    missing = missing_material_packages(out_dir, meshes) if proc.returncode == 0 else []
+    if missing:
+        # The exporter logs a skipped material dependency as a warning and still
+        # exits 0; fetch the referenced material packages once more by exact path.
+        retry = run_arcpak(extraction_command(game_dir, usmap, missing, out_dir=out_dir))
+        log += "\nmissing material JSON refetch " + ",".join(missing) + "\n" + ((retry.stdout or "") + "\n" + (retry.stderr or "")).strip()
+        _finish_extraction(out_dir)
     return proc.returncode, log, meshes
+
+
+_UEMODEL_GAME_REF = re.compile(rb"/Game/[A-Za-z0-9_/\-]+\.[A-Za-z0-9_\-]+")
+
+
+def missing_material_packages(out_dir, meshes) -> list[str]:
+    """Cooked /Game material packages a uemodel names whose JSON is not in out_dir."""
+    from ..Outfit_Accessories.pak_catalog import filesystem_path
+    found = []
+    for mesh in meshes or []:
+        try:
+            with open(filesystem_path(mesh), "rb") as stream:
+                blob = stream.read()
+        except OSError:
+            continue
+        for match in _UEMODEL_GAME_REF.findall(blob):
+            cooked = game_path(match.decode("ascii", "ignore"))
+            stem = cooked.rsplit("/", 1)[-1].casefold()
+            if not stem.startswith(("m_", "mm_", "mi_", "mat_")):
+                continue
+            if cooked in found or os.path.isfile(filesystem_path(os.path.join(out_dir, *cooked.split("/")) + ".json")):
+                continue
+            found.append(cooked)
+    return found
 
 
 def extract_asset(game_dir: str, usmap: str, asset_path: str) -> tuple[int, str, str]:
@@ -1568,6 +1693,7 @@ def ensure_rels(scene, rels: list[str], *, reuse_current: bool = False) -> list[
     code, log, meshes = extract_paths(game, usmap, paths)
     if code or not meshes:
         print(f"Arc Pak: extract rc={code}: {_log_tail(log)}")
+        _report_extract_failure(code, log, paths)
     elif globals().get('start_material_metadata_prefetch'):
         # Overlap the material-metadata pass with the rest of the import; extra
         # MI packages extracted here (colourways) join the same plan.
@@ -1616,6 +1742,20 @@ def reindex(game_dir: str, usmap: str = "") -> tuple[int, str]:
     return proc.returncode, log
 
 
+def _report_extract_failure(code, log, paths) -> None:
+    """Add a failed extraction to the active import report (no-op outside a report)."""
+    if threading.current_thread() is not threading.main_thread():
+        return
+    try:
+        from . import import_report
+        last = _log_tail(log, 1)[:300]
+        first = (paths or [""])[0].rsplit("/", 1)[-1]
+        more = f" (+{len(paths) - 1} more)" if paths and len(paths) > 1 else ""
+        import_report.fail(f"Pak extraction failed for {first}{more}: exporter rc={code}: {last}")
+    except Exception:
+        pass
+
+
 def _log_tail(log: str, limit: int = 6) -> str:
     lines = [ln.strip() for ln in (log or "").splitlines() if ln.strip()]
     if not lines:
@@ -1627,7 +1767,7 @@ class ARC_OT_pick_pak_dir(Operator, ImportHelper):
     """Folder that contains the shipping .utoc/.ucas files (PioneerGame/Content/Paks)."""
 
     bl_idname = "arc_outfits.pick_pak_dir"
-    bl_label = "Select Steam Install / Paks Folder"
+    bl_label = "Choose Game Folder..."
     filename_ext = ""
     filter_glob: StringProperty(default="*", options={"HIDDEN"})
     directory: StringProperty(
@@ -1655,12 +1795,13 @@ class ARC_OT_pick_pak_dir(Operator, ImportHelper):
         if not paks_folder:
             context.scene.arc_pak_dir = ""
             context.scene["arc_pak_dir_user_cleared"] = True
-            self.report({"ERROR"}, "Select a Steam library, Arc Raiders, PioneerGame, Content, or Paks folder")
+            self.report({"ERROR"}, "No game files found there. Choose the Arc Raiders game folder")
             return {"CANCELLED"}
         # Preserve the selected install/root folder for a clearer UI value;
         # configured_dir() resolves it to PioneerGame/Content/Paks as needed.
         context.scene.arc_pak_dir = folder
         context.scene["arc_pak_dir_user_cleared"] = False
+        prefs.set_value("pak_dir", folder)
         window = getattr(context, "window", None)
         cursor_set = getattr(window, "cursor_set", None)
         if callable(cursor_set):
@@ -1668,9 +1809,9 @@ class ARC_OT_pick_pak_dir(Operator, ImportHelper):
         try:
             index, _root = ensure_pak_browser(context.scene)
             from ..Outfit_Accessories import pak_catalog
-            self.report({"INFO"}, f"Paks loaded: {len(pak_catalog.mesh_paths(index))} meshes available")
+            self.report({"INFO"}, f"Game folder ready: {len(pak_catalog.mesh_paths(index))} models available")
         except Exception as exc:
-            self.report({"WARNING"}, f"Paks folder saved; catalog could not load: {exc}")
+            self.report({"WARNING"}, f"Game folder saved, but the asset list could not load: {exc}")
         finally:
             if callable(cursor_set):
                 cursor_set("DEFAULT")
@@ -1679,7 +1820,17 @@ class ARC_OT_pick_pak_dir(Operator, ImportHelper):
 
 class ARC_OT_clear_pak_dir(Operator):
     bl_idname = "arc_outfits.clear_pak_dir"
-    bl_label = "Clear Paks Folder"
+    bl_label = "Disconnect Game Folder"
+    bl_description = "Forget the game folder for this file. Imported objects stay"
+
+    def invoke(self, context, event):
+        message = "Imports stop until you choose the game folder again. Objects already in the scene stay"
+        try:
+            return context.window_manager.invoke_confirm(
+                self, event, title="Disconnect Game Folder?", message=message,
+                confirm_text="Disconnect", icon="WARNING")
+        except TypeError:
+            return context.window_manager.invoke_confirm(self, event)
 
     def execute(self, context):
         context.scene.arc_pak_dir = ""
@@ -1707,6 +1858,7 @@ class ARC_OT_pick_usmap(Operator, ImportHelper):
             self.report({"ERROR"}, "Not a usmap file")
             return {"CANCELLED"}
         context.scene.arc_usmap_path = path
+        prefs.set_value("usmap_path", path)
         return {"FINISHED"}
 
 
@@ -1726,14 +1878,14 @@ class ARC_OT_reindex_paks(Operator):
     """
 
     bl_idname = "arc_outfits.reindex_paks"
-    bl_label = "Load / Refresh Paks"
+    bl_label = "Reload Asset List"
     bl_options = {"REGISTER"}
 
     def execute(self, context):
         reconcile_pak_dir(context.scene)
         game_dir = configured_dir(context.scene)
         if not game_dir:
-            self.report({"ERROR"}, "Set the Paks folder in Settings")
+            self.report({"ERROR"}, "Choose the Arc Raiders game folder first")
             return {"CANCELLED"}
         try:
             code, log = reindex(game_dir, resolve_usmap(context.scene))
@@ -1818,11 +1970,11 @@ class ARC_OT_import_from_pak(Operator, ImportHelper):
                 return {"CANCELLED"}
         game_dir = configured_dir(scene)
         if not game_dir:
-            self.report({"ERROR"}, "Set the Paks folder in Settings")
+            self.report({"ERROR"}, "Choose the Arc Raiders game folder first")
             return {"CANCELLED"}
         usmap = resolve_usmap(scene)
         if not usmap:
-            self.report({"ERROR"}, "No usmap. Pick one in Settings or ship one under ArcPak/mappings")
+            self.report({"ERROR"}, "The game mappings file is missing. Reinstall the add-on")
             return {"CANCELLED"}
         try:
             code, log, meshes = extract_paths(game_dir, usmap, assets)
@@ -1836,6 +1988,7 @@ class ARC_OT_import_from_pak(Operator, ImportHelper):
             print(f"Arc Pak: extract finished with warnings:\n{_log_tail(log)}")
         imported = 0
         last = ""
+        from . import textures
         for mesh in meshes:
             body_variant = getattr(scene, "arc_appearance_body_skin", "NONE") if textures.is_body(mesh) else "NONE"
             ok, msg, _objs = appearance.import_appearance_mesh(mesh, body_variant=body_variant)

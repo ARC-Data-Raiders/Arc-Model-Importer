@@ -95,7 +95,7 @@ class GraphBlocksTests(unittest.TestCase):
             self.assertFalse(any(n.bl_idname == "ShaderNodeMath" for n in w.nodes))
             blocks = [n for n in w.nodes if n.bl_idname == "ShaderNodeGroup"]
             self.assertEqual(len(blocks), 1)
-            self.assertTrue(blocks[0].node_tree.name.startswith("DR · Surface · "))
+            self.assertTrue(blocks[0].node_tree.name.startswith("Arc Outfit · Surface"))
             groups.append(blocks[0].node_tree)
         self.assertEqual(groups[0], groups[1])
         self.assertEqual(self.stats[0]["created"], 1)

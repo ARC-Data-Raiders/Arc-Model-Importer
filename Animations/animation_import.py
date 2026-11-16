@@ -68,98 +68,24 @@ def _get_read_psa_from_file():
     return None
 
 
-def _import_slot(obj):
-    """Import slot stamped on an object, one of its parents, or a direct child."""
-    node = obj
-    while node is not None:
-        for holder in (node, *getattr(node, "children", ())):
-            if "arc_import_slot" in holder.keys():
-                try:
-                    return int(holder["arc_import_slot"])
-                except (TypeError, ValueError):
-                    return None
-        node = node.parent
-    return None
-
-
-def _modifier_armature(obj) -> Optional[Any]:
-    for mod in getattr(obj, "modifiers", ()):
-        if mod.type == "ARMATURE" and getattr(mod.object, "type", "") == "ARMATURE":
-            return mod.object
-    return None
-
-
-def _prefer_body(arms: list) -> Optional[Any]:
-    if not arms:
-        return None
-    body = [o for o in arms if str(o.get("arc_assembly_role") or "").upper() == "BODY"]
-    return (body or arms)[0]
-
-
-def armature_for_object(obj) -> Optional[Any]:
-    """Skeleton of one outfit object: itself, its Armature modifier, its parents, then its asset root."""
-    if obj is None:
-        return None
-    if obj.type == "ARMATURE":
-        return obj
-    found = _modifier_armature(obj)
-    if found is not None:
-        return found
-    node = obj.parent
-    root = obj
-    while node is not None:
-        if node.type == "ARMATURE":
-            return node
-        found = _modifier_armature(node)
-        if found is not None:
-            return found
-        root = node
-        node = node.parent
-    # Asset root (outfit empty): armatures among its descendants.
-    return _prefer_body([o for o in root.children_recursive if o.type == "ARMATURE"])
-
-
-def _active_and_selected(context) -> tuple:
-    view = getattr(context, "view_layer", None)
-    obj = getattr(context, "object", None) or getattr(context, "active_object", None)
-    if obj is None and view is not None:
-        obj = view.objects.active
-    selected = getattr(context, "selected_objects", None)
-    if selected is None:
-        selected = [o for o in view.objects if o.select_get()] if view is not None else []
-    return obj, list(selected)
-
-
 def resolve_target_armature(context) -> Optional[Any]:
-    """Shared skeleton lookup for pose and animation operators (active object first)."""
-    obj, selected = _active_and_selected(context)
-    found = armature_for_object(obj)
-    if found is not None:
-        return found
-    arms = [o for o in selected if o.type == "ARMATURE"]
-    if arms:
-        return arms[0]
-    picked = ([obj] if obj is not None else []) + selected
-    for item in picked:
-        found = armature_for_object(item)
-        if found is not None:
-            return found
-    for item in picked:
-        slot = _import_slot(item)
-        if slot is None:
-            continue
-        same = [o for o in context.scene.objects if o.type == "ARMATURE" and _import_slot(o) == slot]
-        if same:
-            return _prefer_body(same)
-    last = getattr(context.scene, "arc_last_applied_anim_armature", "") or ""
-    if last and last in bpy.data.objects:
-        arm = bpy.data.objects[last]
-        if arm.type == "ARMATURE":
-            return arm
-    arms = [o for o in context.scene.objects if o.type == "ARMATURE" and o.visible_get()]
-    if len(arms) == 1:
-        return arms[0]
-    return None
+    """Shared skeleton lookup for pose and animation operators.
+
+    Only ui_targets.resolve(context, "character"): the nearest owned character root of the
+    selection, else the last character import. No scene-wide fallback: nothing resolved, or
+    any error, is None (fail closed).
+    """
+    try:
+        from ..Shared import ui_targets
+
+        # Same rule the Animations panel shows: a selected weapon or enemy is not a character.
+        refusal_fn = getattr(ui_targets, "animation_refusal", None)
+        if refusal_fn is not None and refusal_fn(ui_targets.resolve(context, "asset")):
+            return None
+        target = ui_targets.resolve(context, "character")
+        return ui_targets.target_armature(target) if target is not None else None
+    except Exception:
+        return None
 
 
 def _activate_armature(context, armature) -> None:
@@ -229,10 +155,12 @@ def _psa_reader(filepath: str):
 
 
 def _psa_translation_scale(armature) -> float:
-    """1.0 for centimetre bones, 0.01 for metre bones; read from the rest pose (a character spans > 10 cm)."""
+    """Infer rest-pose units from the skeleton, ignoring isolated distant sockets."""
     try:
-        reach = max((b.head_local.length for b in armature.data.bones), default=0.0)
-        reach = max(reach, max((b.tail_local.length for b in armature.data.bones), default=0.0))
+        reaches = sorted(b.head_local.length for b in armature.data.bones if b.head_local.length > 1e-6)
+        if not reaches:
+            reaches = sorted(b.tail_local.length for b in armature.data.bones if b.tail_local.length > 1e-6)
+        reach = reaches[(len(reaches) - 1) // 2] if reaches else 0.0
     except Exception:
         return 1.0
     return 0.01 if 0.0 < reach < 10.0 else 1.0

@@ -8,7 +8,10 @@ bOutputTranslucentVelocity, so the in-game "radial blur" is motion blur from the
 parameter BlurStrength) and has nothing a static render can show.
 """
 REASONS = {'m_fx_meshradialblur': 'additive base pass adds only the editor selection colour; the in-game radial blur '
-                                  'is motion blur from its world-position-offset velocity'}
+                                  'is motion blur from its world-position-offset velocity',
+           'm_fanlightfunction': 'light-function material: it modulates a light, it is never drawn on a mesh',
+           'm_fx_volumescorchmarkdecal': 'approximate: runtime FX scorch decal, colour is emissive that fades after '
+                                         'spawn (EmissiveFadeTime); no static base colour'}
 
 
 def build_fx_invisible(g, r):

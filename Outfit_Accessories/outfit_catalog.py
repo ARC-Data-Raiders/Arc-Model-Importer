@@ -10,6 +10,21 @@ import os
 import re
 
 PIONEER_ROOT = 'PioneerGame/Content/Pioneer/'
+NPC_PREVIEW_STEMS = {
+    'ID_APOLLO_NAME': 'T_UI_TRADER_Apollo',
+    'ID_CELESTE_NAME': 'T_UI_TRADER_Celeste',
+    'ID_JUANITO_NAME': 'T_UI_TRADER_Ermal',
+    'ID_LANCE_NAME': 'T_UI_TRADER_Lance',
+    'ID_SHANI_NAME': 'T_UI_TRADER_Shani',
+    'ID_TIANWEN_NAME': 'T_UI_TRADER_TianWen',
+}
+
+
+def is_outfit_option(row):
+    if row.get('ST') in NPC_PREVIEW_STEMS:
+        return True
+    return any(row.get(field) for field in ('Model Folder Name', 'Item/UI Folder Name', 'Pak Mesh Paths', 'Visual Part Paths'))
+
 
 
 def values(text):
@@ -96,9 +111,10 @@ def row_mesh_paths(row, indexed_paths=(), visual_parts=None):
         # Batch import derives the outfit character/colourway from its first
         # mesh. Borrowed pieces must not replace the outfit's own identity.
         return (not path.casefold().startswith(primary), path.casefold())
-    if indexed:
-        return sorted((path for path in indexed if any(path.casefold().startswith(prefix) for prefix in prefixes)), key=primary_first)
     recorded = unique_paths(values(row.get('Pak Mesh Paths', '')))
+    if indexed:
+        recorded_keys = {path.casefold() for path in recorded} if visual_parts is None else set()
+        return sorted((path for path in indexed if path.casefold() in recorded_keys or any(path.casefold().startswith(prefix) for prefix in prefixes)), key=primary_first)
     result = recorded or unique_paths([*row_model_prefixes(row, include_legacy_parts=visual_parts is None), *(path.rsplit('/', 1)[0] for path in parts)])
     return sorted(result, key=primary_first)
 

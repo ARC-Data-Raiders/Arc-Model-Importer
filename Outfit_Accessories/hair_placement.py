@@ -44,6 +44,21 @@ def _head_anchor(path):
     return None
 
 
+def _character_component(obj):
+    from ..Animations.animation_import import _psa_translation_scale
+
+    armature = obj.find_armature()
+    parent = obj.parent
+    while armature is None and parent is not None:
+        if parent.type == 'ARMATURE':
+            armature = parent
+            break
+        parent = parent.parent
+    if armature is None:
+        return None
+    return armature.matrix_world @ Matrix.Scale(_psa_translation_scale(armature) / 0.01, 4)
+
+
 def place_hair_at_head(obj, scene=None):
     """Align authored component-space hair to its same-slot character frame.
 
@@ -74,9 +89,9 @@ def place_hair_at_head(obj, scene=None):
                   and import_layout.infer_role(o) in {'Head', 'Body'}
                   and import_layout.slot_of_object(o) == slot and _source(o)]
     candidates.sort(key=lambda o: 0 if import_layout.infer_role(o) == 'Head' else 1)
-    component = None
+    component = _character_component(obj)
     reference = ''
-    for candidate in candidates:
+    for candidate in candidates if component is None else ():
         try:
             component = candidate.matrix_world @ _frame(candidate, _source(candidate))
         except ValueError:
@@ -118,9 +133,10 @@ def place_static_hair(obj, scene=None):
     if '/characters/hairs/' not in norm and '/characters/facialhairs/' not in norm:
         return False, 'Not an authored hairstyle'
     frame = _frame(obj, source)
-    component = obj.matrix_world @ frame
+    character_component = _character_component(obj)
+    component = character_component if character_component is not None else obj.matrix_world @ frame
     old = obj.get('arc_static_hair_anchor')
-    if old and len(old) == 16:
+    if character_component is None and old and len(old) == 16:
         previous = Matrix([list(old)[i:i+4] for i in range(0, 16, 4)])
         component = component @ previous.inverted()
     slot = import_layout.slot_of_object(obj)
@@ -136,7 +152,7 @@ def place_static_hair(obj, scene=None):
         if anchor is None:
             continue
         reference = path
-        if candidate in same:
+        if candidate in same and character_component is None:
             try:
                 component = candidate.matrix_world @ _frame(candidate, path)
             except ValueError:

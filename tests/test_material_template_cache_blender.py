@@ -51,13 +51,13 @@ class MaterialTemplateCacheTests(unittest.TestCase):
 
     def test_user_graph_and_root_control_edits_do_not_contaminate_template(self):
         first = self.build('complete-signature-A')
-        control = first.node_tree.nodes['DR.Control.dr_roughness_scale']
-        control.outputs[0].default_value = .25
+        control = compiler.control_input(first.node_tree.nodes['DR.Material'], 'dr_roughness_scale')
+        control.default_value = .25
         shader = next(node for node in self.group(first).nodes if node.type == 'BSDF_PRINCIPLED')
         shader.inputs['Metallic'].default_value = .75
         second = self.build('complete-signature-A')
-        self.assertEqual(control.outputs[0].default_value, .25)
-        self.assertEqual(second.node_tree.nodes['DR.Control.dr_roughness_scale'].outputs[0].default_value, 1)
+        self.assertEqual(control.default_value, .25)
+        self.assertEqual(compiler.control_input(second.node_tree.nodes['DR.Material'], 'dr_roughness_scale').default_value, 1)
         second_shader = next(node for node in self.group(second).nodes if node.type == 'BSDF_PRINCIPLED')
         self.assertEqual(second_shader.inputs['Metallic'].default_value, 0)
 

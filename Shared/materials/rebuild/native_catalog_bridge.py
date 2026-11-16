@@ -44,17 +44,30 @@ def session(index):
         index._native_catalog_compat_source=reviewed_source(manifest)
         index._native_catalog_compatibility='Explicit flat/nonstandard FModel export; native namespace association unverified'
         return None
-    result=Session(index,bank,config); result.activation_identity=identity
+    result=Session(index,bank,config,identity); result.activation_identity=identity
     index._native_catalog_session=result
     return result
 
+# Frozen catalog + reviewed limits per (bank path, manifest digest, bank digest).
+# Both are immutable after construction; repositories stay per session.
+_CATALOG_CACHE={}
+
+def _activated_catalog(bank,config,identity):
+    key=(str(bank),identity)
+    cached=_CATALOG_CACHE.get(key) if identity else None
+    if cached is not None:return cached
+    catalog=NativeCatalog.read(bank); payload=catalog.payload; stats=payload.get('statistics',{})
+    limits={}
+    if config.get('schema')==LIMITED_SCHEMA:limits=validate_reviewed_limits(payload,config)
+    elif payload.get('errors') or stats.get('error_count')!=0: raise ValueError('Partial native catalogs cannot activate')
+    if identity:_CATALOG_CACHE.clear();_CATALOG_CACHE[key]=(catalog,limits)
+    return catalog,limits
+
 class Session:
-    def __init__(self,index,bank,config):
-        self.index=index; self.config=config; self.catalog=NativeCatalog.read(bank)
-        payload=self.catalog.payload; stats=payload.get('statistics',{})
-        self.render_limits={}
-        if config.get('schema')==LIMITED_SCHEMA:self.render_limits=reviewed_limits(self.catalog,config)
-        elif payload.get('errors') or stats.get('error_count')!=0: raise ValueError('Partial native catalogs cannot activate')
+    def __init__(self,index,bank,config,identity=None):
+        self.index=index; self.config=config
+        self.catalog,self.render_limits=_activated_catalog(bank,config,identity)
+        payload=self.catalog.payload
         for field in ('build','mapping'):
             if config.get(field)!=payload[field]: raise ValueError('Native catalog activation context mismatch: '+field)
         for field,container in (('material_records','records'),('texture_metadata','textures')):
@@ -111,7 +124,10 @@ class TrackingIndex:
     def __getattr__(self,name): return getattr(self.owner.index,name)
     def texture_info(self,reference):
         fact=self.owner.texture_fact(reference)
-        return None if fact is None else dict(fact['properties'],Type=fact['type'])
+        if fact is None: return None
+        result=dict(fact['properties'],Type=fact['type'])
+        if fact.get('native_texture_kind',fact['type'])=='Texture2DArray': result['Mips']=[{'SizeZ':fact['slice_count']}]
+        return result
     def image_path(self,reference,role='data',slice=None):
         normalized=package_ref(reference,self.owner.repository.mount_aliases)
         binding={'reference':normalized,'role':role}
@@ -230,7 +246,7 @@ def reviewed_limits(catalog,config):
     key=json.dumps(config,sort_keys=True,default=str)
     cached=getattr(catalog,'_reviewed_limits',None)
     if cached is not None and cached[0]==key:return cached[1]
-    result=validate_reviewed_limits(catalog.payload,config)
+    result=catalog.validate_reviewed_limits(config)
     catalog._reviewed_limits=(key,result)
     return result
 

@@ -4,7 +4,6 @@ import json
 import pathlib
 import re
 import numpy as np
-from .fixture import oracle_discard_mask
 
 
 class Unsupported(Exception):
@@ -210,6 +209,17 @@ class Interpreter:
             else:raise Unsupported('interp_unsupported:'+op)
         elif op.startswith(('sample_indexable','sample_l_indexable','sample_b_indexable','sample_d_indexable')):
             dst,coords,resource,sampler,*lod=operands;match=re.fullmatch(r't(\d+)(?:\.([xyzw]+))?',resource);r,data=self.resources[int(match[1])]
+            if r['kind']=='texture3d':
+                from . import volume
+                if op != 'sample_indexable(texture3d)(float,float,float,float)' or lod or not re.fullmatch(r's\d+', sampler):
+                    raise Unsupported('interp_unsupported:volume_sample_form')
+                contract=volume.fixture_contract(self.fixture,int(sampler[1:]))
+                coord=floating(self.read_text(coords,True))
+                value=volume.sample_words(data.reshape(r['depth'],r['height'],r['width'],4),coord[...,:3],contract)
+                swizzle=match[2] or 'xyzw'
+                if len(swizzle)==1:swizzle*=4
+                if len(swizzle)!=4:raise Unsupported('interp_unsupported:resource_swizzle')
+                return dst,value[...,["xyzw".index(c) for c in swizzle]]
             if r['kind'] not in ['texture2d','texture2darray']:raise Unsupported('interp_unsupported:'+op)
             coord=floating(self.read_text(coords,True))
             if not np.all(np.isfinite(coord[active,:2])):raise Unsupported('interp_unsupported:nonfinite_sample_coordinate')
@@ -291,6 +301,7 @@ class Interpreter:
 
 
 def compare(shader,fixture):
+    from .fixture import oracle_discard_mask
     entry=dict(sha=fixture['sha'],shader_set=fixture['set'],mode=fixture['mode'],winding=fixture['winding'],seed_offset=fixture.get('seed_offset',0),status='pass',compared_components=0,max_rel_err=0.0,first_mismatch=None,unobserved_outputs=[row['Name'] for row in shader['signatures']['output'] if row['Name'].lower() in ['sv_depth','sv_depthlessequal','sv_depthgreaterequal']])
     oracle_discarded=oracle_discard_mask(fixture);entry['non_discarded_pixels']=int(np.count_nonzero(~oracle_discarded));entry['discard_agreement']=False
     try:

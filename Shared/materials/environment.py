@@ -15,6 +15,7 @@ from mathutils import Vector
 
 from .. import utils
 from .. import textures
+from .material_audit import record_swallowed as _record_swallowed
 from ...Outfit_Accessories import palette_calibration
 from ...Outfit_Accessories.properties import BODY_ALBEDO, BODY_NORMAL
 
@@ -34,6 +35,8 @@ from .common import (
     _invert_mask,
     _list_image_files,
     _load_fallback_tex_image,
+    _load_image_cached,
+    _resolve_mi_texture_path,
     _mapping_tiled,
     _mask_channel_value,
     _mi_colour,
@@ -270,7 +273,8 @@ def _beacon_view_cell_uv(nodes, links):
     center.attribute_name = "arc_beacon_center"
     try:
         center.attribute_type = "GEOMETRY"
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._beacon_view_cell_uv', _exc)
         pass
     radius = nodes.new("ShaderNodeAttribute")
     radius.label = "Lamp radius"
@@ -278,7 +282,8 @@ def _beacon_view_cell_uv(nodes, links):
     radius.attribute_name = "arc_beacon_radius"
     try:
         radius.attribute_type = "GEOMETRY"
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._beacon_view_cell_uv', _exc)
         pass
     # One direction for the whole lamp. Per-fragment Incoming splits the
     # card across two atlas cells when the view sits on a column boundary.
@@ -298,7 +303,8 @@ def _beacon_view_cell_uv(nodes, links):
     center_view.attribute_name = "arc_beacon_center"
     try:
         center_view.attribute_type = "GEOMETRY"
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._beacon_view_cell_uv', _exc)
         pass
     toward = nodes.new("ShaderNodeVectorMath")
     toward.label = "Toward camera"
@@ -473,6 +479,12 @@ def setup_beacon_material(mat, mi_path: str, psk_path: str = "") -> None:
     from . import preset_defaults
 
     mi = _parse_flat_mi_json(mi_path) if mi_path else {}
+    # Name-substring callers (revamped_bridge._fix_beacon_slots) also hit MI_LampBeacon_01_A, a
+    # M_PropPreset_CR+NOX+XEM housing with its own CR + NOX; only MI_Beacon* / M_Beacon children are sprites.
+    stem = os.path.splitext(os.path.basename(mi_path or ""))[0].lower()
+    parent = str(mi.get("parent") or "").lower()
+    if mi_path and not stem.startswith("mi_beacon") and not parent.endswith("m_beacon"):
+        return
     raw_scalars = mi.get("scalars") or {}
     scalars = raw_scalars if isinstance(raw_scalars, dict) else {n: v for n, v in raw_scalars}
     raw_colours = mi.get("colours") or []
@@ -500,12 +512,13 @@ def setup_beacon_material(mat, mi_path: str, psk_path: str = "") -> None:
         if img is not None:
             try:
                 img.alpha_mode = "STRAIGHT"
-            except Exception:
+            except Exception as _exc:
+                _record_swallowed('environment.setup_beacon_material', _exc)
                 pass
             cell_uv = _beacon_view_cell_uv(nodes, links)
             tex = _new_tex_image(nodes, img, "T_Beacon_CR_01", (1160, 200))
             tex.extension = "CLIP"
-            tex.interpolation = "Linear"
+            tex.interpolation = "Cubic"
             links.new(cell_uv, tex.inputs["Vector"])
             links.new(tex.outputs["Color"], principled.inputs["Base Color"])
             links.new(tex.outputs["Color"], principled.inputs["Emission Color"])
@@ -529,15 +542,18 @@ def setup_beacon_material(mat, mi_path: str, psk_path: str = "") -> None:
             )
         principled.inputs["Roughness"].default_value = 0.35
         principled.inputs["Emission Strength"].default_value = emissive if on else 2.0
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment.setup_beacon_material', _exc)
         pass
     try:
         mat.use_backface_culling = False
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment.setup_beacon_material', _exc)
         pass
     try:
         mat.surface_render_method = "BLENDED"
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment.setup_beacon_material', _exc)
         pass
     mat["arc_mi_family"] = "beacon"
 
@@ -689,6 +705,125 @@ _NOM_TINT_SLOTS = (
 )
 
 
+def _nom_emissive_mask_param(mi: dict, tex_lookup) -> str | None:
+    """R36: "Mask" when a CR+NOM MI enables Use Emissive and binds an _E (emissive) Mask texture, else None.
+
+    The _E masks are grey binary maps (R=G=B, 93% binary texels); emission = Mask.R x intensity, coloured by
+    EmissiveColor or CR (Use CR as Emissive), through packed_emission like the XEM.G route."""
+    switches = mi.get("switches") or {}
+    if not _mi_switch(switches, "Use Emissive", default=False):
+        return None
+    _, img = _find_env_tex(tex_lookup, "Mask")
+    if img is None:
+        return None
+    # Blender-relative "//dir/T_x_E.png" is a UNC share root to os.path.basename on Windows: split by hand.
+    raw = str(getattr(img, "filepath", "") or getattr(img, "name", "")).replace("\\", "/").rsplit("/", 1)[-1]
+    stem = os.path.splitext(raw)[0]
+    return "Mask" if stem.lower().endswith("_e") else None
+
+
+_PACKED_OVERLAY_GATES = ("UseOverlay", "EnableOverlay", "Color Overlay")
+_PACKED_OVERLAY_MODIFIERS = ("TriPlanar Overlay",)
+
+
+def _packed_overlay_gate(switches: dict):
+    """R36: (on, keys) for the Overlay sheet of a CR+NOM / CR+NOX+XEM packed prop.
+
+    Any authored enabling switch turns the sheet on (an inherited UseOverlay=False must not mask an MI-set
+    Color Overlay=True). TriPlanar Overlay picks the projection: it gates only on masters without an enabling
+    switch, and is then approximated on mesh UV0. Use Pattern Overlay samples Pattern Atlas, not this sheet."""
+    keys = [k for k in _PACKED_OVERLAY_GATES if k in switches]
+    if not keys:
+        keys = [k for k in _PACKED_OVERLAY_MODIFIERS if k in switches]
+    on = [k for k in keys if bool(switches[k])]
+    return bool(on), on
+
+
+def _mix_sock_const(nodes, links, a, b, fac, loc, label: str, data_type: str = "FLOAT"):
+    """Mix with either side a socket or a constant (common._mix_* need sockets on both sides)."""
+    idx = {"FLOAT": (2, 3, 0), "RGBA": (6, 7, 2)}[data_type]
+    mix = nodes.new("ShaderNodeMix")
+    mix.data_type = data_type
+    mix.blend_type = "MIX"
+    mix.label = label
+    mix.location = loc
+    if hasattr(fac, "links") or hasattr(fac, "node"):
+        links.new(fac, mix.inputs["Factor"])
+    else:
+        mix.inputs["Factor"].default_value = float(fac)
+    for slot, v in ((idx[0], a), (idx[1], b)):
+        if hasattr(v, "links") or hasattr(v, "node"):
+            links.new(v, mix.inputs[slot])
+        else:
+            mix.inputs[slot].default_value = v
+    return mix.outputs[idx[2]]
+
+
+def _packed_snow_plan(mi: dict):
+    """R36: MI-enabled packed-prop snow ("Use Snow" / "Use Perma Snow" True), else None.
+
+    Mirrors rebuild.surfaces.snow_layer: weight = Snow Breakup Mask.R (x Breakup Mask 2), range-mapped by Snow
+    Mask Min/Max, x "10. Snow Amount"; colour lerps to Snow Base Color (fixed white without it), roughness to
+    0.6, normal to Snow Normal. Approximate: no world-up / vertex-colour term."""
+    switches = mi.get("switches") or {}
+    keys = [k for k in ("Use Snow", "Use Perma Snow") if bool(switches.get(k))]
+    if not keys:
+        return None
+    scalars = mi.get("scalars") or {}
+    lo = _mi_scalar(scalars, "Snow Mask Min", "10. Snow Min", default=0.0)
+    hi = _mi_scalar(scalars, "Snow Mask Max", "10. Snow Max", default=1.0)
+    return {
+        "keys": keys, "min": lo, "max": hi,
+        "amount": max(0.0, min(1.0, _mi_scalar(scalars, "10. Snow Amount", "Snow Amount", "Snow Coverage", default=1.0))),
+        "tiling": _mi_scalar(scalars, "Snow Tiling", default=1.0),
+        "breakup_tiling": _mi_scalar(scalars, "Snow Breakup Tiling", default=1.0),
+        "breakup2_tiling": _mi_scalar(scalars, "Snow Breakup 2 Tiling", default=1.0),
+        "breakup2_strength": max(0.0, min(1.0, _mi_scalar(scalars, "Snow Breakup 2 Strength", default=1.0))),
+        "color": (0.9, 0.92, 0.95, 1.0), "roughness": 0.6,
+    }
+
+
+def _apply_nom_opacity_mask(nodes, links, mat, principled, mi, mi_path, tex_lookup, bind_vec, loc):
+    path = str(mi_path).replace("\\", "/").lower()
+    if not path.endswith("/pioneer/environment/props/residential/railing_01/mi_res_railing_01.json"):
+        return False
+    master = str(mi.get("root_master") or mi.get("parent") or "").replace("\\", "/")
+    if master.rsplit("/", 1)[-1].split(".", 1)[0].lower() != "m_proppreset_cr+nom":
+        return False
+    switches = mi.get("switches") or {}
+    if not _is_masked_blend(mi) or not all(_mi_switch(switches, name, default=False) for name in
+            ("Use Default Texture Setup", "Use Mask Texture", "Use Slice Mask")):
+        return False
+    if any(_mi_switch(switches, name, default=False) for name in
+           ("Use Tinting", "Use Packed Tint Mask", "RGB Tint Mask")):
+        return False
+    _, image = _find_env_tex(tex_lookup, "Mask")
+    if image is None:
+        return False
+    texture = _new_tex_image(nodes, image, "Railing opacity (Mask R)", loc, non_color=True)
+    bind_vec(texture, loc[1])
+    separate = nodes.new("ShaderNodeSeparateColor")
+    separate.location = (loc[0] + 300, loc[1])
+    links.new(texture.outputs["Color"], separate.inputs["Color"])
+    threshold = mi.get("opacity_clip")
+    threshold = 0.3333 if threshold is None else float(threshold)
+    less = nodes.new("ShaderNodeMath")
+    less.operation = "LESS_THAN"
+    less.label = "Railing discard below cutoff"
+    less.location = (loc[0] + 500, loc[1])
+    less.inputs[1].default_value = threshold
+    links.new(separate.outputs["Red"], less.inputs[0])
+    inverse = nodes.new("ShaderNodeMath")
+    inverse.operation = "SUBTRACT"
+    inverse.location = (loc[0] + 700, loc[1])
+    inverse.inputs[0].default_value = 1.0
+    links.new(less.outputs["Value"], inverse.inputs[1])
+    links.new(inverse.outputs["Value"], principled.inputs["Alpha"])
+    _set_material_alpha_mode(mat, mode="CLIP", threshold=threshold, two_sided=bool(mi.get("two_sided")))
+    mat["arc_railing_mask_red_clip"] = 1
+    return True
+
+
 def _nom_prop_tint_plan(mi: dict):
     """Tint permutation of an M_PropPreset_CR+NOM MI, decoded from its cooked SM5 base pass (build 26159202).
 
@@ -730,6 +865,35 @@ def _nom_prop_tint_plan(mi: dict):
         return {"slots": 1, "weights": "r", "source": "Packed Mask" if default_setup else "Mask",
                 "colour": "swatch" if swatch else "tint"}
     return None
+
+
+_PACKED_PROP_DEFAULT_TINT = (0.0, 0.0, 1.0)  # CR+NOM / CR+NOX+XEM master Tint default 0000FF (flat MI json)
+
+
+def _packed_prop_tint_fallback(mi: dict):
+    """Tint route of a packed-prop MI that no decoded path (nom_plan / xem_tint) handled.
+
+    The flat MI json carries the unset master Tint 0000FF, so the raw Tint is used only when authored.
+    Returns ("slots", plan) for Use Packed Tint Mask (applied by _apply_nom_prop_tint), ("swatch", None) for
+    Use Swatch Colors, ("tint", None) for an authored Tint, else (None, None)."""
+    switches = mi.get("switches") or {}
+    swatch = bool(_mi_switch(switches, "Use Swatch Colors", default=False))
+    if _mi_switch(switches, "Use Packed Tint Mask", default=False):
+        # DR_APPROX_PLACEHOLDER: XEM packed tint mask slot weights assumed equal to the decoded CR+NOM slices.
+        colours = tuple(
+            "swatch" if swatch and not _mi_switch(switches, f"Override Swatch ({s})", default=False) else "tint"
+            for s in ("0.33", "0.66", "1"))
+        if _mi_switch(switches, "RGB Tint Mask", default=False):
+            return "slots", {"slots": 3, "weights": "rgb", "source": "RGB Tint Mask Input", "colour": colours}
+        single = _mi_switch(switches, "Use single Mask Texture", "Use Mask Texture", default=False)
+        return "slots", {"slots": 3, "weights": "slice", "source": "Mask" if single else "Packed Mask",
+                         "colour": colours}
+    if swatch:
+        return "swatch", None
+    tint = _mi_colour(mi.get("colours") or [], "Tint", default=None)
+    if tint is None or all(abs(float(a) - b) < 0.01 for a, b in zip(tint[:3], _PACKED_PROP_DEFAULT_TINT)):
+        return None, None
+    return "tint", None
 
 
 def _apply_nom_prop_tint(nodes, links, mi: dict, plan: dict, albedo_sock, tex_lookup, bind_vec, local_folders, loc):
@@ -890,7 +1054,22 @@ def _base_normal_image(tex_lookup: dict, noh_keys, packed_keys):
     return img
 
 
-def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: str = FAMILY_ENVIRONMENT):
+DETAIL_ARRAY_PARAMS = frozenset({"2. Detail Array", "Detail Array"})
+
+
+def texture_array_slice_ref(ref: str, index: int) -> str:
+    """Texture2DArray object path -> exported slice path (/A/TA_X.TA_X -> /A/TA_X_LAYER0.TA_X_LAYER0)."""
+    if not ref:
+        return ""
+    head, _, leaf = str(ref).rpartition("/")
+    name = leaf.split(".", 1)[0]
+    if not name:
+        return ""
+    sl = f"{name}_LAYER{int(index)}"
+    return f"{head}/{sl}.{sl}" if head else f"{sl}.{sl}"
+
+
+def _setup_environment_material(mat,mi_path: str, psk_path: str = "", family: str = FAMILY_ENVIRONMENT):
     """Principled setup for Arc environment MIs (concrete, buildings, roads, metal trims).
 
     Implements the layered protocol in docs/TEXTURE_PROTOCOL.md:
@@ -924,7 +1103,8 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         world_meters_per_tile = _PLANE_ROAD_METERS_PER_TILE
         try:
             mat["arc_world_tile_m"] = float(world_meters_per_tile)
-        except Exception:
+        except Exception as _exc:
+            _record_swallowed('environment._setup_environment_material', _exc)
             pass
     elif is_trim and _trim_wants_world_uv(mi):
         # WorldAlignedTexture: continuous weathering across modular edge seams.
@@ -934,7 +1114,8 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         try:
             mat["arc_world_tile_m"] = float(world_meters_per_tile)
             mat["arc_trim_world_uv"] = 1
-        except Exception:
+        except Exception as _exc:
+            _record_swallowed('environment._setup_environment_material', _exc)
             pass
 
     COL_TEX, COL_UTIL, COL_MIX, COL_BSDF, COL_OUT = -1800, -1100, -350, 450, 750
@@ -1024,6 +1205,15 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
 
     _, detail_img = _find_env_tex(tex_lookup, *detail_n_keys)
     _, ao_img = _find_env_tex(tex_lookup, "Prop AO Texture", "AO")
+    # R24: M_Nature_01_TBG "2. Detail Array" is a Texture2DArray; the exporter writes
+    # <array>_LAYERn.png slices. No MI param picks the slice: slice 0 (approximate).
+    detail_array_img = None
+    if not detail_img:
+        array_ref = next((ref for param, ref in mi.get('textures', [])
+                          if str(param) in DETAIL_ARRAY_PARAMS and ref), "")
+        slice_path = _resolve_mi_texture_path(texture_array_slice_ref(array_ref, 0), local_folders)
+        if slice_path:
+            detail_array_img = _load_image_cached(slice_path, non_color=True)
 
     # Architecture trim packs base normal into NAO (N/A/O). Never let Detail
     # Normal's ``*_NOH`` win the base NOH slot via filename-suffix fallback —
@@ -1294,9 +1484,12 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         )
 
     # ── Overlay color variation (concrete ColorVar / rust overlays) ────────
-    use_overlay = _mi_switch(
-        switches, "UseOverlay", "EnableOverlay", "Color Overlay", default=False if packed_prop else None,
-    )
+    if packed_prop:
+        use_overlay, ov_keys = _packed_overlay_gate(switches)
+        if use_overlay and ov_keys == ["TriPlanar Overlay"]:
+            mat["arc_env_overlay_projection"] = "triplanar approximated on UV0"
+    else:
+        use_overlay = _mi_switch(switches, "UseOverlay", "EnableOverlay", "Color Overlay", default=None)
     mat["arc_env_overlay_enabled"] = bool(use_overlay is not False)
     ov_str = _mi_scalar(
         scalars,
@@ -1528,6 +1721,31 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             nodes, links, normal_sock, det_n, fac,
             (COL_MIX + 120, y_det), "Base ⊕ Detail Normal",
         )
+    use_array = _mi_switch(switches, "2. Detail Texture", "Detail Texture", default=None)
+    if detail_array_img and use_array is not False and normal_sock is not None:
+        # approximate: slice 0 RG read as tangent XY (B is not a unit Z in the
+        # TBG slices; Z set to 1, the Normal Map node renormalises).
+        arr_node = _new_tex_image(
+            nodes, detail_array_img, "Detail Array (slice 0, approximate)", (COL_TEX, y_det - 300),
+            non_color=True, normal=True,
+        )
+        arr_tile = _mi_scalar(scalars, "2. Detail Tile U", "Detail Tile U", "2. Detail Tile", default=4.0)
+        _bind_tex_vec(arr_node, y_det - 300, tiling=arr_tile)
+        sep = nodes.new("ShaderNodeSeparateColor")
+        sep.location = (COL_MIX - 520, y_det - 300)
+        links.new(arr_node.outputs["Color"], sep.inputs["Color"])
+        comb = nodes.new("ShaderNodeCombineColor")
+        comb.location = (COL_MIX - 360, y_det - 300)
+        links.new(sep.outputs[0], comb.inputs[0])
+        links.new(sep.outputs[1], comb.inputs[1])
+        comb.inputs[2].default_value = 1.0
+        arr_n = _wire_normal_map(
+            nodes, links, comb.outputs["Color"], (COL_MIX - 200, y_det - 300),
+            strength=1.0, label="Detail Array Normal Map",
+        )
+        normal_sock = _mix_normals_vec(
+            nodes, links, normal_sock, arr_n, 0.5, (COL_MIX + 120, y_det - 300), "Base ⊕ Detail Array",
+        )
 
     # ── Prop AO / NOH occlusion → darken albedo ────────────────────────────
     if ao_img:
@@ -1660,6 +1878,30 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
     mat["arc_env_tint_enabled"] = bool(tint_on)
     if xem_tint or nom_applied:
         tint_on = False  # already applied with the decoded formula
+    if packed_prop and tint_on and not concrete_profile:
+        # Undecoded packed-prop permutation: follow the MI switches, never the unset master Tint 0000FF.
+        route, route_plan = _packed_prop_tint_fallback(mi)
+        mat["arc_packed_prop_tint_route"] = route or "none"
+        fb_loc = (COL_MIX + 280, y_cr + 220)
+        if route == "slots":
+            applied = False
+            for src in dict.fromkeys((route_plan["source"], "Packed Mask", "Mask", "Normal")):
+                if applied or (route_plan["weights"] == "rgb" and src != route_plan["source"]):
+                    break
+                albedo_sock, applied = _apply_nom_prop_tint(
+                    nodes, links, mi, dict(route_plan, source=src) if route_plan["weights"] == "slice" else route_plan,
+                    albedo_sock, tex_lookup, _bind_tex_vec, local_folders, fb_loc)
+            mat["arc_tint_approximation"] = "DR_APPROX_PLACEHOLDER: packed tint mask slot weights (CR+NOM decode)"
+            tint_on = False
+        elif route == "swatch":
+            # DR_APPROX_PLACEHOLDER: swatch tint weight is the slice mask or 1.0; this permutation is undecoded.
+            albedo_sock, _ = _apply_xem_prop_tint(
+                nodes, links, mi, albedo_sock, tint_mask_sock if tint_mask_sock is not None else 1.0,
+                local_folders, fb_loc)
+            mat["arc_tint_approximation"] = "DR_APPROX_PLACEHOLDER: swatch tint weight (slice mask or 1.0)"
+            tint_on = False
+        elif route is None:
+            tint_on = False
     # Concrete_01 tints around mid-grey: albedo * Tint * 2 (Revamped profile).
     if concrete_profile and albedo_sock is not None and tint is not None:
         rgb = nodes.new("ShaderNodeRGB")
@@ -1753,7 +1995,8 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
         try:
             mat["arc_paint_unit_scale"] = float(paint_unit)
             mat["arc_paint_space"] = "world" if paint_world else "object"
-        except Exception:
+        except Exception as _exc:
+            _record_swallowed('environment._setup_environment_material', _exc)
             pass
 
     # ── Weathering streaks + settled dust (PropTrim / prop presets) ────────
@@ -1805,6 +2048,78 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
                     principled.inputs["Emission Color"].default_value = color
                 links.new(energy, principled.inputs["Emission Strength"])
                 mat["arc_emissive_setup"] = "native-xem-green-static-v1"
+    elif packed_prop and not xem_prop and _nom_emissive_mask_param(mi, tex_lookup):
+        # R36: CR+NOM Use Emissive binds the _E "Mask" texture (grey binary mask, R=G=B, R23 texprobe n=15).
+        _, e_img = _find_env_tex(tex_lookup, "Mask")
+        e_loc = (COL_TEX, y_extra - 3200)
+        e_node = _prop_trim._new_tex_image(nodes, e_img, "Emissive Mask (Mask R)", e_loc, non_color=True)
+        _bind_tex_vec(e_node, e_loc[1])
+        e_sep = nodes.new("ShaderNodeSeparateColor")
+        e_sep.location = (e_loc[0] + 300, e_loc[1])
+        links.new(e_node.outputs["Color"], e_sep.inputs["Color"])
+        from .emission import packed_emission
+        color = albedo_sock if (albedo_sock is not None and _mi_switch(switches, "Use CR as Emissive", default=False)) \
+            else _mi_colour(colours, "EmissiveColor", "Emissive Color", default=(1, 1, 1, 1))
+        color, energy = packed_emission(nodes, links, e_sep.outputs["Red"], mi, color)
+        if isinstance(color, bpy.types.NodeSocket):
+            links.new(color, principled.inputs["Emission Color"])
+        else:
+            principled.inputs["Emission Color"].default_value = color
+        links.new(energy, principled.inputs["Emission Strength"])
+        mat["arc_emissive_setup"] = "native-nom-mask-r-static-v1"
+
+    # ── R36: MI-enabled packed-prop snow (Use Snow / Use Perma Snow) ──────
+    snow_plan = _packed_snow_plan(mi) if packed_prop else None
+    if snow_plan is not None and albedo_sock is not None:
+        y_sn = y_extra - 3000
+        weight = None
+        _, sb_img = _find_env_tex(tex_lookup, "Snow Breakup Mask")
+        if sb_img is not None:
+            sb = _new_tex_image(nodes, sb_img, "Snow Breakup Mask", (COL_TEX, y_sn), non_color=True)
+            _bind_tex_vec(sb, y_sn, tiling=snow_plan["breakup_tiling"])
+            weight = _mask_channel_value(nodes, links, sb, (COL_UTIL, y_sn))
+        _, sb2_img = _find_env_tex(tex_lookup, "Snow Breakup Mask 2")
+        if sb2_img is not None:
+            sb2 = _new_tex_image(nodes, sb2_img, "Snow Breakup Mask 2", (COL_TEX, y_sn - 280), non_color=True)
+            _bind_tex_vec(sb2, y_sn - 280, tiling=snow_plan["breakup2_tiling"])
+            m2 = _mix_sock_const(nodes, links, 1.0, _mask_channel_value(nodes, links, sb2, (COL_UTIL, y_sn - 280)),
+                            snow_plan["breakup2_strength"], (COL_UTIL + 200, y_sn - 280), "Snow Breakup 2 Strength")
+            if weight is None:
+                weight = m2
+            else:
+                node = nodes.new("ShaderNodeMath"); node.operation = "MULTIPLY"; node.label = "Snow breakup 1 x 2"
+                links.new(weight, node.inputs[0]); links.new(m2, node.inputs[1]); weight = node.outputs[0]
+        amt = nodes.new("ShaderNodeMath"); amt.operation = "MULTIPLY"; amt.use_clamp = True
+        amt.label = f"Snow Amount x{snow_plan['amount']:g}"; amt.location = (COL_UTIL + 600, y_sn)
+        amt.inputs[1].default_value = snow_plan["amount"]
+        if weight is None:
+            amt.inputs[0].default_value = 1.0
+        else:
+            links.new(_contrast_mask(nodes, links, weight, snow_plan["min"], snow_plan["max"],
+                                     (COL_UTIL + 400, y_sn), "Snow Mask Min/Max"), amt.inputs[0])
+        snow_fac = amt.outputs["Value"]
+        _, sc_img = _find_env_tex(tex_lookup, "Snow Base Color")
+        if sc_img is not None:
+            sc = _new_tex_image(nodes, sc_img, "Snow Base Color", (COL_TEX, y_sn - 560))
+            _bind_tex_vec(sc, y_sn - 560, tiling=snow_plan["tiling"])
+            snow_col = sc.outputs["Color"]
+        else:
+            snow_col = snow_plan["color"]
+        albedo_sock = _mix_sock_const(nodes, links, albedo_sock, snow_col, snow_fac, (COL_MIX + 400, y_sn),
+                                      "Snow colour", "RGBA")
+        if rough_sock is not None:
+            rough_sock = _mix_sock_const(nodes, links, rough_sock, snow_plan["roughness"], snow_fac,
+                                         (COL_MIX + 400, y_sn - 200), "Snow roughness")
+        _, sn_img = _find_env_tex(tex_lookup, "Snow Normal")
+        if sn_img is not None:
+            sn = _new_tex_image(nodes, sn_img, "Snow Normal", (COL_TEX, y_sn - 840), non_color=True, normal=True)
+            _bind_tex_vec(sn, y_sn - 840, tiling=snow_plan["tiling"])
+            sn_vec = _wire_normal_map(nodes, links, sn.outputs["Color"], (COL_MIX + 200, y_sn - 840), label="Snow Normal")
+            if normal_sock is None:
+                normal_sock = nodes.new("ShaderNodeNewGeometry").outputs["Normal"]
+            normal_sock = _mix_normals_vec(nodes, links, normal_sock, sn_vec, snow_fac,
+                                           (COL_MIX + 400, y_sn - 840), "Snow normal")
+        mat["arc_env_snow"] = "approximate: breakup x amount, no world-up term (" + "/".join(snow_plan["keys"]) + ")"
 
     # ── Bind Principled ────────────────────────────────────────────────────
     if albedo_sock is not None:
@@ -1894,8 +2209,12 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
             )
             try:
                 mat["arc_trim_alpha"] = 1
-            except Exception:
+            except Exception as _exc:
+                _record_swallowed('environment._setup_environment_material', _exc)
                 pass
+
+    _apply_nom_opacity_mask(nodes, links, mat, principled, mi, mi_path, tex_lookup,
+                            _bind_tex_vec, (COL_TEX, y_extra - 3500))
 
     # Setup stamps so Force All / Fix White rebuild stale vent-cell / pre-world-UV graphs.
     try:
@@ -1927,37 +2246,17 @@ def _setup_environment_material(mat, mi_path: str, psk_path: str = "", family: s
                     mat["arc_proptrim_uv_audit"] = (
                         f"UVOffset={float(uv_offset):.4g} rotate={bool(rotate_uv)}"
                     )
-            except Exception:
+            except Exception as _exc:
+                _record_swallowed('environment._setup_environment_material', _exc)
                 pass
         if is_trim:
             mat["arc_trim_setup"] = _TRIM_SETUP_V
         if is_trim_mapper:
             mat["arc_trim_mapper"] = "v1"
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._setup_environment_material', _exc)
         pass
 
-    # Unconnected leftovers for inspection
-    handled = {
-        node.image.filepath
-        for node in nodes
-        if getattr(node, "image", None) is not None
-    }
-    row_u = y_extra - 200
-    for param, (fpath, img) in tex_lookup.items():
-        if fpath in handled:
-            continue
-        # Skip duplicate texture-name aliases (T_Concrete_Wall_05_CR etc.)
-        if param.startswith("T_") and any(
-            param.endswith(suf) for suf in ("_CR", "_NOH", "_C", "_A", "_X", "_GRM", "_NOM", "_NXX", "_NMX", "_NAO",
-                                           "_Color", "_Normal", "_Roughnessmetal", "_Tintmask")
-        ):
-            continue
-        node = nodes.new("ShaderNodeTexImage")
-        node.image = img
-        node.label = param
-        node.interpolation = "Cubic"
-        node.location = (COL_TEX - 700, row_u)
-        row_u -= 280
 
 
 
@@ -2359,7 +2658,8 @@ def _setup_foliage_material(mat, mi_path: str, psk_path: str = ""):
         except Exception:
             try:
                 principled.inputs["Subsurface"].default_value = 0.15
-            except Exception:
+            except Exception as _exc:
+                _record_swallowed('environment._setup_foliage_material', _exc)
                 pass
 
     rough = _mi_scalar(
@@ -2795,7 +3095,8 @@ def _wire_sand_breakup_noise(nodes, links, vector_sock, loc, scale: float = 2.5)
     noise.location = loc
     try:
         noise.noise_dimensions = "2D"
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._wire_sand_breakup_noise', _exc)
         pass
     try:
         noise.inputs["Scale"].default_value = float(scale)
@@ -2803,7 +3104,8 @@ def _wire_sand_breakup_noise(nodes, links, vector_sock, loc, scale: float = 2.5)
         noise.inputs["Roughness"].default_value = 0.55
         if "Distortion" in noise.inputs:
             noise.inputs["Distortion"].default_value = 0.15
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._wire_sand_breakup_noise', _exc)
         pass
     if vector_sock is not None:
         links.new(vector_sock, noise.inputs["Vector"])
@@ -2951,7 +3253,8 @@ def _wire_dual_scale_sand(
             albedo_sock = mul
             try:
                 mat["arc_sand_tint"] = [tr, tg, tb, 1.0]
-            except Exception:
+            except Exception as _exc:
+                _record_swallowed('environment._wire_dual_scale_sand', _exc)
                 pass
 
     # Normals: fine grain + optional larger dune normal — never Displacement
@@ -3042,7 +3345,8 @@ def _wire_dual_scale_sand(
             mat["arc_sand_micro_meters"] = float(micro_meters)
         else:
             mat["arc_sand_tiling"] = float(uv_tiling)
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._wire_dual_scale_sand', _exc)
         pass
 
     return principled, out_node
@@ -3113,7 +3417,8 @@ def _setup_sand_material(mat, mi_path: str, psk_path: str = ""):
     if _is_masked_blend(mi):
         try:
             already_clip = str(getattr(mat, "blend_method", "") or "").upper() == "CLIP"
-        except Exception:
+        except Exception as _exc:
+            _record_swallowed('environment._setup_sand_material', _exc)
             already_clip = False
         if not already_clip:
             _set_material_alpha_mode(
@@ -4061,31 +4366,37 @@ def _wire_water_world_bump(nodes, links, principled, col_tex: float, col_mix: fl
     noise.label = "Ridged Water"
     try:
         noise.noise_dimensions = "3D"
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._wire_water_world_bump', _exc)
         pass
     try:
         noise.noise_type = "RIDGED_MULTIFRACTAL"
     except Exception:
         try:
             noise.noise_type = "MULTIFRACTAL"
-        except Exception:
+        except Exception as _exc:
+            _record_swallowed('environment._wire_water_world_bump', _exc)
             pass
     noise.inputs["Scale"].default_value = 2.0
     try:
         noise.inputs["Detail"].default_value = 0.0
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._wire_water_world_bump', _exc)
         pass
     try:
         noise.inputs["Roughness"].default_value = 1.0
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._wire_water_world_bump', _exc)
         pass
     try:
         noise.inputs["Lacunarity"].default_value = 74.0
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._wire_water_world_bump', _exc)
         pass
     try:
         noise.inputs["Distortion"].default_value = 1.3
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._wire_water_world_bump', _exc)
         pass
     noise.location = (col_mix - 200, -320)
     links.new(mapping.outputs["Vector"], noise.inputs["Vector"])
@@ -4094,7 +4405,8 @@ def _wire_water_world_bump(nodes, links, principled, col_tex: float, col_mix: fl
     bump.inputs["Strength"].default_value = 0.5
     try:
         bump.inputs["Distance"].default_value = 0.1
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._wire_water_world_bump', _exc)
         pass
     bump.location = (col_mix + 80, -280)
     links.new(noise.outputs["Fac"], bump.inputs["Height"])
@@ -4111,7 +4423,8 @@ def _setup_water_material(mat, mi_path: str, psk_path: str = ""):
     _stamp_mi_family(mat, FAMILY_WATER)
     try:
         mat["arc_water_setup"] = _WATER_SETUP_V
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._setup_water_material', _exc)
         pass
 
     COL_TEX, COL_MIX, COL_BSDF, COL_OUT = -1200, -200, 400, 700
@@ -4170,7 +4483,8 @@ def _setup_water_material(mat, mi_path: str, psk_path: str = ""):
     mix.location = (COL_MIX, 200)
     try:
         mix.clamp_factor = True
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._setup_water_material', _exc)
         pass
     mix.inputs["Factor"].default_value = 0.0  # open water until proximity/AO drives shore
     links.new(w_rgb.outputs[0], mix.inputs[6])
@@ -4188,7 +4502,8 @@ def _setup_water_material(mat, mi_path: str, psk_path: str = ""):
         if deep is not None:
             mat["arc_water_color_deep"] = list(deep)
         mat["arc_shore_color"] = list(shore_col)
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._setup_water_material', _exc)
         pass
 
     # Target Principled: glossy translucent water (opaque rivers stay denser).
@@ -4212,16 +4527,19 @@ def _setup_water_material(mat, mi_path: str, psk_path: str = ""):
     except Exception:
         try:
             principled.inputs["Transmission"].default_value = transmission
-        except Exception:
+        except Exception as _exc:
+            _record_swallowed('environment._setup_water_material', _exc)
             pass
     principled.inputs["Alpha"].default_value = alpha
     try:
         principled.inputs["IOR"].default_value = 1.333
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._setup_water_material', _exc)
         pass
     try:
         principled.inputs["Specular IOR Level"].default_value = 0.5
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._setup_water_material', _exc)
         pass
 
     _wire_water_world_bump(nodes, links, principled, COL_TEX, COL_MIX)
@@ -4609,11 +4927,13 @@ def _setup_glass_env_material(mat, mi_path: str, psk_path: str = ""):
     except Exception:
         try:
             principled.inputs["Transmission"].default_value = 0.92
-        except Exception:
+        except Exception as _exc:
+            _record_swallowed('environment._setup_glass_env_material', _exc)
             pass
     try:
         principled.inputs["IOR"].default_value = 1.45
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._setup_glass_env_material', _exc)
         pass
     metallic = _mi_scalar(scalars, "Interior Metallic", "Metallic High", default=0.0)
     if metallic > 0.01:
@@ -4695,7 +5015,8 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
         _set_material_alpha_mode(mat, mode="OPAQUE", threshold=1.0, two_sided=True)
         try:
             mat["arc_simple_setup"] = "v5"
-        except Exception:
+        except Exception as _exc:
+            _record_swallowed('environment._setup_simple_material', _exc)
             pass
         return
 
@@ -4871,7 +5192,8 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
                 links.new(add_abc.outputs[2], principled.inputs["Base Color"])
             try:
                 mat["arc_color_scheme"] = 1
-            except Exception:
+            except Exception as _exc:
+                _record_swallowed('environment._setup_simple_material', _exc)
                 pass
         else:
             links.new(a_node.outputs["Color"], principled.inputs["Base Color"])
@@ -5036,10 +5358,10 @@ def _setup_simple_material(mat, mi_path: str, psk_path: str = ""):
     # A separate authored Mask can cut a window through an otherwise opaque
     # CR surface (tickets, visors and other accessory shells). CR alpha remains
     # roughness; treating it as coverage hides the printed insert behind metal.
-    _mask_param, mask_img = _find_env_tex(tex_lookup, "Mask", "Opacity Mask", "OpacityMask")
-    mask_path = bpy.path.abspath(mask_img.filepath) if mask_img else ""
     use_mask = _mi_switch(switches, "Use Mask Texture", "UseMaskTexture", default=None)
-    if mask_img is not None and use_mask is not False and _is_masked_blend(mi):
+    mask_img = _find_env_tex(tex_lookup, "Mask", "Opacity Mask", "OpacityMask")[1] if use_mask is not False and _is_masked_blend(mi) else None
+    mask_path = bpy.path.abspath(mask_img.filepath) if mask_img else ""
+    if mask_img is not None:
         mask_node = _new_tex_image(
             nodes, mask_img, "Authored opacity mask", (COL_TEX, -800), non_color=True,
         )
@@ -5222,7 +5544,8 @@ def _setup_graphic_atlas_material(mat, mi_path: str, psk_path: str = "", mesh=No
     try:
         mat["arc_decal_mask_setup"] = _MAP_DECAL_MASK_SETUP_V
         mat["arc_graphic_atlas"] = 1
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._setup_graphic_atlas_material', _exc)
         pass
 
     scalars = mi.get("scalars") or {}
@@ -5318,7 +5641,8 @@ def _setup_map_decal_material(mat, mi_path: str, psk_path: str = "", mesh=None):
     _stamp_mi_family(mat, FAMILY_DECAL)
     try:
         mat["arc_decal_mask_setup"] = _MAP_DECAL_MASK_SETUP_V
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('environment._setup_map_decal_material', _exc)
         pass
 
     scalars = mi.get("scalars") or {}
@@ -5521,7 +5845,8 @@ def _setup_tarp_material(mat, mi_path: str, psk_path: str = ""):
             principled.inputs["Subsurface Radius"].default_value = (
                 float(ss[0]), float(ss[1]), float(ss[2]),
             )
-        except Exception:
+        except Exception as _exc:
+            _record_swallowed('environment._setup_tarp_material', _exc)
             pass
 
     two_sided = bool(mi.get("two_sided"))
@@ -5531,4 +5856,3 @@ def _setup_tarp_material(mat, mi_path: str, psk_path: str = ""):
         _set_material_alpha_mode(mat, mode="BLEND", threshold=clip, two_sided=True)
     else:
         _set_material_alpha_mode(mat, mode="CLIP", threshold=clip, two_sided=True or two_sided)
-

@@ -183,7 +183,10 @@ class SavedSourceTests(unittest.TestCase):
     def apply_wrapper(self, obj, **kwargs):
         function = next(node for node in operator_ast.body if isinstance(node, ast.FunctionDef) and
                         node.name == "apply_materials_to_object")
-        exec(compile(ast.Module(body=[function], type_ignores=[]), str(ROOT / "Shared/operators.py"), "exec"), operator_namespace)
+        # apply_materials_to_object calls the real _isolate_material_controls (a no-op without material_slots).
+        helpers = [node for node in operator_ast.body if isinstance(node, ast.FunctionDef) and
+                   node.name == "_isolate_material_controls"]
+        exec(compile(ast.Module(body=helpers + [function], type_ignores=[]), str(ROOT / "Shared/operators.py"), "exec"), operator_namespace)
         operator_namespace["_recover_saved_material_lookup"] = recover_lookup
         operator_namespace["utils"]._pak_cache_roots = [str(self.current)]
         operator_namespace["utils"].timed = lambda label: contextlib.nullcontext()

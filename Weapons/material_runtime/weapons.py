@@ -249,6 +249,13 @@ def native_weapon_glare(record,context,diagnostics):
     glow=mul(mul(glow,sub(1.,falloff)),mul(enabled,fx))
     return tag(expr('max',expr('divide',glow,expr('max',exposure,1e-12)),0.),'DR.Light','Native weapon projected glare')
 
+def _zoned(e,i,zone):
+    """Tag an IR value with its paint zone ('Zone 1 · Red'); the compiler groups zone nodes by it."""
+    if isinstance(e,(tuple,list)):return type(e)(_zoned(v,i,zone) for v in e)
+    # Inputs (literals, parameters, textures, UVs) stay shared; only zone maths carry the tag.
+    if not hasattr(e,'attrs') or getattr(e,'op','literal') in ('literal','preview_parameter','texture','uv','attribute','channel','combine'):return e
+    return expr(e.op,*e.args,**{**dict(e.attrs),'zone':'Zone %d · %s'%(i+1,zone)})
+
 def compile_native_weapon_paint(record,context=None):
     """Fresh5FD2...0252/8E718...0288 semantic paint/wear stages.
 
@@ -302,8 +309,10 @@ def compile_native_weapon_paint(record,context=None):
             # Tortoiseshell PS 51BC9205 instr 102: pattern alpha scales the raw wear before delay/resistance.
             pattern_visibility=_wear_resistance(mul(mul(raw_wear,black_mask),pattern_alpha),scalar(record,'Pattern - Wear Delay',0.),scalar(record,'Pattern - Wear Resistance - '+zone,0.),pattern_target)
             new_surface=lerp(new_surface,pattern_target,pattern_visibility)
-        zone_stages.append((zone,weight,target,visibility,mid_visibility,pattern_visibility))
-        surface=lerp(surface,new_surface,weight)
+        weight,target,visibility,new_surface=(_zoned(v,i,zone) for v in (weight,target,visibility,new_surface))
+        mid_visibility=_zoned(mid_visibility,i,zone);pattern_visibility=_zoned(pattern_visibility,i,zone)
+        zone_stages.append((i,zone,weight,target,visibility,mid_visibility,pattern_visibility))
+        surface=_zoned(lerp(surface,new_surface,weight),i,zone)
     surface=tag(surface,'DR.LayerInputs','Native authored surface styles')
     detail=native_weapon_detail(record,nxm,context,surface)
     normal_base=expr('normal_decode',nxm);detail_n=expr('normal_decode',detail)
@@ -323,7 +332,7 @@ def compile_native_weapon_paint(record,context=None):
     normal_out=tag(expr('normalize',lerp(composed,rust_composed,rust)),'DR.Details','Native detail and rust normal blend')
     albedo=rgb(cr);metal=saturate(ch(nxm,3));rough=_guarded_power(ch(crd,3),1.1)
     wa=ch(wear,3);wa2=mul(wa,2.);pop=scalar(record,'Pop Intensity',1.);roughpop=scalar(record,'Pop Roughness Intensity',.5)
-    for zone,weight,target,visibility,mid_visibility,pattern_visibility in zone_stages:
+    for i,zone,weight,target,visibility,mid_visibility,pattern_visibility in zone_stages:
         palette=color(record,'Base - Color - '+zone)
         c=lerp(albedo,_paint_color(albedo,palette,target,wa2,pop),visibility)
         m=_paint_metal(metal,scalar(record,'Base - Metalness Tweak - '+zone,0.),target,visibility)
@@ -343,7 +352,8 @@ def compile_native_weapon_paint(record,context=None):
             offsets=expr('combine',scalar(record,'Pattern Roughness Offset - R',0.),scalar(record,'Pattern Roughness Offset - G',0.),scalar(record,'Pattern Roughness Offset - B',0.))
             pr=saturate(add(pr,expr('dot',pattern,offsets)))
             rr=lerp(rr,pr,pattern_visibility)
-        albedo=lerp(albedo,c,weight);metal=lerp(metal,m,weight);rough=lerp(rough,rr,weight)
+        c,m,rr=_zoned(c,i,zone),_zoned(m,i,zone),_zoned(rr,i,zone)
+        albedo=_zoned(lerp(albedo,c,weight),i,zone);metal=_zoned(lerp(metal,m,weight),i,zone);rough=_zoned(lerp(rough,rr,weight),i,zone)
     albedo=saturate(mul(albedo,ch(detail,2)))
     contrast=scalar(record,'Plastic Wear Contrast',1.)
     plastic_fade=mul(quality,saturate(add(mul(ch(wear,0),add(1.,mul(contrast,2.))),sub(0.,contrast))))

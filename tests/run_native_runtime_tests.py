@@ -6,6 +6,6 @@ parser=argparse.ArgumentParser();parser.add_argument('--repository',type=Path,de
 os.environ['DATARAIDERS_TEST_REPOSITORY']=str(args.repository.resolve())
 if args.temp_root:
     args.temp_root.mkdir(parents=True,exist_ok=True);os.environ['DATARAIDERS_TEST_TEMP']=str(args.temp_root.resolve());os.environ['TEMP']=str(args.temp_root.resolve());os.environ['TMP']=str(args.temp_root.resolve())
-suite=unittest.defaultTestLoader.discover(str(Path(__file__).parent/'native_runtime'),pattern='test_native*.py',top_level_dir=str(Path(__file__).parent))
+suite=unittest.defaultTestLoader.discover(str(Path(__file__).parent/'native_runtime'),pattern='test_*.py',top_level_dir=str(Path(__file__).parent))
 result=unittest.TextTestRunner(verbosity=2).run(suite)
 raise SystemExit(not result.wasSuccessful())

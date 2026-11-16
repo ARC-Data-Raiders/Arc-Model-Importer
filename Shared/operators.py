@@ -18,6 +18,8 @@ from . import utils
 from . import textures
 from . import materials
 from . import importing
+from . import import_report
+from . import ui_targets
 from ..Animations import rig
 from .. import fmdex
 from ..Maps import map_placement
@@ -538,6 +540,7 @@ def apply_materials_to_object(
             return "unresolved"
     label = f"apply_materials:{getattr(obj, 'name', '?')}"
     with utils.timed(label):
+        previous_images = set(bpy.data.images)
         status = _apply_materials_to_object_impl(
             obj, psk_path,
             body_variant=body_variant,
@@ -550,6 +553,12 @@ def apply_materials_to_object(
             base_pngs=base_pngs,
         )
         _isolate_material_controls(obj)
+        for image in set(bpy.data.images) - previous_images:
+            if image.users == 0 and not image.use_fake_user:
+                bpy.data.images.remove(image)
+        if getattr(obj, 'type', '') == 'MESH':
+            from .materials import material_audit
+            material_audit.audit_imported_object(obj, psk_path)
         return status
 
 
@@ -837,6 +846,11 @@ def _apply_materials_to_object_impl(
 
     if model_type == "misc":
         materials.setup_misc_material(obj, psk_path)
+        # Item meshes (M_ItemPreset_*) take this route; the prop route stamps the
+        # object record in revamped_bridge, this one never did (unaudited_object).
+        from .materials import material_audit
+        if not obj.get("arc_audit"):
+            material_audit.audit_object(obj, material_audit.mesh_meta_for(obj, psk_path))
         return "misc"
 
     # Stamped map without env path (e.g. Map Stage 1 remapped asset path).
@@ -928,31 +942,6 @@ def _apply_materials_to_object_impl(
             return "hair-cards"
         if folder_mi and materials.setup_part_folder_mi_material(obj, folder_mi, psk_path):
             return "part-folder-mi"
-
-    tex_folder = os.path.join(folder, "Textures") if folder else ""
-    # Heroes layout: Textures is sibling of Meshes, not a child
-    if (not tex_folder or not os.path.isdir(tex_folder)) and folder:
-        parent_tex = os.path.join(os.path.dirname(folder), "Textures")
-        if os.path.isdir(parent_tex):
-            tex_folder = parent_tex
-    if tex_folder and os.path.isdir(tex_folder):
-        mat = bpy.data.materials.new(name=obj.name + "_Mat")
-        mat.use_nodes = True
-        obj.active_material = mat
-        nodes = mat.node_tree.nodes
-        row = 400
-        try:
-            for fname in sorted(f for f in os.listdir(tex_folder) if f.lower().endswith(".png")):
-                img = bpy.data.images.load(os.path.join(tex_folder, fname), check_existing=True)
-                node = nodes.new("ShaderNodeTexImage")
-                node.image = img
-                node.label = fname
-                node.interpolation = "Cubic"
-                node.location = (-600, row)
-                row -= 300
-        except OSError:
-            pass
-        return "textures-folder"
 
     return "unresolved"
 
@@ -1349,6 +1338,7 @@ def _iter_reapply_materials_for_preset(
                 shader_parity.apply_uemodel_slots(obj, psk_path)
             except Exception as exc:
                 print(f"Arc Raiders shader parity: slot pass failed for {obj.name}: {exc}")
+                import_report.fail(f"Material slots for {obj.name}", exc)
         if json_path:
             try:
                 obj["arc_skin_json"] = os.path.abspath(json_path)
@@ -1567,6 +1557,7 @@ def _maybe_import_references(context, objects, *, roles: set[str] | None = None)
             print(f"Arc Asset Importer: {m}")
     except Exception as exc:
         print(f"Arc Asset Importer: reference planes skipped: {exc}")
+        import_report.fail("Reference planes", exc)
 
 
 # Reference cards are outfit / cosmetic UI art. Props, weapons, and map
@@ -1786,6 +1777,7 @@ def iter_batch_import_instances(context, selected_presets, *, staged: bool = Fal
                             print(f"    [{preset_name}] {msg}")
                         else:
                             print(f"    [{preset_name}] FAILED: {msg}")
+                            import_report.warn(f"{preset_name}: {msg}")
                         _staged_mark(new_objs)
                         mesh_done += 1
                         yield ("mesh", mesh_done, mesh_total, _entry_label(entries[e_idx]))
@@ -2497,7 +2489,7 @@ def fix_materials_for_object(obj) -> tuple:
 class ARC_OUTFITS_OT_SelectHairMI(Operator):
     """Select a hair MI JSON for this entry."""
     bl_idname = "arc_outfits.select_hair_mi"
-    bl_label = "Select Hair MI"
+    bl_label = "Select Hair Color"
     psk_path: bpy.props.StringProperty(options={'HIDDEN'})
     mi_path: bpy.props.StringProperty(options={'HIDDEN'})
 
@@ -2534,7 +2526,7 @@ class ARC_OUTFITS_OT_PickManualOutfitFolder(Operator, bpy_extras.io_utils.Import
         context.scene.arc_manual_outfit_folder = folder
         found = len(importing.scan_outfit_presets_in_folder(folder))
         if found:
-            self.report({'INFO'}, f"Found {found} outfit colourway(s) for '{os.path.basename(folder)}'.")
+            self.report({'INFO'}, f"Found {found} outfit colorway(s) for '{os.path.basename(folder)}'")
         else:
             self.report(
                 {'WARNING'},
@@ -2558,6 +2550,51 @@ class ARC_OUTFITS_OT_ClearManualOutfitFolder(Operator):
         return {'FINISHED'}
 
 
+_LAST_IMPORT_KIND = "arc_last_import_kind"
+_LAST_IMPORT_PATH = "arc_last_import_path"
+
+
+def remember_import(scene, kind, path):
+    """Store the last FModel file or folder import for Import Again and the next file browser."""
+    try:
+        scene[_LAST_IMPORT_KIND] = kind
+        scene[_LAST_IMPORT_PATH] = os.path.abspath(path)
+    except Exception:
+        pass
+
+
+def last_import(scene):
+    """(kind, path) of the last FModel import when it still exists, else ("", "")."""
+    try:
+        kind = str(scene.get(_LAST_IMPORT_KIND, "") or "")
+        path = str(scene.get(_LAST_IMPORT_PATH, "") or "")
+    except Exception:
+        return "", ""
+    if kind == "FILE" and os.path.isfile(path):
+        return kind, path
+    if kind == "FOLDER" and os.path.isdir(path):
+        return kind, path
+    return "", ""
+
+
+def _last_import_dir(scene):
+    kind, path = last_import(scene)
+    if kind == "FILE":
+        return os.path.dirname(path)
+    if kind == "FOLDER":
+        return os.path.dirname(path.rstrip("/\\")) or path
+    return bpy.path.abspath(getattr(scene, "arc_pioneer_root", "") or "")
+
+
+def _queue_review(context, repeat):
+    """Repeat imports reuse the stored choices and skip the review dialog."""
+    if repeat:
+        importing.populate_outfit_selections(context)
+        bpy.ops.arc_outfits.confirm_psk_import('EXEC_DEFAULT')
+    else:
+        bpy.ops.arc_outfits.confirm_psk_import('INVOKE_DEFAULT')
+
+
 class ARC_OUTFITS_OT_ImportSinglePSK(Operator):
     """Import a single .psk file."""
     bl_idname = "arc_outfits.import_single_psk"
@@ -2565,10 +2602,11 @@ class ARC_OUTFITS_OT_ImportSinglePSK(Operator):
     bl_options = {'REGISTER', 'UNDO'}
     filepath: StringProperty(subtype='FILE_PATH')
     filter_glob: StringProperty(default="*.psk;*.pskx;*.uemodel", options={'HIDDEN'})
+    repeat: BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'})
 
     def invoke(self, context, event):
         if not self.filepath:
-            self.filepath = bpy.path.abspath(getattr(context.scene, "arc_pioneer_root", "") or "") + os.sep
+            self.filepath = _last_import_dir(context.scene).rstrip("/\\") + os.sep
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
@@ -2586,7 +2624,8 @@ class ARC_OUTFITS_OT_ImportSinglePSK(Operator):
         entry = scene.arc_psk_entries.add()
         entry.psk_path = psk_path
         entry.display_name = os.path.basename(psk_path)
-        bpy.ops.arc_outfits.confirm_psk_import('INVOKE_DEFAULT')
+        remember_import(scene, "FILE", psk_path)
+        _queue_review(context, self.repeat)
         return {'FINISHED'}
 
 
@@ -2596,10 +2635,11 @@ class ARC_OUTFITS_OT_ImportOutfitFolder(Operator):
     bl_label = "Import Folder"
     bl_options = {'REGISTER', 'UNDO'}
     directory: StringProperty(subtype='DIR_PATH')
+    repeat: BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'})
 
     def invoke(self, context, event):
         if not self.directory:
-            self.directory = bpy.path.abspath(getattr(context.scene, "arc_pioneer_root", "") or "")
+            self.directory = _last_import_dir(context.scene)
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
@@ -2630,8 +2670,34 @@ class ARC_OUTFITS_OT_ImportOutfitFolder(Operator):
                 f"Skipped {names}. To import a static mesh, use 'Import Single Model'.",
             )
         self.report({'INFO'}, f"Found {len(psks)} PSK(s).")
-        bpy.ops.arc_outfits.confirm_psk_import('INVOKE_DEFAULT')
+        remember_import(scene, "FOLDER", folder)
+        _queue_review(context, self.repeat)
         return {'FINISHED'}
+
+
+class ARC_OUTFITS_OT_ImportAgain(Operator):
+    """Import the last file or folder again with the same choices, without dialogs."""
+    bl_idname = "arc_outfits.import_again"
+    bl_label = "Import Again"
+    bl_description = "Import the last model file or folder again with the same choices"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        kind, _path = last_import(context.scene)
+        if not kind:
+            cls.poll_message_set("Import a file or folder first")
+            return False
+        return True
+
+    def execute(self, context):
+        kind, path = last_import(context.scene)
+        if kind == "FILE":
+            return bpy.ops.arc_outfits.import_single_psk('EXEC_DEFAULT', filepath=path, repeat=True)
+        if kind == "FOLDER":
+            return bpy.ops.arc_outfits.import_outfit_folder('EXEC_DEFAULT', directory=path, repeat=True)
+        self.report({'WARNING'}, "The last imported file or folder no longer exists")
+        return {'CANCELLED'}
 
 
 class ARC_OUTFITS_OT_AssemblePropFolder(Operator):
@@ -2737,7 +2803,7 @@ def _queue_selected_outfit_psks(context):
     from . import pak_extract
     if pak_extract.configured_dir(scene) or not root:
         if not pak_extract.configured_dir(scene):
-            return False, row, label, [], "Set the Steam Install root or Paks folder."
+            return False, row, label, [], "Choose the Arc Raiders game folder first"
         from ..Outfit_Accessories import outfit_catalog
         rels = outfit_catalog.resolve_pak_outfit_paths(scene, row)
         # A warm cache skips the exporter; apply_outfit_preset still checks each
@@ -2745,9 +2811,9 @@ def _queue_selected_outfit_psks(context):
         meshes = pak_extract.ensure_rels(scene, rels, reuse_current=True) if rels else []
         if not meshes:
             if not rels:
-                message = f"'{label}' has no cooked outfit meshes in this game's Pak index."
+                message = f"'{label}' has no outfit models in this game"
             else:
-                message = f"Could not extract the {len(rels)} indexed mesh path(s) for '{label}'. See the Arc Pak log."
+                message = f"Could not read the {len(rels)} outfit model(s) for '{label}' from the game"
             return False, row, label, [], message
         scene.arc_psk_entries.clear()
         for mesh in meshes:
@@ -2756,9 +2822,7 @@ def _queue_selected_outfit_psks(context):
             entry.display_name = os.path.basename(mesh)
         return True, row, label, [], ""
     item_ui_folders = [f.strip() for f in row.get("Item/UI Folder Name", "").split(";") if f.strip()]
-    if not item_ui_folders:
-        return False, row, label, [], "Selected outfit has no Item/UI Folder Name to import from."
-    psks, missing = importing.collect_psks_for_outfit_row(root, item_ui_folders)
+    psks, missing = importing.collect_psks_for_outfit_row(root, item_ui_folders) if item_ui_folders else ([], [])
     if not psks:
         model_folder = (row.get("Model Folder Name") or "").strip()
         psks, missing = importing.collect_psks_from_model_folder(root, model_folder)
@@ -2773,8 +2837,8 @@ def _queue_selected_outfit_psks(context):
             row,
             label,
             missing,
-            "No PSK files found for this outfit's parts." + hint
-            + " If folders only have .uemodel, re-export meshes as ActorX (.psk) in FModel.",
+            "No mesh files found in the export folder for this outfit's parts." + hint
+            + " Choose the Arc Raiders game folder so the importer reads them from the game",
         )
     scene.arc_psk_entries.clear()
     for psk_path in psks:
@@ -2785,12 +2849,39 @@ def _queue_selected_outfit_psks(context):
 
 
 class ARC_OUTFITS_OT_LoadOutfit(Operator):
-    """Load all PSK parts for the selected outfit from the dropdown."""
+    """Import the selected outfit in the chosen colorway."""
     bl_idname = "arc_outfits.load_outfit"
-    bl_label = "Load Outfit"
+    bl_label = "Import Outfit"
     bl_options = {'REGISTER', 'UNDO'}
 
+    choose_skins: BoolProperty(
+        name="Choose Per-Part Skins",
+        description="Open the per-part skin picker before importing",
+        default=False,
+        options={'SKIP_SAVE'},
+    )
+
+    @classmethod
+    def poll(cls, context):
+        scene = context.scene
+        chosen = getattr(scene, "arc_selected_outfit", "")
+        if not (chosen or getattr(scene, "arc_selected_outfit_browse", "")):
+            cls.poll_message_set("Select an outfit first")
+            return False
+        if chosen and not ui_targets.visible_outfit_key(context):
+            cls.poll_message_set(ui_targets.OUTFIT_HIDDEN_MESSAGE)
+            return False
+        busy = ui_targets.job_busy_message()
+        if busy:
+            cls.poll_message_set(busy)
+            return False
+        return True
+
     def execute(self, context):
+        busy = ui_targets.job_busy_message()
+        if busy:
+            self.report({'WARNING'}, busy)
+            return {'CANCELLED'}
         ok, _row, label, missing, err = _queue_selected_outfit_psks(context)
         if not ok:
             self.report({'ERROR'}, err)
@@ -2800,18 +2891,26 @@ class ARC_OUTFITS_OT_LoadOutfit(Operator):
             sample = "; ".join(missing[:5])
             extra = f" (+{len(missing) - 5} more)" if len(missing) > 5 else ""
             print(
-                f"Arc Asset Importer: Load Outfit '{label}' queued {psk_count} "
+                f"Arc Asset Importer: Import Outfit '{label}' queued {psk_count} "
                 f"PSK(s); missing {len(missing)}: {'; '.join(missing)}"
             )
             self.report(
                 {'WARNING'},
                 f"Queued {psk_count} part(s) for '{label}', but {len(missing)} "
-                f"lack .psk: {sample}{extra}. Re-export those meshes as ActorX "
-                f"(.psk) in FModel (not UEFormat .uemodel).",
+                f"have no mesh in the export folder: {sample}{extra}. Choose the "
+                f"Arc Raiders game folder to read them from the game",
             )
         else:
-            self.report({'INFO'}, f"Queued {psk_count} part(s) for '{label}'.")
-        bpy.ops.arc_outfits.confirm_psk_import('INVOKE_DEFAULT')
+            self.report({'INFO'}, f"Queued {psk_count} part(s) for '{label}'")
+        if self.choose_skins:
+            bpy.ops.arc_outfits.confirm_psk_import('INVOKE_DEFAULT')
+            return {'FINISHED'}
+        scene = context.scene
+        importing.populate_outfit_selections(context)
+        colorway = str(getattr(scene, "arc_outfit_colorway", "DEFAULT") or "DEFAULT")
+        for sel in scene.arc_outfit_selections:
+            sel.selected = colorway != "DEFAULT" and sel.preset_name == colorway
+        bpy.ops.arc_outfits.confirm_psk_import('EXEC_DEFAULT')
         return {'FINISHED'}
 
 
@@ -2908,11 +3007,85 @@ class ARC_OUTFITS_OT_ClearDeepPathSearch(Operator):
         return {'FINISHED'}
 
 
+_POLL_MEMO = {}
+
+
+def _memo_poll(cls, context, found_fn, message):
+    """Cheap poll: re-run found_fn at most once per second for an unchanged selection."""
+    import time
+    active = getattr(getattr(context, "active_object", None), "name", "")
+    selected = getattr(context, "selected_objects", None) or ()
+    try:
+        generation = ui_targets.import_generation()
+    except Exception:
+        generation = 0
+    scene = getattr(context, "scene", None)
+    # Selection identities (not only the count), scene and import generation: a new
+    # selection of the same size, another scene or a new import re-runs found_fn.
+    key = (active, tuple(getattr(o, "name", "") for o in selected[:64]), len(selected),
+           getattr(scene, "name", ""), len(bpy.data.objects), generation)
+    now = time.monotonic()
+    memo = _POLL_MEMO.get(cls.__name__)
+    if memo is None or memo[0] != key or now - memo[1] > 1.0:
+        try:
+            found = bool(found_fn(context, selected[:64]))
+        except Exception:
+            found = False
+        memo = (key, now, found)
+        _POLL_MEMO[cls.__name__] = memo
+    if memo[2]:
+        return True
+    cls.poll_message_set(message)
+    return False
+
+
+def _target_poll(cls, context, roles, message):
+    """Poll through the shared resolver only; a resolver error fails closed."""
+    def _found(ctx, sel):
+        return any(ui_targets.resolve(ctx, role) is not None for role in roles)
+    return _memo_poll(cls, context, _found, message)
+
+
+def _busy_poll(cls):
+    """False with the job message while a long import runs (shared job guard)."""
+    busy = ui_targets.job_busy_message()
+    if busy:
+        cls.poll_message_set(busy)
+        return False
+    return True
+
+
+def _busy_refusal(op):
+    """Report and return True when a long import is running; execute then cancels."""
+    busy = ui_targets.job_busy_message()
+    if busy:
+        op.report({'WARNING'}, busy)
+        return True
+    return False
+
+
+HAIR_RECOLOR_MESSAGES = {
+    "hair": "This character has no imported hair to recolor",
+    "facial_hair": "This character has no imported facial hair to recolor",
+}
+
+
+def _hair_tab_role(context):
+    tab = str(getattr(getattr(context, "scene", None), "arc_hair_tab", "HAIR") or "HAIR")
+    return "hair" if tab == "HAIR" else "facial_hair"
+
+
 class ARC_OUTFITS_OT_UpdateHairColor(Operator):
     """Re-apply the selected Hair Color MI to selected hair meshes (no re-import)."""
     bl_idname = "arc_outfits.update_hair_color"
-    bl_label = "Update Hair Color"
+    bl_label = "Apply Hair Color"
+    bl_description = "Recolor the selected hair or facial hair with the color chosen above. No re-import"
     bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        role = _hair_tab_role(context)
+        return _target_poll(cls, context, (role,), HAIR_RECOLOR_MESSAGES[role])
 
     part: EnumProperty(
         name="Part",
@@ -2927,7 +3100,7 @@ class ARC_OUTFITS_OT_UpdateHairColor(Operator):
         cid = _appearance.hair_color_choice(context.scene, role)
         colour_json = _appearance.resolve_hair_color_path(cid, context.scene) if cid != "NONE" else ""
         if cid != "NONE" and (not colour_json or not os.path.isfile(colour_json)):
-            self.report({'ERROR'}, f"Hair Color MI not found for '{cid}'")
+            self.report({'ERROR'}, "That hair color was not found in the game files")
             return {'CANCELLED'}
 
         copy_lashes = role == "Hair" and bool(
@@ -2949,11 +3122,12 @@ class ARC_OUTFITS_OT_UpdateHairColor(Operator):
                 targets.append(obj)
             elif _is_head_mesh(obj):
                 head_targets.append(obj)
+        if not targets and not head_targets:
+            hit = ui_targets.resolve(context, "facial_hair" if role == "FacialHair" else "hair")
+            if hit is not None and hit.obj.type == "MESH":
+                targets.append(hit.obj)
         if not targets and not (copy_lashes and head_targets):
-            self.report(
-                {'ERROR'},
-                "Select hair mesh(es), or a head when Eyelash copy Hair Color is on",
-            )
+            self.report({'ERROR'}, HAIR_RECOLOR_MESSAGES["facial_hair" if role == "FacialHair" else "hair"])
             return {'CANCELLED'}
 
         done = 0
@@ -3034,7 +3208,7 @@ class ARC_OUTFITS_OT_UpdateHairColor(Operator):
                     pass
 
         if done <= 0 and lash_done <= 0:
-            self.report({'ERROR'}, "No hair MI / eyelash mats found on selection")
+            self.report({'ERROR'}, "No hair or eyelash materials found on the selection")
             return {'CANCELLED'}
         msg = f"Updated hair color on {done} mesh(es)"
         if lash_done:
@@ -3046,9 +3220,9 @@ class ARC_OUTFITS_OT_UpdateHairColor(Operator):
 
 
 class ARC_OUTFITS_OT_AddAppearancePart(Operator):
-    """Import one appearance part (Hair / Head / Body / gear), optionally onto the selected outfit."""
+    """Import one character part (hair, head, body or gear) as a new character, onto a character, or as a replacement."""
     bl_idname = "arc_outfits.add_appearance_part"
-    bl_label = "Add Appearance Part"
+    bl_label = "Add Part to Character"
     bl_options = {'REGISTER', 'UNDO'}
 
     part: EnumProperty(
@@ -3059,20 +3233,51 @@ class ARC_OUTFITS_OT_AddAppearancePart(Operator):
             ('HEAD', "Head", "Import the selected head"),
             ('BODY', "Body", "Import the shared body mesh"),
             ('BACKPACK', "Backpack", "Import the selected backpack"),
-            ('ATTACHMENT', "Attachment", "Import the selected backpack attachment"),
+            ('ATTACHMENT', "Backpack Attachment", "Import the selected backpack attachment"),
             ('CHARM', "Charm", "Import the selected backpack charm"),
             ('RAIDER_TOOL', "Raider Tool", "Import the selected raider tool"),
         ),
         default='HAIR',
     )
 
+    @classmethod
+    def poll(cls, context):
+        busy = ui_targets.job_busy_message()
+        if busy:
+            cls.poll_message_set(busy)
+            return False
+        scene = getattr(context, "scene", None)
+        plan = ui_targets.part_destination(context, getattr(scene, "arc_part_mode", "ADD"))
+        if plan["error"]:
+            cls.poll_message_set(plan["error"])
+            return False
+        return True
+
+    def invoke(self, context, event):
+        # R3: Replace asks first; New and Add run at once.
+        plan = ui_targets.part_destination(context, getattr(context.scene, "arc_part_mode", "ADD"))
+        if not plan["replace"] or plan["error"]:
+            return self.execute(context)
+        part = self.bl_rna.properties["part"].enum_items[self.part].name
+        target = plan["target"]
+        character = (getattr(target, "name", "") or "Character") if target is not None else "Character"
+        return context.window_manager.invoke_confirm(
+            self, event, title=f"Replace {part} on {character}?",
+            message="The old part is removed only after the new one imports",
+            confirm_text="Replace", icon="QUESTION")
+
     def execute(self, context):
         from ..Outfit_Accessories import appearance
 
         from . import pak_extract
 
+        busy = ui_targets.job_busy_message()
+        if busy:
+            self.report({'WARNING'}, busy)
+            return {'CANCELLED'}
+
         if not utils.get_pioneer_root() and not pak_extract.configured_dir(context.scene):
-            self.report({'ERROR'}, "Set PioneerGame Folder or the Paks folder in Settings")
+            self.report({'ERROR'}, "Choose the Arc Raiders game folder first")
             return {'CANCELLED'}
 
         role = {
@@ -3085,20 +3290,14 @@ class ARC_OUTFITS_OT_AddAppearancePart(Operator):
             "CHARM": "Charm",
             "RAIDER_TOOL": "RaiderTool",
         }.get(self.part, "Hair")
-        replace = bool(getattr(context.scene, "arc_appearance_replace_selected", False))
-        attach = bool(getattr(context.scene, "arc_appearance_attach_to_outfit", False))
-        attach_to = None
-        # Replace also needs the pad armature so we can find the old part on it.
-        if attach or replace:
-            attach_to = appearance.find_target_armature(context)
-            if attach and attach_to is None:
-                self.report(
-                    {'ERROR'},
-                    "Select an outfit armature (or a mesh skinned to one) first",
-                )
-                return {'CANCELLED'}
-        # Only merge when Add to Selected Outfit is on (replace may only swap).
-        merge_target = attach_to if attach else None
+        # One destination plan, computed once and passed down unchanged (no rediscovery).
+        plan = ui_targets.part_destination(context, getattr(context.scene, "arc_part_mode", "ADD"))
+        if plan["error"]:
+            self.report({'ERROR'}, plan["error"])
+            return {'CANCELLED'}
+        attach_to = plan["armature"]
+        replace = bool(plan["replace"])
+        standalone = bool(plan["standalone"])
 
         def _finish(op, ctx, result):
             count, msgs, objs = result
@@ -3106,28 +3305,36 @@ class ARC_OUTFITS_OT_AddAppearancePart(Operator):
                 print(f"Arc Asset Importer: {m}")
             if count <= 0:
                 op.report({'ERROR'}, "; ".join(msgs[:3]) or f"Nothing imported ({role})")
-                return
+                return False
             if role in ("Body", "Head", "Hair", "FacialHair", "Backpack", "Attachment", "Charm", "RaiderTool"):
                 _maybe_import_references(ctx, objs, roles={role})
             verb = "Replaced" if replace else "Added" if attach_to is not None else "Imported"
             if attach_to is not None:
-                op.report({'INFO'}, f"{verb} {role} on '{attach_to.name}'. " + "; ".join(msgs[:4]))
+                where = ui_targets.display_name(attach_to)
+                op.report({'INFO'}, f"{verb} {role} on '{where}'. " + "; ".join(msgs[:4]))
             else:
                 op.report({'INFO'}, f"{verb} {role}. " + "; ".join(msgs[:4]))
 
         return _start_staged_generator(
             self, context,
             lambda ctx: appearance.iter_appearance_parts(
-                ctx, roles={role}, attach_to=merge_target, replace_selected=replace,
+                ctx, roles={role}, attach_to=attach_to, replace_selected=replace,
+                standalone=standalone, explicit_plan=True,
             ),
             _finish,
+            kind=role,
         )
 
 class ARC_OUTFITS_OT_UpdateBackpackColorway(Operator):
     """Apply an authored color option to selected backpack assemblies."""
     bl_idname = "arc_outfits.update_backpack_colorway"
-    bl_label = "Update Backpack Colorway"
+    bl_label = "Apply Backpack Colorway"
+    bl_description = "Recolor the selected backpack with the colorway chosen above"
     bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _target_poll(cls, context, ("backpack",), ui_targets.poll_message("backpack"))
 
     def execute(self, context):
         from ..Outfit_Accessories import appearance
@@ -3136,7 +3343,11 @@ class ARC_OUTFITS_OT_UpdateBackpackColorway(Operator):
             candidates = [selected] + list(selected.children_recursive)
             targets.update(obj for obj in candidates if obj.type == 'MESH' and obj.get('arc_assembly_role') == 'Backpack')
         if not targets:
-            self.report({'ERROR'}, "Select backpack meshes or their armature")
+            hit = ui_targets.resolve(context, "backpack")
+            if hit is not None and hit.obj.type == 'MESH':
+                targets.add(hit.obj)
+        if not targets:
+            self.report({'ERROR'}, ui_targets.poll_message("backpack"))
             return {'CANCELLED'}
         colorway = getattr(context.scene, 'arc_appearance_backpack_colorway', 'BASE')
         for obj in targets:
@@ -3158,18 +3369,42 @@ class ARC_OUTFITS_OT_UpdateBackpackColorway(Operator):
 class ARC_OUTFITS_OT_ImportReference(Operator):
     """Place UI reference image planes for the selected outfit / head / hair."""
     bl_idname = "arc_outfits.import_reference"
-    bl_label = "Import Reference"
+    bl_label = "Import Reference Image"
+    bl_description = "Add the menu picture of the chosen outfit, head or hair as an image plane"
     bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if not _busy_poll(cls):
+            return False
+
+        def _found(ctx, selected):
+            if any(getattr(o, "type", "") in {"MESH", "ARMATURE"} for o in selected):
+                return True
+            scene = getattr(ctx, "scene", None)
+            return scene is not None and any(
+                o.type == "MESH" and o.get("arc_assembly_role") for o in scene.objects)
+        return _memo_poll(cls, context, _found, "Import an outfit, head or hair first")
 
     def execute(self, context):
         from ..Outfit_Accessories import reference_planes
+        from . import ui_lists
 
+        if _busy_refusal(self):
+            return {'CANCELLED'}
+        snap = ui_lists.snapshot()
         made, msgs = reference_planes.import_references_from_scene(context)
         for m in msgs:
             print(f"Arc Asset Importer: {m}")
         if made <= 0:
             self.report({'ERROR'}, "; ".join(msgs[:3]) or "No reference planes created")
             return {'CANCELLED'}
+        try:
+            ui_lists.record_import("Reference Image", snap)
+            new_objs = [obj for obj in bpy.data.objects if obj.name not in snap[0]]
+            ui_targets.stamp(new_objs, ui_targets.new_import_id(), kind="asset", label="Reference Image")
+        except Exception:
+            pass
         self.report({'INFO'}, f"Created {made} reference plane(s). " + "; ".join(msgs[:4]))
         return {'FINISHED'}
 
@@ -3198,7 +3433,7 @@ class ARC_OUTFITS_OT_ImportColorBenchmark(Operator):
 
         root = utils.get_pioneer_root()
         if (not root or not os.path.isdir(root)) and not pak_extract.configured_dir(context.scene):
-            self.report({'ERROR'}, "Set PioneerGame Folder or the Paks folder in Settings")
+            self.report({'ERROR'}, "Choose the Arc Raiders game folder first")
             return {'CANCELLED'}
 
         bid = (self.benchmark_id or "ALL").strip().upper()
@@ -3233,28 +3468,62 @@ def _start_staged_import(op, context, presets, finish):
     """
     from ..Maps import staged_import as _staged
     from . import import_view as _import_view
+    from . import import_report as _report
+    busy = ui_targets.job_busy_message()
+    if busy:
+        op.report({'WARNING'}, busy)
+        return {'CANCELLED'}
     _import_view.prepare_outfit_import(context, frame=True)
-    _staged.queue_job(presets, finish)
+
+    def _finish_reported(fop, fctx, result, _finish=finish):
+        try:
+            return _finish(fop, fctx, result)
+        finally:
+            _report.emit(fop, _report.end())
+
+    _report.begin("Outfit import")
+    _staged.queue_job(presets, _finish_reported)
     try:
         result = bpy.ops.arc_outfits.staged_import('INVOKE_DEFAULT')
     except Exception as exc:
+        _report.end()
         op.report({'ERROR'}, f"Outfit import could not start: {exc}")
         return {'CANCELLED'}
     if 'RUNNING_MODAL' not in result:
+        _report.end()  # undo this begin; leaves a running import's report intact
         op.report({'WARNING'}, "Outfit import did not start.")
     return {'CANCELLED'}
 
 
-def _start_staged_generator(op, context, make_gen, finish, *, frame=False):
+def _start_staged_generator(op, context, make_gen, finish, *, frame=False,
+                            kind="Outfit", prepare_view=True):
     """Start a step generator (mesh step, then material steps) as the staged modal run.
 
     ``make_gen(context)`` builds the generator; ``finish(op, context, result)`` runs on success.
     The caller returns CANCELLED so only the modal run pushes one undo step.
+    ``prepare_view=False`` keeps the viewport as is (weapon import never changed it).
     """
     from ..Maps import staged_import as _staged
     from . import import_view as _import_view
-    _import_view.prepare_outfit_import(context, frame=frame)
-    _staged.queue_generator(make_gen, finish)
+    from . import import_report as _report
+    busy = ui_targets.job_busy_message()
+    if busy:
+        op.report({'WARNING'}, busy)
+        return {'CANCELLED'}
+    if prepare_view:
+        _import_view.prepare_outfit_import(context, frame=frame)
+
+    def _make_reported(ctx, _make=make_gen):
+        _report.begin(f"{kind} import")
+        return _make(ctx)
+
+    def _finish_reported(fop, fctx, result, _finish=finish):
+        try:
+            return _finish(fop, fctx, result)
+        finally:
+            _report.emit(fop, _report.end())
+
+    _staged.queue_generator(_make_reported, _finish_reported, kind)
     try:
         result = bpy.ops.arc_outfits.staged_import('INVOKE_DEFAULT')
     except Exception as exc:
@@ -3301,6 +3570,8 @@ class ARC_OUTFITS_OT_LoadAllColorways(Operator):
 
     @classmethod
     def poll(cls, context):
+        if not _busy_poll(cls):
+            return False
         scene = context.scene
         choice = getattr(scene, "arc_selected_outfit", "") or ""
         if not choice:
@@ -3317,7 +3588,15 @@ class ARC_OUTFITS_OT_LoadAllColorways(Operator):
                 return False
         return bool((row.get("Item/UI Folder Name") or row.get("Model Folder Name") or "").strip())
 
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(
+            self, event, title="Load every colorway?",
+            message="Imports each colorway of the selected outfit, one after another. This can take several minutes.",
+            confirm_text="Load All Colorways", icon="QUESTION")
+
     def execute(self, context):
+        if _busy_refusal(self):
+            return {'CANCELLED'}
         ok, row, label, missing, err = _queue_selected_outfit_psks(context)
         if not ok:
             self.report({'ERROR'}, err)
@@ -3335,7 +3614,7 @@ class ARC_OUTFITS_OT_LoadAllColorways(Operator):
         if not presets:
             context.scene.arc_psk_entries.clear()
             context.scene.arc_outfit_selections.clear()
-            self.report({'ERROR'}, f"No colourways found for '{label}'.")
+            self.report({'ERROR'}, f"No colorways found for '{label}'")
             return {'CANCELLED'}
 
         if missing:
@@ -3496,11 +3775,41 @@ def _batch_mesh_material_profile(obj):
     return profile
 
 
+def _outfit_catalog_jobs(scene, context=None):
+    """Every outfit row the all-outfits batch would plan, in selector order."""
+    from types import SimpleNamespace
+    from ..Outfit_Accessories import properties
+    from . import importing
+    context = context or SimpleNamespace(scene=scene)
+    rows = importing.load_outfit_csv(importing.get_outfit_csv_path(context))
+    by_key = {importing.outfit_row_key(row): row for row in rows if importing.outfit_row_key(row)}
+    jobs = []
+    for item in properties.make_outfit_selector_items(scene, context):
+        key = item[0]
+        row = by_key.get(key)
+        if not row or key == 'NONE':
+            continue
+        jobs.append({'key': key, 'label': item[1], 'row': row})
+    return jobs
+
+
+def _split_existing_outfits(scene, jobs):
+    """(jobs to import, labels already in the scene: legitimately skipped)."""
+    already = {str(obj.get('arc_batch_outfit_key') or '') for obj in scene.objects}
+    return ([job for job in jobs if job['key'] not in already],
+            [job['label'] for job in jobs if job['key'] in already])
+
+
+def all_outfit_jobs(scene, context=None):
+    """(jobs the all-outfits batch would queue, labels it would skip): the real planner."""
+    return _split_existing_outfits(scene, _outfit_catalog_jobs(scene, context))
+
+
 class ARC_OUTFITS_OT_LoadAllOutfitsColorways(Operator, ExportHelper):
-    """Import all outfit rows, finishing every colourway of one outfit before the next."""
+    """Import all outfit rows, finishing every colorway of one outfit before the next."""
     bl_idname = 'arc_outfits.load_all_outfits_colorways'
-    bl_label = 'Load All Outfits & Colorways'
-    bl_description = 'Import every outfit and all its colourways sequentially, checkpointing every five outfits'
+    bl_label = 'Import All Outfits and Colorways'
+    bl_description = 'Import every outfit and all its colorways one by one, saving every five outfits'
     bl_options = {'REGISTER', 'UNDO'}
     filename_ext = '.blend'
     filter_glob: StringProperty(default='*.blend', options={'HIDDEN'})
@@ -3508,12 +3817,20 @@ class ARC_OUTFITS_OT_LoadAllOutfitsColorways(Operator, ExportHelper):
 
     @classmethod
     def poll(cls, context):
-        return _ALL_OUTFITS_COLORWAYS_ACTIVE is None
+        if _ALL_OUTFITS_COLORWAYS_ACTIVE is not None:
+            return False
+        if ui_targets.job_active() is not None:
+            cls.poll_message_set("Another import is running")
+            return False
+        return True
 
     def invoke(self, context, event):
         if bpy.data.filepath:
             self.filepath = bpy.data.filepath
-            return self.execute(context)
+            return context.window_manager.invoke_confirm(
+                self, event, title="Load every outfit and colorway?",
+                message="Imports the whole outfit catalog into this file and saves it every five outfits. This can take hours.",
+                confirm_text="Load Everything", icon="WARNING")
         # An unsaved scene must get a real Save As path before the first import.
         return ExportHelper.invoke(self, context, event)
 
@@ -3523,18 +3840,10 @@ class ARC_OUTFITS_OT_LoadAllOutfitsColorways(Operator, ExportHelper):
         scene = context.scene
         game = pak_extract.configured_dir(scene)
         if not game and not utils.get_pioneer_root():
-            self.report({'ERROR'}, 'Set the Steam Install or FModel Output folder before importing all outfits.')
+            self.report({'ERROR'}, 'Choose the Arc Raiders game folder first')
             return {'CANCELLED'}
 
-        rows = importing.load_outfit_csv(importing.get_outfit_csv_path(context))
-        by_key = {importing.outfit_row_key(row): row for row in rows if importing.outfit_row_key(row)}
-        jobs = []
-        for item in properties.make_outfit_selector_items(scene, context):
-            key = item[0]
-            row = by_key.get(key)
-            if not row or key == 'NONE':
-                continue
-            jobs.append({'key': key, 'label': item[1], 'row': row})
+        jobs = _outfit_catalog_jobs(scene, context)
         if not jobs:
             self.report({'ERROR'}, 'No outfit entries were found in the Outfit Selector catalog.')
             return {'CANCELLED'}
@@ -3577,9 +3886,7 @@ class ARC_OUTFITS_OT_LoadAllOutfitsColorways(Operator, ExportHelper):
             {name: getattr(entry, name, '') for name in ('preset_name', 'json_path', 'selected')}
             for entry in scene.arc_outfit_selections
         ]
-        already = {str(obj.get('arc_batch_outfit_key') or '') for obj in scene.objects}
-        self._skipped_existing = [job['label'] for job in jobs if job['key'] in already]
-        self._jobs = [job for job in jobs if job['key'] not in already]
+        self._jobs, self._skipped_existing = _split_existing_outfits(scene, jobs)
         self._position = 0
         self._imported = 0
         self._failures = []
@@ -3596,6 +3903,10 @@ class ARC_OUTFITS_OT_LoadAllOutfitsColorways(Operator, ExportHelper):
         self._timer = None
         self._wm = context.window_manager
         self._origin_filepath = current
+        if not ui_targets.job_begin('outfit', 'All Outfits and Colorways', len(self._jobs),
+                                    'arc_outfits.cancel_all_outfits_colorways'):
+            self.report({'ERROR'}, 'Another import is running')
+            return {'CANCELLED'}
         _ALL_OUTFITS_COLORWAYS_ACTIVE = self
         self._wm.progress_begin(0, max(1, len(self._jobs)))
         if self._jobs:
@@ -3745,6 +4056,10 @@ class ARC_OUTFITS_OT_LoadAllOutfitsColorways(Operator, ExportHelper):
                 if colors:
                     obj['arc_batch_colorway'] = colors[0]
             self._imported += 1
+            try:
+                ui_targets.stamp(created, ui_targets.new_import_id(), kind='character', label=job['label'])
+            except Exception:
+                pass
             record = {'key': job['key'], 'label': job['label'], 'ok': True,
                       'started_at': started_at,
                       'completed_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
@@ -3769,6 +4084,7 @@ class ARC_OUTFITS_OT_LoadAllOutfitsColorways(Operator, ExportHelper):
         scene.arc_outfit_selections.clear()
         self._position += 1
         self._current_label = ''
+        ui_targets.job_step(self._position, job['label'])
         self._persist_report('running')
         if self._position and self._position % 5 == 0:
             self._save_checkpoint('five-outfit-checkpoint')
@@ -3891,6 +4207,16 @@ class ARC_OUTFITS_OT_LoadAllOutfitsColorways(Operator, ExportHelper):
         except Exception as exc:
             error = error or f'Final checkpoint failed: {exc}'
         _ALL_OUTFITS_COLORWAYS_ACTIVE = None
+        lines = [f"Failed: {f.get('key') or f.get('label') or '?'}: {f.get('error', '')}" for f in self._failures]
+        if self._cancel_requested:
+            lines.append('Cancelled before the end')
+        if error:
+            lines.append(f"Error: {error}")
+        # Outfits already in the scene are skipped; queued outfits never attempted are left.
+        left = max(0, len(self._jobs) - self._imported - len(self._failures))
+        ui_targets.job_end(self._imported, len(self._failures), len(self._skipped_existing), lines,
+                           status='failed' if error else ('cancelled' if self._cancel_requested else 'completed'),
+                           left=left)
         self._redraw()
         failed = len(self._failures)
         message = f"Imported {self._imported} outfit(s); {failed} failed. Final material audit: {len(self._audit_after)} unresolved generic/untextured mesh(es)."
@@ -3932,6 +4258,24 @@ class ARC_OUTFITS_OT_LoadAllOutfitsColorways(Operator, ExportHelper):
         self._cancel_requested = True
 
 
+class ARC_OUTFITS_OT_CancelAllOutfitsColorways(Operator):
+    """Stop the all outfits and colorways import after the current step."""
+    bl_idname = 'arc_outfits.cancel_all_outfits_colorways'
+    bl_label = 'Cancel'
+    bl_description = 'Stop importing all outfits and colorways'
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return _ALL_OUTFITS_COLORWAYS_ACTIVE is not None
+
+    def execute(self, context):
+        active = _ALL_OUTFITS_COLORWAYS_ACTIVE
+        if active is not None:
+            active._cancel_requested = True
+        return {'FINISHED'}
+
+
 class ARC_OUTFITS_OT_SelectOutfit(Operator):
     """Select an outfit from the searchable list."""
     bl_idname = "arc_outfits.select_outfit"
@@ -3959,7 +4303,19 @@ class ARC_OUTFITS_OT_MergeSelectedArmatures(Operator):
     """Merge all selected armatures using Arc Raiders rig fix logic."""
     bl_idname = "arc_outfits.merge_selected_armatures"
     bl_label = "Merge Selected Armatures"
+    bl_description = "Join the selected armatures into one rig"
     bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        count = 0
+        for obj in (getattr(context, "selected_objects", None) or ())[:256]:
+            if obj.type == 'ARMATURE':
+                count += 1
+                if count >= 2:
+                    return True
+        cls.poll_message_set("Select two or more armatures")
+        return False
 
     def execute(self, context):
         armatures = [o for o in context.selected_objects if o.type == 'ARMATURE']
@@ -3974,7 +4330,7 @@ class ARC_OUTFITS_OT_MergeSelectedArmatures(Operator):
 class ARC_OUTFITS_OT_FixMaterials(Operator):
     bl_idname = "arc_outfits.fix_materials"
     bl_label = "Update Materials"
-    bl_description = ""
+    bl_description = "Rebuild the game materials on the selected meshes, or on every mesh when none is selected"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -3982,7 +4338,7 @@ class ARC_OUTFITS_OT_FixMaterials(Operator):
 
         root = utils.get_pioneer_root()
         if (not root or not os.path.isdir(root)) and not pak_extract.configured_dir(context.scene):
-            self.report({'ERROR'}, "Set PioneerGame Folder or the Paks folder in Settings")
+            self.report({'ERROR'}, "Choose the Arc Raiders game folder first")
             return {'CANCELLED'}
 
         objs = [o for o in context.selected_objects if o.type == 'MESH']
@@ -4080,7 +4436,7 @@ def reimport_selected_mesh(obj) -> tuple:
 class ARC_OUTFITS_OT_ReimportSelected(Operator):
     bl_idname = "arc_outfits.reimport_selected"
     bl_label = "Re-import Selected"
-    bl_description = ""
+    bl_description = "Reload the UVs and game materials on the selected meshes in place"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -4088,7 +4444,7 @@ class ARC_OUTFITS_OT_ReimportSelected(Operator):
 
         root = utils.get_pioneer_root()
         if (not root or not os.path.isdir(root)) and not pak_extract.configured_dir(context.scene):
-            self.report({'ERROR'}, "Set PioneerGame Folder or the Paks folder in Settings")
+            self.report({'ERROR'}, "Choose the Arc Raiders game folder first")
             return {'CANCELLED'}
 
         objs = [o for o in context.selected_objects if o.type == 'MESH']
@@ -4219,6 +4575,7 @@ def _apply_folder_prop_layout(context) -> str:
         stats = prop_assemble.apply_detected_folder_layout(folder)
     except Exception as exc:
         print(f"Arc Raiders: prop coordinate detection failed: {exc}")
+        import_report.fail("Prop layout from folder", exc)
         return ""
     if stats.get("error"):
         print(f"Arc Raiders: prop layout: {stats['error']}")
@@ -4283,6 +4640,10 @@ class ARC_OUTFITS_OT_ConfirmPSKImport(Operator):
     def invoke(self, context, event):
         from ..Outfit_Accessories import properties as props
         from . import pak_extract
+        busy = ui_targets.job_busy_message()
+        if busy:
+            self.report({'WARNING'}, busy)
+            return {'CANCELLED'}
         if pak_extract.configured_dir(context.scene):
             # Warm exporter handshake overlaps the user's review of this dialog.
             pak_extract.prestart_serve()
@@ -4331,7 +4692,7 @@ class ARC_OUTFITS_OT_ConfirmPSKImport(Operator):
             sels = context.scene.arc_outfit_selections
             manual_outfit = getattr(context.scene, 'arc_manual_outfit_folder', '')
             bbox = layout.box()
-            bbox.label(text="Batch import colourways — each becomes a separate model:", icon='DUPLICATE')
+            bbox.label(text="Import colorways, each as a separate model:", icon='DUPLICATE')
 
             if manual_outfit:
                 mrow = bbox.row()
@@ -4349,9 +4710,9 @@ class ARC_OUTFITS_OT_ConfirmPSKImport(Operator):
                 else:
                     bbox.label(text="None ticked → single import using the choices below", icon='INFO')
             else:
-                bbox.label(text="No colourway data detected automatically.", icon='ERROR')
-                bbox.label(text="Pick the DA_OI colourway folder manually (Outfit or BackpackContainer/…):")
-                bbox.operator("arc_outfits.pick_manual_outfit_folder", text="Browse for DA_OI Colourway Folder...", icon='FILEBROWSER')
+                bbox.label(text="No colorways found for this outfit", icon='ERROR')
+                bbox.label(text="Choose the colorway folder manually")
+                bbox.operator("arc_outfits.pick_manual_outfit_folder", text="Choose Colorway Folder...", icon='FILEBROWSER')
 
             self._draw_outfit_preview(layout, context, sels)
             layout.separator()
@@ -4392,7 +4753,7 @@ class ARC_OUTFITS_OT_ConfirmPSKImport(Operator):
         col.scale_y = 3.0
         col.alignment = 'CENTER'
         shown = ", ".join(names[:3]) + (f" +{len(names) - 3}" if len(names) > 3 else "")
-        col.label(text=(f"Colourway icon for {shown} will show here" if names
+        col.label(text=(f"Colorway icon for {shown} will show here" if names
                         else "Colourway icon render will show here"), icon='RENDER_STILL')
 
     def _draw_parts(self, layout, context, entries):
@@ -4424,7 +4785,7 @@ class ARC_OUTFITS_OT_ConfirmPSKImport(Operator):
                 box.prop(entry, "body_choice", text="Body Skin")
             if is_hair and hair_mis:
                 col = box.column(align=True)
-                col.label(text="Hair MI — click to select:")
+                col.label(text="Hair color: click to select")
                 for mi_name, mi_path in hair_mis:
                     is_sel = entry.hair_mi == mi_path
                     row = col.row()
@@ -4438,6 +4799,10 @@ class ARC_OUTFITS_OT_ConfirmPSKImport(Operator):
 
     def execute(self, context):
         from ..Outfit_Accessories import properties as props
+        busy = ui_targets.job_busy_message()
+        if busy:
+            self.report({'WARNING'}, busy)
+            return {'CANCELLED'}
         props.clear_confirm_dialog_cache()
         self._scan_cache = None
 
@@ -4455,12 +4820,31 @@ class ARC_OUTFITS_OT_ConfirmPSKImport(Operator):
 
         if bpy.app.background or context.window is None:
             # No window to keep responsive: drain the same step generator in one go.
+            from . import import_report as _report
+            _report.begin("Outfit import")
+            before = set(bpy.data.objects)
+            scene = context.scene
+            key = (getattr(scene, "arc_selected_outfit", "")
+                   or getattr(scene, "arc_selected_outfit_browse", ""))
+            label = ui_targets.outfit_label(context, key)
             gen = _iter_folder_import(context)
             try:
                 while True:
                     next(gen)
             except StopIteration as stop:
                 _finish_folder_import(self, context, stop.value)
+            finally:
+                _report.emit(self, _report.end())
+            try:
+                new_objs = [o for o in bpy.data.objects if o not in before]
+                if new_objs:
+                    if not label:
+                        rig = next((o for o in new_objs if o.type == 'ARMATURE'), None)
+                        label = ui_targets.clean_name(rig.name) if rig is not None else ""
+                    ui_targets.stamp(new_objs, ui_targets.new_import_id(), kind="character",
+                                     label=label or "Outfit Import")
+            except Exception as exc:
+                print("Arc import: objects not stamped:", exc)
             return {'FINISHED'}
         return _start_staged_generator(self, context, _iter_folder_import, _finish_folder_import,
                                        frame=importing.queue_supports_outfit_batch(context))
@@ -4499,8 +4883,11 @@ def _iter_folder_import(context):
         if ok:
             ok_count += 1
             reports.append(('WARNING' if "FAIL" in msg else 'INFO', msg))
+            if "FAIL" in msg:
+                import_report.warn(msg)
         else:
             reports.append(('WARNING', msg))
+            import_report.warn(msg)
 
     # Pass 2: materials, one mesh per step, after the last mesh exists.
     mat_total = len(pending_materials)
@@ -4520,6 +4907,7 @@ def _iter_folder_import(context):
         status = str(obj.get("arc_material_status") or "")
         if "FAIL" in status:
             reports.append(('WARNING', f"{label}: {status}"))
+            import_report.warn(f"{label}: {status}")
         for ent in deferred:
             with _dr_ops.operation_session():
                 for cut in ent["gen"]:
@@ -4572,6 +4960,7 @@ def _iter_folder_import(context):
                 ))
         except Exception as exc:
             print(f"Arc Asset Importer: slot layout skipped: {exc}")
+            import_report.fail("Slot layout", exc)
         yield ("finish", 2, 3, "view")
         _post_import_outfit_ux(context, [all_new_objs], references=True)
     elif all_new_objs:
@@ -4592,14 +4981,19 @@ def _iter_folder_import(context):
 def _finish_folder_import(op, context, reports):
     for level, msg in reports or ():
         op.report({level}, msg)
+    try:  # Central post-build graph hook for the staged folder import (no stamp on this path).
+        from .materials import graph_layout
+        graph_layout.finalize_objects(list(context.scene.objects), context.scene)
+    except Exception as exc:
+        print("Arc import: graph finalize failed:", exc)
     context.scene.arc_psk_entries.clear()
     context.scene.arc_outfit_selections.clear()
 
 
 class ARC_OUTFITS_OT_PickPioneerRoot(Operator, bpy_extras.io_utils.ImportHelper):
-    """Browse to the PioneerGame root folder."""
+    """Choose the FModel export folder."""
     bl_idname = "arc_outfits.pick_pioneer_root"
-    bl_label = "Select PioneerGame Folder"
+    bl_label = "Choose FModel Export Folder..."
     filename_ext = ""
     filter_glob: StringProperty(default="*", options={'HIDDEN'})
     directory: StringProperty(subtype='DIR_PATH', options={'HIDDEN'})
@@ -4616,9 +5010,9 @@ class ARC_OUTFITS_OT_PickPioneerRoot(Operator, bpy_extras.io_utils.ImportHelper)
 
 
 class ARC_OUTFITS_OT_ClearPioneerRoot(Operator):
-    """Clear the PioneerGame root folder."""
+    """Clear the FModel export folder."""
     bl_idname = "arc_outfits.clear_pioneer_root"
-    bl_label = "Clear PioneerGame Folder"
+    bl_label = "Clear FModel Export Folder"
 
     def execute(self, context):
         context.scene.arc_pioneer_root = ""
@@ -5180,23 +5574,94 @@ class ARC_OUTFITS_OT_ImportWeapon(Operator):
     """Import the selected ST firearm/launcher folder from Pioneer."""
     bl_idname = "arc_outfits.import_weapon"
     bl_label = "Import Weapon"
+    bl_description = "Import the weapon chosen above from the game files"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        if getattr(context.scene, 'arc_weapon_key', 'NONE') in ('', 'NONE'):
+            cls.poll_message_set('Select a weapon first')
+            return False
+        from . import ui_targets as _targets
+        busy = _targets.job_busy_message()
+        if busy:
+            cls.poll_message_set(busy)
+            return False
+        return True
 
     def execute(self, context):
         from ..Weapons import weapon_import
-        return weapon_import.selected_import(self, context)
+        from . import import_report
+        import_report.begin("Weapon import")
+        from . import ui_lists
+        try:
+            snap = ui_lists.snapshot()
+        except Exception:
+            snap = None
+        try:
+            result = weapon_import.selected_import(self, context)
+            if 'FINISHED' in result:
+                try:
+                    if snap is not None:
+                        ui_lists.record_import("Weapon", snap)
+                    ui_lists.record_recent("weapon", getattr(context.scene, 'arc_weapon_key', ''))
+                except Exception as exc:
+                    print("Arc import: history not recorded:", exc)
+            return result
+        finally:
+            import_report.emit(self, import_report.end())
+
+    def invoke(self, context, event):
+        # Sidebar click: run the same steps as a staged modal (progress text, Esc
+        # between stages). Headless and script calls use execute (synchronous).
+        if bpy.app.background or context.window is None:
+            return self.execute(context)
+        from ..Weapons import weapon_import
+        entry, variant = weapon_import.selected_entry(context)
+        if not entry:
+            self.report({'ERROR'}, 'Select a weapon first')
+            return {'CANCELLED'}
+
+        def make_gen(_ctx):
+            # bpy.context is read at each step; the invoke context is not kept.
+            return weapon_import.iter_import_weapon(bpy.context, entry, variant)
+
+        weapon_key = getattr(context.scene, 'arc_weapon_key', '')
+
+        def finish(op, ctx, root):
+            if root is not None:
+                op.report({'INFO'}, 'Imported ' + root.name)
+                try:
+                    from . import ui_lists
+                    ui_lists.record_recent("weapon", weapon_key)
+                except Exception as exc:
+                    print("Arc import: recent not recorded:", exc)
+
+        return _start_staged_generator(
+            self, context, make_gen, finish, kind="Weapon", prepare_view=False,
+        )
 
 
 class ARC_OUTFITS_OT_ImportWeaponMod(Operator):
     """Import selected ST weapon mod and bone-parent snap to the active gun."""
     bl_idname = "arc_outfits.import_weapon_mod"
-    bl_label = "Import Weapon Mod"
+    bl_label = "Add Attachment"
+    bl_description = "Import the chosen attachment and fit it to the selected weapon"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return _weapon_poll(cls, context)
 
     mod_type: StringProperty(name="Mod Type", default="Muzzle")
 
     def execute(self, context):
         from ..Weapons import weapon_position, weapon_import
+        if _busy_refusal(self):
+            return {"CANCELLED"}
+        if ui_targets.resolve(context, "weapon") is None:
+            self.report({"ERROR"}, ui_targets.poll_message("weapon"))
+            return {"CANCELLED"}
         if weapon_position.roots_for_selection(context):
             return weapon_import.import_mod(self, context)
         from ..Weapons import weapon_catalog as wcat
@@ -5301,22 +5766,35 @@ class ARC_OUTFITS_OT_ImportWeaponMod(Operator):
 
 
 def _weapon_mesh_targets(context):
-    """Selected weapon meshes, else all meshes stamped arc_model_type=weapon."""
-    objs = [o for o in context.selected_objects if o.type == "MESH"]
-    if not objs:
-        objs = [
-            o
-            for o in bpy.data.objects
-            if o.type == "MESH" and str(o.get("arc_model_type", "")).lower() == "weapon"
-        ]
-    return objs
+    """Meshes of the weapon the shared resolver picks; never every weapon in the file."""
+    try:
+        target = ui_targets.resolve(context, "weapon")
+        if target is None:
+            return []
+        return [o for o in ui_targets.members(target, getattr(context, "scene", None))
+                if getattr(o, "type", "") == "MESH"]
+    except Exception:
+        return []
+
+
+def _weapon_poll(cls, context):
+    busy = ui_targets.job_busy_message()
+    if busy:
+        cls.poll_message_set(busy)
+        return False
+    return _target_poll(cls, context, ("weapon",), ui_targets.poll_message("weapon"))
 
 
 class ARC_OUTFITS_OT_ApplyWeaponSkin(Operator):
     """Rebuild weapon materials from the selected Skins/<colourway> MI."""
     bl_idname = "arc_outfits.apply_weapon_skin"
-    bl_label = "Apply Weapon Skin"
+    bl_label = "Apply Skin"
+    bl_description = "Show the skin chosen above on the selected weapon"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return _weapon_poll(cls, context)
 
     def execute(self, context):
         from ..Weapons import weapon_import
@@ -5421,24 +5899,37 @@ class ARC_OUTFITS_OT_ApplyWeaponSkin(Operator):
                 ", no paintjob pattern (export MaterialLibrary/"
                 "Textures/Weapons/Patterns PNGs if this skin needs one)"
             )
+        if not n:
+            self.report({"WARNING"}, "No importable weapon materials found; import or select a weapon first")
+            return {"CANCELLED"}
         self.report({"INFO"}, f"Applied skin '{label}' to {n} mesh(es){extra}")
-        return {"FINISHED"} if n else {"CANCELLED"}
+        return {"FINISHED"}
 
 
 class ARC_OUTFITS_OT_ClearWeaponSkin(Operator):
     """Rebuild weapon materials with the base MI (no Skins/ colourway)."""
     bl_idname = "arc_outfits.clear_weapon_skin"
-    bl_label = "Clear Weapon Skin"
+    bl_label = "Remove Skin"
+    bl_description = "Return the selected weapon to its default look"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def poll(cls, context):
+        return _weapon_poll(cls, context)
+
     def execute(self, context):
+        from ..Weapons import weapon_position
+
+        if not _weapon_mesh_targets(context) and not weapon_position.roots_for_selection(context):
+            self.report({"WARNING"}, "No weapon meshes selected / in scene")
+            return {"CANCELLED"}
         scene = context.scene
         if hasattr(scene, "arc_weapon_skin"):
             try:
                 scene.arc_weapon_skin = "NONE"
             except Exception:
                 pass
-        return bpy.ops.arc_outfits.apply_weapon_skin()
+        return ARC_OUTFITS_OT_ApplyWeaponSkin.execute(self, context)
 
 
 class ARC_OUTFITS_OT_ApplyWeaponPattern(Operator):
@@ -5459,7 +5950,7 @@ class ARC_OUTFITS_OT_ApplyWeaponPattern(Operator):
         pioneer = utils.get_pioneer_root() or getattr(scene, "arc_pioneer_root", "") or ""
         pdir = wcat.patterns_dir(pioneer)
         if not pdir:
-            self.report({"ERROR"}, "Patterns folder not found under Pioneer root")
+            self.report({"ERROR"}, "Patterns folder not found in the FModel export folder")
             return {"CANCELLED"}
         path = os.path.join(pdir, pat)
         if not os.path.isfile(path):
@@ -5532,7 +6023,12 @@ class ARC_OUTFITS_OT_ApplyPosePreset(Operator):
     """Apply one still pose (A-pose, idle, tool, or gun hold) to the character."""
     bl_idname = "arc_outfits.apply_pose_preset"
     bl_label = "Apply Pose"
+    bl_description = "Put the selected character in the pose chosen above"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return _target_poll(cls, context, ("character",), ui_targets.poll_message("character"))
 
     def execute(self, context):
         from ..Animations import pose_presets
@@ -5550,7 +6046,7 @@ class ARC_OUTFITS_OT_ApplyPosePreset(Operator):
 
 
 class ARC_OUTFITS_OT_SelectAnim(Operator):
-    """Select an animation from the searchable catalog (does not import it)."""
+    """Choose this animation in the list. It is not applied yet"""
     bl_idname = "arc_outfits.select_anim"
     bl_label = "Select Animation"
     bl_options = {"INTERNAL"}
@@ -5574,9 +6070,9 @@ class ARC_OUTFITS_OT_ClearAnimSearch(Operator):
 
 
 class ARC_OUTFITS_OT_RefreshAnimCatalog(Operator):
-    """Rebuild the animation name list from FMDex and the PSA cache folder."""
+    """Reload the animation list."""
     bl_idname = "arc_outfits.refresh_anim_catalog"
-    bl_label = "Refresh Animation Catalog"
+    bl_label = "Reload Animation List"
 
     def execute(self, context):
         from ..Animations import animation_catalog as acat
@@ -5592,7 +6088,15 @@ class ARC_OUTFITS_OT_ApplyAnim(Operator):
     """Import the selected animation onto the active armature (one Action, not a bulk dump)."""
     bl_idname = "arc_outfits.apply_anim"
     bl_label = "Apply Animation"
+    bl_description = "Play the chosen animation on the selected character"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        if getattr(context.scene, "arc_selected_anim", ""):
+            return _target_poll(cls, context, ("character",), ui_targets.poll_message("character"))
+        cls.poll_message_set("Pick an animation from the list first")
+        return False
 
     def execute(self, context):
         from ..Animations import animation_catalog as acat
@@ -5615,14 +6119,25 @@ class ARC_OUTFITS_OT_ApplyAnim(Operator):
             replace_action=bool(getattr(scene, "arc_anim_replace_action", True)),
         )
         self.report({"INFO"} if ok else {"ERROR"}, msg)
+        if ok:
+            try:
+                from . import ui_lists
+                ui_lists.record_recent("anim", key)
+            except Exception as exc:
+                print("Arc import: recent not recorded:", exc)
         return {"FINISHED"} if ok else {"CANCELLED"}
 
 
 class ARC_OUTFITS_OT_ClearAnimProps(Operator):
     """Remove notify-spawned props / FX markers from the last applied animation."""
     bl_idname = "arc_outfits.clear_anim_props"
-    bl_label = "Clear Anim Props"
+    bl_label = "Remove Animation Props"
+    bl_description = "Delete the props and effect markers the last animation added to the selected character"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return _target_poll(cls, context, ("character",), ui_targets.poll_message("character"))
 
     def execute(self, context):
         from ..Animations import animation_import as aimp
@@ -5663,19 +6178,67 @@ class ARC_OUTFITS_OT_ApplyLightingLook(Operator):
     """Apply the selected map scenario's color grade, sky and sun."""
 
     bl_idname = "arc_outfits.apply_lighting_look"
-    bl_label = "Apply Lighting Look"
+    bl_label = "Apply Lighting"
     bl_description = (
         "Run the game's tonemapper and color grade in the compositor and build the scenario's "
         "sky and sun (LUT strips and cloud textures are fetched from the game files)"
     )
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def poll(cls, context):
+        scene = getattr(context, "scene", None)
+        none = "_NONE_"
+        if getattr(scene, "arc_lighting_map", none) in ("", none):
+            cls.poll_message_set("Select a map first")
+            return False
+        if getattr(scene, "arc_lighting_scenario", none) in ("", none):
+            cls.poll_message_set("Select a scenario first")
+            return False
+        return True
+
+    def execute(self, context):
+        from ..Lighting import lighting_catalog as lcat
+        from ..Lighting import lighting_looks
+
+        scene = context.scene
+        ok, msg = lighting_looks.apply_lighting_look(scene)
+        if ok:
+            map_id = scene.arc_lighting_map
+            tag = scene.arc_lighting_scenario
+            entry = lcat.load_catalog().get("maps", {}).get(map_id, {})
+            scen = lcat.scenario(map_id, tag) or {}
+            label = scen.get("label") or lcat.studio_rig_id(tag) or tag
+            scene["arc_lighting_applied_label"] = f"{entry.get('label') or map_id} / {label}"
+        self.report({"INFO"} if ok else {"ERROR"}, msg)
+        return {"FINISHED"} if ok else {"CANCELLED"}
+
+
+class ARC_OUTFITS_OT_RemoveLightingLook(Operator):
+    """Remove the applied lighting look and restore the previous world."""
+
+    bl_idname = "arc_outfits.remove_lighting_look"
+    bl_label = "Remove Lighting"
+    bl_description = "Remove the color grade, sky and sun added by Apply Lighting"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        scene = getattr(context, "scene", None)
+        if scene is not None and "arc_lighting_state" in scene:
+            return True
+        cls.poll_message_set("No lighting applied")
+        return False
+
     def execute(self, context):
         from ..Lighting import lighting_looks
 
-        ok, msg = lighting_looks.apply_lighting_look(context.scene)
-        self.report({"INFO"} if ok else {"ERROR"}, msg)
-        return {"FINISHED"} if ok else {"CANCELLED"}
+        scene = context.scene
+        msg = lighting_looks.clear_lighting_look(scene)
+        if "arc_lighting_applied_label" in scene:
+            del scene["arc_lighting_applied_label"]
+        self.report({"INFO"}, msg)
+        return {"FINISHED"}
 
 
 class ARC_OUTFITS_OT_ImportStudioLights(Operator):
@@ -5693,9 +6256,21 @@ class ARC_OUTFITS_OT_ImportStudioLights(Operator):
     set_view: BoolProperty(name="Set View Transform", description="Use the rig's view transform and exposure", default=True)
     set_camera: BoolProperty(name="Camera", description="Add the camera that matches this scenario and make it the scene camera", default=True)
 
+    @classmethod
+    def poll(cls, context):
+        if not _busy_poll(cls):
+            return False
+        rig = str(getattr(getattr(context, "scene", None), "arc_studio_light_rig", "") or "")
+        if not rig or rig == "NONE":
+            cls.poll_message_set("No studio light rigs found in assets/studio_lights")
+            return False
+        return True
+
     def execute(self, context):
         from ..Lighting import studio_lights
 
+        if _busy_refusal(self):
+            return {"CANCELLED"}
         ok, msg = studio_lights.import_rig(context.scene, context.scene.arc_studio_light_rig,
                                            world=self.set_world, view=self.set_view,
                                            camera=self.set_camera, context=context)
@@ -5720,6 +6295,13 @@ class ARC_OUTFITS_OT_ClearGraphCache(Operator):
     """Delete the cached outfit material graphs; the next import rebuilds them."""
     bl_idname = "arc_outfits.clear_graph_cache"
     bl_label = "Clear Material Graph Cache"
+    bl_description = "Delete the saved material setups. The next import of each outfit rebuilds them and is slower once"
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(
+            self, event, title="Clear the material graph cache?",
+            message="Loaded outfits stay as they are. The next import of each outfit is slower once.",
+            confirm_text="Clear Cache", icon="WARNING")
 
     def execute(self, context):
         from .materials import graph_cache as gc
@@ -5736,7 +6318,8 @@ class ARC_OUTFITS_OT_ClearGraphCache(Operator):
 class ARC_OUTFITS_OT_SelectNS(Operator):
     """Select a Niagara system from the searchable catalog (does not import it)."""
     bl_idname = "arc_outfits.select_ns"
-    bl_label = "Select Niagara System"
+    bl_label = "Select Effect"
+    bl_description = "Choose this effect in the list. It is not imported yet"
     bl_options = {"INTERNAL"}
 
     ns_key: StringProperty(name="NS Key", default="")
@@ -5746,18 +6329,13 @@ class ARC_OUTFITS_OT_SelectNS(Operator):
 
         scene = context.scene
         scene.arc_ns_selected = self.ns_key
-        entry = ncat.get_entry(
-            self.ns_key, getattr(scene, "arc_ns_catalog_root", "") or ""
-        )
-        if entry and entry.get("path"):
-            scene.arc_ns_json_path = entry["path"]
         return {"FINISHED"}
 
 
 class ARC_OUTFITS_OT_ClearNSSearch(Operator):
-    """Clear the Niagara catalog search filter."""
+    """Clear the effect search"""
     bl_idname = "arc_outfits.clear_ns_search"
-    bl_label = "Clear NS Search"
+    bl_label = "Clear Effect Search"
     bl_options = {"INTERNAL"}
 
     def execute(self, context):
@@ -5773,12 +6351,23 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
     recovered: module inputs are compiled into VectorVM / DXBC, not the cook.
     """
     bl_idname = "arc_outfits.import_niagara_fx"
-    bl_label = "Import NS Effect"
+    bl_label = "Import Effect"
+    bl_description = "Import the chosen effect as scene objects you can inspect. Particle motion is approximate"
     bl_options = {'REGISTER', 'UNDO'}
 
     filepath: StringProperty(subtype='FILE_PATH')
     filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
     use_selected: BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        if not _busy_poll(cls):
+            return False
+        scene = context.scene
+        if getattr(scene, "arc_ns_selected", "") in ("", "NONE") and not (getattr(scene, "arc_ns_json_path", "") or "").strip():
+            cls.poll_message_set("Select an effect first")
+            return False
+        return True
 
     def invoke(self, context, event):
         scene = context.scene
@@ -5797,6 +6386,8 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
         from ..Niagara import niagara as ncat
         from ..Niagara import niagara as niagara_fx
 
+        if _busy_refusal(self):
+            return {'CANCELLED'}
         scene = context.scene
         source_mode = getattr(scene, "arc_import_source", "PAK")
         if self.use_selected and not self.filepath:
@@ -5837,7 +6428,6 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
         if not os.path.isfile(path):
             self.report({'ERROR'}, f"NS json not found: {path}")
             return {'CANCELLED'}
-        scene.arc_ns_json_path = path
 
         asset_root = ncat.resolved_asset_root(
             bpy.path.abspath(scene.arc_ns_asset_root or "") or ""
@@ -5850,6 +6440,11 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
         elif not asset_root:
             asset_root = None
 
+        from . import ui_lists
+        try:
+            snap = ui_lists.snapshot()
+        except Exception:
+            snap = None
         try:
             root, stats, missing = niagara_fx.import_ns_json(
                 path,
@@ -5882,6 +6477,13 @@ class ARC_OUTFITS_OT_ImportNiagaraFX(Operator):
             lines.append(f"asset root: {os.path.basename(asset_root.rstrip('/\\'))}")
         lines.extend(f"missing: {m}" for m in missing)
         scene["arc_ns_last_report"] = "\n".join(lines)
+        try:
+            if snap is not None:
+                ui_lists.record_import("FX", snap)
+            if self.use_selected:
+                ui_lists.record_recent("fx", getattr(scene, "arc_ns_selected", ""))
+        except Exception as exc:
+            print("Arc import: history not recorded:", exc)
 
         self.report({'INFO'}, lines[0])
         return {'FINISHED'}
@@ -5892,6 +6494,31 @@ from ..Niagara.niagara import ARC_OUTFITS_OT_PlayNiagaraFX
 from ..Outfit_Accessories.asset_organization import ARC_OUTFITS_OT_GroupByAssetType, ARC_OUTFITS_OT_GroupByOutfitSlot
 
 
+class ARC_OT_AuditSelected(bpy.types.Operator):
+    """Write the importer's audit records for the selected objects into the 'ARC Audit' text block"""
+    bl_idname = "arc.audit_selected"
+    bl_label = "Audit Selected"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        import json as _json
+        from .materials import material_audit
+        objs = [o for o in (context.selected_objects or ()) if o.type == "MESH"]
+        for o in objs:
+            for s in o.material_slots:
+                if s.material is not None and not s.material.get("arc_audit"):
+                    material_audit.audit_material(s.material, {}, o, extra={"audited_by": "arc.audit_selected"})
+            if not o.get("arc_audit"):
+                material_audit.audit_object(o)
+        data = material_audit.collect(objs)
+        txt = bpy.data.texts.get("ARC Audit") or bpy.data.texts.new("ARC Audit")
+        txt.clear()
+        txt.write(_json.dumps(data, indent=1, ensure_ascii=False))
+        flagged = sum(1 for r in data["materials"] + data["objects"] if r.get("flags"))
+        self.report({"INFO"}, f"ARC Audit: {len(data['objects'])} objects, {len(data['materials'])} materials, {flagged} flagged")
+        return {"FINISHED"}
+
+
 _outfit_classes = (
     ARC_OUTFITS_OT_SelectNS,
     ARC_OUTFITS_OT_ClearNSSearch,
@@ -5900,6 +6527,7 @@ _outfit_classes = (
     ARC_OUTFITS_OT_SelectHairMI,
     ARC_OUTFITS_OT_ImportSinglePSK,
     ARC_OUTFITS_OT_ImportOutfitFolder,
+    ARC_OUTFITS_OT_ImportAgain,
     ARC_OUTFITS_OT_AssemblePropFolder,
     ARC_OUTFITS_OT_PickOutfitCSV,
     ARC_OUTFITS_OT_ClearOutfitCSV,
@@ -5918,6 +6546,7 @@ _outfit_classes = (
     ARC_OUTFITS_OT_ImportColorBenchmark,
     ARC_OUTFITS_OT_LoadAllColorways,
     ARC_OUTFITS_OT_LoadAllOutfitsColorways,
+    ARC_OUTFITS_OT_CancelAllOutfitsColorways,
     ARC_OUTFITS_OT_SelectOutfit,
     ARC_OUTFITS_OT_ClearOutfitSearch,
     ARC_OUTFITS_OT_MergeSelectedArmatures,
@@ -5959,6 +6588,7 @@ _outfit_classes = (
     ARC_OUTFITS_OT_ClearAnimationCache,
     ARC_OUTFITS_OT_ClearGraphCache,
     ARC_OUTFITS_OT_ApplyLightingLook,
+    ARC_OUTFITS_OT_RemoveLightingLook,
     ARC_OUTFITS_OT_ImportStudioLights,
 )
 
@@ -5991,4 +6621,4 @@ def _map_operator_classes():
 
 _map_ops = _map_operator_classes()
 
-classes = _outfit_classes + _map_ops
+classes = _outfit_classes + _map_ops + (ARC_OT_AuditSelected,)

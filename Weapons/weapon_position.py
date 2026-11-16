@@ -108,12 +108,20 @@ def align_grip(root,anchor=None):
     bpy.context.view_layer.update()
 
 def roots_for_selection(context):
-    result=[]
-    for o in context.selected_objects:
+    """The one weapon every edit action changes (R6): the sidebar's resolved target, never all selected."""
+    try:
+        from ..Shared import ui_targets
+    except Exception:
+        ui_targets=None
+    if ui_targets is not None:
+        # Same target the sidebar shows: selection, else the last imported weapon.
+        target=ui_targets.resolve(context,'weapon')
+        return [target.obj] if target else []
+    for o in [context.view_layer.objects.active,*context.selected_objects]:
         while o and not o.get('arc_weapon_assembly'):o=o.parent
-        if o and o not in result:result.append(o)
-    if not result and not context.selected_objects:
+        if o:return [o]
+    if not context.selected_objects:
         name=getattr(context.scene,'arc_weapon_last_assembly','')
         o=context.scene.objects.get(name)
-        if o and o.get('arc_weapon_assembly'):result=[o]
-    return result
+        if o and o.get('arc_weapon_assembly'):return [o]
+    return []

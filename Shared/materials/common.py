@@ -429,8 +429,13 @@ def _load_image_cached(fpath: str, *, non_color=None, alpha_mode=None):
                         and candidate.users == 0 and not candidate.is_dirty
                         and not getattr(candidate, "packed_file", None)), None)
             if img is None:
-                # check_existing=True may alias a different shader role.
-                img = bpy.data.images.load(fpath, check_existing=False)
+                neutral = _IMAGE_BY_PATH.get(path_key)
+                if (neutral is not None and _image_alive(neutral) and neutral.users == 0
+                        and not neutral.is_dirty and not neutral.get("arc_shader_image_key")
+                        and not getattr(neutral, "packed_file", None)):
+                    img = _IMAGE_BY_PATH.pop(path_key)
+                else:
+                    img = bpy.data.images.load(fpath, check_existing=False)
             elif "arc_shader_prefetch_path" in img:
                 del img["arc_shader_prefetch_path"]
             if colorspace is not None:
@@ -1080,6 +1085,23 @@ def _parse_flat_mi_json(json_path: str) -> dict:
             result['opacity_clip'] = float(properties['OpacityMaskClipValue'])
         _apply_bpo_flags(result, properties.get('BasePropertyOverrides') or {})
         _source_entry, data = textures._material_source(json_path)
+        package = (_source_entry or {}).get('Package')
+        if not package and _source_entry and not json_path.casefold().endswith('.arc-material.json'):
+            companion_path = json_path[:-5] + '.arc-material.json'
+            if os.path.isfile(companion_path):
+                companion, _ = textures._material_source(companion_path)
+                candidate = (companion or {}).get('Package')
+                if isinstance(candidate, str) and '..' not in candidate.replace('\\', '/').split('/'):
+                    canonical = textures._material_ref_path(candidate)
+                    source_path = json_path.replace('\\', '/').casefold()
+                    for mount, directory in (('/Game/', 'PioneerGame/Content/'), ('/Engine/', 'Engine/Content/')):
+                        if canonical.startswith(mount):
+                            suffix = '/' + directory + canonical[len(mount):] + '.json'
+                            if source_path.endswith(suffix.casefold()):
+                                package = candidate
+                            break
+        if isinstance(package, str) and package:
+            result['package'] = package
         thin = data[0] if isinstance(data, list) and data else data
         if isinstance(thin, dict) and textures._is_thin_fmodel_mi_data(thin):
             params = thin.get('Parameters') or {}
@@ -1521,6 +1543,8 @@ def _load_mi_textures(json_path: str, nodes, links, group_node,
     connected_set = set()
 
     for param, obj_path in mi['textures']:
+        if not group_node or param not in connected or connected[param] in connected_set or connected[param] not in group_node.inputs:
+            continue
         if obj_path.startswith('/Engine/') or 'CharacterSnow' in obj_path:
             continue
         fpath = textures.find_texture_from_object_path(obj_path + '.0')
@@ -2403,24 +2427,33 @@ def _resolve_mi_texture_path(obj_path: str, local_folders: list = None) -> str:
 
 
 
+class _TextureLookup(dict):
+    def __getitem__(self, key):
+        fpath, image = super().__getitem__(key)
+        if image is None:
+            image = _load_image_cached(fpath)
+            super().__setitem__(key, (fpath, image))
+        return fpath, image
+    def get(self, key, default=None):
+        return self[key] if key in self else default
+    def items(self):
+        return ((key, self[key]) for key in self)
+    def values(self):
+        return (self[key] for key in self)
+    def path(self, key):
+        return super().__getitem__(key)[0]
+
+
 def _tex_lookup_from_flat_mi(mi: dict, local_folders: list = None) -> dict:
-    """param -> (fpath, image) for textures referenced by a flat MI JSON."""
-    tex_lookup = {}
-    path_to_img = {}
+    """Resolve MI paths without creating image datablocks until selected."""
+    tex_lookup = _TextureLookup()
     for param, obj_path in mi.get('textures', []):
         if not obj_path or obj_path.startswith('/Engine/') or 'CharacterSnow' in obj_path:
             continue
         fpath = _resolve_mi_texture_path(obj_path, local_folders)
-        if not fpath:
-            continue
-        if fpath in path_to_img:
-            tex_lookup[param] = (fpath, path_to_img[fpath])
-            continue
-        img = _load_image_cached(fpath)
-        path_to_img[fpath] = img
-        tex_lookup[param] = (fpath, img)
+        if fpath:
+            tex_lookup[param] = (fpath, None)
     return tex_lookup
-
 
 
 def _find_flat_tex(tex_lookup: dict, *keys_or_suffixes: str):
@@ -2434,14 +2467,15 @@ def _find_flat_tex(tex_lookup: dict, *keys_or_suffixes: str):
         suffix = key.lower()
         if not suffix.startswith('_'):
             suffix = '_' + suffix
-        for param, (fpath, img) in tex_lookup.items():
+        for param in tex_lookup:
+            fpath = tex_lookup.path(param) if isinstance(tex_lookup, _TextureLookup) else tex_lookup[param][0]
             # Detail Normal / Detail* must not satisfy base NOH/CR suffix hunts.
             pl = (param or "").lower()
             if pl.startswith("detail") or "detail normal" in pl:
                 continue
             stem = os.path.splitext(os.path.basename(fpath))[0].lower()
             if stem.endswith(suffix):
-                return param, img
+                return param, tex_lookup[param][1]
     return None, None
 
 
@@ -2609,6 +2643,7 @@ def _authored_sampling(img):
 def _new_tex_image(nodes, img, label: str, loc, non_color: bool = False, normal: bool = False):
     # Colour and data reads follow the authored sampling; normal maps keep the raw read, as in
     # materials.native.interop.Graph.image.
+    albedo = not non_color and not normal
     decoded = None if normal else _authored_sampling(img)
     if decoded is not None:
         non_color = not decoded
@@ -2616,7 +2651,7 @@ def _new_tex_image(nodes, img, label: str, loc, non_color: bool = False, normal:
     node = nodes.new("ShaderNodeTexImage")
     node.image = img
     node.label = label
-    node.interpolation = "Linear"
+    node.interpolation = "Cubic" if albedo else "Linear"
     node.location = loc
     return node
 
@@ -2869,27 +2904,7 @@ def _mask_channel_value(nodes, links, mask_node, loc, prefer: str = "Red"):
 
 
 def _dump_unconnected_tex(nodes, tex_lookup, handled_paths, loc_x, loc_y):
-    """Leave unused MI textures as Image nodes for inspection."""
-    row_u = loc_y
-    for param, (fpath, img) in tex_lookup.items():
-        if fpath in handled_paths:
-            continue
-        if param.startswith("T_") and any(
-            param.endswith(suf) for suf in (
-                "_CR", "_NOH", "_C", "_A", "_X", "_GRM", "_NOM", "_NXX", "_NMX",
-                "_CA", "_CS", "_NTR", "_NX", "_EXX",
-                "_Color", "_Normal", "_Roughnessmetal", "_Tintmask",
-            )
-        ):
-            continue
-        node = nodes.new("ShaderNodeTexImage")
-        node.image = img
-        node.label = param
-        node.interpolation = "Cubic"
-        node.location = (loc_x, row_u)
-        row_u -= 280
-    return row_u
-
+    return loc_y
 
 
 # ---------------------------------------------------------------------------
@@ -3327,4 +3342,3 @@ def _material_used_by_other_objects(mat, obj) -> bool:
             if slot.material == mat:
                 return True
     return False
-

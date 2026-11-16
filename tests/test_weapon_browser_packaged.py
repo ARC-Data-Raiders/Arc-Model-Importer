@@ -41,9 +41,13 @@ class Layout:
         return SimpleNamespace()
     def row(self, **kwargs):
         return self
+    def split(self, **kwargs):
+        return self
+    def column(self, **kwargs):
+        return self
     def box(self):
         return Layout(self.events, 'box', self.expanded)
-    def separator(self):
+    def separator(self, **kwargs):
         pass
 
 
@@ -78,6 +82,24 @@ class WeaponBrowserTests(unittest.TestCase):
         cls.ui = load_module('weapon_ui')
         cls.arc_catalog = load_module('arc_catalog_data')
         cls.arc = load_module('arc_ui')
+        # Weapon draw and gun preview moved from Weapons/weapon_ui.py to sidebar.py (5f70ddb).
+        from section_fixture import add_parents
+        bpy.types.Panel = type('Panel', (), {})
+        bpy.types.Menu = type('Menu', (), {})
+        add_parents(sys.modules, PACKAGE)
+        spec = importlib.util.spec_from_file_location(PACKAGE + '.sidebar', ROOT / 'sidebar.py')
+        cls.sidebar = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = cls.sidebar
+        spec.loader.exec_module(cls.sidebar)
+        appearance = ModuleType(PACKAGE + ".Outfit_Accessories.appearance")
+        appearance._PREVIEW_GENERATION = 0
+        appearance._low_resolution_icon_id = lambda path: 0
+        previews = ModuleType(PACKAGE + ".Outfit_Accessories.preview_assets")
+        previews.source_preview_path = lambda path: path
+        sys.modules[appearance.__name__] = appearance
+        sys.modules[previews.__name__] = previews
+        sys.modules[PACKAGE + ".Outfit_Accessories"].appearance = appearance
+        sys.modules[PACKAGE + ".Outfit_Accessories"].preview_assets = previews
 
     @classmethod
     def tearDownClass(cls):
@@ -120,17 +142,21 @@ class WeaponBrowserTests(unittest.TestCase):
                 self.assertEqual(self.arc._pioneer_image_path(filename), self.arc._ARC_PREVIEW_DIR / filename)
 
     def test_gun_controls_are_packaged_and_visible_without_advanced(self):
-        with patch.object(self.assets, 'pioneer_roots', side_effect=AssertionError('draw root discovery')), patch.object(self.ui, 'ensure_registered', return_value=True), patch.object(self.ui, 'draw_gun_preview'), patch.object(self.ui, 'draw_preview'), patch.object(self.ui, 'draw_arc_preview'):
+        with patch.object(self.assets, 'pioneer_roots', side_effect=AssertionError('draw root discovery')), patch.object(self.ui, 'ensure_registered', return_value=True), patch.object(self.sidebar, 'draw_gun_preview'), patch.object(self.sidebar, 'draw_preview'), patch.object(self.sidebar, 'draw_arc_preview'):
             for expanded in (False, True):
                 layout = Layout(expanded=expanded)
-                self.ui.draw(layout, self.context)
+                self.sidebar._draw_weapons_content(layout, self.context)
                 default = {(kind, name) for scope, kind, name in layout.events if scope == 'default'}
                 self.assertIn(('operator', 'arc_outfits.import_weapon'), default)
                 for name in ('arc_weapon_position', 'arc_weapon_tier', 'arc_weapon_ascended'):
                     self.assertIn(('prop', name), default)
+                # One merged apply button for wear tier and position.
+                self.assertIn(('operator', 'arc_outfits.apply_weapon_wear_position'), default)
                 for name in ('arc_outfits.set_weapon_tier', 'arc_outfits.update_weapon_position'):
-                    self.assertIn(('operator', name), default)
-                self.assertIn(('prop', 'arc_add_all_weapons'), default)
+                    self.assertNotIn(('operator', name), default)
+                # Add All is its own always-visible button with a confirmation; no mode checkbox.
+                self.assertNotIn(('prop', 'arc_add_all_weapons'), default)
+                # Import All Weapons moved to Settings > Batch Import.
                 self.assertNotIn(('operator', 'arc_outfits.add_all_weapons'), default)
                 self.assertFalse(any(scope == 'box' for scope, kind, name in layout.events))
                 self.assertFalse(any(kind == 'panel' and name == 'arc_weapon_advanced' for scope, kind, name in layout.events))
@@ -154,10 +180,10 @@ class WeaponBrowserTests(unittest.TestCase):
     def test_draw_passes_selected_tier_and_stencil(self):
         self.scene.arc_weapon_tier = '1'
         self.scene.arc_weapon_skin = 'CommonBlue'
-        with patch.object(self.ui, 'ensure_registered', return_value=True), patch.object(self.ui, 'draw_gun_preview') as preview, patch.object(self.assets, 'bundled_preview', return_value=None) as select:
-            self.ui.draw(Layout(), self.context)
+        with patch.object(self.ui, 'ensure_registered', return_value=True), patch.object(self.sidebar, '_ui_lists', return_value=SimpleNamespace(draw_list_header=True)), patch.object(self.sidebar, '_draw_catalog_selector', return_value=False) as selector, patch.object(self.assets, 'bundled_preview', return_value=None) as select:
+            self.sidebar._draw_weapons_content(Layout(), self.context)
             select.assert_called_once_with(self.catalog.weapon_by_key(self.scene.arc_weapon_key), 'OFF', tier='1', stencil='CommonBlue')
-            preview.assert_called_once()
+            selector.assert_called_once_with(unittest.mock.ANY, self.context, 'weapon', self.catalog.weapon_enum_items(), self.scene.arc_weapon_key, 0)
 
     def test_ascended_preview_survives_tier_and_stencil_selection(self):
         for stem, weapon in self.assets.bundled()['weapons'].items():
@@ -183,19 +209,19 @@ class WeaponBrowserTests(unittest.TestCase):
         with patch.object(self.ui, '_GUN_TEXTURES', textures), patch.object(self.ui, '_GUN_PENDING', set()), patch.object(self.ui, '_GUN_DISPLAY', {}, create=True), patch.object(self.ui, '_GUN_FAILED', set(), create=True), patch.object(self.ui.bpy, 'app', SimpleNamespace(timers=timers), create=True), patch.object(Path, 'is_file', return_value=True):
             for path, expected in ((first, 'first'), (second, 'first'), (second, 'second')):
                 layout = PreviewLayout()
-                self.ui.draw_gun_preview(layout, context, path)
+                self.sidebar.draw_gun_preview(layout, context, path)
                 self.assertIn(('preview', expected), layout.events)
                 if path == second:
                     textures[second] = SimpleNamespace(name='second')
             self.assertEqual(len(callbacks), 1)
             layout = PreviewLayout()
-            self.ui.draw_gun_preview(layout, context, None)
+            self.sidebar.draw_gun_preview(layout, context, None)
             self.assertFalse(any(event[0] == 'preview' for event in layout.events))
             self.assertTrue(layout.events)
-            self.ui.draw_gun_preview(PreviewLayout(), context, first)
+            self.sidebar.draw_gun_preview(PreviewLayout(), context, first)
             self.ui._GUN_FAILED.add(str((ROOT / 'missing.png').resolve()))
             layout = PreviewLayout()
-            self.ui.draw_gun_preview(layout, context, ROOT / 'missing.png')
+            self.sidebar.draw_gun_preview(layout, context, ROOT / 'missing.png')
             self.assertFalse(any(event[0] == 'preview' for event in layout.events))
             self.assertTrue(layout.events)
 
@@ -206,7 +232,7 @@ class WeaponBrowserTests(unittest.TestCase):
         context = SimpleNamespace(region=None, preferences=SimpleNamespace(system=SimpleNamespace(ui_scale=1)))
         layout = Layout()
         with patch.object(self.ui, '_GUN_TEXTURES', {}), patch.object(self.ui, '_GUN_PENDING', set()), patch.object(self.ui, '_GUN_DISPLAY', {}, create=True), patch.object(self.ui, '_GUN_FAILED', set(), create=True), patch.object(self.ui.bpy, 'app', SimpleNamespace(timers=timers), create=True), patch.object(Path, 'is_file', return_value=True), patch.object(self.ui, 'gun_preview_id', side_effect=AssertionError('decode in draw')):
-            self.ui.draw_gun_preview(layout, context, ROOT / 'cold.png')
+            self.sidebar.draw_gun_preview(layout, context, ROOT / 'cold.png')
         self.assertTrue(layout.events)
         self.assertEqual(len(callbacks), 1)
 
@@ -229,8 +255,8 @@ class WeaponBrowserTests(unittest.TestCase):
         entry = next(entry for entry in self.catalog.weapons() if entry['stem'] == 'BattleRifle_EnergyBurst_01')
         self.scene.arc_weapon_key = entry['key']
         self.scene.arc_weapon_tier = '3'
-        with patch.object(self.ui, 'ensure_registered', return_value=True), patch.object(self.ui, 'draw_gun_preview'), patch.object(self.assets, 'bundled_preview', return_value=None) as select:
-            self.ui.draw(Layout(), self.context)
+        with patch.object(self.ui, 'ensure_registered', return_value=True), patch.object(self.sidebar, '_ui_lists', return_value=SimpleNamespace(draw_list_header=True)), patch.object(self.sidebar, '_draw_catalog_selector', return_value=False), patch.object(self.assets, 'bundled_preview', return_value=None) as select:
+            self.sidebar._draw_weapons_content(Layout(), self.context)
             select.assert_called_once_with(entry, 'OFF', tier='0', stencil='NONE')
 
     def test_arc_preview_decode_is_deferred_and_queued_once(self):

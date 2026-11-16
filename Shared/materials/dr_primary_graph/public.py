@@ -5,9 +5,14 @@ Both proven one-hot and general fractional-mask composition use original DR flow
 """
 from dataclasses import dataclass
 import json
-from .selection import build_balanced
+import os
+from .selection import build_balanced,build_chain
 from .general import build_general
 from .lookup import lookup
+
+def chain_enabled():
+    """Balanced selectors are the default; DR_MUX_CHAIN=1 enables the layer-stack chain mux (import +25%, 2026-11-14)."""
+    return os.environ.get('DR_MUX_CHAIN','0')=='1'
 
 @dataclass(frozen=True)
 class SelectionStats:
@@ -27,6 +32,15 @@ class PrimarySelectionCandidate:
     def lookup(self,nodes):return lookup(nodes)
     def mux(self,retained,nodes,links,zone_idx,zone_socks,**kwargs):
         before={n.as_pointer() for n in nodes}
+        if chain_enabled():
+            try:
+                result=build_chain(nodes,links,zone_idx,zone_socks,**kwargs)
+                nodes.id_data['dr.primary_selection.schema']=self.schema
+                return result
+            except Exception:
+                for node in reversed(list(nodes)):
+                    if node.as_pointer() not in before:nodes.remove(node)
+                raise
         try:result,detail=build_balanced(nodes,links,zone_idx,zone_socks,**kwargs)
         except Exception:
             for node in reversed(list(nodes)):

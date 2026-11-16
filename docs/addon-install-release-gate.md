@@ -44,6 +44,23 @@ designated Z: scratch root before packaging on this workstation. The script
 creates a short `ic-*` profile directly under that root to avoid Windows path
 length failures when extracting long asset filenames.
 
+## Compute headroom
+
+Blender launches are admitted by current resource headroom, not the number of
+running instances. The package check requires CPU usage below 90% and at least
+4 GiB of free physical RAM. It has no fixed Blender process or worker-thread
+cap. Existing processes are left running.
+
+`Get-BlenderComputeHeadroom` reports CPU usage, free RAM and each NVIDIA GPU
+separately. The install check does not require a GPU. GPU workloads can call
+`Assert-BlenderComputeHeadroom -RequireGpu`; either GPU qualifies when its
+utilization is below 90% and at least 1024 MiB of VRAM is free. An occupied
+GPU does not exclude another available GPU. Missing GPU telemetry is unknown,
+not zero usage, and blocks only GPU-required admission.
+
+`tests/test_blender_compute_headroom.ps1` checks admission with synthetic
+resource readings. Add `-Live` to check the current CPU, RAM and both GPUs.
+
 This gate catches basic install/registration errors. It does not prove that an
 already-running Blender process has unloaded an older Python module. When a
 live UI install still fails after the gate passes, record that session's module

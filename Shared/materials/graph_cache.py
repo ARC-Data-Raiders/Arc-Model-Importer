@@ -157,6 +157,11 @@ def _dir(rec=None):
 def material_key(json_path, colours, preset_key="", extra=None):
     sc = bpy.context.scene
     pro = getattr(sc, "arc_pro_mode", getattr(sc, "arc_pro", ""))
+    # Graph-shape switches must key the cache, or a toggle silently reuses the other shape.
+    modes = [k + "=" + v for k, v, default in (("DR_MUX_CHAIN", "1", False), ("DR_GRAPH_BLOCKS", "0", False))
+             if os.environ.get(k) == v]
+    if modes:
+        extra = list(extra or []) + modes
     blob = json.dumps([os.path.normcase(os.path.normpath(json_path or "")),
                        os.environ.get("DR_GRAPH_RECIPE") or recipe(), _build(),
                        colours or {}, preset_key or "", str(pro), repr(extra or [])],
@@ -243,7 +248,8 @@ def _load_file(d, fn):
     g0 = set(bpy.data.node_groups.keys())
     i0 = set(bpy.data.images.keys())
     with bpy.data.libraries.load(os.path.join(d, fn), link=False) as (src, dst):
-        dst.materials = [n for n in src.materials if n in want]
+        req = [n for n in src.materials if n in want]
+        dst.materials = list(req)
     gall = {g.name: g for g in bpy.data.node_groups}
     hcache = {}
     t0 = time.perf_counter()
@@ -298,15 +304,33 @@ def _load_file(d, fn):
         except Exception:
             pass
     iall = {im.name: im for im in bpy.data.images}
-    by_key = {}
+    by_key, by_path = {}, {}
     for n in i0:
-        k = _img_key(iall[n])
+        k = _img_key(iall[n]) or _gen_key(iall[n])
         if k:
             by_key.setdefault(k, iall[n])
-    for n in set(iall) - i0:
-        im = iall[n]
-        k = _img_key(im)
+        pp = iall[n].get("arc_shader_prefetch_path") if iall[n].source == "FILE" else None
+        if pp:
+            by_path.setdefault(_norm(iall[n].filepath), []).append(iall[n])
+    inew = [iall[n] for n in sorted(set(iall) - i0)]
+    for im in inew:
+        k = _img_key(im) or _gen_key(im)
         hit = by_key.get(k) if k else None
+        if hit is None and k and k[0] != "GEN":
+            # The live build adopts an unconsumed prefetch buffer of the same file and
+            # sets its role (colour space, alpha mode); do the same instead of keeping
+            # the cached copy beside the 0-user base image.
+            hit = next((c for c in by_path.get(k[0], ())
+                        if c.users == 0 and not c.is_dirty and c.packed_file is None
+                        and "arc_shader_prefetch_path" in c), None)
+            if hit is not None:
+                by_path[k[0]].remove(hit)
+                del hit["arc_shader_prefetch_path"]
+                hit.colorspace_settings.name = im.colorspace_settings.name
+                hit.alpha_mode = im.alpha_mode
+                if im.get("arc_shader_image_key"):
+                    hit["arc_shader_image_key"] = im["arc_shader_image_key"]
+                by_key[k] = hit
         if hit is not None:
             diff = [a for a in ("source", "use_view_as_render", "alpha_mode") if getattr(im, a, None) != getattr(hit, a, None)]
             STATS.setdefault("img_remaps", []).append((fn[:8], im.name, hit.name, diff))
@@ -326,6 +350,8 @@ def _load_file(d, fn):
             if im is not None and im in imap:
                 nd.image = imap[im]
     dead = [g for g in gmap if g.users == 0] + [im for im in imap if im.users == 0]
+    # Images this load appended that nothing uses (users of removed duplicates only).
+    dead += [im for im in inew if im not in imap and im.users == 0]
     # Duplicates still used only by other duplicates were left behind before, so
     # bpy.data grew by ~15 groups per load and each later libraries.load got slower.
     # Remove them too once every user is itself a removed duplicate.
@@ -339,15 +365,41 @@ def _load_file(d, fn):
     if dead:
         bpy.data.batch_remove(dead)
     STATS.setdefault("load_s", []).append((fn[:8], "lib", round(tl, 2), "dedupe", round(td, 2), "all", round(time.perf_counter() - t0, 2), len(gmap), len(imap), len(left)))
-    for m in dst.materials:
+    # Map by request order: a cached name that already ends in ".001" is renamed ".002"
+    # on append when ".001" exists, so a name/base lookup missed it and the import fell
+    # back to a live build on every run.
+    for n, m in zip(req, dst.materials):
         if m is not None:
             m.use_fake_user = False
-            _PRELOADED[want.get(m.get("dr_gc_name", ""), None) or _key_of(m, want)] = m.name
+            _PRELOADED[want[n]] = m.name
 
 
-def _key_of(m, want):
-    base = _DUP.match(m.name)
-    return want.get(m.name) or (want.get(base.group(1)) if base else None)
+def _gen_key(im):
+    """Key of a generated (not file) image: name stem, size, type, colour, role."""
+    if im.source != "GENERATED" or im.packed_file is not None:
+        return None
+    m = _DUP.match(im.name)
+    try:
+        return ("GEN", m.group(1) if m else im.name, tuple(im.size), im.generated_type,
+                tuple(round(c, 4) for c in im.generated_color), bool(im.use_generated_float),
+                im.colorspace_settings.name, im.alpha_mode)
+    except Exception:
+        return None
+
+
+def _drop_entry(d, key, fn):
+    """Drop one index entry whose material is not in its blend (entry only, blend untouched)."""
+    idx = _index(d)
+    if idx.pop(key, None) is None:
+        return
+    print("WARNING: DataRaiders graph_cache: material for entry %s missing in %s; entry dropped" % (key[:8], fn))
+    try:
+        tmp = os.path.join(d, "index.json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(idx, f)
+        os.replace(tmp, os.path.join(d, "index.json"))
+    except Exception as exc:
+        _log("drop", exc)
 
 
 def try_load(key, mat):
@@ -364,7 +416,9 @@ def try_load(key, mat):
             _load_file(d, ent["file"])
         new = bpy.data.materials.get(_PRELOADED.pop(key, "") or "")
         if new is None:
-            raise RuntimeError("material missing in " + ent["file"])
+            STATS["misses"] += 1
+            _drop_entry(d, key, ent["file"])     # next import rebuilds live and re-caches it
+            return None
         name = mat.name
         # A batch file appends later materials before their placeholders exist, so the
         # placeholder gets ".001"; keep the cached base name instead.

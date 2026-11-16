@@ -5,7 +5,8 @@ from . import props
 
 class ARC_OT_parity_refresh(bpy.types.Operator):
     bl_idname = "arc_outfits.parity_refresh"
-    bl_label = "Refresh Shader Parity"
+    bl_label = "Refresh Shader Compatibility"
+    bl_description = "Rebuild the shader compatibility data on every imported object in the scene"
 
     def execute(self, context):
         props.ensure_scene(context.scene)
@@ -20,7 +21,7 @@ class ARC_OT_parity_refresh(bpy.types.Operator):
 
 
 def draw_settings(layout, context):
-    layout.prop(context.scene, "dr_parity_root")
+    layout.prop(context.scene, "dr_parity_root", text="Shader Library Folder")
     layout.operator("arc_outfits.parity_refresh")
 
 

@@ -68,8 +68,9 @@ def build(source, destination, catalog_path, evidence_path):
             if max(original.size) > 512:
                 raise ValueError('Source exceeds quarter-resolution budget: ' + str(path))
             image = original.convert('RGBA')
+            image.thumbnail((256, 256), Image.Resampling.LANCZOS)
             output = io.BytesIO()
-            image.save(output, format='AVIF', quality=60, speed=6)
+            image.save(output, format='AVIF', quality=85, speed=6, subsampling='4:4:4')
             encoded = output.getvalue()
             size = list(image.size)
         filename = hashlib.sha256(encoded).hexdigest() + '.avif'

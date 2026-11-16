@@ -117,18 +117,37 @@ def _ue_vec(v, mirror_y: bool) -> tuple[float, float, float]:
     return (x, -y, z) if mirror_y else (x, y, z)
 
 
+def _plain(label: str) -> str:
+    """Display label from a builder name: no ArcSky prefix, words split ("ArcSkySunDisc" -> "Sun Disc")."""
+    import re
+    s = label[6:] if label.startswith("ArcSky") else label
+    s = re.sub(r"(?<=[a-z])(?=[A-Z0-9])|(?<=[A-Z])(?=[A-Z][a-z])", " ", s.replace("_", " "))
+    return " ".join(s.split()) or label
+
+
 class _Graph:
-    """World-shader builder: scalar/vector math on sockets or constants, laid out column by column."""
+    """World-shader builder: scalar/vector math on sockets or constants, laid out column by column.
+
+    Node names stay the builder names (unique as "name 2", "name 3" ...); labels are plain words.
+    Every node is recorded under the current ``section`` so the world can be grouped afterwards.
+    """
 
     def __init__(self, nt):
         self.nt = nt
         self.count = 0
+        self.section = None
+        self.sections: dict[Any, list[str]] = {}
+        self._used: dict[str, int] = {}
 
-    def new(self, kind: str, label: str):
+    def new(self, kind: str, label: str, text: str | None = None):
         node = self.nt.nodes.new(kind)
-        node.label = node.name = label
+        k = self._used.get(label, 0) + 1
+        self._used[label] = k
+        node.name = label if k == 1 else "%s %d" % (label, k)
+        node.label = (text if text is not None else _plain(label))[:63]
         node.location = (-3000 + 190 * (self.count // 14), 900 - 120 * (self.count % 14))
         self.count += 1
+        self.sections.setdefault(self.section, []).append(node.name)
         return node
 
     def put(self, sock, value) -> None:
@@ -140,7 +159,8 @@ class _Graph:
             sock.default_value = float(value)
 
     def math(self, op: str, a, b=None, c=None, *, clamp: bool = False, label: str = ""):
-        node = self.new("ShaderNodeMath", label or "ArcSkyMath")
+        node = self.new("ShaderNodeMath", label or "ArcSkyMath",
+                        None if label else op.replace("_", " ").title())
         node.operation = op
         node.use_clamp = clamp
         for i, v in enumerate((a, b, c)):
@@ -149,7 +169,8 @@ class _Graph:
         return node.outputs[0]
 
     def vec(self, op: str, a, b=None, c=None, *, scale=None, label: str = ""):
-        node = self.new("ShaderNodeVectorMath", label or "ArcSkyVec")
+        node = self.new("ShaderNodeVectorMath", label or "ArcSkyVec",
+                        None if label else "Vector " + op.replace("_", " ").title())
         node.operation = op
         for i, v in enumerate((a, b, c)):
             if v is not None:
@@ -159,12 +180,12 @@ class _Graph:
         return node.outputs["Value" if op in ("DOT_PRODUCT", "LENGTH", "DISTANCE") else "Vector"]
 
     def xyz(self, v):
-        node = self.new("ShaderNodeSeparateXYZ", "ArcSkyAxes")
+        node = self.new("ShaderNodeSeparateXYZ", "ArcSkyAxes", "Split XYZ")
         self.nt.links.new(v, node.inputs[0])
         return node.outputs["X"], node.outputs["Y"], node.outputs["Z"]
 
     def combine(self, x, y, z, label: str = "ArcSkyCombine"):
-        node = self.new("ShaderNodeCombineXYZ", label)
+        node = self.new("ShaderNodeCombineXYZ", label, "Combine XYZ" if label == "ArcSkyCombine" else None)
         for sock, v in zip(node.inputs, (x, y, z)):
             self.put(sock, v)
         return node.outputs[0]
@@ -241,6 +262,7 @@ def _uds_nodes(g: _Graph, entry: dict[str, Any], d, atmos, *, mirror_y: bool, cl
     sun_up = max(0.0, min(1.0, -sun_p[2]))                      # cb1[4].y
     status = []
 
+    g.section = "Clouds"
     # Wisps (t4): texture * Wispy Cloud Color * Wispy Cloud Alpha (PS 140-142).
     tint = tuple(c * scalar("Wispy Cloud Alpha", 1.0) for c in vector("Wispy Cloud Color", (1.0, 1.0, 1.0)))
     sphere = entry.get("sky_sphere") or {}
@@ -281,6 +303,7 @@ def _uds_nodes(g: _Graph, entry: dict[str, Any], d, atmos, *, mirror_y: bool, cl
             lum = tuple(c * t for c, t in zip(light_rgb(sun), trans))
     l_len = math.sqrt(sum(c * c for c in lum))
     color = cloud
+    g.section = "Sun Disc"
     if l_len > 0.0:
         inv_r = 1.0 / max(1e-5, scalar("Sun Radius", 0.0003))
         dist = g.vec("DISTANCE", d, s_b)
@@ -293,6 +316,7 @@ def _uds_nodes(g: _Graph, entry: dict[str, Any], d, atmos, *, mirror_y: bool, cl
         color = g.vec("MULTIPLY_ADD", hue, g.combine(weight, weight, weight), cloud, label="ArcSkySunDiscAdd")
 
     # Sun/moon glow gain (PS 239-260): g = (1.8*(sun + moon) + 2.3) * Lit_Intensity.
+    g.section = "Sky Glow"
     k = (1.0 - sun_up) * 2.0 + 1.0                              # cb1[4].w
     dx, dy, dz = g.xyz(d)
     bent = g.vec("NORMALIZE", g.combine(dx, dy, g.math("MULTIPLY_ADD", g.math("SUBTRACT", dz, s_b[2]), k, s_b[2])))
@@ -312,11 +336,13 @@ def _uds_nodes(g: _Graph, entry: dict[str, Any], d, atmos, *, mirror_y: bool, cl
     # Extra_Contrast / Overall Intensity / Saturation (PS 446-465), absolute luminance.
     threshold = max(0.025, min(0.3, -sun_p[2] + 0.1))           # cb1[18].w
     controls = {}
+    g.section = "Controls"
     for name in ("Extra_Contrast", "Overall Intensity", "Saturation"):
         control = g.new("ShaderNodeValue", name)
         control.outputs[0].default_value = scalar(name, 1.0)
         controls[name] = control.outputs[0]
     ec, oi, sat = (controls[name] for name in ("Extra_Contrast", "Overall Intensity", "Saturation"))
+    g.section = "Exposure"
     lift_gain = g.math("MULTIPLY", ec, 2.5)
     crush_gain = g.math("MULTIPLY", ec, 5.0)
     remaining = g.math("SUBTRACT", 1.0, sat)
@@ -349,7 +375,11 @@ def _own_world(scene) -> bpy.types.World:
 
 
 def _drive_sun_rotation(sky_node, world, rotation_node, base: float) -> None:
-    """sky_node.sun_rotation = base + the ArcSkyRotation Angle, as a simple-expression driver."""
+    """sky_node.sun_rotation = base + the ArcSkyRotation Angle, as a simple-expression driver.
+
+    ``rotation_node`` is the top-level world node (or its name) that carries the Angle input.
+    """
+    name = rotation_node if isinstance(rotation_node, str) else rotation_node.name
     sky_node.driver_remove("sun_rotation")
     drv = sky_node.driver_add("sun_rotation").driver
     drv.type = "SCRIPTED"
@@ -358,8 +388,136 @@ def _drive_sun_rotation(sky_node, world, rotation_node, base: float) -> None:
     var.type = "SINGLE_PROP"
     var.targets[0].id_type = "WORLD"
     var.targets[0].id = world
-    var.targets[0].data_path = 'node_tree.nodes["%s"].inputs["Angle"].default_value' % rotation_node.name
+    var.targets[0].data_path = 'node_tree.nodes["%s"].inputs["Angle"].default_value' % name
     drv.expression = "%r + angle" % float(base)
+
+
+# World grouping: section -> (role, plain stage). Order is the dataflow order (members must be convex).
+SKY_GROUP = "Arc Sky"
+_SKY_SECTIONS = (("Sun", "inputs"), ("Sky Gradient", "colour"), ("Clouds", "pattern"),
+                 ("Sun Disc", "colour"), ("Sky Glow", "surface"), ("Exposure", "surface"))
+_SKY_CONTROL_TIPS = {
+    "Angle": "Turns the sky and sun around the vertical axis",
+    "Extra Contrast": "Lifts highlights and crushes shadows around the sun-height threshold",
+    "Overall Intensity": "Multiplies the whole sky brightness",
+    "Saturation": "1 keeps sky colours, 0 makes the sky grey",
+}
+
+
+def _sky_groups(nt):
+    """Node groups reachable from nt (outer first) that this module built."""
+    seen, out, stack = set(), [], [nt]
+    while stack:
+        t = stack.pop(0)
+        for n in t.nodes:
+            sub = getattr(n, "node_tree", None)
+            if sub is not None and sub.as_pointer() not in seen:
+                seen.add(sub.as_pointer())
+                if sub.name.startswith(SKY_GROUP):
+                    out.append(sub)
+                stack.append(sub)
+    return out
+
+
+def _walk_nodes(nt, path=""):
+    for n in nt.nodes:
+        yield path + n.name, n
+        sub = getattr(n, "node_tree", None)
+        if sub is not None and n.bl_idname.endswith("NodeGroup"):
+            yield from _walk_nodes(sub, path + n.name + "/")
+
+
+def find_node(nt, name):
+    """Node named ``name`` at the top of nt, else anywhere inside its groups (arc_node_map first)."""
+    if nt is None:
+        return None
+    node = nt.nodes.get(name)
+    if node is not None:
+        return node
+    path = (nt.get("arc_node_map") or {}).get(name)
+    if path:
+        t, parts = nt, str(path).split("/")
+        for part in parts[:-1]:
+            gn = t.nodes.get(part)
+            t = getattr(gn, "node_tree", None)
+            if t is None:
+                break
+        else:
+            node = t.nodes.get(parts[-1])
+            if node is not None:
+                return node
+    return next((n for p, n in _walk_nodes(nt) if n.name == name), None)
+
+
+def _polish_interface(group, defaults):
+    """Panels, ranges, tooltips and imported defaults on the Arc Sky group's inputs."""
+    items = {it.name: it for it in group.interface.items_tree
+             if getattr(it, "item_type", "") == "SOCKET" and it.in_out == "INPUT"}
+    for name, it in items.items():
+        try:
+            it.description = _SKY_CONTROL_TIPS.get(name, "")
+            if name == "Angle":
+                it.min_value, it.max_value = -6.2832, 6.2832
+                try:
+                    it.subtype = "ANGLE"
+                except Exception:
+                    pass
+            elif name in _SKY_CONTROL_TIPS:
+                it.min_value, it.max_value = 0.0, 10.0
+            if name in defaults:
+                it.default_value = defaults[name]
+        except Exception:
+            pass
+    try:
+        for title, names in (("Sun", ("Angle",)), ("Look", ("Extra Contrast", "Overall Intensity", "Saturation"))):
+            present = [items[n] for n in names if n in items]
+            if not present:
+                continue
+            panel = group.interface.new_panel(title)
+            for it in present:
+                group.interface.move_to_parent(it, panel, len(panel.interface_items))
+    except Exception:
+        pass
+
+
+def _group_world(nt, sections, world, bases):
+    """Move the builder sections into one "Arc Sky" group; top level keeps controls and Background/Output.
+
+    The outer group node keeps the name ``ArcSkyRotation`` (sidebar and driver path read its Angle input).
+    """
+    from ..Shared.materials import graph_layout as gl
+    temp = nt.nodes.new("ShaderNodeValue")
+    temp.name = temp.label = "Angle"
+    temp.outputs[0].default_value = 0.0
+    nt.links.new(temp.outputs[0], nt.nodes["ArcSkyRotation"].inputs["Angle"])
+    inner = []
+    for sec, role in _SKY_SECTIONS:
+        members = [nt.nodes[n] for n in sections.get(sec, ()) if n in nt.nodes]
+        if not members:
+            continue
+        gn, _ = gl._move_into_group(nt, members, SKY_GROUP + " " + sec, role, stage=sec)
+        gn.label = sec
+        inner.append(gn.name)
+    body = inner + [n for n in sections.get("body", ()) if n in nt.nodes]
+    gn, _ = gl._move_into_group(nt, [nt.nodes[n] for n in body], SKY_GROUP, "surface", stage="Look")
+    gn.name = "ArcSkyRotation"
+    gn.label = SKY_GROUP
+    nt.nodes.remove(temp)
+    gn = nt.nodes["ArcSkyRotation"]
+    gn.inputs["Angle"].default_value = 0.0
+    defaults = {"Angle": 0.0}
+    for n in nt.nodes:
+        if n.bl_idname == "ShaderNodeValue":
+            defaults[n.label or n.name] = float(n.outputs[0].default_value)
+            gl.tag(n, stage="Controls", role="controls")
+        elif n.bl_idname in ("ShaderNodeBackground", "ShaderNodeOutputWorld"):
+            gl.tag(n, stage="Output", role="output")
+    _polish_interface(gn.node_tree, defaults)
+    for p, n in _walk_nodes(nt):
+        if n.bl_idname == "ShaderNodeTexSky" and n.name in bases and n.inputs.get("Vector") is None:
+            _drive_sun_rotation(n, world, "ArcSkyRotation", bases[n.name])
+    nt["arc_node_map"] = {n.name: p for p, n in _walk_nodes(nt) if "/" in p}
+    gl.finalize_tree(nt, "world", force=True, collapse=False)
 
 
 def ensure_scenario_sky(scene, entry: dict[str, Any], *, mirror_y: bool, cloud_image=None,
@@ -370,9 +528,13 @@ def ensure_scenario_sky(scene, entry: dict[str, Any], *, mirror_y: bool, cloud_i
         scene["arc_lighting_prev_film_transparent"] = scene.render.film_transparent
     scene.render.film_transparent = False
     nt = world.node_tree
+    stale = _sky_groups(nt)
     for n in list(nt.nodes):
         if n.bl_idname != "ShaderNodeOutputWorld":
             nt.nodes.remove(n)
+    for grp in stale:
+        if grp.users == 0:
+            bpy.data.node_groups.remove(grp)
     out = next((n for n in nt.nodes if n.bl_idname == "ShaderNodeOutputWorld"), None) or nt.nodes.new("ShaderNodeOutputWorld")
     out.location = (900, 0)
     out.is_active_output = True
@@ -392,6 +554,7 @@ def ensure_scenario_sky(scene, entry: dict[str, Any], *, mirror_y: bool, cloud_i
         rotation = 0.0
     uds = bool(entry.get("sky_material")) and bool(entry.get("sky_sphere"))
     # Without a Pioneer_Sky actor the SkyAtmosphere draws itself, sun disc included.
+    g.section = "Sky Gradient"
     sky_nodes = [(g.new("ShaderNodeTexSky", "ArcSkyAtmosphere"), False)]
     if not uds:
         sky_nodes.append((g.new("ShaderNodeTexSky", "ArcSkyCamera"), True))
@@ -418,11 +581,13 @@ def ensure_scenario_sky(scene, entry: dict[str, Any], *, mirror_y: bool, cloud_i
     sl_int = float(sky_light.get("intensity") if sky_light.get("intensity") is not None else 1.0)
     sl = tuple(c * sl_int for c in sl_color)
 
-    coord = g.new("ShaderNodeTexCoord", "ArcSkyCoord")
-    rotation_node = g.new("ShaderNodeVectorRotate", "ArcSkyRotation")
+    g.section = "Sun"
+    coord = g.new("ShaderNodeTexCoord", "ArcSkyCoord", "Sky Coordinates")
+    rotation_node = g.new("ShaderNodeVectorRotate", "ArcSkyRotation", "Sky Rotation")
     rotation_node.rotation_type = "Z_AXIS"
     g.put(rotation_node.inputs["Vector"], coord.outputs["Generated"])
     d = g.vec("NORMALIZE", rotation_node.outputs["Vector"], label="ArcSkyDirection")
+    bases = {}
     for sky_node, disc in sky_nodes:
         vec = sky_node.inputs.get("Vector")
         if vec is not None:
@@ -431,8 +596,9 @@ def ensure_scenario_sky(scene, entry: dict[str, Any], *, mirror_y: bool, cloud_i
             # Blender 5.1 hides the Vector socket on the multiple-scattering sky: it always samples the ray
             # direction. Rotating the lookup by +Angle about Z turns the sky by -Angle, which for this sky is
             # sun_rotation + Angle (sun_rotation runs from +Y towards +X). A simple-expression driver keeps the
-            # Rotation slider working without Python auto-run.
-            _drive_sun_rotation(sky_node, world, rotation_node, sky_node.sun_rotation)
+            # Rotation slider working without Python auto-run; it is added once the world is grouped.
+            bases[sky_node.name] = sky_node.sun_rotation
+    g.section = "Sky Gradient"
     atmos_col = g.vec("MULTIPLY", sky_nodes[0][0].outputs["Color"], cam_scale, label="ArcSkyAtmosphereScaled")
     status = [f"{kind or 'no light'} {elevation:.1f}° up"]
     if uds:
@@ -442,17 +608,53 @@ def ensure_scenario_sky(scene, entry: dict[str, Any], *, mirror_y: bool, cloud_i
     else:
         camera = g.vec("MULTIPLY", sky_nodes[1][0].outputs["Color"], cam_scale, label="ArcSkyCameraOut")
         capture = atmos_col
+    g.section = "body"
     lighting = g.vec("MULTIPLY", capture, sl, label="ArcSkyLightingOut")
 
     path = g.new("ShaderNodeLightPath", "ArcSkyLightPath")
     split = g.mix(path.outputs["Is Camera Ray"], lighting, camera, "ArcSkyCameraSplit")
-    bg = g.new("ShaderNodeBackground", "ArcSkyBackground")
+    g.section = None
+    bg = g.new("ShaderNodeBackground", "ArcSkyBackground", "Background")
     bg.location = (700, 0)
     nt.links.new(split, bg.inputs["Color"])
     bg.inputs["Strength"].default_value = 1.0
     nt.links.new(bg.outputs["Background"], out.inputs["Surface"])
+    _group_world(nt, g.sections, world, bases)
     world["arc_lighting_sky_scale"] = scale
     return " · ".join(status)
+
+
+# World sections: (frame label, node-name prefixes). Frames group and label only; node names
+# (and the sun rotation driver path that uses them) and links stay the same.
+WORLD_SECTIONS = (
+    ("Sun", ("ArcSkyCoord", "ArcSkyRotation", "ArcSkyDirection")),
+    ("Atmosphere", ("ArcSkyAtmosphere",)),
+    ("Sky", ("ArcSkyCamera", "ArcSkyLighting", "ArcSkyLightPath", "ArcSkyBackground")),
+)
+
+
+def frame_world(nt):
+    """Put the world's named nodes into Sun / Atmosphere / Sky frames. Returns {label: count}."""
+    frames, counts = {}, {}
+    for node in list(nt.nodes):
+        if node.bl_idname in ("NodeFrame", "ShaderNodeOutputWorld"):
+            continue
+        label = next((lab for lab, prefixes in WORLD_SECTIONS
+                      if any(node.name.startswith(p) for p in prefixes)), None)
+        if label is None:
+            continue
+        fr = frames.get(label)
+        if fr is None:
+            fr = nt.nodes.new("NodeFrame")
+            fr.name = "ArcFrame " + label
+            fr.label = label
+            fr.label_size = 20
+            frames[label] = fr
+        loc = node.location.copy()
+        node.parent = fr
+        node.location = loc
+        counts[label] = counts.get(label, 0) + 1
+    return counts
 
 
 

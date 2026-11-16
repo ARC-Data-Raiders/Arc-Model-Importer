@@ -20,9 +20,11 @@ DataRaiders-Documentation ``character_weather_user_controls_20261109``):
 * Wear on weapons is not in this group: the sidebar writes the game's WeaponQuality input
   (object property ``arc_weapon_wear``). On outfits Wear blends along the game edge mask.
 
-The sidebar sets the group-node inputs (outfits) or the top-level ``DR.Control.dr_uc_*``
-Value nodes (weapons). No rebuild is needed.
+The sidebar sets the group-node inputs (outfits) or the weapon look wrapper's control inputs
+(found by key through the group's ``arc_control_keys`` map; old graphs keep top-level
+``DR.Control.dr_uc_*`` Value nodes). No rebuild is needed.
 """
+import json
 import re
 
 UC_NAME = "DR.UserControls"
@@ -518,8 +520,37 @@ def _is_uc(n):
     return n.type == "GROUP" and n.node_tree is not None and n.node_tree.name == UC_NAME
 
 
+def _weapon_keys(n):
+    """{key: input identifier} of a weapon look wrapper's look controls (empty otherwise)."""
+    tree = getattr(n, "node_tree", None) if n.type == "GROUP" else None
+    raw = tree.get("arc_control_keys") if tree is not None else None
+    if not raw:
+        return {}
+    try:
+        keys = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return {k: v for k, v in keys.items() if k in WEAPON_PROP} if isinstance(keys, dict) else {}
+
+
 def _is_weapon_value(n):
-    return n.bl_idname == "ShaderNodeValue" and n.name.startswith("DR.Control.dr_uc_")
+    if n.bl_idname == "ShaderNodeValue" and n.name.startswith("DR.Control.dr_uc_"):
+        return True
+    return bool(_weapon_keys(n))
+
+
+def _weapon_sockets(n):
+    """(prop, socket, is_output) for one weapon control holder: an old Value node or a wrapper."""
+    if n.bl_idname == "ShaderNodeValue":
+        prop = WEAPON_PROP.get(n.name[len("DR.Control."):])
+        return [(prop, n.outputs[0], True)] if prop else []
+    out = []
+    by_id = {s.identifier: s for s in n.inputs}
+    for key, ident in sorted(_weapon_keys(n).items()):
+        s = by_id.get(ident)
+        if s is not None and not s.is_linked:
+            out.append((WEAPON_PROP[key], s, False))
+    return out
 
 
 def owned_nodes(mat, match, own=False):
@@ -597,10 +628,9 @@ def cached_material_targets(mat, own=False):
                     found.append((BY_SOCKET[sock][1], s))
                     rows.append((BY_SOCKET[sock][1], chain, sock, False))
         else:
-            prop = WEAPON_PROP.get(n.name[len("DR.Control."):])
-            if prop:
-                found.append((prop, n.outputs[0]))
-                rows.append((prop, chain, 0, True))
+            for prop, s, is_output in _weapon_sockets(n):
+                found.append((prop, s))
+                rows.append((prop, chain, 0 if is_output else s.name, is_output))
     _TARGET_PATHS[key] = rows
     return found
 
@@ -643,9 +673,8 @@ def material_targets(mat, own=False):
                 if s is not None and not s.is_linked:
                     found.append((BY_SOCKET[sock][1], s))
         else:
-            prop = WEAPON_PROP.get(n.name[len("DR.Control."):])
-            if prop:
-                found.append((prop, n.outputs[0]))
+            for prop, s, _is_output in _weapon_sockets(n):
+                found.append((prop, s))
     return found
 
 
@@ -1040,3 +1069,233 @@ def zone_offsets_set(materials, zone, values):
             _zo_input(node, key).default_value = tuple(v) if ZO_BY_KEY[key][3] in ZO_COLOR_KINDS else float(v)
         count += 1
     return count
+
+
+# ===========================================================================
+# BEGIN G4 CONTROL SCHEMA (owner: G4, U2 D1/D2). One ordered list of a material's
+# look controls for the sidebar, the Material "Arc Look" panel, the node N panel,
+# reset and presets. Found by graph structure: every input of a look/control group
+# node that is unlinked or fed by a Value/RGB node. Rest of this file: G3.
+# ===========================================================================
+IMPORT_DEFAULTS_KEY = "arc_import_defaults"
+SCHEMA_PANELS = ("Colour", "Surface", "Weathering")     # fallback panels for groups without interface panels
+_SCHEMA_GROUP_PANEL = {"Palette": "Colour", "Wear": "Weathering", "Dirt": "Weathering"}
+_SCHEMA_SKIP_TREES = (UC_NAME, ZO_NAME, LOOK_NAME)
+
+
+def schema_is_control_tree(tree):
+    """A group whose inputs are look controls: tagged by the builder, an "Arc ... Look" group,
+    or a DR./Independent group."""
+    if tree is None or tree.name in _SCHEMA_SKIP_TREES:
+        return False
+    if "arc_gt_ver" in tree or tree.get("arc_look_group"):
+        return True
+    name = tree.name
+    if name.startswith("Arc ") and "Look" in name:
+        return True
+    return name.startswith("DR.") or name.startswith("Independent")
+
+
+def schema_source(node, name):
+    """Socket that holds control *name* of *node*: the input when unlinked, else the output of the
+    Value/RGB node feeding it; None for any other link."""
+    sock = node.inputs.get(name) if node is not None else None
+    if sock is None:
+        return None
+    if not sock.is_linked:
+        return sock
+    links = sock.links
+    src = links[0].from_node if links else None
+    if src is not None and src.type in {"VALUE", "RGB"} and len(src.outputs):
+        out = src.outputs[0]
+        if out.type == sock.type:
+            return out
+    return None
+
+
+def _schema_value(sock):
+    v = sock.default_value
+    return tuple(float(x) for x in v) if hasattr(v, "__len__") else float(v)
+
+
+def _schema_items(tree):
+    """{socket name: (interface item, panel name or "")} of a group's inputs."""
+    out = {}
+    try:
+        items = tree.interface.items_tree
+    except Exception:
+        return out
+    for item in items:
+        if getattr(item, "item_type", "") != "SOCKET" or getattr(item, "in_out", "") != "INPUT":
+            continue
+        parent = getattr(item, "parent", None)
+        pname = getattr(parent, "name", "") if getattr(parent, "item_type", "") == "PANEL" else ""
+        out.setdefault(item.name, (item, pname))
+    return out
+
+
+def _schema_id(name):
+    """Stable id of a control socket; renamed sockets resolve through an id map when one exists."""
+    for attr in ("SOCKET_IDS", "CONTROL_IDS", "ID_MAP"):
+        table = globals().get(attr)
+        if isinstance(table, dict) and name in table:
+            return table[name]
+    return name
+
+
+def _schema_label(name):
+    try:
+        from . import param_labels
+        return param_labels.label_for(name)
+    except Exception:
+        return name, "Other"
+
+
+def import_defaults(node):
+    """{socket name: value} stored on a group node at import (``node["arc_import_defaults"]``)."""
+    import json
+    raw = node.get(IMPORT_DEFAULTS_KEY) if node is not None else None
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def schema_nodes(material):
+    """[(group node, tree)] of the look/control groups on every per-material level."""
+    out = []
+    try:
+        from . import wrapper_tree
+        trees = list(wrapper_tree.graph_trees(material))
+    except Exception:
+        nt = getattr(material, "node_tree", None)
+        trees = [nt] if nt is not None else []
+    for tree in trees:
+        for node in tree.nodes:
+            if node.type == "GROUP" and schema_is_control_tree(node.node_tree):
+                out.append((node, tree))
+    return out
+
+
+def capture_import_defaults(material, force=False):
+    """Store the current control values on each group node that has none yet. Returns nodes
+    written. Call outside draw (import, sync timer, operators)."""
+    import json
+    count = 0
+    for node, _tree in schema_nodes(material):
+        if not force and node.get(IMPORT_DEFAULTS_KEY):
+            continue
+        data = {}
+        for sock in node.inputs:
+            if sock.type not in {"VALUE", "RGBA"}:
+                continue
+            src = schema_source(node, sock.name)
+            if src is not None:
+                data[sock.name] = _schema_value(src)
+        if data:
+            node[IMPORT_DEFAULTS_KEY] = json.dumps(data, sort_keys=True)
+            count += 1
+    return count
+
+
+def schema(material):
+    """Ordered [{id, label, panel, type, min, max, default, imported, value, node, socket}] of one
+    material. ``default`` is the group's interface default, ``imported`` the value at import
+    (falls back to the current value), ``type`` "FLOAT" or "COLOR". A control on several group
+    nodes is listed once (first node)."""
+    rows, seen = [], set()
+    if material is None or getattr(material, "node_tree", None) is None:
+        return rows
+    for node, tree in schema_nodes(material):
+        items = _schema_items(node.node_tree)
+        imported = import_defaults(node)
+        for sock in node.inputs:
+            if sock.type not in {"VALUE", "RGBA"} or sock.name in seen:
+                continue
+            src = schema_source(node, sock.name)
+            if src is None:
+                continue
+            seen.add(sock.name)
+            item, pname = items.get(sock.name, (None, ""))
+            label, group = _schema_label(sock.name)
+            color = sock.type == "RGBA"
+            value = _schema_value(src)
+            default = getattr(item, "default_value", None) if item is not None else None
+            if default is not None:
+                default = tuple(float(x) for x in default) if hasattr(default, "__len__") else float(default)
+            lo = getattr(item, "min_value", None) if item is not None else None
+            hi = getattr(item, "max_value", None) if item is not None else None
+            imp = imported.get(sock.name)
+            if imp is not None:
+                imp = tuple(imp) if isinstance(imp, list) else float(imp)
+            rows.append({
+                "id": _schema_id(sock.name),
+                "label": label,
+                "panel": pname or _SCHEMA_GROUP_PANEL.get(group, "Surface"),
+                "type": "COLOR" if color else "FLOAT",
+                "min": 0.0 if color else (float(lo) if lo is not None else None),
+                "max": 1.0 if color else (float(hi) if hi is not None else None),
+                "default": default,
+                "imported": imp if imp is not None else value,
+                "value": value,
+                "node": node.name,
+                "socket": sock.name,
+            })
+    order = {}
+    for r in rows:                                   # panels in first-seen order; fallback panels last
+        order.setdefault(r["panel"], len(order) + (100 + SCHEMA_PANELS.index(r["panel"])
+                                                   if r["panel"] in SCHEMA_PANELS else 0))
+    rows.sort(key=lambda r: order[r["panel"]])       # stable: interface order inside a panel
+    return rows
+
+
+def schema_set(material, control_id, value):
+    """Write one control on every group node of *material* that has it. Returns sockets written."""
+    count = 0
+    for node, _tree in schema_nodes(material):
+        for sock in node.inputs:
+            if _schema_id(sock.name) != control_id and sock.name != control_id:
+                continue
+            src = schema_source(node, sock.name)
+            if src is None:
+                continue
+            src.default_value = tuple(value) if hasattr(value, "__len__") else float(value)
+            count += 1
+    return count
+
+
+def schema_reset(material, ids=None):
+    """Write the imported value back onto every control (or only *ids*). Returns sockets written."""
+    count = 0
+    for node, _tree in schema_nodes(material):
+        imported = import_defaults(node)
+        for name, value in imported.items():
+            if ids is not None and name not in ids and _schema_id(name) not in ids:
+                continue
+            src = schema_source(node, name)
+            if src is None:
+                continue
+            src.default_value = tuple(value) if isinstance(value, list) else float(value)
+            count += 1
+    return count
+
+
+def schema_sockets(material):
+    """{control id: socket that holds its value} (first group node wins), for panels that draw
+    ``layout.prop(socket, "default_value")``."""
+    out = {}
+    for node, _tree in schema_nodes(material):
+        for sock in node.inputs:
+            if sock.type not in {"VALUE", "RGBA"}:
+                continue
+            cid = _schema_id(sock.name)
+            if cid in out:
+                continue
+            src = schema_source(node, sock.name)
+            if src is not None:
+                out[cid] = src
+    return out
+# END G4 CONTROL SCHEMA

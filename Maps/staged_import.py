@@ -150,6 +150,46 @@ def discard_run_objects(before_objects, before_meshes) -> int:
     return removed
 
 
+def _job_track():
+    """ui_targets.job_track() when available, else a no-op context (never blocks a run)."""
+    try:
+        from ..Shared import ui_targets
+        return ui_targets.job_track()
+    except Exception:
+        import contextlib
+        return contextlib.nullcontext()
+
+
+def _job_owned(pool="objects") -> list:
+    try:
+        from ..Shared import ui_targets
+        return list(ui_targets.job_owned(pool))
+    except Exception:
+        return []
+
+
+def discard_job_objects() -> int:
+    """Remove only the objects and meshes this job created (job registry), then the placeholder.
+
+    Objects the user added while the job ran are never touched; an empty registry removes nothing.
+    """
+    removed = 0
+    for obj in _job_owned("objects"):
+        try:
+            bpy.data.objects.remove(obj, do_unlink=True)
+            removed += 1
+        except Exception:
+            pass
+    for mesh in _job_owned("meshes"):
+        try:
+            if mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+        except Exception:
+            pass
+    sweep_placeholder(None)
+    return removed
+
+
 def enter_solid_viewports() -> list:
     """Switch every 3D viewport to Solid. Returns [(space, old_type)] for restore.
 
@@ -326,15 +366,20 @@ def queue_job(presets, finish) -> None:
     _PENDING_JOB = (list(presets or []), finish)
 
 
-def queue_generator(make_gen, finish) -> None:
-    """Queue any step generator. make_gen(context) builds it; finish(op, context, result) runs on success."""
+def queue_generator(make_gen, finish, kind="Outfit") -> None:
+    """Queue any step generator. make_gen(context) builds it; finish(op, context, result) runs on success.
+
+    ``kind`` names the import in the stop/fail messages ("Weapon import failed: ...").
+    """
     global _PENDING_GEN
-    _PENDING_GEN = (make_gen, finish)
+    _PENDING_GEN = (make_gen, finish, str(kind or "Outfit"))
 
 
-def _catalog_warming() -> bool:
+def _catalog_warming(start=True) -> bool:
     try:
         from ..Shared.materials.rebuild import native_catalog_bridge
+        if start:
+            native_catalog_bridge.prewarm()
         return native_catalog_bridge.warming()
     except Exception:
         return False
@@ -358,13 +403,16 @@ class StagedRun:
         self.error = None
         self.done = False
         self.cancel_requested = False
+        self.after_success = []  # callables run only after the run and its finish succeed
         self.waiting = False     # last event was ("wait", ...): nothing ready, poll slowly
+        self.graphs_done = False # begin_graphs ran (material graph finishing phase)
+        self.prewarm = True      # False: never start the catalog prewarm; measured for weapons: 1 s less total but longest freeze 6.5 s instead of 3.6 s, so left on
 
     def advance(self, budget=TICK_BUDGET_SECONDS) -> bool:
         """Run steps until the time budget is spent. Returns True when the run ended."""
         if self.done:
             return True
-        if _catalog_warming():
+        if _catalog_warming(self.prewarm):
             # Let the catalog prewarm thread finish alone; see native_catalog_bridge.warming.
             self.waiting = True
             if not self.stage:
@@ -372,7 +420,8 @@ class StagedRun:
             return False
         t0 = time.perf_counter()
         try:
-            return self._advance(t0, budget)
+            with _job_track():
+                return self._advance(t0, budget)
         finally:
             self.tick_count += 1
             self.max_tick_ms = max(self.max_tick_ms, (time.perf_counter() - t0) * 1000.0)
@@ -405,6 +454,38 @@ class StagedRun:
             self.steps.append((stage, index, total, label))
             if time.perf_counter() - t0 >= budget:
                 return False
+
+    def begin_graphs(self, objects, scene) -> bool:
+        """After the build: lay out the new material graphs as one more sliced phase.
+
+        graph_layout.finalize_objects ran synchronously in the finish (ui_targets.stamp,
+        folder finish) and blocked the UI ~37 s on a 14-material outfit (each RNA op on a
+        750-node group costs ~3 ms). Run here in slices, the later sync calls find every
+        tree hooked and cached. Returns True when the phase started.
+        """
+        if self.graphs_done or self.error is not None or self.cancel_requested:
+            return False
+        self.graphs_done = True
+        try:
+            from ..Shared.materials import graph_layout
+        except Exception:
+            return False
+        steps = graph_layout.iter_finalize_objects(list(objects or ()), scene)
+
+        def phase():
+            n = 0
+            try:
+                for _ in steps:
+                    n += 1
+                    yield ("finish", n, 0, "material graphs")
+            except Exception as exc:  # layout is cosmetic: never fail the import over it
+                print("Arc import: material graph finishing failed:", exc)
+            return self.result
+
+        self.gen = phase()
+        self.done = False
+        self.stage, self.label = "finish", "material graphs"
+        return True
 
     def cancel(self) -> None:
         """Close the generator so its finally blocks run (batch material mode off)."""
@@ -448,6 +529,8 @@ STAGE_TEXT = {
     "bind": "Binding textures",
     "finish": "Finishing",
     "prepare": "Preparing",
+    "extract": "Extracting assets",
+    "attach": "Attaching parts",
 }
 
 
@@ -479,7 +562,7 @@ def draw_progress(layout, context) -> None:
 
 class ARC_OUTFITS_OT_StagedImport(Operator):
     bl_idname = "arc_outfits.staged_import"
-    bl_label = "Import Outfit Colourways"
+    bl_label = "Import Outfit"
     bl_description = "Import outfit meshes, then build materials, without blocking the UI"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -493,29 +576,98 @@ class ARC_OUTFITS_OT_StagedImport(Operator):
     def invoke(self, context, event):
         global _ACTIVE, _PENDING_JOB, _PENDING_GEN
         if _ACTIVE is not None or (_PENDING_JOB is None and _PENDING_GEN is None):
-            self.report({'WARNING'}, "An outfit import is already running or nothing is queued.")
+            self.report({'WARNING'}, "An import is already running or nothing is queued")
             return {'CANCELLED'}
-        if _PENDING_GEN is not None:
-            make_gen, finish = _PENDING_GEN
-            _PENDING_GEN = None
-            gen = make_gen(context)
-        else:
-            presets, finish = _PENDING_JOB
+        from ..Shared import ui_targets
+        busy = ui_targets.job_busy_message()
+        if busy:
             _PENDING_JOB = None
-            from ..Shared import operators as _ops
-            gen = _ops.iter_batch_import_instances(context, presets, staged=True)
+            _PENDING_GEN = None
+            self.report({'WARNING'}, busy)
+            return {'CANCELLED'}
+        self._kind = "Outfit"
+        pending_gen, pending_job = _PENDING_GEN, _PENDING_JOB
+        if pending_gen is not None:
+            self._kind = pending_gen[2]
+        self._label = self._import_label(context)
+        if not ui_targets.job_begin(ui_targets.role_for_kind(self._kind) or "import",
+                                    "Importing " + self._label, 0,
+                                    "arc_outfits.staged_import_cancel"):
+            _PENDING_JOB = None
+            _PENDING_GEN = None
+            self.report({'WARNING'}, ui_targets.job_busy_message() or "An import is already running")
+            return {'CANCELLED'}
+        try:
+            if pending_gen is not None:
+                make_gen, finish, self._kind = pending_gen
+                _PENDING_GEN = None
+                gen = make_gen(context)
+            else:
+                presets, finish = pending_job
+                _PENDING_JOB = None
+                from ..Shared import operators as _ops
+                gen = _ops.iter_batch_import_instances(context, presets, staged=True)
+        except Exception:
+            _PENDING_GEN = None
+            _PENDING_JOB = None
+            ui_targets.job_end(0, 1, 0, [], status="failed")
+            raise
         self._run = StagedRun(gen)
         self._finish = finish
         self._before = set(bpy.data.objects)
         self._before_meshes = set(bpy.data.meshes)
+        try:
+            from ..Shared import ui_lists
+            self._snap = ui_lists.snapshot()
+        except Exception:
+            self._snap = None
         _ACTIVE = self._run
         wm = context.window_manager
-        wm.arc_staged_cancel = False
-        _publish(wm, self._run, True)
-        self._timer_step = TICK_SECONDS
-        self._timer = wm.event_timer_add(TICK_SECONDS, window=context.window)
-        wm.modal_handler_add(self)
+        self._timer = None
+        try:
+            wm.arc_staged_cancel = False
+            _publish(wm, self._run, True)
+            self._timer_step = TICK_SECONDS
+            self._timer = wm.event_timer_add(TICK_SECONDS, window=context.window)
+            wm.modal_handler_add(self)
+        except Exception:
+            # Setup failed after the job began: release the job and the timer, then re-raise.
+            if self._timer is not None:
+                try:
+                    wm.event_timer_remove(self._timer)
+                except Exception:
+                    pass
+                self._timer = None
+            self._run.cancel()
+            _ACTIVE = None
+            ui_targets.job_end(0, 1, 0, [], status="failed")
+            raise
         return {'RUNNING_MODAL'}
+
+    def _import_label(self, context) -> str:
+        """Outfit display name for outfit runs ("Goalie"), else the kind ("Hair", "Weapon")."""
+        kind = getattr(self, "_kind", "Outfit") or "Outfit"
+        if kind != "Outfit":
+            return kind
+        try:
+            from ..Shared import ui_targets
+            scene = context.scene
+            key = (getattr(scene, "arc_selected_outfit", "")
+                   or getattr(scene, "arc_selected_outfit_browse", ""))
+            self._outfit_key = str(key or "")
+            self._outfit_label = ui_targets.outfit_label(context, key)
+            return self._outfit_label or "Outfit Import"
+        except Exception:
+            return "Outfit Import"
+
+    @staticmethod
+    def _job_end(status, imported=0, failed=0, lines=(), left=None):
+        try:
+            from ..Shared import ui_targets
+            if ui_targets.job_active() is not None:
+                ui_targets.job_end(imported, failed, 0, list(lines), status=status, left=left)
+        except Exception:
+            pass
 
     def _retime(self, context, step) -> None:
         """Swap the timer only when the wanted interval changes (ready <-> waiting)."""
@@ -537,12 +689,19 @@ class ARC_OUTFITS_OT_StagedImport(Operator):
         if run.cancel_requested and not run.done:
             run.cancel()
             return self._end(context, cancelled=True)
-        if event.type != 'TIMER':
+        if event.type != 'TIMER' or getattr(event, "timer", self._timer) is not self._timer:
             return {'RUNNING_MODAL'}
         if run.advance():
-            return self._end(context, cancelled=False)
+            if not run.begin_graphs(_job_owned("objects"), context.scene):
+                return self._end(context, cancelled=False)
         self._retime(context, next_interval(run))
         _publish(wm, run, True)
+        try:
+            from ..Shared import ui_targets
+            ui_targets.job_step(run.index, progress_text(run.stage, run.index, run.total, run.label),
+                                total=run.total)
+        except Exception:
+            pass
         return {'RUNNING_MODAL'}
 
     def cancel(self, context):
@@ -559,6 +718,20 @@ class ARC_OUTFITS_OT_StagedImport(Operator):
             pass
         self._timer = None
         _ACTIVE = None
+        self._job_end("cancelled", left=1)
+
+    def _fail(self, kind, error):
+        """Failed run or finish: drop this run's objects, end the job failed, never "completed"."""
+        try:
+            from ..Shared import import_report
+            import_report.abort()
+        except Exception:
+            pass
+        discard_job_objects()
+        label = getattr(self, "_label", "") or kind
+        self._job_end("failed", failed=1, lines=[f"Failed: {label}: {error}"])
+        self.report({'ERROR'}, f"{kind} import failed: {error}")
+        return {'CANCELLED'}
 
     def _end(self, context, cancelled: bool):
         global _ACTIVE
@@ -570,26 +743,77 @@ class ARC_OUTFITS_OT_StagedImport(Operator):
         _ACTIVE = None
         _publish(wm, run, False)
         wm.arc_staged_cancel = False
+        kind = getattr(self, "_kind", "Outfit") or "Outfit"
+        if cancelled:
+            try:
+                from ..Shared import import_report
+                import_report.abort()
+            except Exception:
+                pass
         if cancelled:
             # Remove the partial objects this run created so no placeholder is left behind.
-            discard_run_objects(self._before, self._before_meshes)
-            self.report({'WARNING'}, "Outfit import stopped; partial objects were removed.")
+            discard_job_objects()
+            self._job_end("cancelled", lines=[f"{getattr(self, '_label', kind)}: stopped, partial objects removed"],
+                          left=1)
+            self.report({'WARNING'}, f"{kind} import stopped; partial objects were removed")
             return {'CANCELLED'}
         if run.error is not None:
-            self.report({'ERROR'}, f"Outfit import failed: {run.error}")
-            return {'CANCELLED'}
-        sweep_placeholder(
-            [o for o in bpy.data.objects if o not in self._before]
-        )
-        if self._finish is not None:
-            self._finish(self, context, run.result)
+            return self._fail(kind, run.error)
+        sweep_placeholder(_job_owned("objects"))
+        try:
+            with _job_track():
+                ok = self._finish(self, context, run.result) if self._finish is not None else True
+        except Exception as exc:
+            return self._fail(kind, exc)
+        if ok is False:
+            return self._fail(kind, "nothing was imported")
+        step_errors = []
+        for step in list(getattr(run, "after_success", ()) or ()):
+            try:
+                with _job_track():
+                    for line in step() or ():
+                        print("Arc import:", line)
+            except Exception as exc:
+                print("Arc import: cleanup after import failed:", exc)
+                step_errors.append(str(exc) or exc.__class__.__name__)
+        label0 = getattr(self, "_label", "") or kind
+        if step_errors:
+            # The new part is in, but the old part could not be removed: never a plain success.
+            self._job_end("failed", imported=1, failed=1,
+                          lines=[f"Failed: {label0}: old part not removed ({e})" for e in step_errors])
+            self.report({'WARNING'}, f"{kind} imported, but the old part was not removed: {step_errors[0]}")
+        else:
+            self._job_end("completed", imported=1)
+        try:
+            from ..Shared import ui_targets
+            new_objects = _job_owned("objects")
+            label = getattr(self, "_label", "") or self._import_label(context)
+            if kind == "Outfit" and not getattr(self, "_outfit_label", ""):
+                # No catalog name captured at invoke: name it after its own new rig.
+                rig = next((o for o in new_objects if getattr(o, "type", "") == "ARMATURE"), None)
+                label = (ui_targets.clean_name(rig.name) if rig is not None else "") or label
+            ui_targets.stamp(new_objects, ui_targets.new_import_id(),
+                             kind=ui_targets.role_for_kind(kind), label=label)
+        except Exception as exc:
+            print("Arc import: objects not stamped:", exc)
+        try:
+            from ..Shared import ui_lists
+            if getattr(self, "_snap", None) is not None:
+                ui_lists.record_import(kind, self._snap)
+            if kind == "Outfit":
+                scene = context.scene
+                ui_lists.record_recent("outfit", getattr(self, "_outfit_key", "")
+                                       or getattr(scene, "arc_selected_outfit", "")
+                                       or getattr(scene, "arc_selected_outfit_browse", ""))
+        except Exception as exc:
+            print("Arc import: history not recorded:", exc)
         return {'FINISHED'}
 
 
 class ARC_OUTFITS_OT_StagedImportCancel(Operator):
     bl_idname = "arc_outfits.staged_import_cancel"
-    bl_label = "Cancel Outfit Import"
-    bl_description = "Stop the running outfit import"
+    bl_label = "Cancel Import"
+    bl_description = "Stop the running import"
 
     def execute(self, context):
         context.window_manager.arc_staged_cancel = True
@@ -605,6 +829,19 @@ classes = (
 # O1g: staged mode defers finish_gt_outfit_graph generators so the batch
 # generator can slice them across ticks. None = normal (sync) mode.
 FINISH_SINK = None
+
+
+def after_success(step) -> bool:
+    """Queue *step* (returns message lines) to run once the active run and its finish succeed.
+
+    Returns False when no staged run is active; the caller then runs *step* itself. A cancel
+    or failure drops the queue, so a replace keeps the old part.
+    """
+    run = _ACTIVE
+    if run is None:
+        return False
+    run.after_success.append(step)
+    return True
 
 
 def defer_finish(gen, after) -> bool:

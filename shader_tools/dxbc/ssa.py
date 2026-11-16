@@ -107,6 +107,11 @@ class Builder:
             dst,coords,resource=operands;inputs=self.read(coords,state,src);kind='bufload' if '(buffer)' in op else 'texfetch';meta={}
         elif op.startswith(('sample_indexable','sample_l_indexable','sample_b_indexable','sample_d_indexable')):
             dst,coords,resource,sampler,*lod=operands;inputs=self.read(coords,state,src,True);kind='sample';meta={}
+            if 'texture3d' in op:
+                if not re.fullmatch(r's\d+',sampler):
+                    raise Unsupported('ssa_unsupported:volume_sample_form')
+                meta['sampler']=int(sampler[1:])
+                meta['volume_opcode']=op
         elif op.startswith('resinfo_indexable'):
             dst,mip,resource=operands;inputs=[];kind='resinfo';meta=dict(suffix=suffix)
         else:raise Unsupported('ssa_unsupported:'+op)
@@ -187,6 +192,15 @@ class Evaluator:
         if op=='texfetch':
             coords=[value.view(np.int32) for value in values];x,y=coords[:2];layer=coords[2] if r['layers']>1 else np.zeros(self.shape,np.int32);mip=coords[3] if r['layers']>1 else coords[2];valid=(x>=0)&(x<r['width'])&(y>=0)&(y<r['height'])&(layer>=0)&(layer<r['layers'])&(mip==0);ix=texel_index(x,r['width']);iy=texel_index(y,r['height']);return np.where(valid,data.reshape(r['layers'],r['height'],r['width'],4)[np.clip(layer,0,r['layers']-1),iy,ix,c],np.uint32(0))
         if op=='sample':
+            if r['kind']=='texture3d':
+                from . import volume
+                if meta.get('volume_opcode', 'sample_indexable(texture3d)(float,float,float,float)') != 'sample_indexable(texture3d)(float,float,float,float)':
+                    raise Unsupported('ssa_unsupported:volume_sample_form')
+                if meta.get('sampler') is None:
+                    raise Unsupported('ssa_unsupported:missing_volume_sampler')
+                contract=volume.fixture_contract(self.fixture,meta['sampler'])
+                coords=np.stack([floating(value) for value in values[:3]],axis=-1)
+                return volume.sample_words(data.reshape(r['depth'],r['height'],r['width'],4),coords,contract)[...,c]
             coords=[floating(value) for value in values];u=ftz((coords[0]-np.floor(coords[0]))*np.float32(r['width']));v=ftz((coords[1]-np.floor(coords[1]))*np.float32(r['height']));x=texel_index(u,r['width']);y=texel_index(v,r['height']);layer=np.clip(np.rint(coords[2]),0,r['layers']-1).astype(np.int64) if r['layers']>1 else np.zeros(self.shape,np.int64);return data.reshape(r['layers'],r['height'],r['width'],4)[layer,y,x,c]
         if op=='resinfo':
             dims=[r['width'],r['height'],r['layers'] if r['kind']=='texture2darray' else 0,1];value=np.uint32(dims[c]) if meta['suffix']=='uint' else bits(np.float32(dims[c]));return np.full(self.shape,value,np.uint32)

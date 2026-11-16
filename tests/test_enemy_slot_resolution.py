@@ -27,9 +27,9 @@ class EnemySlotResolutionTests(unittest.TestCase):
         exec(compile(ast.Module(body=[n for n in common.body if isinstance(n,ast.FunctionDef) and n.name=='_uemodel_section_materials'],type_ignores=[]),'<section table>','exec'),helper)
         sys.modules[PKG+'.Shared.materials.common']._uemodel_section_materials=helper['_uemodel_section_materials']
         source=ast.parse((ROOT/'Shared/materials/enemy.py').read_text(encoding='utf-8'))
-        nodes=[n for n in source.body if isinstance(n,ast.FunctionDef) and n.name=='setup_enemy_material']
+        nodes=[n for n in source.body if isinstance(n,ast.FunctionDef) and n.name in ('setup_enemy_material','_adopt_slot_name')]
         textures=types.SimpleNamespace(find_asset_from_object_path=lambda path,ext:str(self.files.get(path.rsplit('.',1)[0] if '.' in path.rsplit('/',1)[-1] else path,'')))
-        self.namespace={'__package__':PKG+'.Shared.materials','os':os,'re':re,'textures':textures}
+        self.namespace={'__package__':PKG+'.Shared.materials','os':os,'re':re,'textures':textures,'bpy':sys.modules.get('bpy')}
         exec(compile(ast.Module(body=nodes,type_ignores=[]),'<enemy slot resolution>','exec'),self.namespace)
     def tearDown(self):
         for m in self.modules:sys.modules.pop(m.__name__,None)

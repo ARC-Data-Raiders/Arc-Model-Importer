@@ -30,10 +30,62 @@ from .common import (
 # Other material setups (body, hair, weapon, misc, face)
 # ---------------------------------------------------------------------------
 
+def _face_body_tone(skin_mi: str) -> str:
+    """'dark' / 'white' from the face SkinColor MI's BodyColorMap, '' when unknown."""
+    if not skin_mi or not os.path.isfile(skin_mi):
+        return ""
+    try:
+        with open(skin_mi, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except Exception:
+        return ""
+    ref = ""
+    textures_flat = data.get("Textures") if isinstance(data, dict) else None
+    if isinstance(textures_flat, dict) and isinstance(textures_flat.get("BodyColorMap"), dict):
+        value = textures_flat["BodyColorMap"]
+        ref = str(value.get("AssetPathName") or value.get("ObjectPath") or "")
+    else:
+        entry = utils.first_ue_export(data, "MaterialInstanceConstant") or {}
+        for tp in (entry.get("Properties") or {}).get("TextureParameterValues") or []:
+            if str((tp.get("ParameterInfo") or {}).get("Name") or "") == "BodyColorMap":
+                value = tp.get("ParameterValue") or {}
+                ref = str(value.get("ObjectPath") or value.get("AssetPathName") or "") if isinstance(value, dict) else str(value)
+    name = ref.rsplit("/", 1)[-1].split(".", 1)[0].casefold()
+    if not name:
+        return ""
+    if "color_dark" in name:
+        return "dark"
+    if name.startswith("t_body_") and name.endswith("_c"):
+        return "white"
+    return ""
+
+
+def body_variant_for_face(body_variant: str, skin_mi: str) -> str:
+    """The face picks the body base (light or dark); the body keeps its gender.
+
+    MI_Face_*_SkinColor sets BodyColorMap; the game tints that base with the
+    face's ColorMultiply, so a light-base face on a dark base comes out twice as dark.
+    """
+    if not body_variant or body_variant == "NONE":
+        return body_variant
+    tone = _face_body_tone(skin_mi)
+    gender = body_variant.split("_", 1)[0]
+    candidate = f"{gender}_{tone}" if tone else body_variant
+    return candidate if candidate in BODY_ALBEDO else body_variant
+
+
 def setup_body_material(obj, psk_path: str, body_variant: str):
     if body_variant == 'NONE':
         return
-    
+    face_variant = body_variant_for_face(body_variant, _resolve_skin_color_mi_for_obj(obj, psk_path))
+    if face_variant != body_variant:
+        print(f"Arc Asset Importer: Body base follows face SkinColor: {body_variant} -> {face_variant}")
+        body_variant = face_variant
+        try:
+            obj["arc_body_variant"] = body_variant
+        except Exception:
+            pass
+
     tex_folder = os.path.join(os.path.dirname(psk_path), "Textures")
     albedo_name = BODY_ALBEDO.get(body_variant)
     normal_name = BODY_NORMAL.get(body_variant)
@@ -2038,7 +2090,8 @@ def _wire_face_shader_image(
     sock = group_node.inputs.get(sock_name) if group_node is not None else None
     if sock is None or not fpath or not os.path.isfile(fpath):
         return False
-    img = bpy.data.images.load(fpath, check_existing=True)
+    from .character_body import image_for_role, replace_role_image
+    img = image_for_role(fpath, non_color=True)
     try:
         img.colorspace_settings.name = "Non-Color"
         img.alpha_mode = "CHANNEL_PACKED"
@@ -2048,7 +2101,7 @@ def _wire_face_shader_image(
     if sock.links:
         src = sock.links[0].from_node
         if getattr(src, "type", "") == "TEX_IMAGE":
-            src.image = img
+            replace_role_image(src, img)
             src.label = label
             if coverage is not None:
                 links.new(src.outputs["Alpha"], coverage)
@@ -2072,6 +2125,7 @@ def _overlay_nxa_before_normal_flipper(mat, nxa_path: str, label: str = "Hair NX
         return False
     if not nxa_path or not os.path.isfile(nxa_path):
         return False
+    from .character_body import image_for_role, replace_role_image
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
     flip = next(
@@ -2096,19 +2150,19 @@ def _overlay_nxa_before_normal_flipper(mat, nxa_path: str, label: str = "Hair NX
         if b_sock is not None and b_sock.links:
             src = b_sock.links[0].from_node
             if getattr(src, "type", "") == "TEX_IMAGE":
-                img = bpy.data.images.load(nxa_path, check_existing=True)
+                img = image_for_role(nxa_path, non_color=True)
                 try:
                     img.colorspace_settings.name = "Non-Color"
                 except Exception:
                     pass
-                src.image = img
+                replace_role_image(src, img)
                 src.label = label
                 return True
         return False
 
     base_sock = flip_in.links[0].from_socket
     links.remove(flip_in.links[0])
-    img = bpy.data.images.load(nxa_path, check_existing=True)
+    img = image_for_role(nxa_path, non_color=True)
     try:
         img.colorspace_settings.name = "Non-Color"
     except Exception:
@@ -2142,7 +2196,7 @@ def _overlay_nxa_before_normal_flipper(mat, nxa_path: str, label: str = "Hair NX
 def sync_face_shader_hair(nxa_path: str = "", rgba=None, *, head_obj=None) -> bool:
     """Explicit UI/style binding to owned native face inputs, without global templates."""
     from .native.native_families import is_user_override
-    from .character_body import image_for_role
+    from .character_body import image_for_role, replace_role_image
     materials = [slot.material for slot in head_obj.material_slots if slot.material] if head_obj is not None else list(bpy.data.materials)
     color = tuple(float(v) for v in rgba[:3]) + (float(rgba[3]) if len(rgba)>3 else 1.,) if rgba is not None else None
     image = image_for_role(nxa_path, non_color=True) if nxa_path and os.path.isfile(nxa_path) else None
@@ -2156,7 +2210,7 @@ def sync_face_shader_hair(nxa_path: str = "", rgba=None, *, head_obj=None) -> bo
         if image is not None:
             for node in material.node_tree.nodes:
                 if node.type == 'TEX_IMAGE' and (node.label or '') in ('Hair NXA', 'Scalp Hair NXA'):
-                    node.image = image
+                    replace_role_image(node, image)
                     changed = True
         if color is not None:
             for group in groups:
@@ -2427,6 +2481,14 @@ def setup_hair_material(obj, json_path: str, colour_json: str = ""):
         obj.active_material_index = min(previous_index, max(0, len(obj.material_slots) - 1))
 
 
+def _prune_unlinked_textures(nodes):
+    """Remove image nodes whose outputs feed nothing, then UV nodes left feeding nothing."""
+    for kinds in (("ShaderNodeTexImage",), ("ShaderNodeUVMap", "ShaderNodeTexCoord")):
+        dead = [n for n in nodes if n.bl_idname in kinds and not any(s.is_linked for s in n.outputs)]
+        for n in dead:
+            nodes.remove(n)
+
+
 def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
     """Hair cards: Metahuman atlases → Principled + HASHED soft Coverage.
 
@@ -2469,6 +2531,8 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
             mi.setdefault("textures", []).append((param, os.path.splitext(os.path.basename(fpath))[0], fpath))
     loaded = {}
     for param_name, tex_stem, obj_path in mi["textures"]:
+        if param_name not in {"GlobalHairColor", "AttributeMap", "Coverage", "Tangent"}:
+            continue
         fpath = obj_path if obj_path and os.path.isfile(obj_path) else ""
         if not fpath:
             fpath = _resolve_hair_texture(tex_stem, obj_path, source=json_path)
@@ -2552,7 +2616,7 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         node.image = img
         node.label = "GlobalHairColor"
         global_map_node = node
-        node.interpolation = "Linear"
+        node.interpolation = "Cubic"
         node.location = (x, row)
         uv = _uv_for("GlobalHairColor", (x - 280, row))
         links.new(uv.outputs["UV"], node.inputs["Vector"])
@@ -2749,12 +2813,7 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
         _set_material_alpha_mode(mat, mode="OPAQUE", two_sided=True)
 
     # Depth is UE pixel-depth-offset data, not Principled glass transmission.
-    if "Depth" in loaded:
-        _, image = loaded["Depth"]
-        image.colorspace_settings.name="Non-Color"
-        depth=nodes.new("ShaderNodeTexImage");depth.image=image;depth.label="Depth (UE PDO; not glass)"
-        uv=_uv_for("Depth",(x-280,row));links.new(uv.outputs["UV"],depth.inputs["Vector"])
-        row-=300
+    # No node is built for it: nothing in Blender reads pixel depth offset.
     # Tangent atlas only on Principled fallback (Specular Cycles has no Tangent sock).
     if "Tangent" in loaded and principled is not None:
         _, img = loaded["Tangent"]
@@ -2819,16 +2878,13 @@ def _setup_hair_card_material(obj, json_path: str, colour_json: str = ""):
             aniso.default_value = 0.75
         row -= 300
 
-    handled = {"GlobalHairColor", "Coverage", "AttributeMap", "Depth", "Tangent"}
-    for param_name, (_fpath, img) in loaded.items():
-        if param_name in handled:
-            continue
-        node = nodes.new("ShaderNodeTexImage")
-        node.image = img
-        node.label = param_name
-        node.interpolation = "Linear"
-        node.location = (x - 400, row)
-        row -= 260
+    # Textures nothing reads (Depth, unused atlases) are not built; prune any left unlinked.
+    _prune_unlinked_textures(nodes)
+    try:
+        from .character_body import arrange_flow
+        arrange_flow(nodes, links, list(nodes), origin=(x - 900, 600), title="Hair look")
+    except Exception as exc:
+        print(f"DR_HAIR_LAYOUT_SKIP {mat.name}: {exc}", flush=True)
 
     try:
         mat["arc_mi_path"] = os.path.abspath(json_path)

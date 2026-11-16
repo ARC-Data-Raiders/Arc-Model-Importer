@@ -49,7 +49,10 @@ param(
     # Either way the packaged CUE4Parse.Arc.dll must carry the perf types, or packaging fails.
     [string]$Cue4ParseRoot = $env:ARCPAK_CUE4PARSE_ROOT,
     [ValidateSet("", "Fpng", "FastPng")]
-    [string]$ArcPakPng = ""
+    [string]$ArcPakPng = "",
+    # The staged ArcPak exe/dlls must match ArcPak/runtime.sha256.json (the approved perf build).
+    # Pass this after an intentional rebuild; a mismatch then only warns.
+    [switch]$AllowArcPakRebuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -190,6 +193,31 @@ function Resolve-ReleaseLine {
     return "outfits"
 }
 
+function Test-ArcPakManifest {
+    # Compare SHA256 of the ArcPak runtime files in $ArcPakDir with the approved manifest.
+    # Returns the mismatch list; throws on mismatch unless $AllowRebuild.
+    param([string]$ArcPakDir, [string]$ManifestPath, [switch]$AllowRebuild)
+    if (-not (Test-Path -LiteralPath $ManifestPath)) { throw "ArcPak hash manifest missing: $ManifestPath" }
+    $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    $bad = @()
+    foreach ($prop in $manifest.files.PSObject.Properties) {
+        $file = Join-Path $ArcPakDir $prop.Name
+        if (-not (Test-Path -LiteralPath $file)) { $bad += "$($prop.Name): missing"; continue }
+        $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLowerInvariant()
+        if ($hash -ne ([string]$prop.Value).ToLowerInvariant()) { $bad += "$($prop.Name): $hash != approved $($prop.Value)" }
+    }
+    if ($bad.Count -eq 0) {
+        Write-Host "ArcPak runtime hashes match $(Split-Path -Leaf $ManifestPath) ($(@($manifest.files.PSObject.Properties).Count) files)"
+    }
+    elseif ($AllowRebuild) {
+        Write-Warning ("ArcPak runtime differs from the approved build (-AllowArcPakRebuild):`n  " + ($bad -join "`n  "))
+    }
+    else {
+        throw ("ArcPak runtime differs from the approved build in $ManifestPath. Restore the approved binaries, or pass -AllowArcPakRebuild for an intentional rebuild:`n  " + ($bad -join "`n  "))
+    }
+    return $bad
+}
+
 function Copy-ArcPakRuntime {
     param([string]$AddonDir, [string]$ReleaseLine)
     if ($ReleaseLine -eq "map-importer") { return }
@@ -225,7 +253,7 @@ function Copy-ArcPakRuntime {
         $exe = Join-Path $src "ArcPak.Export.exe"
         if (-not (Test-Path -LiteralPath $exe)) { throw "ArcPak.Export source has no executable: $src" }
         New-Item -ItemType Directory -Path $dst -Force | Out-Null
-        Get-ChildItem -LiteralPath $src -File | Where-Object { @(".dll", ".exe", ".json") -contains $_.Extension -and @("BouncyCastle.Cryptography.dll") -notcontains $_.Name } | ForEach-Object {
+        Get-ChildItem -LiteralPath $src -File | Where-Object { @(".dll", ".exe", ".json") -contains $_.Extension -and @("BouncyCastle.Cryptography.dll", "runtime.sha256.json") -notcontains $_.Name } | ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dst $_.Name) -Force
         }
         # Gate: the shipped CUE4Parse must be the perf build.
@@ -238,6 +266,7 @@ function Copy-ArcPakRuntime {
         if ($png -eq "Fpng" -and -not (Test-Path -LiteralPath (Join-Path $dst "fpng.dll"))) { throw "Packaged exporter uses Fpng but fpng.dll is missing" }
         if ($ArcPakPng -and $png -ne $ArcPakPng) { throw "Packaged exporter PNG path $png != requested $ArcPakPng" }
         Write-Host "ArcPak exporter: perf CUE4Parse, png=$png"
+        $null = Test-ArcPakManifest -ArcPakDir $dst -ManifestPath (Join-Path $arcDir "runtime.sha256.json") -AllowRebuild:$AllowArcPakRebuild
     }
     finally {
         if (Test-Path -LiteralPath $runtimeRoot) {
@@ -259,6 +288,33 @@ function Copy-ArcPakRuntime {
         } | ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $mapDst $_.Name) -Force
         }
+    }
+}
+
+function Copy-ShaderRuntime([string]$AddonDir) {
+    # Runtime closure only. Offline generators, tests and corpora stay in the repo.
+    $files = @(
+        "__init__.py",
+        "binding.py",
+        "disasm.py",
+        "interp.py",
+        "lower_blender.py",
+        "lower_dag.py",
+        "material_ub.py",
+        "opt.py",
+        "parse.py",
+        "ssa.py",
+        "visioncone.py",
+        "visioncone_runtime.py",
+        "visioncone_vf.py",
+        "volume.py"
+    )
+    $dst = Join-Path $AddonDir "shader_tools\dxbc"
+    New-Item -ItemType Directory -Path $dst -Force | Out-Null
+    foreach ($name in $files) {
+        $src = Join-Path $RepoRoot ("shader_tools\dxbc\" + $name)
+        if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { throw "Missing shader runtime module: $src" }
+        Copy-Item -LiteralPath $src -Destination (Join-Path $dst $name) -Force
     }
 }
 
@@ -286,11 +342,11 @@ function New-StagingDir {
         $src = Join-Path $RepoRoot $d
         if (-not (Test-Path -LiteralPath $src)) { throw "Missing addon section folder: $src" }
         $dst = Join-Path $addonStage $d
-        $xd = @("__pycache__", ".git")
+        $xd = @("__pycache__", ".git", ".local", "_tmp*", "tests")
         if ($d -eq "Maps") { $xd += "map_tools" }
         robocopy $src $dst /E /NFL /NDL /NJH /NJS /nc /ns /np `
             /XD @xd `
-            /XF *.pyc *.pyo *.log *.blend1 Thumbs.db @SectionExcludeFiles | Out-Null
+            /XF *.pyc *.pyo *.log *.blend1 Thumbs.db "arc_raiders_debug.log*" *.pre_restore_backup results.json @SectionExcludeFiles | Out-Null
         if ($LASTEXITCODE -ge 8) {
             throw "robocopy failed for $d (exit $LASTEXITCODE)"
         }
@@ -313,8 +369,8 @@ function New-StagingDir {
         else {
             # assets: copy but skip caches / thumbs
             robocopy $src $dst /E /NFL /NDL /NJH /NJS /nc /ns /np `
-                /XD __pycache__ .git `
-                /XF *.pyc *.pyo *.log *.blend1 Thumbs.db | Out-Null
+                /XD __pycache__ .git .local _tmp* tests `
+                /XF *.pyc *.pyo *.log *.blend1 Thumbs.db "arc_raiders_debug.log*" *.pre_restore_backup results.json | Out-Null
             if ($LASTEXITCODE -ge 8) {
                 throw "robocopy failed for $d (exit $LASTEXITCODE)"
             }
@@ -350,7 +406,7 @@ function New-StagingDir {
     Get-ChildItem -LiteralPath $addonStage -Recurse -Force -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
         ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue }
     Get-ChildItem -LiteralPath $addonStage -Recurse -Force -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Extension -in ".pyc", ".pyo", ".log", ".blend1" } |
+        Where-Object { $_.Extension -in ".pyc", ".pyo", ".log", ".blend1", ".pre_restore_backup" -or $_.Name -like "arc_raiders_debug.log*" -or $_.Name -eq "results.json" } |
         ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -Confirm:$false -ErrorAction SilentlyContinue }
 
     # Runtime shader layout and slot-one reference-card calibration.
@@ -364,6 +420,7 @@ function New-StagingDir {
         }
     }
 
+    Copy-ShaderRuntime -AddonDir $addonStage
     Copy-ArcPakRuntime -AddonDir $addonStage -ReleaseLine $ReleaseLine
 
     return @{ StageRoot = $stage; AddonDir = $addonStage; FolderName = $folderName }
@@ -443,7 +500,7 @@ function Update-StagedBlInfo([string]$AddonDir, [string]$ReleaseLine) {
         $desc = "Import Arc Raiders map placements, geometry, and ground materials."
     }
     else {
-        $desc = "Import Arc Raiders outfits, weapons, and models by selecting content folders."
+        $desc = "Import Arc Raiders outfits, weapons, animations, and models by selecting content folders."
     }
     $text = Get-Content -LiteralPath $initPath -Raw
     $updated = [regex]::Replace($text, '("name"\s*:\s*")([^"]*)(")', "`${1}$name`${3}", 1)
@@ -556,12 +613,88 @@ function Resolve-BlenderExe([string]$Requested) {
     throw "Blender is required for the package install check. Pass -BlenderExe or set BLENDER_EXE."
 }
 
+function Get-BlenderComputeHeadroom {
+    $processor = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop
+    $memory = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+    $gpus = @()
+    try {
+        $gpuCommand = Get-Command nvidia-smi -CommandType Application -ErrorAction SilentlyContinue
+        if ($gpuCommand) {
+            $gpuRows = @(& $gpuCommand.Source --query-gpu=index,utilization.gpu,memory.free --format=csv,noheader,nounits 2>$null)
+            if ($LASTEXITCODE -eq 0) {
+                foreach ($row in $gpuRows) {
+                    $fields = $row -split ","
+                    $gpuIndex = 0
+                    $utilization = 0.0
+                    $freeMemory = 0.0
+                    $numberStyle = [Globalization.NumberStyles]::Float
+                    $culture = [Globalization.CultureInfo]::InvariantCulture
+                    if ($fields.Count -eq 3 -and
+                        [int]::TryParse($fields[0].Trim(), [ref]$gpuIndex) -and
+                        [double]::TryParse($fields[1].Trim(), $numberStyle, $culture, [ref]$utilization) -and
+                        [double]::TryParse($fields[2].Trim(), $numberStyle, $culture, [ref]$freeMemory)) {
+                        $gpus += [pscustomobject]@{
+                            Index = $gpuIndex
+                            UtilizationPercent = $utilization
+                            FreeMemoryMiB = $freeMemory
+                        }
+                    }
+                }
+            }
+        }
+    }
+    catch { $gpus = @() }
+    [pscustomobject]@{
+        CpuPercent = $processor.PercentProcessorTime
+        AvailableMemoryGiB = if ($null -ne $memory.FreePhysicalMemory) { [double]$memory.FreePhysicalMemory / 1MB } else { $null }
+        Gpus = $gpus
+    }
+}
+
+function Assert-BlenderComputeHeadroom {
+    param(
+        [psobject]$Headroom = (Get-BlenderComputeHeadroom),
+        [switch]$RequireGpu
+    )
+    if ($null -eq $Headroom.CpuPercent -or $null -eq $Headroom.AvailableMemoryGiB) {
+        throw "Compute headroom is unknown; CPU and available RAM measurements are required."
+    }
+    $cpuPercent = [double]$Headroom.CpuPercent
+    $availableMemoryGiB = [double]$Headroom.AvailableMemoryGiB
+    if ([double]::IsNaN($cpuPercent) -or [double]::IsInfinity($cpuPercent) -or $cpuPercent -lt 0 -or $cpuPercent -gt 100 -or
+        [double]::IsNaN($availableMemoryGiB) -or [double]::IsInfinity($availableMemoryGiB) -or $availableMemoryGiB -lt 0) {
+        throw "Compute headroom is unknown; CPU or available RAM measurements are invalid."
+    }
+    $gpuSummary = @($Headroom.Gpus | ForEach-Object {
+        "GPU {0}: {1:N0}% busy, {2:N0} MiB free" -f $_.Index, $_.UtilizationPercent, $_.FreeMemoryMiB
+    }) -join "; "
+    if (-not $gpuSummary) { $gpuSummary = "GPU telemetry unavailable" }
+    Write-Host ("Compute headroom: CPU {0:N0}% busy; RAM {1:N1} GiB free; {2}" -f $cpuPercent, $availableMemoryGiB, $gpuSummary)
+    if ($cpuPercent -ge 90 -or $availableMemoryGiB -lt 4) {
+        throw ("Insufficient compute headroom: CPU {0:N0}% busy, RAM {1:N1} GiB free. Start Blender when CPU is below 90% and at least 4 GiB RAM is free." -f $cpuPercent, $availableMemoryGiB)
+    }
+    if ($RequireGpu) {
+        $readyGpus = @($Headroom.Gpus | Where-Object {
+            $null -ne $_.UtilizationPercent -and $null -ne $_.FreeMemoryMiB -and
+            -not [double]::IsNaN([double]$_.UtilizationPercent) -and
+            [double]$_.UtilizationPercent -ge 0 -and [double]$_.UtilizationPercent -lt 90 -and
+            -not [double]::IsInfinity([double]$_.FreeMemoryMiB) -and
+            [double]$_.FreeMemoryMiB -ge 1024
+        })
+        if (-not $readyGpus.Count) {
+            throw "Insufficient or unknown GPU headroom: at least one GPU must be below 90% utilization with 1024 MiB free VRAM."
+        }
+    }
+}
+
 function Test-PackagedAddon([string]$ZipPath, [string]$Folder, [string]$Version, [string]$StageRoot, [string]$Executable) {
+    Assert-BlenderComputeHeadroom
     # Keep the private profile path short: Blender's ZIP extractor still hits
     # Windows MAX_PATH with deeply nested addon icon filenames.
     $requestedCheckRoot = if ($InstallCheckRoot) { $InstallCheckRoot } elseif ($env:DATARAIDERS_INSTALL_CHECK_ROOT) { $env:DATARAIDERS_INSTALL_CHECK_ROOT } else { Split-Path $StageRoot -Parent }
     $scratchBase = (Resolve-Path -LiteralPath $requestedCheckRoot).Path
-    $checkRoot = Join-Path $scratchBase ("ic-" + [guid]::NewGuid().ToString("n").Substring(0, 8))
+    $checkRoot = Join-Path $scratchBase ([guid]::NewGuid().ToString("n").Substring(0, 4))
+    if (Test-Path -LiteralPath $checkRoot) { throw "Private profile already exists: $checkRoot" }
     $archive = [IO.Compression.ZipFile]::OpenRead($ZipPath)
     try {
         $longestInstallPath = 0
@@ -586,9 +719,6 @@ function Test-PackagedAddon([string]$ZipPath, [string]$Folder, [string]$Version,
         TEMP = (Join-Path $checkRoot "temp")
         TMP = (Join-Path $checkRoot "temp")
         PYTHONDONTWRITEBYTECODE = "1"
-        OMP_NUM_THREADS = "4"
-        OPENBLAS_NUM_THREADS = "1"
-        DOTNET_PROCESSOR_COUNT = "4"
     }
     $oldEnv = @{}
     foreach ($key in $privateEnv.Keys) {
@@ -601,8 +731,26 @@ function Test-PackagedAddon([string]$ZipPath, [string]$Folder, [string]$Version,
         $oldErrorAction = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
-            $checkOutput = & $Executable --background --factory-startup -t 4 --python-exit-code 1 --python $checkScript -- (Resolve-Path -LiteralPath $ZipPath).Path $Folder $Version 2>&1
-            $checkExit = $LASTEXITCODE
+            $checkArgs = @("--background", "--factory-startup", "--python-exit-code", "1", "--python", $checkScript, "--", (Resolve-Path -LiteralPath $ZipPath).Path, $Folder, $Version)
+            $checkInfo = New-Object Diagnostics.ProcessStartInfo
+            $checkInfo.FileName = $Executable
+            $checkInfo.Arguments = ($checkArgs | ForEach-Object { '"' + $_ + '"' }) -join ' '
+            $checkInfo.UseShellExecute = $false
+            $checkInfo.CreateNoWindow = $true
+            $checkInfo.RedirectStandardOutput = $true
+            $checkInfo.RedirectStandardError = $true
+            $checkProcess = [Diagnostics.Process]::Start($checkInfo)
+            try {
+                $checkProcess.PriorityClass = 'BelowNormal'
+                $checkStdout = $checkProcess.StandardOutput.ReadToEndAsync()
+                $checkStderr = $checkProcess.StandardError.ReadToEndAsync()
+                $checkProcess.WaitForExit()
+                $checkOutput = @($checkStdout.Result, $checkStderr.Result)
+                $checkExit = $checkProcess.ExitCode
+            }
+            finally {
+                $checkProcess.Dispose()
+            }
         }
         finally {
             $ErrorActionPreference = $oldErrorAction
@@ -685,6 +833,7 @@ try {
     )
     $zipSize = (Get-Item -LiteralPath $OutZip).Length
     Write-Host ("Wrote {0} ({1:N2} MB)" -f $OutZip, ($zipSize / 1MB))
+    if ($zipSize -gt 50MB) { Write-Warning ("Release zip is {0:N2} MB, above the 50 MB guide." -f ($zipSize / 1MB)) }
 
     $blenderPath = Resolve-BlenderExe $BlenderExe
     Test-PackagedAddon -ZipPath $OutZip -Folder $folderName -Version $ver -StageRoot $staged.StageRoot -Executable $blenderPath

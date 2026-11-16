@@ -83,3 +83,27 @@ CLAUDE.md
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Root scratch / probe clutter from local agent runs (never shipped)
+/E/
+/_tmp/
+/uh/
+/v2/
+/swap/
+/base/
+/System.Diagnostics.Process*/
+/*.exr
+/results.json
+arc_raiders_debug.log*
+scripts/lighting/probe/bin/
+scripts/lighting/probe/obj/
+ArcPak/Tests/bin/
+ArcPak/Tests/obj/
+
+# ArcPak runtime binaries: untracked by decision. The approved build lives on disk in ArcPak/
+# and package_addon.ps1 checks it against ArcPak/runtime.sha256.json, which stays tracked.
+ArcPak/*.dll
+ArcPak/*.exe
+ArcPak/ArcPak.Export.deps.json
+ArcPak/ArcPak.Export.runtimeconfig.json
+!ArcPak/runtime.sha256.json

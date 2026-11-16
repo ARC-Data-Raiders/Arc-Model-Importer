@@ -117,7 +117,8 @@ def setup_misc_material(obj, psk_path: str):
         obj.active_material_index = original_index
         apply_embedded_fur_slots(obj, psk_path)
         _fill_shell_slots(obj, os.path.dirname(psk_path))
-        # Opaque glass (the resin pickup) has a compiled-shader surface profile the shading-model family lacks.
+        # Opaque glass (the resin pickup) has a compiled-shader surface profile the shading-model family lacks;
+        # slots left on the legacy simple catch-all (Masked+NA+Detail spring) get their rebuild family.
         from ...Outfit_Accessories.revamped_bridge import rebuild_surface_families
         rebuild_surface_families(obj, psk_path, {"glass_opaque"})
         obj["arc_accessory_material_route"] = "authored-mi-slots"

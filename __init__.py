@@ -4,9 +4,9 @@ Import Arc Raiders models by selecting an outfit folder.
 """
 
 bl_info = {
-    "name": "Arc Asset Importer v2.3.18",
-    "author": "Silarious / Naryun & Zebulon Core Functions",
-    "version": (2, 3, 18),
+    "name": "Arc Asset Importer v2.3.33",
+    "author": "Silarious",
+    "version": (2, 3, 33),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > Arc Asset Importer",
     "description": "Import Arc Raiders outfits, weapons, animations, and models by selecting content folders.",
@@ -40,22 +40,36 @@ _configure_pycache_prefix()
 
 import bpy
 
-# Add current directory to path for imports
+# Submodules import with package-relative imports only; the addon folder is not
+# put on sys.path (generic names like ``utils`` would shadow other add-ons).
 addon_dir = _addon_dir
-if addon_dir not in sys.path:
-    sys.path.insert(0, addon_dir)
 
 from .Outfit_Accessories import addon_line
 from .Outfit_Accessories import properties
 from .Shared import operators
 from . import sidebar
 from .Shared import shader_control_ops
-from .Shared import importing
-from .Shared import materials
-from .Shared import textures
 from .Shared import utils
 from .Shared import pak_extract
-from .Maps import map_placement  # noqa: F401 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â map-importer lane; bridge helpers shared with outfits
+
+# Loaded on first attribute access (``<package>.materials`` etc.) instead of at enable.
+_LAZY_SUBMODULES = {
+    "importing": ".Shared.importing",
+    "materials": ".Shared.materials",
+    "textures": ".Shared.textures",
+    "map_placement": ".Maps.map_placement",  # map-importer lane; bridge helpers shared with outfits
+}
+
+
+def __getattr__(name):
+    target = _LAZY_SUBMODULES.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    module = importlib.import_module(target, __name__)
+    globals()[name] = module
+    return module
 
 
 
@@ -95,13 +109,24 @@ def _safe_unregister_class(cls):
             pass
 
 
+def _anything_registered():
+    """True when a class of this add-on (or a stale copy of it) is live in RNA."""
+    for group in (sidebar.classes, operators.classes, pak_extract.classes, properties.classes):
+        for cls in group:
+            if getattr(cls, "is_registered", False) or hasattr(bpy.types, cls.__name__):
+                return True
+    return False
+
+
 def register():
     """Register all modules and properties (idempotent on reinstall/reload)."""
-    # Clean slate so Preferences ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Install over an enabled copy cannot double-register.
-    try:
-        unregister()
-    except Exception:
-        pass
+    # Clean slate so Preferences > Install over an enabled copy cannot double-register.
+    # Skip the full walk on a cold enable (nothing of ours in RNA yet).
+    if _anything_registered():
+        try:
+            unregister()
+        except Exception:
+            pass
 
     properties.register()
     from .Weapons import weapon_ui
@@ -133,8 +158,17 @@ def register():
         _safe_register_class(cls)
 
     shader_control_ops.register()
+    from .Shared import look_panel
+    look_panel.register()
     from .Shared import texture_sets
     texture_sets.register()
+    from .Shared import ui_lists
+    ui_lists.register()
+    from .Shared import node_tools
+    node_tools.register()
+    from .Shared import first_image
+    for cls in first_image.CLASSES:
+        _safe_register_class(cls)
     for cls in sidebar.classes:
         _safe_register_class(cls)
     try:
@@ -143,11 +177,16 @@ def register():
     except Exception as e:
         print(f"Arc Raiders shader parity: register failed: {e}")
 
+    from .shader_tools.dxbc import visioncone_runtime
+    visioncone_runtime.register()
+
     # Runtime resources and listeners are initialized on demand by their UI actions.
 
     # Instancer material focus is map Fast-import only.
     if addon_line.is_map_importer_line():
         try:
+            from .Maps import map_placement
+
             map_placement.register_instancer_material_focus()
         except Exception as e:
             print(f"Arc Raiders instancer material focus: register failed: {e}")
@@ -160,6 +199,8 @@ def register():
 
 def unregister():
     """Unregister all modules and properties (safe if partially registered)."""
+    from .shader_tools.dxbc import visioncone_runtime
+    visioncone_runtime.unregister()
     try:
         from .Shared.materials.native import shader_parity
         shader_parity.unregister()
@@ -178,6 +219,8 @@ def unregister():
     character_fit.unregister()
     try:
         if addon_line.is_map_importer_line():
+            from .Maps import map_placement
+
             map_placement.unregister_instancer_material_focus()
     except Exception:
         pass
@@ -192,6 +235,27 @@ def unregister():
 
     for cls in reversed(sidebar.classes):
         _safe_unregister_class(cls)
+    try:
+        from .Shared import first_image
+        for cls in reversed(first_image.CLASSES):
+            _safe_unregister_class(cls)
+    except Exception:
+        pass
+    try:
+        from .Shared import node_tools
+        node_tools.unregister()
+    except Exception:
+        pass
+    try:
+        from .Shared import ui_lists
+        ui_lists.unregister()
+    except Exception:
+        pass
+    try:
+        from .Shared import look_panel
+        look_panel.unregister()
+    except Exception:
+        pass
     try:
         shader_control_ops.unregister()
     except Exception:

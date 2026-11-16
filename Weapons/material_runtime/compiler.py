@@ -11,6 +11,90 @@ from ...Shared.materials import graph_layout as _graph_layout
 _UC_KEYS={'base_color':'Albedo','roughness':'Roughness','metallic':'Metallic'}
 _OUTPUTS={'base_color':'Base Color','roughness':'Roughness','metallic':'Metallic','specular':'Specular IOR Level','normal':'Normal','alpha':'Alpha','emission':'Emission Color','emission_strength':'Emission Strength','ior':'IOR','transmission':'Transmission Weight','coat':'Coat Weight','coat_roughness':'Coat Roughness','tangent':'Tangent','anisotropy':'Anisotropic IOR Level','subsurface_weight':'Subsurface Weight','subsurface_radius':'Subsurface Radius'}
 
+# Stage frames: internal name -> plain label, graph_layout stage tag.
+_STAGE_LABELS={'DR.Controls':'Controls','DR.Coordinates':'Coordinates','DR.Source':'Textures','DR.LayerInputs':'Layer Inputs',
+               'DR.Wear':'Weathering','DR.Surface':'Surface','DR.Details':'Detail','DR.Light':'Emission',
+               'DR.Coverage':'Coverage','DR.Output':'Output'}
+_STAGE_TAGS={'DR.Controls':'Controls','DR.Coordinates':'Coordinates','DR.Source':'Textures','DR.LayerInputs':'Inputs',
+             'DR.Wear':'Weathering','DR.Surface':'Surface','DR.Details':'Detail','DR.Light':'Surface',
+             'DR.Coverage':'Mask','DR.Output':'Output'}
+LAYOUT_VER=1
+
+def _stage_role(stage):
+    return getattr(_graph_layout,'STAGE_ROLE',{}).get(_STAGE_TAGS.get(stage),'surface')
+
+def _stage_color(stage):
+    return getattr(_graph_layout,'ROLE_COLORS',{}).get(_stage_role(stage),(0.12,0.20,0.28))
+
+# Control sockets: key -> (plain name, panel, min, max, subtype, hint). The key stays the
+# stable id (group['arc_control_keys'] maps it to the socket identifier); old names alias it.
+_CONTROL_SPEC={
+    'dr_roughness_scale':('Roughness Scale','Surface',0.,2.,'NONE','Multiplies the game roughness'),
+    'dr_metallic_scale':('Metallic Scale','Surface',0.,2.,'NONE','Multiplies the game metallic value'),
+    'dr_emission_scale':('Emission Strength','Surface',0.,10.,'NONE','Multiplies the glow colour'),
+    'dr_alpha_scale':('Alpha Scale','Surface',0.,2.,'NONE','Multiplies the game opacity'),
+    'dr_uc_hue':('Hue Shift','Colour',-.5,.5,'NONE','Rotates the colour hue'),
+    'dr_uc_sat':('Saturation','Colour',0.,2.,'NONE','Scales colour saturation'),
+    'dr_uc_val':('Brightness','Colour',0.,2.,'NONE','Scales colour brightness'),
+    'dr_uc_tint_h':('Tint Hue','Colour',0.,1.,'FACTOR','Hue of the tint colour'),
+    'dr_uc_tint_a':('Tint Amount','Colour',0.,1.,'FACTOR','How much tint to mix in'),
+    'dr_uc_wear':('Wear','Weathering',0.,1.,'FACTOR','Adds worn edges'),
+    'dr_uc_dirt':('Dirt','Weathering',0.,1.,'FACTOR','Adds dirt in creases'),
+    'dr_uc_wet':('Wetness','Weathering',0.,1.,'FACTOR','Makes the surface look wet'),
+    'dr_uc_snow':('Snow','Weathering',0.,1.,'FACTOR','Adds snow on top faces'),
+    'dr_uc_rust':('Rust','Weathering',0.,1.,'FACTOR','Adds rust on metal'),
+}
+_PANELS=('Colour','Surface','Weathering','Advanced')
+
+def _control_socket(group,panels,keys,key,default,label):
+    """New float group input for control ``key`` in its panel, with range, subtype and hint."""
+    spec=_CONTROL_SPEC.get(key)
+    if spec is None:
+        text=str(label or key).replace('_',' ').strip()
+        name=' '.join(w[:1].upper()+w[1:] for w in text.split()) or key
+        spec=(name,'Advanced',min(0.,float(default)),max(1.,abs(float(default))*4.),'NONE','Game parameter '+str(key))
+    name,panel_name,lo,hi,subtype,hint=spec
+    taken={s.name for s in group.interface.items_tree if getattr(s,'item_type','')=='SOCKET' and s.in_out=='INPUT'}
+    if name in taken: name=name+' ('+str(key)+')'
+    if not panels:
+        for i,pname in enumerate(_PANELS):
+            try: panels[pname]=group.interface.new_panel(pname,default_closed=i>0)
+            except (TypeError,AttributeError): panels[pname]=None
+    parent=panels.get(panel_name)
+    try: socket=group.interface.new_socket(name=name,in_out='INPUT',socket_type='NodeSocketFloat',parent=parent)
+    except TypeError: socket=group.interface.new_socket(name=name,in_out='INPUT',socket_type='NodeSocketFloat')
+    socket.default_value=default
+    socket.min_value=min(lo,float(default)); socket.max_value=max(hi,float(default))
+    try: socket.subtype=subtype
+    except (TypeError,AttributeError): pass
+    socket.description=hint
+    keys[key]=socket.identifier
+    group['arc_control_keys']=json.dumps(keys,sort_keys=True)
+    return socket
+
+def _finish_panels(group,panels):
+    """Drop empty panels and open the first one that holds sockets."""
+    opened=False
+    for pname in _PANELS:
+        panel=panels.get(pname)
+        if panel is None: continue
+        if not any(getattr(item,'parent',None)==panel and item!=panel for item in group.interface.items_tree):
+            group.interface.remove(panel); continue
+        panel.default_closed=opened; opened=True
+
+def control_keys(group):
+    """{control key: socket identifier} of a compiled group ({} for an old graph)."""
+    try: return json.loads(group.get('arc_control_keys') or '{}') if group is not None else {}
+    except (TypeError,ValueError): return {}
+
+def control_input(group_node,key):
+    """Wrapper input for control ``key`` (new graphs map by identifier; old ones named it ``key``)."""
+    ident=control_keys(getattr(group_node,'node_tree',None)).get(key)
+    if ident:
+        for s in group_node.inputs:
+            if s.identifier==ident: return s
+    return group_node.inputs.get(key)
+
 
 def authored_role(repository,reference,role):
     """Image role the game's sampler gives a texture whatever a recipe asks (T_Door_02_A_XEM, native prop).
@@ -56,19 +140,27 @@ def compile_plan(plan,material,obj=None,repository=None, *, replace=False,templa
     group.interface.new_socket(name='Shader',in_out='OUTPUT',socket_type='NodeSocketShader')
     nodes=group.nodes; links=group.links
     memo={}; coordinate_memo={}; uv_values={}; fingerprint_memo={}; input_memo={}; image_memo={}; retained=[]; preview_parameters={}
-    stages=('DR.Coordinates','DR.Source','DR.LayerInputs','DR.Wear','DR.Surface','DR.Details','DR.Light','DR.Coverage','DR.Output')
+    stages=('DR.Controls','DR.Coordinates','DR.Source','DR.LayerInputs','DR.Wear','DR.Surface','DR.Details','DR.Light','DR.Coverage','DR.Output')
     frames={}
-    current=['DR.Surface','']
+    current=['DR.Surface','','']
+    step=['']  # nearest named consumer step, used to word helper maths
     serial=[0]
     def node(kind):
         stage=current[0]
         if stage not in frames:
-            frame=nodes.new('NodeFrame'); frame.name=stage; frame.label=stage; frame.use_custom_color=True
-            frame.color=(0.12,0.20,0.28); frames[stage]=frame
+            frame=nodes.new('NodeFrame'); frame.name=stage; frame.label=_STAGE_LABELS.get(stage,stage); frame.use_custom_color=True
+            frame.color=_stage_color(stage); frame.label_size=20; frames[stage]=frame
+            _graph_layout.tag(frame,stage=_STAGE_TAGS.get(stage),role=_stage_role(stage))
         n=nodes.new(kind); n.parent=frames[stage]; serial[0]+=1
         n.name=stage+'.'+kind.removeprefix('ShaderNode')+'.'+str(serial[0]).zfill(4)
         n.label=current[1] or kind.removeprefix('ShaderNode')
+        _graph_layout.tag(n,stage=_STAGE_TAGS.get(stage),zone=current[2] or None,role=_stage_role(stage))
         return n
+    def math_label(n,operation):
+        # Plain words for helper maths: '<step>: Multiply' (Blender caps labels at 63 chars).
+        text=operation.replace('_',' ').title()
+        name=current[1] or step[0]
+        n.label=((name+': ') if name else '')[:60-len(text)]+text
     def connect(value,socket):
         if isinstance(value,(tuple,list)):
             value=combine(value)
@@ -123,7 +215,7 @@ def compile_plan(plan,material,obj=None,repository=None, *, replace=False,templa
             if folded is not None: return folded
         key=(operation,operand(x))
         if key in cse: return cse[key]
-        n=node('ShaderNodeMath'); n.operation=operation; connect(x,n.inputs[0]); cse[key]=n.outputs[0]; return n.outputs[0]
+        n=node('ShaderNodeMath'); n.operation=operation; math_label(n,operation); connect(x,n.inputs[0]); cse[key]=n.outputs[0]; return n.outputs[0]
     def binary(operation,x,y,third=None):
         if isinstance(x,(tuple,list)) or isinstance(y,(tuple,list)):
             vectors=[value for value in (x,y) if isinstance(value,(tuple,list))]
@@ -145,7 +237,7 @@ def compile_plan(plan,material,obj=None,repository=None, *, replace=False,templa
             if simple is not None: return simple
         key=(operation,operand(x),operand(y),None if third is None else operand(third))
         if key in cse: return cse[key]
-        n=node('ShaderNodeMath'); n.operation=operation; connect(x,n.inputs[0]); connect(y,n.inputs[1])
+        n=node('ShaderNodeMath'); n.operation=operation; math_label(n,operation); connect(x,n.inputs[0]); connect(y,n.inputs[1])
         if third is not None: connect(third,n.inputs[2])
         cse[key]=n.outputs[0]; return n.outputs[0]
     def dot(x,y):
@@ -155,17 +247,19 @@ def compile_plan(plan,material,obj=None,repository=None, *, replace=False,templa
         return result
     def norm(x):
         length=unary('SQRT',dot(x,x)); return binary('DIVIDE',x,length)
-    control_labels={}; control_inputs={}
+    control_labels={}; control_inputs={}; control_panels={}; control_keys={}
     def control(key,default,label,policy=''):
         if key in preview_parameters:
             prior_default,value=preview_parameters[key]
             if prior_default!=default: raise ValueError('Conflicting preview parameter definitions: '+key)
             return value
-        socket=group.interface.new_socket(name=key,in_out='INPUT',socket_type='NodeSocketFloat')
-        socket.default_value=default
+        socket=_control_socket(group,control_panels,control_keys,key,default,label)
         if not control_inputs:
+            current_stage=current[:]; current[:]=['DR.Controls','Controls','']
             control_inputs['node']=node('NodeGroupInput')
-        value=control_inputs['node'].outputs[key]
+            current[:]=current_stage
+            _graph_layout.tag(control_inputs['node'],stage='Controls',role='controls')
+        value=next(s for s in control_inputs['node'].outputs if s.identifier==socket.identifier)
         preview_parameters[key]=(default,value)
         control_labels[key]=(label,policy)
         return value
@@ -182,8 +276,13 @@ def compile_plan(plan,material,obj=None,repository=None, *, replace=False,templa
         stage=str(at.get('stage',inferred)); stage=stage if stage.startswith('DR.') else 'DR.'+stage
         # Unknown specialized stage labels remain in the nearest physical stage.
         if stage not in stages: stage=next((s for s in stages if stage.startswith(s+'.')),inferred)
+        # Zone tag: explicit 'zone' attr, else inherit from the consumer; shared inputs and named stage steps reset it.
+        zone=str(at['zone']) if at.get('zone') else '' if (signature is not None or 'stage' in at or 'name' in at) else previous[2]
+        current[2]=zone
+        own_name=str(at.get('name',at.get('label','')))
+        previous_step=step[0]; step[0]=own_name or (previous_step if not (signature is not None or 'stage' in at) else '')
         a=[lower(v) for v in e.args]
-        current[:]=[stage,str(at.get('name',at.get('label','')))]
+        current[:]=[stage,own_name,zone]
         if op=='literal': value=a[0]
         elif op=='preview_parameter':
             key,default=preview_parameter_definition(at)
@@ -238,7 +337,7 @@ def compile_plan(plan,material,obj=None,repository=None, *, replace=False,templa
             rgb=split(n.outputs['Color']); value=rgb+(n.outputs['Alpha'],)
         elif op=='tangent_view':
             from ...Shared.materials.native.renderer_vectors import lower_native_tangent_view
-            current[:]=['DR.Coordinates','Native view in authored tangent basis']
+            current[:]=['DR.Coordinates','Native view in authored tangent basis','']
             def view_node(kind,label=''):
                 result=node(kind)
                 if label: result.label=label
@@ -280,10 +379,10 @@ def compile_plan(plan,material,obj=None,repository=None, *, replace=False,templa
         if isinstance(value,(tuple,list)) and _coordinate_expr(e,coordinate_memo): uv_values[id(value)]=value
         memo[identity]=value
         if signature is not None: input_memo[signature]=value
-        current[:]=previous; return value
+        current[:]=previous; step[0]=previous_step; return value
     try:
-        current[:]=['DR.Surface','Physical surface']; shader=node('ShaderNodeBsdfPrincipled')
-        current[:]=['DR.Output','Material shader']; output=node('NodeGroupOutput'); links.new(shader.outputs['BSDF'],output.inputs['Shader'])
+        current[:]=['DR.Surface','Physical surface','']; shader=node('ShaderNodeBsdfPrincipled')
+        current[:]=['DR.Output','Material shader','']; output=node('NodeGroupOutput'); links.new(shader.outputs['BSDF'],output.inputs['Shader'])
         uc_in={}
         for key,e in plan.outputs.items():
             if key=='alpha' and ignores_alpha_output(plan.settings):
@@ -291,7 +390,7 @@ def compile_plan(plan,material,obj=None,repository=None, *, replace=False,templa
             if key not in _OUTPUTS: raise NotImplementedError('Unknown shader output '+key)
             socket=shader.inputs.get(_OUTPUTS[key])
             if socket is None: raise NotImplementedError('Blender socket unavailable: '+_OUTPUTS[key])
-            current[:]=['DR.Light' if key in ('emission','emission_strength') else 'DR.Coverage' if key=='alpha' else 'DR.Details' if key in ('normal','tangent') else 'DR.Surface',key.replace('_',' ').title()]
+            current[:]=['DR.Light' if key in ('emission','emission_strength') else 'DR.Coverage' if key=='alpha' else 'DR.Details' if key in ('normal','tangent') else 'DR.Surface',key.replace('_',' ').title(),'']
             v=lower(e)
             if key in ('roughness','metallic','emission','alpha'):
                 gain=control('dr_'+key+'_scale',1.0,key.replace('_',' ').title()+' scale')
@@ -308,7 +407,7 @@ def compile_plan(plan,material,obj=None,repository=None, *, replace=False,templa
         if uc_in:
             # Shared User Controls group between game values and the BSDF (neutral defaults are exact).
             from ...Shared.materials import user_controls as _uc
-            current[:]=['DR.Surface',_uc.UC_LABEL]; ucn=node('ShaderNodeGroup'); ucn.node_tree=_uc.ensure_group()
+            current[:]=['DR.Surface',_uc.UC_LABEL,'']; ucn=node('ShaderNodeGroup'); ucn.node_tree=_uc.ensure_group()
             ucn.label=_uc.UC_LABEL; ucn['arc_user_controls']=_uc.UC_VER
             for key,(v,socket) in uc_in.items():
                 connect(v,ucn.inputs[_UC_KEYS[key]]); links.new(ucn.outputs[_UC_KEYS[key]],socket)
@@ -344,7 +443,8 @@ def compile_plan(plan,material,obj=None,repository=None, *, replace=False,templa
         for stage in stages:
             if stage in frames:
                 frames[stage].location=(x,0); x+=stage_widths[stage]+120
-        _graph_layout.tidy_tree(group)
+        _finish_panels(group,control_panels)
+        _layout(group,collapse=True)  # group root: collapse zone/stage chunks into child groups
         result=_attach_group(plan,material,group,preview_parameters,control_labels,settings,replace)
         if template_key is not None:
             pristine=group.copy()
@@ -361,6 +461,13 @@ def compile_plan(plan,material,obj=None,repository=None, *, replace=False,templa
         raise
 
 
+def _layout(tree,collapse=None):
+    """finalize_tree when graph_layout has it, else the column tidy; stamps the layout version."""
+    fin=getattr(_graph_layout,'finalize_tree',None)
+    if fin is not None: fin(tree,collapse=collapse)
+    else: _graph_layout.tidy_tree(tree)
+    tree['arc_layout_ver']=LAYOUT_VER
+
 def _attach_group(plan,material,group,preview_parameters,control_labels,settings,replace):
     import bpy
     old_use_nodes=material.use_nodes
@@ -371,19 +478,19 @@ def _attach_group(plan,material,group,preview_parameters,control_labels,settings
     material.use_nodes=True; tree=material.node_tree
     old_nodes=list(tree.nodes)
     old_active=[n for n in old_nodes if n.type=='OUTPUT_MATERIAL' and n.is_active_output]
-    wrapper=tree.nodes.new('ShaderNodeGroup'); wrapper.node_tree=group; wrapper.name='DR.Pending.Material'; wrapper.label='DR '+plan.family
+    wrapper=tree.nodes.new('ShaderNodeGroup'); wrapper.node_tree=group; wrapper.name='DR.Pending.Material'; wrapper.label='Arc '+str(plan.family).replace('_',' ').title()+' Look'
     out=tree.nodes.new('ShaderNodeOutputMaterial'); out.name='DR.Pending.Output'
-    root_controls=[]
     wrapper.location=(0,0); wrapper.width=280; out.location=(420,0)
+    _graph_layout.tag(wrapper,stage='Look',role='surface'); _graph_layout.tag(out,stage='Output',role='output')
     try:
-        for index,(key,(default,_value)) in enumerate(preview_parameters.items()):
-            control_node=tree.nodes.new('ShaderNodeValue'); root_controls.append(control_node)
-            control_node.name='DR.Control.'+key; control_node.label=control_labels[key][0]
-            control_node['dr_preview_parameter']=key; control_node['dr_preview_default']=default
-            control_node['dr_preview_policy']=control_labels[key][1]
-            control_node.outputs[0].default_value=default
-            control_node.location=((index%3)*250,340+(index//3)*160); control_node.width=220
-            tree.links.new(control_node.outputs[0],wrapper.inputs[key])
+        # Controls are the wrapper's own sockets (no loose Value nodes at the top level).
+        defaults={}
+        for key,(default,_value) in preview_parameters.items():
+            control_input(wrapper,key).default_value=default; defaults[key]=default
+        if defaults:
+            wrapper['dr_preview_parameter']=','.join(defaults)
+            wrapper['dr_preview_policy']=json.dumps({key:control_labels[key][1] for key in defaults},sort_keys=True)
+            wrapper['arc_import_defaults']=json.dumps(defaults,sort_keys=True)
         tree.links.new(wrapper.outputs['Shader'],out.inputs['Surface']); out.is_active_output=True
         material.use_backface_culling=not settings['two_sided']
         if hasattr(material,'surface_render_method') and settings['render_method'] is not None: material.surface_render_method=settings['render_method']
@@ -391,7 +498,6 @@ def _attach_group(plan,material,group,preview_parameters,control_labels,settings
         material['independent_diagnostics']='\n'.join(map(str,plan.diagnostics))
         material['independent_owned_graph']=replace
     except Exception:
-        for control_node in root_controls: tree.nodes.remove(control_node)
         tree.nodes.remove(out); tree.nodes.remove(wrapper)
         for previous in old_active: previous.is_active_output=True
         material.use_backface_culling=old_culling
@@ -410,8 +516,8 @@ def _attach_group(plan,material,group,preview_parameters,control_labels,settings
     else:
         # Only a single active output is allowed even when retaining unmanaged nodes.
         for previous in old_active: previous.is_active_output=False
-    wrapper.name='DR.Material'; out.name='DR.Output'; out.label='DR.Output'
-    _graph_layout.tidy_tree(tree)
+    wrapper.name='DR.Material'; out.name='DR.Output'; out.label='Material Output'
+    _layout(tree)
     return material
 
 # Bind this module's source identity at import; overwrites require restart.

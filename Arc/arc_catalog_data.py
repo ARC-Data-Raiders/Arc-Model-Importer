@@ -68,13 +68,24 @@ def by_key(key):
     return _BY_KEY.get(str(key or ""))
 
 
+_ENUM_ITEMS=None
+
+
+def display_label(key):
+    """Clean enemy name for a catalog key: 'Leaper (Bullcrab)' -> 'Leaper'."""
+    row=by_key(key)
+    if not row:
+        return ''
+    return row[1].split('(',1)[0].strip() or row[1]
+
+
 def enum_items(_self=None, _context=None):
-    items=[]
-    for key,label,_image in ARC_ENEMIES:
-        codename=key.title().replace('_',' ')
-        # Keep the already-humanized codenames for the entries with legacy
-        # labels; otherwise show the catalog's stable codename in parentheses.
-        if '(' not in label:
-            label=f'{label} ({codename})'
-        items.append((key,label,f'Codex ARC portrait: {label}'))
-    return items
+    # Blender keeps pointers into the returned strings: build once and keep alive.
+    global _ENUM_ITEMS
+    if _ENUM_ITEMS is None:
+        items=[('NONE','Choose an Enemy...','Pick an enemy to import')]
+        for key,_label,_image in ARC_ENEMIES:
+            name=display_label(key)
+            items.append((key,name,f'{name}. Code name: {key}'))
+        _ENUM_ITEMS=items
+    return _ENUM_ITEMS

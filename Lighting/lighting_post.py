@@ -17,6 +17,7 @@ blurred luminance and bilateral grid) are approximate.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 import bpy
@@ -27,8 +28,10 @@ from . import lighting_grade as grade
 GROUP_NAME = "ArcLightingLook"
 LUT_GROUP_NAME = "ArcGameTonemapLUT"
 LUT_IMAGE_NAME = "ArcLightingGameLUT"
-STACK_VERSION = 13
-LUT_SCHEMA = 1
+STACK_VERSION = 15  # 15: "Arc Look" group with one sub-group per pipeline stage
+LUT_SCHEMA = 2  # 2: LUT sample / interpolation / output sub-groups
+LOOK_GROUP = "Arc Look"
+NODE_MAP_KEY = "arc_node_map"  # {node key: "group node/child group node/node key"}
 REF_PASS_INDEX = 64  # reference_planes.REF_PASS_INDEX: UI art is already display-referred
 # Weighted log-luminance is stored as w * (log2 L + _LOG_SHIFT) / _LOG_SPAN so the
 # Levels mean never sees values outside [0, 1].
@@ -37,20 +40,52 @@ _LOG_SPAN = 40.0
 _BLOOM_TINTS = (0.3465, 0.138, 0.1176, 0.066, 0.066, 0.061)
 
 
+def _plain(key):
+    """Display label for a stable node key: "ArcMeterLog2" -> "Meter Log2"."""
+    if key == "ArcLighting3DLUT":
+        return "Game Tonemap LUT"
+    for p in ("ArcLighting", "Arc"):
+        if key.startswith(p) and len(key) > len(p) and key[len(p)].isupper():
+            return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", key[len(p):])
+    return key
+
+
 class _Graph:
+    """Node builder: stable unique names (lookup keys), plain labels, a section per node."""
+
     def __init__(self, tree):
         self.tree = tree
         self.nodes, self.links = tree.nodes, tree.links
         self.count = 0
+        self.used = {n.name for n in tree.nodes}
+        self.section = None
+        self.sections = {}
+
+    def _unique(self, key):
+        out, k = key, 2
+        while out in self.used:
+            out = "%s %d" % (key, k)
+            k += 1
+        self.used.add(out)
+        return out
 
     def node(self, kind, label, loc=None):
         node = self.nodes.new(kind)
-        node.name = label
-        node.label = label
+        node.name = self._unique(label)
+        node.label = label if kind == "ShaderNodeValue" else _plain(label)
         if loc is None:
             loc = ((self.count % 12) * 200, -(self.count // 12) * 180)
         node.location = loc
         self.count += 1
+        self.sections[node.name] = self.section
+        return node
+
+    def rename(self, node, key):
+        self.used.discard(node.name)
+        sec = self.sections.pop(node.name, self.section)
+        node.name = self._unique(key)
+        node.label = _plain(key)
+        self.sections[node.name] = sec
         return node
 
     def put(self, socket, value):
@@ -60,7 +95,7 @@ class _Graph:
             socket.default_value = value
 
     def math(self, op, a, b=0.0, c=None, label=""):
-        n = self.node("ShaderNodeMath", label or op)
+        n = self.node("ShaderNodeMath", label or op.replace("_", " ").title())
         n.operation = op
         self.put(n.inputs[0], a)
         self.put(n.inputs[1], b)
@@ -83,8 +118,51 @@ def _rgba_out(node):
     return next(s for s in node.outputs if s.type == "RGBA")
 
 
-def _find(nodes, label):
-    return next((n for n in nodes if n.label == label), None)
+def _find(nodes, key):
+    """Node by stable name (or label) at the top level, through tree["arc_node_map"], or
+    recursively inside child groups. The stack keeps its nodes in "Arc Look" groups."""
+    hit = nodes.get(key) if hasattr(nodes, "get") else None
+    if hit is not None:
+        return hit
+    hit = next((n for n in nodes if n.label == key), None)
+    if hit is not None:
+        return hit
+    tree = getattr(nodes, "id_data", None)
+    nmap = tree.get(NODE_MAP_KEY) if tree is not None else None
+    path = None
+    try:
+        path = nmap.get(key) if nmap is not None else None
+    except Exception:
+        path = None
+    if path:
+        cur, segs = nodes, str(path).split("/")
+        for i, seg in enumerate(segs):
+            node = cur.get(seg)
+            if node is None:
+                break
+            if i == len(segs) - 1:
+                return node
+            sub = getattr(node, "node_tree", None)
+            if sub is None:
+                break
+            cur = sub.nodes
+    seen = set()
+
+    def walk(ns):
+        for n in ns:
+            sub = getattr(n, "node_tree", None) if n.bl_idname.endswith("Group") else None
+            if sub is None or sub.as_pointer() in seen:
+                continue
+            seen.add(sub.as_pointer())
+            hit = sub.nodes.get(key)
+            if hit is not None:
+                return hit
+            hit = walk(sub.nodes)
+            if hit is not None:
+                return hit
+        return None
+
+    return walk(nodes)
 
 
 # ---------------------------------------------------------------------------
@@ -129,12 +207,14 @@ def ensure_lut_group(image: bpy.types.Image) -> bpy.types.NodeTree:
             return tree
     if tree is not None:
         bpy.data.node_groups.remove(tree)
+    _remove_stale_groups()
     tree = bpy.data.node_groups.new(LUT_GROUP_NAME, "CompositorNodeTree")
     tree.interface.new_socket(name="Image", in_out="INPUT", socket_type="NodeSocketColor")
     tree.interface.new_socket(name="Image", in_out="OUTPUT", socket_type="NodeSocketColor")
     g = _Graph(tree)
     gi = g.node("NodeGroupInput", "Linear exposed scene (H)")
     go = g.node("NodeGroupOutput", "Linear display-referred")
+    g.section = "Sample"
     sep = g.node("CompositorNodeSeparateColor", "H channels")
     g.put(sep.inputs["Image"], gi.outputs["Image"])
     eps, scale, offset = float(grade.LOG_EPS), float(grade.LOG_SCALE), float(grade.LOG_OFFSET)
@@ -149,15 +229,18 @@ def ensure_lut_group(image: bpy.types.Image) -> bpy.types.NodeTree:
     upper = g.math("MINIMUM", g.math("ADD", lower, 1.0), float(n - 1), label="blue upper slice")
     frac = g.math("SUBTRACT", blue, lower, label="blue fraction")
     v = g.math("DIVIDE", g.math("ADD", green, 0.5), float(n), label="v")
+    g.section = None
     lut = g.node("CompositorNodeImage", "Game LUT image")
     lut.image = image
     samples = []
     for label, sl in (("lower", lower), ("upper", upper)):
+        g.section = "Sample"
         u = g.math("DIVIDE", g.math("ADD", g.math("MULTIPLY_ADD", sl, float(n), red), 0.5), float(n * n), label=f"u {label}")
         uv = g.node("ShaderNodeCombineXYZ", f"UV {label} (Z = coverage)")
         g.put(uv.inputs["X"], u)
         g.put(uv.inputs["Y"], v)
         uv.inputs["Z"].default_value = 1.0
+        g.section = None
         mu = g.node("CompositorNodeMapUV", f"Bilinear {label} slice")
         g.put(mu.inputs["Image"], lut.outputs["Image"])
         g.put(mu.inputs["UV"], uv.outputs["Vector"])
@@ -165,20 +248,186 @@ def ensure_lut_group(image: bpy.types.Image) -> bpy.types.NodeTree:
             mu.inputs["Interpolation"].default_value = "Bilinear"
         except Exception:
             pass
+        g.section = "Interpolation"
         s = g.node("CompositorNodeSeparateColor", f"{label} sample")
         g.put(s.inputs["Image"], mu.outputs["Image"])
         samples.append(s)
+    g.section = "Output"
     comb = g.node("CompositorNodeCombineColor", "Display-decoded RGB")
     gain = float(grade.CONSUMER_GAIN)
     for ch in ("Red", "Green", "Blue"):
+        g.section = "Interpolation"
         tri = g.lerp(samples[0].outputs[ch], samples[1].outputs[ch], frac)
         disp = g.clamp01(g.math("MULTIPLY", tri, gain, label=f"{ch} x1.05"))
+        g.section = "Output"
         g.put(comb.inputs[ch], _decode_srgb(g, disp))
     g.put(comb.inputs["Alpha"], sep.outputs["Alpha"])
     g.put(go.inputs["Image"], comb.outputs["Image"])
     tree["arc_lut_size"] = n
     tree["arc_lut_schema"] = LUT_SCHEMA
+    tree.description = LUT_DESCRIPTION
+    g.section = None
+    nmap = _group_sections(tree, g.sections, LUT_SECTIONS, "Arc LUT ")
+    tree[NODE_MAP_KEY] = {k: v + "/" + k for k, v in nmap.items()}
+    _finalize(tree)
     return tree
+
+
+# ---------------------------------------------------------------------------
+# Grouping: one child group per pipeline stage, values stay outside as controls
+# ---------------------------------------------------------------------------
+LUT_SECTIONS = ("Sample", "Interpolation", "Output")
+LOOK_SECTIONS = ("Scene Input", "Meter", "Exposure", "Local Blur", "Local Base", "Local Contrast", "Local Exposure",
+                 "Apply Exposure", "Bloom", "Vignette Mask", "Vignette", "Tonemap")
+
+
+def _gl():
+    from ..Shared.materials import graph_layout
+    return graph_layout
+
+
+def _group_sections(tree, sections, order, prefix):
+    """Move each section's nodes into child group "<prefix><section>" (label = section).
+    Returns {node key: group node name}. A section that cannot cross a group stays put."""
+    gl = _gl()
+    nmap = {}
+    for sec in order:
+        members = [n for n in tree.nodes if sections.get(n.name) == sec
+                   and n.bl_idname not in ("ShaderNodeValue", "NodeFrame")]
+        if not members:
+            continue
+        names = [n.name for n in members]
+        try:
+            gn, _created = gl._move_into_group(tree, members, prefix + sec, "post", stage=sec)
+        except gl.CollapseError as exc:
+            print("[DataRaiders] Arc Look: %s stays ungrouped (%s)" % (sec, exc))
+            continue
+        gn.label = sec
+        _plain_iface(gn.node_tree)
+        gn.node_tree.pop(gl.COLLAPSE_SIG, None)  # configure edits inner nodes; never reuse by content
+        for nm in names:
+            nmap[nm] = gn.name
+    return nmap
+
+
+def _plain_iface(group):
+    """Interface sockets named from key-labelled control values get plain names."""
+    for item in group.interface.items_tree:
+        if getattr(item, "item_type", "") == "SOCKET" and item.name != _plain(item.name):
+            item.name = _plain(item.name)
+
+
+def _finalize(tree):
+    try:
+        _gl().finalize_tree(tree, "compositor", force=True, collapse=False)
+    except Exception as exc:
+        print("[DataRaiders] Arc Look layout skipped: %s" % exc)
+
+
+_LOOK_PANELS = (("Exposure", ("Meter", "Exposure ")), ("Local Exposure", ("Local Exposure",)),
+                ("Bloom", ("Bloom",)), ("Vignette", ("Vignette",)))
+_LOOK_HINTS = {
+    "Exposure Bias": "Exposure compensation in stops (game AutoExposureBias)",
+    "Exposure Manual": "Fixed exposure scale used when auto exposure is off",
+    "Exposure Use Auto": "1 = game auto exposure, 0 = fixed exposure",
+    "Exposure Use Curve": "1 = apply the game exposure bias curve",
+    "Exposure Min Lum": "Darkest scene white point the meter may pick",
+    "Exposure Max Lum": "Brightest scene white point the meter may pick",
+    "Meter Use Mask": "1 = weight the meter with the game metering mask",
+    "Bloom Amount": "Bloom strength added on top of the exposed image",
+    "Vignette Intensity": "Corner darkening strength (game VignetteIntensity)",
+}
+
+
+def _polish_look(group, gn, tree):
+    """Defaults = imported look, plain tooltips, 0..1 toggles, panels per stage."""
+    items = [i for i in group.interface.items_tree if getattr(i, "item_type", "") == "SOCKET"]
+    for k, item in enumerate(i for i in items if i.in_out == "INPUT"):
+        sock = gn.inputs[k] if k < len(gn.inputs) else None
+        src = sock.links[0].from_node if sock is not None and sock.is_linked else None
+        name = item.name
+        if src is not None and src.bl_idname == "ShaderNodeValue":
+            try:
+                item.default_value = float(src.outputs[0].default_value)
+            except Exception:
+                pass
+        hint = _LOOK_HINTS.get(name)
+        if hint is None and name.startswith("Local Exposure"):
+            hint = "Game local exposure setting " + name[len("Local Exposure"):].strip()
+        if hint is None and src is not None and src.bl_idname == "CompositorNodeRLayers":
+            hint = "Rendered scene from Blender"
+        try:
+            item.description = hint or name
+        except Exception:
+            pass
+        toggle = name.endswith("Enable") or " Use " in " %s " % name
+        if toggle:
+            for attr, v in (("min_value", 0.0), ("max_value", 1.0)):
+                try:
+                    setattr(item, attr, v)
+                except Exception:
+                    pass
+    for item in items:
+        if item.in_out == "OUTPUT" and len(item.name) <= 2:
+            item.name = "Graded Image"
+            try:
+                item.description = "Tonemapped, premultiplied image"
+            except Exception:
+                pass
+    try:
+        for title, keys in _LOOK_PANELS:
+            members = [i for i in items if i.in_out == "INPUT" and i.name.startswith(keys)]
+            if not members:
+                continue
+            panel = group.interface.new_panel(title)
+            for i in members:
+                group.interface.move_to_parent(i, panel, len(panel.interface_items) if hasattr(panel, "interface_items") else 0)
+    except Exception as exc:
+        print("[DataRaiders] Arc Look panels skipped: %s" % exc)
+
+
+def _group_stack(tree, sections):
+    """Stage groups ("Arc Look <stage>") inside one "Arc Look" group; control values stay
+    at the top level and feed the Arc Look inputs. tree[NODE_MAP_KEY] maps every moved
+    node key to its group path for configure/sync lookups."""
+    gl = _gl()
+    nmap = {k: [v] for k, v in _group_sections(tree, sections, LOOK_SECTIONS, LOOK_GROUP + " ").items()}
+    stage_nodes = [n for n in tree.nodes if n.bl_idname == "CompositorNodeGroup" and n.name.startswith(LOOK_GROUP + " ")]
+    look = None
+    if stage_nodes:
+        try:
+            look, _c = gl._move_into_group(tree, stage_nodes, LOOK_GROUP, "post", stage="Look")
+            look.node_tree.pop(gl.COLLAPSE_SIG, None)
+            look.label = "Arc Look"
+            _plain_iface(look.node_tree)
+            nmap = {k: [look.name] + v for k, v in nmap.items()}
+            look.node_tree.description = "Game exposure, local exposure, bloom, vignette and tonemap, in pipeline order"
+            _polish_look(look.node_tree, look, tree)
+        except gl.CollapseError as exc:
+            print("[DataRaiders] Arc Look stays split (%s)" % exc)
+            look = None
+    for n in tree.nodes:
+        if n.bl_idname == "ShaderNodeValue":
+            gl.tag(n, stage="Controls", role="controls", label=n.label)
+        elif n.bl_idname in ("NodeGroupOutput", "CompositorNodeViewer", "ShaderNodeMix", "CompositorNodeCryptomatteV2") \
+                or n.name == "ArcLightingRefCoverage":
+            gl.tag(n, stage="Output", role="output", label=n.label)
+        elif n.bl_idname == "CompositorNodeRLayers":
+            gl.tag(n, stage="Inputs", role="inputs", label=n.label)
+    tree[NODE_MAP_KEY] = {k: "/".join(v + [k]) for k, v in nmap.items()}
+    _finalize(tree)
+    return look
+
+
+def _remove_stale_groups():
+    import bpy as _bpy
+    removed = True
+    while removed:
+        removed = False
+        for grp in list(_bpy.data.node_groups):
+            if grp.name.startswith((LOOK_GROUP, "Arc LUT ")) and grp.users == 0 and grp.library is None:
+                _bpy.data.node_groups.remove(grp)
+                removed = True
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +470,7 @@ def _local_exposure(g: _Graph, rl, *, logl, exposure, total_bias, use_auto):
     luminance. Here the blurred term is a Blur node on log luminance and the
     bilateral grid is approximated by a Bilateral Blur node on the same image.
     """
+    g.section = "Local Blur"
     v = {k: g.node("ShaderNodeValue", "ArcLocalExposure" + k, (-1400 + 120 * (i % 6), 500 + 120 * (i // 6))).outputs[0]
          for i, k in enumerate(_LE_VALUES)}
     info = g.node("CompositorNodeImageInfo", "ArcLocalExposureInfo", (-1400, 300))
@@ -246,15 +496,17 @@ def _local_exposure(g: _Graph, rl, *, logl, exposure, total_bias, use_auto):
     gridded = g.node("CompositorNodeSeparateColor", "ArcLocalExposureGridded", (-800, 150))
     g.put(gridded.inputs["Image"], grid.outputs["Image"])
     base0 = g.lerp(gridded.outputs["Red"], blurred.outputs["Red"], v["BlurredLuminanceBlend"])
-    base0.node.label = base0.node.name = "ArcLocalExposureBaseLog"
+    g.rename(base0.node, "ArcLocalExposureBaseLog")
 
+    g.section = "Local Base"
     log_e = g.math("LOGARITHM", g.math("MAXIMUM", exposure, 1e-30), 2.0, label="ArcLocalExposureLogE")
     log_lum = g.math("ADD", logl, log_e, label="ArcLocalExposureLogLum")
     base = g.math("ADD", base0, log_e, label="ArcLocalExposureBase")
     detail = g.math("SUBTRACT", log_lum, base, label="ArcLocalExposureDetail")
     mg_auto = g.math("ADD", g.math("ADD", total_bias, math.log2(grade.MIDDLE_GREY)), v["MiddleGreyBias"])
     mg = g.lerp(v["MiddleGreyManual"], mg_auto, use_auto)
-    mg.node.label = mg.node.name = "ArcLocalExposureMiddleGrey"
+    g.rename(mg.node, "ArcLocalExposureMiddleGrey")
+    g.section = "Local Contrast"
     b = g.math("SUBTRACT", base, mg, label="ArcLocalExposureB")
     pos = g.math("GREATER_THAN", b, 0.0, label="ArcLocalExposureHighlight")
     scale = g.lerp(v["ShadowContrastScale"], v["HighlightContrastScale"], pos)
@@ -268,21 +520,25 @@ def _local_exposure(g: _Graph, rl, *, logl, exposure, total_bias, use_auto):
                smooth(v["HighlightThreshold"], v["HighlightThresholdStrength"]), pos)
     e = g.lerp(g.math("MINIMUM", g.math("ADD", b, v["ShadowThreshold"]), 0.0),
                g.math("MAXIMUM", g.math("SUBTRACT", b, v["HighlightThreshold"]), 0.0), pos)
+    g.section = "Local Exposure"
     dk = g.math("MULTIPLY", g.math("SUBTRACT", b, e), g.math("SUBTRACT", 1.0, s), label="ArcLocalExposureKept")
     local = g.math("MULTIPLY_ADD", detail, v["DetailStrength"],
                    g.math("MULTIPLY_ADD", g.math("SUBTRACT", b, dk), scale, g.math("ADD", mg, dk)),
                    label="ArcLocalExposureLocalLog")
     f = g.math("POWER", 2.0, g.math("SUBTRACT", local, log_lum), label="ArcLocalExposureRaw")
     factor = g.lerp(1.0, f, v["Enable"])
-    factor.node.label = factor.node.name = "ArcLocalExposureFactor"
+    g.rename(factor.node, "ArcLocalExposureFactor")
     return factor
 
 
 def _build_stack(scene, tree, lut_group):
     tree.nodes.clear()
+    tree.pop(NODE_MAP_KEY, None)
+    _remove_stale_groups()
     g = _Graph(tree)
     rl = g.node("CompositorNodeRLayers", "ArcLightingRenderLayers", (-1800, 0))
     rl.scene = scene
+    g.section = "Scene Input"
     sep = g.node("CompositorNodeSeparateColor", "ArcLightingSceneChannels", (-1600, 0))
     g.put(sep.inputs["Image"], rl.outputs["Image"])
     alpha = sep.outputs["Alpha"]
@@ -290,6 +546,7 @@ def _build_stack(scene, tree, lut_group):
     straight = [g.math("MULTIPLY", sep.outputs[c], inv_a, label=f"ArcLightingStraight{c}") for c in ("Red", "Green", "Blue")]
 
     # --- metering (AEM_Basic steady state) ---
+    g.section = "Meter"
     lum = g.math("DIVIDE", g.math("ADD", g.math("ADD", straight[0], straight[1]), straight[2]), 3.0, label="ArcMeterLuminance")
     logl = g.math("LOGARITHM", g.math("MAXIMUM", lum, grade.METER_LUMINANCE_MIN), 2.0, label="ArcMeterLog2")
     mask = g.node("CompositorNodeImage", "ArcMeterMaskImage", (-1600, -700))
@@ -317,6 +574,7 @@ def _build_stack(scene, tree, lut_group):
     mean_log = g.math("SUBTRACT", g.math("DIVIDE", g.math("MULTIPLY", lv_log.outputs["Mean"], _LOG_SPAN),
                                          g.math("MAXIMUM", lv_w.outputs["Mean"], 1e-6)), _LOG_SHIFT, label="ArcMeterLogAverage")
     # White point = average / 0.18; EV100 and the brightness clamp refer to it.
+    g.section = "Exposure"
     ev100 = g.math("SUBTRACT", mean_log, math.log2(grade.EV100_LUMINANCE * grade.MIDDLE_GREY), label="ArcMeterEV100")
     curve = g.node("ShaderNodeFloatCurve", "ArcExposureBiasCurve", (-800, -560))
     g.put(curve.inputs["Value"], ev100)
@@ -332,13 +590,14 @@ def _build_stack(scene, tree, lut_group):
     manual_e = g.node("ShaderNodeValue", "ArcExposureManual", (-600, -760))
     use_auto = g.node("ShaderNodeValue", "ArcExposureUseAuto", (-600, -860))
     exposure = g.lerp(manual_e.outputs[0], auto_e, use_auto.outputs[0])
-    exposure.node.label = exposure.node.name = "ArcExposureScale"
+    g.rename(exposure.node, "ArcExposureScale")
 
     # --- local exposure (tonemapper permutation AEB6EEB6…), scene only, not bloom ---
     factor = _local_exposure(g, rl, logl=logl, exposure=exposure, total_bias=total_bias,
                              use_auto=use_auto.outputs[0])
 
     # --- exposure, bloom, vignette ---
+    g.section = "Apply Exposure"
     exposed = g.node("CompositorNodeCombineColor", "ArcLightingExposed", (-400, 0))
     local = g.node("CompositorNodeCombineColor", "ArcLightingLocalExposed", (-400, 200))
     for i, c in enumerate(("Red", "Green", "Blue")):
@@ -347,6 +606,7 @@ def _build_stack(scene, tree, lut_group):
         g.put(local.inputs[c], g.math("MULTIPLY", x, factor, label=f"ArcLocalExposed{c}"))
     exposed.inputs["Alpha"].default_value = 1.0
     local.inputs["Alpha"].default_value = 1.0
+    g.section = "Bloom"
     glare = g.node("CompositorNodeGlare", "ArcLightingBloom", (-200, 0))
     g.put(glare.inputs["Image"], exposed.outputs["Image"])
     for name, value in (("Type", "Bloom"), ("Threshold", 0.0), ("Smoothness", 0.0), ("Clamp", False),
@@ -364,6 +624,7 @@ def _build_stack(scene, tree, lut_group):
     g.put(_rgba_in(bloomed, "A"), local.outputs["Image"])
     g.put(_rgba_in(bloomed, "B"), glare.outputs["Glare"])
 
+    g.section = "Vignette Mask"
     info = g.node("CompositorNodeImageInfo", "ArcVignetteInfo", (0, -300))
     g.put(info.inputs["Image"], rl.outputs["Image"])
     res = g.node("ShaderNodeSeparateXYZ", "ArcVignetteResolution", (150, -300))
@@ -379,6 +640,7 @@ def _build_stack(scene, tree, lut_group):
     vy = g.math("MULTIPLY", g.math("DIVIDE", g.math("MULTIPLY_ADD", pos.outputs["Y"], 2.0, -1.0), aspect), scale, label="ArcVignetteY")
     tan2 = g.math("MULTIPLY_ADD", vx, vx, g.math("MULTIPLY", vy, vy))
     vig = g.math("POWER", g.math("DIVIDE", 1.0, g.math("ADD", tan2, 1.0)), 2.0, label="ArcVignetteMask")
+    g.section = "Vignette"
     vig_sep = g.node("CompositorNodeSeparateColor", "ArcVignetteIn", (300, 0))
     g.put(vig_sep.inputs["Image"], _rgba_out(bloomed))
     h = g.node("CompositorNodeCombineColor", "ArcLightingH", (500, 0))
@@ -386,6 +648,7 @@ def _build_stack(scene, tree, lut_group):
         g.put(h.inputs[c], g.math("MULTIPLY", vig_sep.outputs[c], vig, label=f"ArcVignette{c}"))
     h.inputs["Alpha"].default_value = 1.0
 
+    g.section = "Tonemap"
     lut = g.node("CompositorNodeGroup", "ArcLighting3DLUT", (700, 0))
     lut.node_tree = lut_group
     g.put(lut.inputs[0], h.outputs["Image"])
@@ -396,6 +659,7 @@ def _build_stack(scene, tree, lut_group):
         g.put(premul.inputs[c], g.math("MULTIPLY", out_sep.outputs[c], alpha, label=f"ArcPremultiply{c}"))
     g.put(premul.inputs["Alpha"], alpha)
 
+    g.section = None
     id_mask = g.node("CompositorNodeCryptomatteV2", "ArcLightingRefMask", (900, -400))
     id_mask.scene = scene
     id_mask.layer_name = scene.view_layers[0].name + ".CryptoObject"
@@ -406,11 +670,94 @@ def _build_stack(scene, tree, lut_group):
     hold.inputs["Factor"].default_value = 0.0
     g.put(_rgba_in(hold, "A"), premul.outputs["Image"])
     g.put(_rgba_in(hold, "B"), rl.outputs["Image"])
+    coverage = g.math("GREATER_THAN", id_mask.outputs["Matte"], 0.0, label="ArcLightingRefCoverage")
+    g.put(hold.inputs["Factor"], coverage)
     go = g.node("NodeGroupOutput", "ArcLightingOutput", (1500, 0))
     g.put(go.inputs[0], _rgba_out(hold))
     viewer = g.node("CompositorNodeViewer", "ArcLightingViewer", (1500, -200))
     g.put(viewer.inputs["Image"], _rgba_out(hold))
+    _group_stack(tree, g.sections)
     tree["arc_stack_version"] = STACK_VERSION
+
+
+# Stack sections, left to right: (frame label, node-name prefixes). Frames only group and
+# label nodes; no link or value changes, so the look stays the same.
+STACK_SECTIONS = (
+    ("Exposure", ("ArcMeter", "ArcExposure", "ArcLightingExposed", "ArcExposed",
+                  "ArcLocalExposure", "ArcLightingLocalExposed", "ArcLocalExposed")),
+    ("Bloom", ("ArcLightingBloom", "ArcBloom")),
+    ("Vignette", ("ArcVignette", "ArcLightingH")),
+    ("Tonemap/LUT", ("ArcLightingGraded", "ArcLightingPremultiply", "ArcPremultiply")),
+)
+LUT_FRAME_LABEL = "Game tonemap (do not edit)"
+LUT_DESCRIPTION = ("Game tonemapper and color grade baked from Arc Raiders. "
+                   "Change exposure, bloom and vignette in the Arc Look sidebar instead")
+
+
+def _section_of(name):
+    if name == "ArcLighting3DLUT":
+        return LUT_FRAME_LABEL
+    for label, prefixes in STACK_SECTIONS:
+        if any(name.startswith(p) for p in prefixes):
+            return label
+    return None
+
+
+def frame_stack(tree):
+    """Put the stack's named nodes into Exposure / Bloom / Vignette / Tonemap frames.
+    The game LUT node gets its own "Game tonemap (do not edit)" frame inside Tonemap/LUT.
+    Returns {frame label: node count}."""
+    nodes = tree.nodes
+    frames = {}
+
+    def frame(label, parent=None):
+        fr = frames.get(label)
+        if fr is None:
+            fr = nodes.new("NodeFrame")
+            fr.name = "ArcFrame " + label
+            fr.label = label
+            fr.label_size = 20
+            if parent is not None:
+                fr.parent = parent
+            frames[label] = fr
+        return fr
+
+    counts = {}
+    for node in list(nodes):
+        if node.bl_idname == "NodeFrame":
+            continue
+        label = _section_of(node.name)
+        if label is None:
+            continue
+        if label == LUT_FRAME_LABEL:
+            fr = frame(label, frame("Tonemap/LUT"))
+        else:
+            fr = frame(label)
+        loc = node.location.copy()
+        node.parent = fr
+        node.location = loc
+        counts[label] = counts.get(label, 0) + 1
+        try:
+            from ..Shared.materials import graph_layout
+            tag = getattr(graph_layout, "tag", None)
+            if tag is not None:
+                tag(node, stage=label, role="post", label=node.label)
+        except Exception:
+            pass
+    lut = frames.get(LUT_FRAME_LABEL)
+    if lut is not None:
+        try:
+            lut.color = (0.45, 0.2, 0.2)
+            lut.use_custom_color = True
+        except Exception:
+            pass
+    for n in nodes:
+        if n.name == "ArcLighting3DLUT" and getattr(n, "node_tree", None) is not None:
+            try:
+                n.node_tree.description = LUT_DESCRIPTION
+            except Exception:
+                pass
+    return counts
 
 
 def ensure_stack(scene, lut_group) -> bpy.types.NodeTree:

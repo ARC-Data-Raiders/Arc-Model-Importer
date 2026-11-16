@@ -77,7 +77,7 @@ def make_lighting_map_items(self, context):
     cache_key = ('maps',)
     if cache_key in _ENUM_CACHE:
         return _ENUM_CACHE[cache_key]
-    items = [(NONE, "(pick a map)", "Arc Raiders map whose lighting scenarios to use", 0)]
+    items = [(NONE, "Select Map...", "Arc Raiders map whose lighting scenarios to use", 0)]
     for i, (mid, entry) in enumerate(load_catalog().get("maps", {}).items(), start=1):
         count = len(entry.get("scenarios") or {})
         items.append((mid, entry.get("label") or mid, f"{mid}: {count} lighting scenarios", i))
@@ -95,7 +95,7 @@ def make_lighting_scenario_items(self, context):
     cache_key = ('scenarios', map_id)
     if cache_key in _ENUM_CACHE:
         return _ENUM_CACHE[cache_key]
-    items = [(NONE, "(pick a scenario)" if scen else "(pick a map first)", "Gameplay lighting scenario", 0)]
+    items = [(NONE, "Select Scenario..." if scen else "Pick a map above", "Gameplay lighting scenario", 0)]
     total = sum(float(s.get("weight") or 0.0) for s in scen.values())
     for i, (tag, s) in enumerate(scen.items(), start=1):
         weight = float(s.get("weight") or 0.0)

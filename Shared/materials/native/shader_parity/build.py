@@ -81,7 +81,7 @@ def images(plan):
         path = plan.directory / row["image"]
         exr = path.is_file()
         if not exr:
-            path = Path(pak_extract.cache_dir()) / (pak_catalog.canonical_path(row["object_path"]) + ".png")
+            path = Path(pak_extract.cache_path()) / (pak_catalog.canonical_path(row["object_path"]) + ".png")
             if not path.is_file():
                 raise FileNotFoundError(path)
         image = bpy.data.images.load(str(path), check_existing=True)

@@ -46,7 +46,7 @@ def root():
     if not build:
         last_reason = "build_unknown"
         return None
-    return Path(_addon()[0].cache_dir()) / "shader_parity" / build
+    return Path(_addon()[0].cache_path()) / "shader_parity" / build
 
 
 def index(root_path):

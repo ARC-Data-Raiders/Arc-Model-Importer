@@ -5,6 +5,7 @@ from unittest.mock import patch
 import numpy as np
 CANONICAL=Path(__file__).resolve().parents[1]/'Shared/uemodel_import.py'
 sys.path.insert(0,str(CANONICAL.parent))
+if str(CANONICAL.parents[1]) not in sys.path:sys.path.insert(0,str(CANONICAL.parents[1]))  # `from Shared...` below needs the repo root
 
 def load_reader():
     package='_charfx_canonical_parser_probe';pkg=types.ModuleType(package);pkg.__path__=[str(CANONICAL.parents[1])];sys.modules[package]=pkg

@@ -37,6 +37,7 @@ def load_modules():
             spec.loader.exec_module(module)
             add_parents(sys.modules, package.__name__)
             setattr(package, name, module)
+        package.appearance._prepare_packaged_preview_paths()
     return package, modules
 
 
@@ -133,6 +134,31 @@ class AppearanceBrowseTests(unittest.TestCase):
         for filename in ("../outside.png", "..\\outside.png", "X:/outside.png"):
             self.assertEqual(self.appearance._packaged_appearance_preview(filename), "")
 
+    def test_packaged_preview_lookup_performs_no_filesystem_checks(self):
+        stem = 'T_UI_Icon_Outfit_Abyss'
+        expected = self.appearance._packaged_appearance_preview(stem)
+        self.assertTrue(expected)
+        with patch.object(os.path, 'isfile', side_effect=AssertionError('draw stat')), patch.object(os, 'scandir', side_effect=AssertionError('draw scan')):
+            self.assertEqual(self.appearance._packaged_appearance_preview(stem), expected)
+            self.assertEqual(self.appearance._packaged_appearance_preview('missing_fixture'), '')
+
+    def test_cold_packaged_preview_schedules_timer_without_io(self):
+        self.appearance._CACHE.pop('packaged_preview_paths')
+        with patch.object(os.path, 'isfile', side_effect=AssertionError('draw stat')), patch.object(os, 'scandir', side_effect=AssertionError('draw scan')):
+            self.assertEqual(self.appearance._packaged_appearance_preview('T_UI_Icon_Outfit_Abyss'), '')
+            self.assertEqual(self.appearance._packaged_appearance_preview('T_UI_Icon_Outfit_Abyss'), '')
+        self.assertEqual(self.timers, [self.appearance._prepare_browse_choices])
+
+    def test_invalidation_prepares_browse_cache_outside_draw(self):
+        self.appearance.invalidate_cache()
+        with patch.object(os.path, 'isfile', side_effect=AssertionError('draw stat')), patch.object(os, 'scandir', side_effect=AssertionError('draw scan')), patch('builtins.open', side_effect=AssertionError('draw read')):
+            self.assertTrue(self.appearance.list_head_choices())
+            self.assertTrue(self.appearance._list_all_hair_choices())
+            self.assertTrue(self.appearance.list_hair_color_choices())
+            for kind in self.appearance._GEAR_KINDS:
+                self.assertTrue(self.appearance.list_gear_choices(kind))
+            self.assertTrue(self.appearance._packaged_appearance_preview('T_UI_Icon_Outfit_Abyss'))
+
     def test_hair_palette_action_retains_export_resolution(self):
         choice = self.appearance.list_hair_color_choices()[0]
         pak = self.modules["appearance_test_addon.Shared.pak_extract"]
@@ -151,36 +177,63 @@ class AppearanceBrowseTests(unittest.TestCase):
     def test_preview_loader_uses_only_packaged_art_and_reuses_it(self):
         choice_id = next(iter(self.appearance._appearance_browse_manifest()["icons"]))
         class Previews(dict):
+            def new(self, key):
+                self[key] = SimpleNamespace(icon_id=37, image_size=(0, 0), image_pixels=[])
+                return self[key]
+
             def load(self, key, path, kind):
-                self[key] = SimpleNamespace(icon_id=37)
+                self[key] = SimpleNamespace(icon_id=37, image_size=(80, 40))
                 return self[key]
         previews = Previews()
-        with patch.object(self.appearance, "_PREVIEW_COLLECTION", previews), patch.object(self.appearance, "_crop_sidebar_preview") as crop, patch.object(self.appearance, "_icon_file_for_choice", side_effect=AssertionError("action icon resolver")):
+        with patch.object(self.appearance, "_PREVIEW_COLLECTION", previews), patch.object(self.appearance, "_crop_sidebar_preview", return_value=None) as crop, patch.object(self.appearance, "_icon_file_for_choice", side_effect=AssertionError("action icon resolver")):
             with patch.dict(sys.modules, self.modules):
-                self.assertEqual(self.appearance.preview_icon_id(choice_id), 0)
-                self.assertEqual(self.appearance.preview_icon_id(choice_id), 0)
-                self.assertEqual(len(previews), 0)
+                source = self.appearance._browse_icon_file_for_choice(self.appearance.resolve_choice(choice_id))
+                self.assertEqual(self.appearance._low_resolution_icon_id(source, prepare=True), 37)
+                self.assertEqual(self.appearance.preview_icon_id(choice_id), 37)
+                self.assertEqual(self.appearance.preview_icon_id(choice_id), 37)
+                self.assertEqual(len(previews), 1)
                 crop.assert_not_called()
-                self.assertEqual(len(self.timers), 1)
+                self.assertEqual(self.timers.count(self.appearance._prepare_sidebar_previews), 0)
                 self.assertIsNone(self.appearance._prepare_sidebar_previews())
-            self.assertEqual(self.appearance.preview_icon_id(choice_id), 37)
+            with patch.dict(sys.modules, self.modules):
+                self.assertEqual(self.appearance.preview_icon_id(choice_id), 37)
         self.assertEqual(len(previews), 1)
-        crop.assert_called_once()
+        crop.assert_not_called()
 
-    def test_preview_timer_processes_only_one_image_per_tick(self):
+    def test_preview_timer_batches_and_prioritizes(self):
         class Previews(dict):
             def load(self, key, path, kind):
-                self[key] = SimpleNamespace(icon_id=37)
+                self[key] = SimpleNamespace(icon_id=37, image_size=(80, 40))
                 return self[key]
         previews = Previews()
         with patch.dict(sys.modules, self.modules), patch.object(self.appearance, '_PREVIEW_COLLECTION', previews), patch.object(self.appearance, '_crop_sidebar_preview'), patch.object(os.path, 'isfile', return_value=True):
-            self.appearance._preview_icon_id_for_path('first.png')
-            self.appearance._preview_icon_id_for_path('second.png')
+            for index in range(5):
+                self.appearance._preview_icon_id_for_path('normal%d.png' % index, priority=False)
+            self.appearance._preview_icon_id_for_path('priority.png')
             self.assertEqual(len(previews), 0)
-            self.assertGreater(self.appearance._prepare_sidebar_previews(), 0)
+            with patch.object(self.appearance.time, 'perf_counter', return_value=1.0):
+                self.assertGreater(self.appearance._prepare_sidebar_previews(), 0)
+                self.assertEqual(len(previews), 4)
+                self.assertEqual(next(iter(previews)), os.path.normcase('priority.png'))
+                self.assertIsNone(self.appearance._prepare_sidebar_previews())
+                self.assertEqual(len(previews), 6)
+
+    def test_preview_timer_respects_deadline_and_redraws_loaded_browser(self):
+        class Previews(dict):
+            def load(self, key, path, kind):
+                self[key] = SimpleNamespace(icon_id=37, image_size=(80, 40))
+                return self[key]
+        browser = ModuleType(self.appearance.__package__ + '.icon_browser')
+        browser._tag_browser_redraw = Mock()
+        modules = dict(self.modules, **{browser.__name__: browser})
+        previews = Previews()
+        with patch.dict(sys.modules, modules), patch.object(self.appearance, '_PREVIEW_COLLECTION', previews), patch.object(self.appearance, '_crop_sidebar_preview'), patch.object(os.path, 'isfile', return_value=True):
+            self.appearance._preview_icon_id_for_path('first.png', priority=False)
+            self.appearance._preview_icon_id_for_path('second.png', priority=False)
+            with patch.object(self.appearance.time, 'perf_counter', side_effect=[1.0, 1.013]):
+                self.assertGreater(self.appearance._prepare_sidebar_previews(), 0)
             self.assertEqual(len(previews), 1)
-            self.assertIsNone(self.appearance._prepare_sidebar_previews())
-            self.assertEqual(len(previews), 2)
+            browser._tag_browser_redraw.assert_called_once_with(self.modules['bpy'].context)
 
     def test_failed_preview_is_not_requeued_and_unregister_cancels_work(self):
         class Previews(dict):

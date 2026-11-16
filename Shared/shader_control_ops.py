@@ -25,10 +25,179 @@ _STATE = {"updates": 0, "guard": False, "self_edit": False, "synced": None}
 _CACHE = {}
 
 
-def asset_root(obj):
+def _top_parent(obj):
     while obj is not None and obj.parent is not None:
         obj = obj.parent
     return obj
+
+
+def asset_root(obj):
+    """Root of the import that owns obj (nearest owned root, D1). A user grouping empty that
+    holds several imports is never the root. Objects no import owns keep their top parent."""
+    if obj is None:
+        return None
+    targets = _targets()
+    finder = getattr(targets, "_from_selection", None) if targets is not None else None
+    if finder is not None:
+        try:
+            root = finder(obj, "asset")
+        except Exception:
+            root = None
+        if root is not None:
+            return root
+    return _top_parent(obj)
+
+
+def _targets():
+    try:
+        from . import ui_targets
+        return ui_targets
+    except Exception:
+        return None
+
+
+def target_object(context):
+    """Object the shader controls edit: the active object when it belongs to the targeted asset
+    (keeps part scope), else the root of the asset the sidebar targets, else the active object."""
+    obj = getattr(context, "active_object", None)
+    targets = _targets()
+    if targets is None:
+        return obj
+    try:
+        target = targets.resolve(context, "asset")
+    except Exception:
+        return obj
+    if target is None or target.obj is None:
+        return obj
+    if obj is not None and asset_root(obj) is target.obj:
+        return obj
+    return target.obj
+
+
+def _schedule_sync():
+    """Timer (first_interval 0): rebuild the control list once for the new target, outside draw."""
+    try:
+        if not bpy.app.timers.is_registered(_safe_refresh):
+            bpy.app.timers.register(_safe_refresh, first_interval=0.0)
+    except Exception as exc:
+        print(f"Arc Raiders shader controls: sync timer failed: {exc}")
+
+
+EMPTY_MESSAGE = "This asset has no colors or wear to change"
+EMPTY_LOOK_MESSAGE = "This asset has no color slots. Hue, Wear and Dirt still work"
+STATE_MESSAGES = {"none": "", "syncing": "Getting colors for %s...", "empty": EMPTY_MESSAGE,
+                  "failed": "Could not read colors for %s", "ready": ""}
+
+
+def shader_target_info(context):
+    """{"state": "none" | "syncing" | "empty" | "ready", "name": str, "source": "selection" |
+    "last_import" | "", "root": Object | None, "message": str}.
+
+    "empty": the control list finished building for this asset and holds no controls."""
+    info = {"state": "none", "name": "", "source": "", "root": None, "message": ""}
+    scene = getattr(context, "scene", None)
+    targets = _targets()
+    obj = target_object(context)
+    if obj is None or scene is None:
+        return info
+    if targets is not None:
+        try:
+            target = targets.resolve(context, "asset")
+        except Exception:
+            target = None
+            info["message"] = "Could not find the asset to edit"
+            return info
+        if target is None:
+            return info
+        info["source"] = str(getattr(target, "source", "") or "")
+    else:
+        target = None
+    # The resolved target names the asset; only without one fall back to the object's own root.
+    root = getattr(target, "obj", None) or asset_root(obj)
+    info["root"] = root
+    try:
+        info["name"] = targets.display_name(root) if targets is not None else root.name
+    except Exception:
+        info["name"] = getattr(root, "name", "")
+    if not hasattr(scene, "arc_shader_items"):
+        info["root"] = None
+        return info
+    try:
+        key = _key(scene, obj)
+    except Exception:
+        key = None
+    if key is not None and _STATE.get("synced") != key:
+        waited = sync_elapsed(key)
+        if waited > SYNC_TIMEOUT:
+            info["state"] = "failed"
+            info["message"] = STATE_MESSAGES["failed"] % (info["name"] or "the selection")
+            return info
+        _schedule_sync()
+        info["state"] = "syncing"
+        # A list that builds within SYNC_QUIET shows no text, so a quick rebuild does not flash.
+        if waited >= SYNC_QUIET:
+            info["message"] = STATE_MESSAGES["syncing"] % (info["name"] or "the selection")
+        return info
+    if key is not None and not len(scene.arc_shader_items):
+        info["state"] = "empty"
+        info["message"] = empty_message(root)
+        return info
+    info["state"] = "ready"
+    return info
+
+
+SYNC_TIMEOUT = 2.0      # s: a list that is still not built after this shows "Could not read colors"
+SYNC_QUIET = 0.3        # s: no "Getting colors" text before this
+
+
+def sync_elapsed(key, now=None):
+    """Seconds the control list for *key* has waited to be built. The first call for a new key
+    starts the clock; Retry (clear_sync_clock) restarts it."""
+    now = _time.monotonic() if now is None else now
+    clock = _STATE.get("sync_clock")
+    if clock is None or clock[0] != key:
+        _STATE["sync_clock"] = (key, now)
+        return 0.0
+    return now - clock[1]
+
+
+def sync_timed_out(key, now=None):
+    return sync_elapsed(key, now) > SYNC_TIMEOUT
+
+
+def clear_sync_clock():
+    _STATE["sync_clock"] = None
+
+
+def empty_message(root):
+    """Why an asset has no material controls, in words that say what it can do instead."""
+    try:
+        objs = [root] + list(getattr(root, "children_recursive", ()))
+        if any(user_controls.look_slots(ob) for ob in objs):
+            return EMPTY_LOOK_MESSAGE
+    except Exception:
+        pass
+    return EMPTY_MESSAGE
+
+
+def _target_poll(cls, context):
+    """Apply-button poll: same root/state as the sidebar (shader_target_info)."""
+    info = shader_target_info(context)
+    if info["root"] is not None and info["state"] == "ready":
+        return True
+    try:
+        cls.poll_message_set(info["message"] or "Select an imported outfit, weapon or enemy")
+    except Exception:
+        pass
+    return False
+
+
+def shader_target_state(context):
+    """("none" | "syncing" | "empty" | "ready", asset name). An empty control list does not mean no
+    asset: while the list is built for a new target the state is "syncing"; once built and empty
+    the state is "empty"."""
+    info = shader_target_info(context)
+    return (info["state"], info["name"])
 
 
 def _nodes(mat):
@@ -43,6 +212,60 @@ def _is_control_tree(tree):
     if "arc_gt_ver" in tree:
         return True
     return tree.name.startswith("DR.") or tree.name.startswith("Independent")
+
+
+VALUE_SOURCES = {"VALUE", "RGB"}
+
+
+def control_socket(node, name):
+    """Writable socket that holds control *name* of group *node*: the input itself when unlinked,
+    else the output of the Value/RGB node that feeds it (weapon and enemy graphs wire their
+    DR.Control.* values in this way). None when the input is fed by anything else."""
+    if node is not None and getattr(node, "type", "") in VALUE_SOURCES:
+        # A parameter Value/RGB node inside a stage or zone group: its output is the control.
+        return node.outputs[0] if len(node.outputs) else None
+    sock = node.inputs.get(name) if node is not None else None
+    if sock is None:
+        return None
+    if not sock.is_linked:
+        return sock
+    links = sock.links
+    src = links[0].from_node if links else None
+    if src is not None and src.type in VALUE_SOURCES and len(src.outputs):
+        out = src.outputs[0]
+        if out.type == sock.type:
+            return out
+    return None
+
+
+class _ControlInputs:
+    __slots__ = ("node",)
+
+    def __init__(self, node):
+        self.node = node
+
+    def get(self, name, default=None):
+        sock = control_socket(self.node, name)
+        return default if sock is None else sock
+
+    def __getitem__(self, name):
+        sock = control_socket(self.node, name)
+        if sock is None:
+            raise KeyError(name)
+        return sock
+
+    def __contains__(self, name):
+        return control_socket(self.node, name) is not None
+
+
+class _ControlNode:
+    """Group node view whose ``inputs`` resolve through control_socket (shader_tweaks.apply)."""
+    __slots__ = ("node", "inputs", "name")
+
+    def __init__(self, node):
+        self.node = node
+        self.name = node.name
+        self.inputs = _ControlInputs(node)
 
 
 def _interface_default(tree, name):
@@ -107,38 +330,200 @@ def _drop_uid(uid):
     return keys
 
 
+IMPORT_DEFAULTS_KEY = "arc_import_defaults"
+_GROUP_DEPTH = 6        # stage/zone groups nest at most DEPTH_MAX (4) deep; margin for wrappers
+_UNNAMED = {"", "Value", "RGB", "Color", "Colour"}
+
+
+def _interface_range(tree, name):
+    for item in tree.interface.items_tree:
+        if getattr(item, "item_type", "") == "SOCKET" and item.in_out == "INPUT" and item.name == name:
+            lo, hi = getattr(item, "min_value", None), getattr(item, "max_value", None)
+            if lo is not None and hi is not None:
+                return float(lo), float(hi)
+    return None
+
+
+def _value_range(value):
+    v = float(value)
+    return min(0.0, v), max(1.0, abs(v) * 4.0)
+
+
+def _imported(node):
+    import json
+    raw = node.get(IMPORT_DEFAULTS_KEY) if hasattr(node, "get") else None
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _as_value(value, color):
+    if value is None:
+        return None
+    if color:
+        v = tuple(float(x) for x in value) if hasattr(value, "__len__") else (float(value),) * 3
+        return (v + (1.0,) * 4)[:4]
+    return float(value[0]) if hasattr(value, "__len__") else float(value)
+
+
+def param_node_name(node):
+    """Plain control name of a parameter Value/RGB node (the MI parameter label), or "" for an
+    unnamed constant, a DR.Control.* value already listed through its group, or a dead node."""
+    if getattr(node, "type", "") not in VALUE_SOURCES or not len(node.outputs):
+        return ""
+    if node.name.startswith("DR.Control."):
+        return ""
+    name = str(node.get("dr.parameter_key") or node.label or "").strip()
+    if name in _UNNAMED or not node.outputs[0].is_linked:
+        return ""
+    return name
+
+
+def _group_rows(node, rows, uids):
+    sub = node.node_tree
+    sub_uid = _uid(sub)
+    uids.add(sub_uid)
+    defaults = _DEFAULTS.setdefault(sub_uid, {})
+    imported = _imported(node)
+    for sock in node.inputs:
+        if sock.type not in {"VALUE", "RGBA"}:
+            continue
+        if sock.is_linked:
+            src = control_socket(node, sock.name)
+            if src is None:
+                continue
+        else:
+            src = sock
+        name = sock.name
+        if name not in defaults:
+            defaults[name] = _interface_default(sub, name)
+        color = sock.type == "RGBA"
+        value = src.default_value
+        default = _as_value(imported.get(name), color)
+        if default is None:
+            default = defaults[name]
+        span = (0.0, 1.0) if color else (_interface_range(sub, name) or _value_range(value))
+        rows.append((name, "COLOR" if color else "FLOAT",
+                     tuple(value) if color else float(value), default, node.name) + span)
+
+
+def _param_rows(tree, rows, uids):
+    for node in tree.nodes:
+        name = param_node_name(node)
+        if not name:
+            continue
+        color = node.type == "RGB"
+        value = node.outputs[0].default_value
+        value = tuple(value) if color else float(value)
+        default = _as_value(_imported(node).get(name), color)
+        span = (0.0, 1.0) if color else _value_range(value if default is None else default)
+        rows.append((name, "COLOR" if color else "FLOAT", value,
+                     value if default is None else default, node.name) + span)
+
+
+def _walk_rows(tree, rows, uids, seen, depth):
+    """Control rows of *tree*: inputs of control groups, then (inside nested stage and zone
+    groups, which collapse makes) the parameter Value/RGB nodes."""
+    for node in tree.nodes:
+        if node.type != "GROUP" or node.node_tree is None:
+            continue
+        sub = node.node_tree
+        if _is_control_tree(sub):
+            _group_rows(node, rows, uids)
+            continue
+        if depth >= _GROUP_DEPTH or sub.name in seen:
+            continue
+        seen.add(sub.name)
+        uids.add(_uid(sub))
+        _param_rows(sub, rows, uids)
+        _walk_rows(sub, rows, uids, seen, depth + 1)
+
+
 def _mat_rows(mat):
+    """[(name, kind, value, imported default, node name, min, max)] of one material, groups
+    searched recursively. The default is the imported value when stored, else the game default."""
     key = _mat_key(mat)
     rows = _MAT_ROWS.get(key)
     if rows is not None:
         return rows
     rows = []
     uids = {_uid(mat)}
+    seen = set()
     for tree in wrapper_tree.graph_trees(mat):
         uids.add(_uid(tree))
-        for node in tree.nodes:
-            if node.type != "GROUP":
-                continue
-            sub = node.node_tree
-            if not _is_control_tree(sub):
-                continue
-            sub_uid = _uid(sub)
-            uids.add(sub_uid)
-            defaults = _DEFAULTS.setdefault(sub_uid, {})
-            for sock in node.inputs:
-                if sock.type not in {"VALUE", "RGBA"} or sock.is_linked:
-                    continue
-                name = sock.name
-                if name not in defaults:
-                    defaults[name] = _interface_default(sub, name)
-                color = sock.type == "RGBA"
-                value = sock.default_value
-                rows.append((name, "COLOR" if color else "FLOAT",
-                             tuple(value) if color else float(value), defaults[name], node.name))
+        seen.add(tree.name)
+        _walk_rows(tree, rows, uids, seen, 0)
     _MAT_ROWS[key] = rows
     for uid in uids:
         _TREE_INDEX.setdefault(uid, set()).add(key)
     return rows
+
+
+def find_control_node(mat, name):
+    """Node *name* of a discover target: per-material levels first, then nested groups."""
+    if mat is None or not name:
+        return None
+    node = wrapper_tree.find_node(mat, name)
+    if node is not None:
+        return node
+    finder = _find_node_fn()
+    for tree in wrapper_tree.graph_trees(mat):
+        node = finder(tree, name, recursive=True)
+        if node is not None:
+            return node
+    return None
+
+
+def _find_node_fn():
+    try:
+        from .materials import graph_layout
+        return graph_layout.find_node
+    except Exception:
+        def local(tree, name, recursive=True):
+            node = tree.nodes.get(name)
+            if node is not None or not recursive:
+                return node
+            for n in tree.nodes:
+                sub = getattr(n, "node_tree", None) if n.type == "GROUP" else None
+                if sub is not None and sub is not tree:
+                    hit = local(sub, name)
+                    if hit is not None:
+                        return hit
+            return None
+        return local
+
+
+def capture_param_defaults(mat):
+    """Store the imported value of each nested parameter Value/RGB node once
+    (``node["arc_import_defaults"]``). Returns nodes written. Call outside draw."""
+    import json
+    count, seen = 0, set()
+
+    def walk(tree, depth):
+        nonlocal count
+        for node in tree.nodes:
+            if node.type == "GROUP" and node.node_tree is not None:
+                sub = node.node_tree
+                if _is_control_tree(sub) or depth >= _GROUP_DEPTH or sub.name in seen:
+                    continue
+                seen.add(sub.name)
+                for inner in sub.nodes:
+                    name = param_node_name(inner)
+                    if name and not inner.get(IMPORT_DEFAULTS_KEY):
+                        value = inner.outputs[0].default_value
+                        value = list(value) if inner.type == "RGB" else float(value)
+                        inner[IMPORT_DEFAULTS_KEY] = json.dumps({name: value}, sort_keys=True)
+                        count += 1
+                walk(sub, depth + 1)
+
+    for tree in wrapper_tree.graph_trees(mat):
+        seen.add(tree.name)
+        walk(tree, 0)
+    return count
 
 
 def _label(name):
@@ -158,7 +543,7 @@ def discover(obj, whole, keys_out=None):
         mat_name = mat.name
         if keys_out is not None:
             keys_out.add(_mat_key(mat))
-        for sock_name, kind, value, default, node_name in _mat_rows(mat):
+        for sock_name, kind, value, default, node_name, lo, hi in _mat_rows(mat):
             entry = params.get(sock_name)
             if entry is None:
                 label, group = _label(sock_name)
@@ -169,9 +554,13 @@ def discover(obj, whole, keys_out=None):
                     "kind": kind,
                     "value": value,
                     "default": default,
+                    "min": lo,
+                    "max": hi,
                     "targets": [],
                 }
                 params[sock_name] = entry
+            else:
+                entry["min"], entry["max"] = min(entry["min"], lo), max(entry["max"], hi)
             entry["targets"].append((mat_name, node_name))
     order = {g: i for i, g in enumerate(GROUP_ORDER)}
     return sorted(params.values(), key=lambda e: (order.get(e["group"], 99), e["label"]))
@@ -183,7 +572,7 @@ def _key(scene, obj):
 
 
 def cached_discover(context):
-    obj = context.active_object
+    obj = target_object(context)
     key = _key(context.scene, obj)
     if _CACHE.get("key") != key:
         keys = set()
@@ -219,7 +608,7 @@ def apply_order(scopes):
 
 
 def _edited(context):
-    obj = context.active_object
+    obj = target_object(context)
     if obj is None:
         return set()
     return edited_names(shader_tweaks.get(asset_root(obj)), _scope(context))
@@ -240,6 +629,8 @@ def sync_items(context):
             item.group = entry["group"]
             item.kind = entry["kind"]
             item.edited = entry["name"] in edited
+            item.min_value = entry.get("min", 0.0)
+            item.max_value = entry.get("max", 1.0)
             if entry["kind"] == "COLOR":
                 item.color_value = entry["value"]
             else:
@@ -248,6 +639,32 @@ def sync_items(context):
         _STATE["guard"] = False
     _STATE["synced"] = _CACHE.get("key")
     sync_colourways(context)
+    capture_imported(target_object(context))
+
+
+_CAPTURED = set()       # material session_uids whose imported look is stored
+
+
+def capture_imported(obj):
+    """Store each material's imported control values once (``node["arc_import_defaults"]``) so
+    Reset to Imported Look can return to them. Runs from the sync timer, never from draw."""
+    if obj is None:
+        return 0
+    count = 0
+    for mat in _materials(_objects(obj, True)):
+        uid = _uid(mat)
+        if uid in _CAPTURED:
+            continue
+        _CAPTURED.add(uid)
+        try:
+            count += user_controls.capture_import_defaults(mat)
+        except Exception:
+            pass
+        try:
+            count += capture_param_defaults(mat)
+        except Exception:
+            pass
+    return count
 
 
 def item_matches(label, name, edited, query="", edited_only=False):
@@ -399,11 +816,11 @@ def visible_groups(context):
 def _scope(context):
     if context.scene.arc_shader_scope == "WHOLE":
         return "whole"
-    return "part:" + context.active_object.name
+    return "part:" + target_object(context).name
 
 
 def set_param(context, name, value):
-    obj = context.active_object
+    obj = target_object(context)
     entry = next((e for e in cached_discover(context) if e["name"] == name), None)
     if entry is None:
         return False
@@ -411,9 +828,10 @@ def set_param(context, name, value):
         mat = bpy.data.materials.get(mat_name)
         if mat is not None:
             wrapper_tree.own_wrapper(mat)
-        node = wrapper_tree.find_node(mat, node_name) if mat else None
-        if node is not None and name in node.inputs:
-            node.inputs[name].default_value = value
+        node = find_control_node(mat, node_name) if mat else None
+        sock = control_socket(node, name)
+        if sock is not None:
+            sock.default_value = value
     entry["value"] = value
     default = entry["default"] if entry["default"] is not None else value
     shader_tweaks.record(asset_root(obj), _scope(context), name, value, default)
@@ -422,9 +840,13 @@ def set_param(context, name, value):
 
 
 def _item_update(self, context):
-    if _STATE.get("guard") or context.active_object is None:
+    if _STATE.get("guard") or target_object(context) is None:
         return
-    value = tuple(self.color_value) if self.kind == "COLOR" else self.float_value
+    if self.kind == "COLOR":
+        value = tuple(self.color_value)
+    else:
+        lo, hi = self.min_value, self.max_value
+        value = min(max(self.float_value, lo), hi) if hi > lo else self.float_value
     set_param(context, self.name, value)
     _STATE["guard"] = True
     try:
@@ -450,7 +872,7 @@ def clear_zone_caches():
 def _refresh(context):
     if context.scene is None or not hasattr(context.scene, "arc_shader_items"):
         return
-    if _STATE.get("synced") != _key(context.scene, context.active_object):
+    if _STATE.get("synced") != _key(context.scene, target_object(context)):
         sync_items(context)
         uc_sync_scene(context)
 
@@ -497,7 +919,7 @@ def _in_active_scope(mat_names):
     """True when a material called one of *mat_names* sits on the active scope's objects."""
     try:
         ctx = bpy.context
-        obj = ctx.active_object
+        obj = target_object(ctx)
         if obj is None or ctx.scene is None:
             return False
         whole = getattr(ctx.scene, "arc_shader_scope", "WHOLE") == "WHOLE"
@@ -550,7 +972,7 @@ def _on_depsgraph(scene, depsgraph=None):
         ctx = bpy.context
         if (not _STATE.get("dirty") and getattr(ctx, "scene", None) is not None
                 and hasattr(ctx.scene, "arc_shader_items")
-                and _STATE.get("synced") != _key(ctx.scene, ctx.active_object)):
+                and _STATE.get("synced") != _key(ctx.scene, target_object(ctx))):
             _schedule_refresh()
     except Exception as exc:
         print(f"Arc Raiders shader controls: refresh failed: {exc}")
@@ -562,6 +984,8 @@ class ArcShaderControlItem(bpy.types.PropertyGroup):
     group: StringProperty()
     kind: StringProperty(default="FLOAT")
     edited: BoolProperty(default=False)
+    min_value: FloatProperty(name="Min", default=0.0)
+    max_value: FloatProperty(name="Max", default=1.0)
     float_value: FloatProperty(name="Value", update=_item_update)
     color_value: FloatVectorProperty(name="Color", subtype="COLOR", size=4, min=0.0, max=1.0, update=_item_update)
 
@@ -575,7 +999,7 @@ class ARC_OT_shader_control_reset(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None
+        return _target_poll(cls, context)
 
     def execute(self, context):
         for entry in cached_discover(context):
@@ -607,7 +1031,7 @@ def _resolve(obj):
         for mat in _materials(objs):
             for node in _nodes(mat):
                 if node.type == "GROUP" and _is_control_tree(node.node_tree):
-                    out.append((mat, node))
+                    out.append((mat, _ControlNode(node)))
         return out
     return resolve
 
@@ -618,9 +1042,10 @@ def _restore_defaults(obj, whole):
             continue
         for mat_name, node_name in entry["targets"]:
             mat = bpy.data.materials.get(mat_name)
-            node = wrapper_tree.find_node(mat, node_name) if mat else None
-            if node is not None:
-                node.inputs[entry["name"]].default_value = entry["default"]
+            node = find_control_node(mat, node_name) if mat else None
+            sock = control_socket(node, entry["name"])
+            if sock is not None:
+                sock.default_value = entry["default"]
 
 
 def apply_all(obj):
@@ -669,10 +1094,16 @@ class ARC_OT_shader_control_reset_all(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None
+        return target_object(context) is not None
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(
+            self, event, title="Reset all material controls?",
+            message="Every control in the current scope returns to the game default. Undo restores them.",
+            confirm_text="Reset All", icon="WARNING")
 
     def execute(self, context):
-        obj = context.active_object
+        obj = target_object(context)
         whole = context.scene.arc_shader_scope == "WHOLE"
         _restore_defaults(obj, whole)
         shader_tweaks.reset(asset_root(obj), _scope(context))
@@ -690,10 +1121,10 @@ class ARC_OT_shader_tweaks_save(bpy.types.Operator, ExportHelper):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None
+        return target_object(context) is not None
 
     def execute(self, context):
-        text = shader_tweaks.to_json(asset_root(context.active_object))
+        text = shader_tweaks.to_json(asset_root(target_object(context)))
         with open(self.filepath, "w", encoding="utf-8") as fh:
             fh.write(text)
         self.report({"INFO"}, f"Saved shader tweaks to {self.filepath}")
@@ -710,10 +1141,10 @@ class ARC_OT_shader_tweaks_load(bpy.types.Operator, ImportHelper):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None
+        return target_object(context) is not None
 
     def execute(self, context):
-        obj = context.active_object
+        obj = target_object(context)
         try:
             with open(self.filepath, encoding="utf-8") as fh:
                 text = fh.read()
@@ -737,11 +1168,11 @@ class ARC_OT_shader_tweaks_sync_parts(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None and context.scene.arc_shader_scope == "PART"
+        return target_object(context) is not None and context.scene.arc_shader_scope == "PART"
 
     @staticmethod
     def _plan(context):
-        obj = context.active_object
+        obj = target_object(context)
         scopes = [part_scope(ob.name) for ob in _part_objects(obj)]
         return asset_root(obj), part_scope(obj.name), scopes
 
@@ -760,7 +1191,7 @@ class ARC_OT_shader_tweaks_sync_parts(bpy.types.Operator):
             col.label(text=line)
 
     def execute(self, context):
-        obj = context.active_object
+        obj = target_object(context)
         root, src, scopes = self._plan(context)
         for ob in _part_objects(obj):
             if ob is not obj:
@@ -784,7 +1215,7 @@ def sync_colourways(context):
     scene = context.scene
     if not hasattr(scene, "arc_colourways"):
         return
-    obj = context.active_object
+    obj = target_object(context)
     names = sorted(shader_tweaks.colourways(asset_root(obj))) if obj is not None else []
     if [c.name for c in scene.arc_colourways] == names:
         return
@@ -813,7 +1244,7 @@ def capture_values(obj):
 
 def _whole_targets(context):
     """Cached whole-scope discovery: {name: [node input sockets]}."""
-    obj = context.active_object
+    obj = target_object(context)
     key = ("cw", obj.name, _STATE["updates"])
     if _CACHE.get("cw_key") != key:
         socks = {}
@@ -821,9 +1252,10 @@ def _whole_targets(context):
             lst = socks.setdefault(entry["name"], [])
             for mat_name, node_name in entry["targets"]:
                 mat = bpy.data.materials.get(mat_name)
-                node = wrapper_tree.find_node(mat, node_name) if mat else None
-                if node is not None:
-                    lst.append(node.inputs[entry["name"]])
+                node = find_control_node(mat, node_name) if mat else None
+                sock = control_socket(node, entry["name"])
+                if sock is not None:
+                    lst.append(sock)
         _CACHE["cw_key"] = key
         _CACHE["cw_socks"] = socks
     return _CACHE["cw_socks"]
@@ -852,14 +1284,14 @@ class ARC_OT_shader_colourway_save(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None
+        return target_object(context) is not None
 
     def execute(self, context):
         name = (self.name or context.scene.arc_colourway_name).strip()
         if not name:
             self.report({"ERROR"}, "Colourway needs a name")
             return {"CANCELLED"}
-        obj = context.active_object
+        obj = target_object(context)
         shader_tweaks.save_colourway(asset_root(obj), name, capture_values(obj))
         sync_colourways(context)
         names = [c.name for c in context.scene.arc_colourways]
@@ -877,12 +1309,12 @@ class ARC_OT_shader_colourway_apply(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None
+        return _target_poll(cls, context)
 
     def execute(self, context):
         import time
         t0 = time.perf_counter()
-        obj = context.active_object
+        obj = target_object(context)
         name = self.name or _selected_colourway(context)
         values = shader_tweaks.load_colourway(asset_root(obj), name) if name else None
         if values is None:
@@ -908,11 +1340,18 @@ class ARC_OT_shader_colourway_delete(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None
+        return target_object(context) is not None
+
+    def invoke(self, context, event):
+        name = self.name or _selected_colourway(context)
+        return context.window_manager.invoke_confirm(
+            self, event, title="Delete colorway?",
+            message='"%s" is removed from this asset.' % (name or "The selected colorway"),
+            confirm_text="Delete", icon="WARNING")
 
     def execute(self, context):
         name = self.name or _selected_colourway(context)
-        if not name or not shader_tweaks.delete_colourway(asset_root(context.active_object), name):
+        if not name or not shader_tweaks.delete_colourway(asset_root(target_object(context)), name):
             return {"CANCELLED"}
         sync_colourways(context)
         return {"FINISHED"}
@@ -927,11 +1366,11 @@ class ARC_OT_shader_colourway_export(bpy.types.Operator, ExportHelper):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None
+        return target_object(context) is not None
 
     def execute(self, context):
         with open(self.filepath, "w", encoding="utf-8") as fh:
-            fh.write(shader_tweaks.colourways_to_json(asset_root(context.active_object)))
+            fh.write(shader_tweaks.colourways_to_json(asset_root(target_object(context))))
         return {"FINISHED"}
 
 
@@ -945,12 +1384,12 @@ class ARC_OT_shader_colourway_import(bpy.types.Operator, ImportHelper):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None
+        return target_object(context) is not None
 
     def execute(self, context):
         try:
             with open(self.filepath, encoding="utf-8") as fh:
-                shader_tweaks.colourways_from_json(asset_root(context.active_object), fh.read())
+                shader_tweaks.colourways_from_json(asset_root(target_object(context)), fh.read())
         except (OSError, ValueError) as exc:
             self.report({"ERROR"}, f"Import failed: {exc}")
             return {"CANCELLED"}
@@ -1354,7 +1793,7 @@ def pro_material(context):
     scene = context.scene
     name = getattr(scene, "arc_shader_pick_material", "")
     mat = bpy.data.materials.get(name) if name else None
-    if mat is None and context.active_object is not None:
+    if mat is None and target_object(context) is not None:
         mat = context.active_object.active_material
     return mat
 
@@ -1412,9 +1851,56 @@ def _safe_refresh():
         if isinstance(ctx, bpy.types.Context) and getattr(ctx, "scene", None) is not None:
             _STATE["synced"] = None
             _refresh(ctx)
+            tag_redraw(ctx)
     except Exception as exc:
         print(f"Arc Raiders shader controls: refresh failed: {exc}")
     return None
+
+
+def tag_redraw(context=None):
+    """Redraw the sidebar and Properties areas so a finished sync shows without a mouse move."""
+    try:
+        wm = (context or bpy.context).window_manager
+        for win in wm.windows:
+            for area in win.screen.areas:
+                if area.type in {"VIEW_3D", "PROPERTIES", "NODE_EDITOR"}:
+                    area.tag_redraw()
+    except Exception:
+        pass
+
+
+def draw_target_state(layout, info):
+    """Draw the non-ready states of shader_target_info; True when something was drawn (a
+    Retry button follows "Could not read colors")."""
+    state = (info or {}).get("state", "")
+    if state == "failed":
+        row = layout.row()
+        row.label(text=info.get("message", ""), icon="ERROR")
+        row.operator("arc.shader_control_retry", text="Retry", icon="FILE_REFRESH")
+        return True
+    if state in {"syncing", "empty"}:
+        if info.get("message"):
+            layout.label(text=info["message"], icon="SORTTIME" if state == "syncing" else "INFO")
+        return True
+    return False
+
+
+class ARC_OT_shader_control_retry(bpy.types.Operator):
+    bl_idname = "arc.shader_control_retry"
+    bl_label = "Retry"
+    bl_description = "Read this asset's colors again"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        clear_sync_clock()
+        user_controls.bump_targets()
+        try:
+            _resync(context)
+        except Exception as exc:
+            self.report({"WARNING"}, f"Could not read colors: {exc}")
+            return {"CANCELLED"}
+        tag_redraw(context)
+        return {"FINISHED"}
 
 
 def _on_active_change(*_args):
@@ -1448,6 +1934,7 @@ def _on_load_pre(*_args):
 @bpy.app.handlers.persistent
 def _on_load_post(*_args):
     _CACHE.clear()
+    _CAPTURED.clear()
     clear_discover_cache()
     user_controls.bump_targets()
     clear_zone_caches()
@@ -1468,9 +1955,9 @@ def _uc_root(name_or_obj):
 
 
 SELECT_MODES = (
-    ("WHOLE", "Whole Outfit", "Edits change every part of the asset"),
-    ("PART", "Part", "Edits change the active part only"),
-    ("ZONE", "Zone/Decal", "Edits change the picked colour zone or decal"),
+    ("WHOLE", "Whole Asset", "Edits change every part of the asset"),
+    ("PART", "One Part", "Edits change the active part only"),
+    ("ZONE", "Zone or Decal", "Edits change the picked colour zone or decal"),
 )
 
 
@@ -1480,7 +1967,7 @@ def select_mode(scene):
 
 def uc_part(context):
     """The active part when the selection mode is Part (edits then stay on that part), else None."""
-    obj = context.active_object
+    obj = target_object(context)
     if obj is None or select_mode(context.scene) not in ("PART", "ZONE") or asset_root(obj) is obj:
         return None
     return obj
@@ -1651,7 +2138,7 @@ def uc_set(root, values, part=None):
 def uc_sync_scene(context):
     import colorsys
     scene = context.scene
-    root = _uc_root(context.active_object) if context.active_object is not None else None
+    root = _uc_root(target_object(context)) if target_object(context) is not None else None
     values = uc_values(root, uc_part(context))
     _UC_GUARD["on"] = True
     try:
@@ -1669,18 +2156,18 @@ def uc_sync_scene(context):
 def _uc_tint_update(self, context):
     """Colour wheel: hue and saturation of the picked colour become Tint Hue and Tint Amount."""
     import colorsys
-    if _UC_GUARD["on"] or context.active_object is None:
+    if _UC_GUARD["on"] or target_object(context) is None:
         return
     h, s, _v = colorsys.rgb_to_hsv(*[min(max(float(c), 0.0), 1.0) for c in getattr(self, _UC_TINT)])
-    uc_set(_uc_root(context.active_object), {"arc_uc_tint_h": h, "arc_uc_tint_a": s}, uc_part(context))
+    uc_set(_uc_root(target_object(context)), {"arc_uc_tint_h": h, "arc_uc_tint_a": s}, uc_part(context))
     uc_sync_scene(context)
 
 
 def _uc_prop_update(prop):
     def update(self, context):
-        if _UC_GUARD["on"] or context.active_object is None:
+        if _UC_GUARD["on"] or target_object(context) is None:
             return
-        uc_set(_uc_root(context.active_object), {prop: getattr(self, prop)}, uc_part(context))
+        uc_set(_uc_root(target_object(context)), {prop: getattr(self, prop)}, uc_part(context))
     return update
 
 
@@ -1749,7 +2236,7 @@ class ARC_OT_user_control_reset(bpy.types.Operator):
     prop: StringProperty(default="", options={"SKIP_SAVE"})
 
     def execute(self, context):
-        root = _uc_root(context.active_object) if context.active_object is not None else None
+        root = _uc_root(target_object(context)) if target_object(context) is not None else None
         ctl = user_controls.BY_PROP.get(self.prop)
         if root is None or ctl is None:
             return {"CANCELLED"}
@@ -1775,7 +2262,7 @@ class ARC_OT_shader_zone_select(bpy.types.Operator):
     zone: IntProperty(default=0, options={"SKIP_SAVE"})
 
     def execute(self, context):
-        obj = context.active_object
+        obj = target_object(context)
         if obj is None or self.zone <= 0 or asset_root(obj) is obj:
             return {"CANCELLED"}
         pick = _pick_module()
@@ -1822,7 +2309,7 @@ def _parse_zo(name):
 def zone_target(context):
     """(root, part, zone) of the Zone/Decal tab, or None when no part zone is picked."""
     scene = context.scene
-    obj = context.active_object
+    obj = target_object(context)
     zone = int(getattr(scene, "arc_shader_pick_zone", 0) or 0)
     if obj is None or select_mode(scene) != "ZONE" or not zone or asset_root(obj) is obj:
         return None
@@ -1911,7 +2398,7 @@ def zo_sync_scene(context):
 
 def _zo_prop_update(key):
     def update(self, context):
-        if _ZO_GUARD["on"] or context.active_object is None:
+        if _ZO_GUARD["on"] or target_object(context) is None:
             return
         v = getattr(self, zo_prop(key))
         zo_set(context, {key: (tuple(v) + (1.0,)) if user_controls.ZO_BY_KEY[key][3] in user_controls.ZO_COLOR_KINDS else float(v)})
@@ -1956,10 +2443,16 @@ class ARC_OT_shader_reset_outfit(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.active_object is not None
+        return target_object(context) is not None
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(
+            self, event, title="Reset the whole asset?",
+            message="Every part, zone and slider returns to the game look. Undo restores them.",
+            confirm_text="Reset", icon="WARNING")
 
     def execute(self, context):
-        obj = context.active_object
+        obj = target_object(context)
         root = asset_root(obj)
         zo_reset(root)
         _restore_defaults(obj, True)
@@ -1980,11 +2473,11 @@ class ARC_OT_shader_reset_part(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
+        obj = target_object(context)
         return obj is not None and asset_root(obj) is not obj
 
     def execute(self, context):
-        obj = context.active_object
+        obj = target_object(context)
         root = asset_root(obj)
         zo_reset(root, obj)
         _restore_defaults(obj, False)
@@ -1998,11 +2491,11 @@ class ARC_OT_shader_reset_part(bpy.types.Operator):
 
 def _cold_snap_update(self, context):
     """Cold Snap exposure time -> the game's Snow and Wetness values on the whole asset."""
-    if _UC_GUARD["on"] or context.active_object is None:
+    if _UC_GUARD["on"] or target_object(context) is None:
         return
     from . import cold_snap
     snow, wet = cold_snap.state(self.arc_cold_snap_outdoors, self.arc_cold_snap_sheltered)
-    uc_set(_uc_root(context.active_object), {"arc_uc_snow": snow, "arc_uc_wet": wet})
+    uc_set(_uc_root(target_object(context)), {"arc_uc_snow": snow, "arc_uc_wet": wet})
     uc_sync_scene(context)
 
 
@@ -2050,10 +2543,10 @@ def register():
         update=_scope_update)
     bpy.types.Scene.arc_shader_items = bpy.props.CollectionProperty(type=ArcShaderControlItem)
     bpy.types.Scene.arc_colourways = bpy.props.CollectionProperty(type=ArcColourwayItem)
-    bpy.types.Scene.arc_colourway_index = IntProperty(default=0)
-    bpy.types.Scene.arc_colourway_name = StringProperty(name="Name", default="Colourway")
-    bpy.types.Scene.arc_shader_search = StringProperty(name="Search", default="", options={"TEXTEDIT_UPDATE"})
-    bpy.types.Scene.arc_shader_edited_only = BoolProperty(name="Edited only", default=False)
+    bpy.types.Scene.arc_colourway_index = IntProperty(default=0, description="Saved colourway selected in the list")
+    bpy.types.Scene.arc_colourway_name = StringProperty(name="Name", default="Colourway", description="Name given to the colourway when it is saved")
+    bpy.types.Scene.arc_shader_search = StringProperty(name="Search", default="", options={"TEXTEDIT_UPDATE"}, description="Type part of a control name to filter the list")
+    bpy.types.Scene.arc_shader_edited_only = BoolProperty(name="Edited only", default=False, description="Show only the controls that you changed")
     bpy.types.Scene.arc_shader_collapsed = StringProperty(default="")
     bpy.types.Scene.arc_shader_pick_material = StringProperty(default="")
     bpy.types.Scene.arc_shader_pick_zone = IntProperty(default=0)
@@ -2064,7 +2557,7 @@ def register():
         update=_select_mode_update)
     for cls in (ARC_OT_user_controls_set, ARC_OT_user_controls_reset, ARC_OT_shader_zone_reset,
                 ARC_OT_shader_reset_outfit, ARC_OT_shader_reset_part, ARC_OT_user_control_reset,
-                ARC_OT_shader_zone_select):
+                ARC_OT_shader_zone_select, ARC_OT_shader_control_retry):
         try:
             bpy.utils.register_class(cls)
         except ValueError:
@@ -2112,8 +2605,9 @@ def unregister():
         pass
     _unregister_uc_props()
     _unregister_zo_props()
-    for cls in (ARC_OT_shader_reset_part, ARC_OT_shader_reset_outfit, ARC_OT_shader_zone_reset,
-                                   ARC_OT_user_controls_reset, ARC_OT_user_controls_set):
+    for cls in (ARC_OT_shader_control_retry, ARC_OT_shader_zone_select, ARC_OT_user_control_reset,
+                ARC_OT_shader_reset_part, ARC_OT_shader_reset_outfit, ARC_OT_shader_zone_reset,
+                ARC_OT_user_controls_reset, ARC_OT_user_controls_set):
         try:
             bpy.utils.unregister_class(cls)
         except RuntimeError:

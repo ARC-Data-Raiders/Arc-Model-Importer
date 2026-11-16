@@ -3269,8 +3269,11 @@ def write_decal_slot(C, nodes, idx, decal, df, dirs, method) -> bool:
     if not on:   # keep placement and images: an off slot only needs alpha 0
         for stage, group in (("color", "decal"), ("data", "decal_data")):
             nd = role.get(stage)
-            if nd is not None and nd.image is None:
-                nd.image = _neutral_image(group)
+            if nd is not None:
+                if nd.image is None:
+                    nd.image = _neutral_image(group)
+                # UseDecal=0 already drops the slot; muting keeps the 1x1 neutral out of the live graph
+                nd.mute = True
         return False
     p = vals["params"]
     for stage, loc, rot, scale in (("rot", p["rot_location"], p["rot_rotation"], p["rot_scale"]),
@@ -3296,6 +3299,7 @@ def write_decal_slot(C, nodes, idx, decal, df, dirs, method) -> bool:
                 pass
         nd.image = img if img is not None else _neutral_image(group)
         nd.extension = vals["extension"]
+        nd.mute = False
     color = role.get("color")
     if color is not None:
         _dr_ops.set_label(color, f'Decal {idx}: {vals["label"]}')

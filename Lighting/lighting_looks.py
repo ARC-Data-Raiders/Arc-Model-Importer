@@ -61,6 +61,101 @@ def on_lighting_map_update(scene, context) -> None:
 def on_lighting_scenario_update(scene, context) -> None:
     return None
 
+
+# Scene options that are results, not choices: they never make the lighting "pending".
+_SIGNATURE_SKIP = frozenset(("arc_lighting_look_applied", "arc_lighting_state", "arc_lighting_applied_label"))
+# Used when the scene type exposes no RNA (plain test doubles).
+_SIGNATURE_FALLBACK = (
+    "arc_lighting_map", "arc_lighting_scenario", "arc_lighting_override", "arc_lighting_look",
+    "arc_lighting_lut_intensity", "arc_lighting_lut_strength", "arc_lighting_apply_lut",
+    "arc_lighting_exposure_mode", "arc_lighting_meter_ev", "arc_lighting_exposure_comp",
+    "arc_lighting_apply_bloom", "arc_lighting_apply_vignette", "arc_lighting_apply_local_exposure",
+    "arc_lighting_compositor_precision", "arc_lighting_apply_hdri", "arc_lighting_hdri",
+    "arc_lighting_hdri_strength", "arc_lighting_hdri_rotation_z", "arc_lighting_hdri_flip_x",
+    "arc_lighting_apply_clouds", "arc_lighting_cloud_time", "arc_lighting_apply_sun",
+    "arc_lighting_apply_fog", "arc_lighting_fog_size_x", "arc_lighting_fog_size_y",
+    "arc_lighting_fog_size_z", "arc_lighting_import_camera",
+)
+
+
+def _signature_names(scene) -> list[str]:
+    names = []
+    try:
+        for prop in type(scene).bl_rna.properties:
+            ident = prop.identifier
+            if (ident.startswith("arc_lighting_") and ident not in _SIGNATURE_SKIP
+                    and prop.type not in {"POINTER", "COLLECTION"}):
+                names.append(ident)
+    except Exception:
+        names = []
+    return sorted(names) if names else list(_SIGNATURE_FALLBACK)
+
+
+def _signature_value(value):
+    if isinstance(value, float):
+        return round(value, 5)
+    if isinstance(value, (bool, int, str)) or value is None:
+        return value
+    try:
+        return [_signature_value(v) for v in value]
+    except TypeError:
+        return str(value)
+
+
+def lighting_signature(scene) -> str:
+    """Hash of every lighting option the user can change. Equal signature means nothing to apply."""
+    if scene is None:
+        return ""
+    values = {}
+    for name in _signature_names(scene):
+        if hasattr(scene, name):
+            try:
+                values[name] = _signature_value(getattr(scene, name))
+            except Exception:
+                values[name] = None
+    blob = json.dumps(values, sort_keys=True, default=str)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()
+
+
+def _stored_state(scene) -> dict[str, Any]:
+    raw = scene.get("arc_lighting_state") if scene is not None and hasattr(scene, "get") else None
+    if not raw:
+        return {}
+    try:
+        state = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except Exception:
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def lighting_state(scene) -> dict[str, Any]:
+    """Applied lighting and whether the options changed since. Reads scene data only, safe in draw.
+
+    Returns {"applied": bool, "applied_map": str, "applied_scenario": str, "applied_label": str,
+    "pending": bool, "warnings": [str]}. pending: a map is chosen and either nothing is applied yet
+    or any lighting option differs from the signature stored at the last Apply."""
+    state = _stored_state(scene)
+    applied = bool(state)
+    applied_map = str(state.get("map") or "")
+    applied_scenario = str(state.get("scenario") or "")
+    warnings = [str(w) for w in (state.get("warnings") or []) if w]
+    label = ""
+    if scene is not None:
+        label = str(getattr(scene, "arc_lighting_look_applied", "") or "")
+    chosen_map = (getattr(scene, "arc_lighting_map", "") or "") if scene is not None else ""
+    chosen = chosen_map not in ("", cat.NONE)
+    if not chosen:
+        pending = False
+    elif not applied:
+        pending = True
+    elif state.get("signature"):
+        pending = state.get("signature") != lighting_signature(scene)
+    else:
+        chosen_tag = getattr(scene, "arc_lighting_scenario", "") or ""
+        pending = (chosen_map, chosen_tag) != (applied_map, applied_scenario)
+    return {"applied": applied, "applied_map": applied_map, "applied_scenario": applied_scenario,
+            "applied_label": label, "pending": bool(pending), "warnings": warnings}
+
 # ---------------------------------------------------------------------------
 # Scenario resolution
 # ---------------------------------------------------------------------------
@@ -182,6 +277,25 @@ def apply_lighting_look(scene: bpy.types.Scene, look_id: str | None = None, *, a
                         **_legacy) -> tuple[bool, str]:
     """Apply the selected scenario. Returns (ok, message)."""
     del look_id
+    ok, message = _apply_lighting_look(scene, allow_extract=allow_extract)
+    if ok:
+        # Stamp the signature of every option so the panel shows pending changes exactly.
+        map_id, tag, _entry = _selection(scene)
+        state = _stored_state(scene)
+        if cat.studio_rig_id(tag) or (state.get("map"), state.get("scenario")) != (map_id, tag):
+            # Studio rigs write no state of their own; never keep a previous scenario's warnings.
+            state = {"map": map_id, "scenario": tag, "warnings": []}
+        state["signature"] = lighting_signature(scene)
+        scene["arc_lighting_state"] = json.dumps(state)
+        try:  # Central post-build graph hook for the world and compositor trees.
+            from ..Shared.materials import graph_layout
+            graph_layout.finalize_objects([], scene)
+        except Exception as exc:
+            print("[lighting] graph finalize failed: %s" % exc)
+    return ok, message
+
+
+def _apply_lighting_look(scene, *, allow_extract: bool = True) -> tuple[bool, str]:
     from . import lighting_grade as grade
     from . import lighting_post as post
     from . import lighting_sky as sky

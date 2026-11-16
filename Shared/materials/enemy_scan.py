@@ -14,9 +14,9 @@ from .common import _parse_flat_mi_json
 
 
 STATE_ITEMS = (
-    ("SCANNING", "Idle (0.0)", "AlertnessState 0.0: the shaders' blue window (eye display and alertness emissive)"),
-    ("ALERT", "Alert (0.5)", "AlertnessState 0.5: the shaders' orange window"),
-    ("AGGRO", "Combat (1.0)", "AlertnessState 1.0: the shaders' red window; the Loop display lights all LEDs"),
+    ("SCANNING", "Idle", "Blue eye display. AlertnessState 0.0: the shaders' blue window (eye display and alertness emissive)"),
+    ("ALERT", "Alert", "Orange eye display. AlertnessState 0.5: the shaders' orange window"),
+    ("AGGRO", "Combat", "Red eye display. AlertnessState 1.0: the shaders' red window; the Loop display lights all LEDs"),
 )
 STATE_VALUES = {"SCANNING": 0.0, "ALERT": 0.5, "AGGRO": 1.0}
 _PALETTES = {

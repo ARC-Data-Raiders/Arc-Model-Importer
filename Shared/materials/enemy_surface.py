@@ -154,7 +154,9 @@ def _owner(mat, psk_path, obj):
     candidate = getattr(bpy.context, 'object', None)
     if candidate is not None and candidate.type == 'MESH':
         return candidate
-    raise ValueError('Enemy shader requires its imported mesh UV layers')
+    # approximate: no owning mesh yet (prop slot set up before link). Graph UV nodes then
+    # leave uv_map unset, which Blender resolves to the active render UV at link time.
+    return None
 
 
 def ensure_alertness_property(obj, value=None):
@@ -290,9 +292,10 @@ def _build_enemy_cr_nom(g, record):
         if native_master:
             normal = b.normal_to_world(normal)
             emission, emissive_stages = _native_emission(b, record, ex, normal, color)
+        # Sample before finish(): stage grouping there replaces the cached UV nodes.
+        if t.get('Cubemap'):
+            g.image(t['Cubemap'], required=False, srgb=False, label='Enemy cubemap · runtime reflection input')
         b.finish(color, b.clamp(rough), nom['a'], normal, emission=emission)
-    if t.get('Cubemap'):
-        g.image(t['Cubemap'], required=False, srgb=False, label='Enemy cubemap · runtime reflection input')
     g.report['implemented_stages'] = ['CR linear colour', 'CR.A^1.1 roughness', 'NOM RG normal reconstruction',
         'NOM.A metallic', 'NOM.B exposed engine AO', 'authored detail UV scale', 'detail B colour modulation',
         'detail A roughness modulation', 'native additive XY detail normal'] + (emissive_stages or ['no emissive output for this master'])
@@ -316,7 +319,11 @@ def setup_enemy_surface_material(mat, mi_path, psk_path='', *, obj=None):
         report['warnings'].append('Missing exact parent metadata: ' + record['missing_parent'])
     if record.get('inferred_master'):
         report['warnings'].append('Legacy summary lacks Parent; re-extract PAKs for authoritative named defaults')
-    graph = Graph(mat, _owner(mat, psk_path, obj), _EnemyTextureIndex(mi_path, psk_path), report)
+    owner = _owner(mat, psk_path, obj)
+    if owner is None:
+        report['warnings'].append('approximate: no owning mesh at setup; UV maps use the active render layer')
+        report['uv_owner_unresolved'] = True
+    graph = Graph(mat, owner, _EnemyTextureIndex(mi_path, psk_path), report)
     if str(record.get('master', '')).lower().endswith('m_enemypreset_ox+tiling+detail'):
         build_enemy_tile(graph, record)
     else:

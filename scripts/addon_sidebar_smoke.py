@@ -40,6 +40,9 @@ def check_sidebar(module):
         'niagara', 'lighting_catalog', 'lighting_looks', 'animation_import',
         'materials.native.shader_parity.plans')}
     violations = []
+    properties = importlib.import_module(module.__name__ + '.Outfit_Accessories.properties')
+    properties._refresh_outfit_csv_state()
+    modules['appearance']._prepare_browse_choices()
 
     def forbidden(name):
         def reject(*arguments, **keywords):
@@ -82,8 +85,9 @@ def check_sidebar(module):
         effects.catalog_stats('')
         effects.filter_entries('shield', catalog_root='', limit=10)
     assert not violations, violations
-    for name in ('arc_weapon_key', 'arc_anim_search', 'arc_ns_json_path', 'arc_ns_play_ticks'):
-        assert bpy.types.Scene.bl_rna.properties[name].description == '', name
+    # Hover tooltips come from properties._TOOLTIPS; every visible control should explain itself.
+    for name in ('arc_weapon_key', 'arc_anim_search', 'arc_ns_json_path'):
+        assert bpy.types.Scene.bl_rna.properties[name].description != '', name
     assert not hasattr(bpy.types, 'ARC_PT_shader_parity')
     print('SIDEBAR_BOUNDARY_CHECK_OK', module.__name__)
 
@@ -123,8 +127,13 @@ def check_controls(module):
         'emission_strength': core.expr('preview_parameter', key='TestGain', default=1., label='Test gain')})
     material = bpy.data.materials.new('Private control check')
     compiler.compile_plan(plan, material, replace=True)
-    values = {node.get('dr_preview_parameter'): node for node in material.node_tree.nodes if node.get('dr_preview_parameter')}
-    assert 'TestGain' in values and 'dr_roughness_scale' in values
+    # Controls are sockets on the material wrapper; its tag lists their keys comma-separated.
+    tagged = [node for node in material.node_tree.nodes if node.get('dr_preview_parameter')]
+    assert len(tagged) == 1, [node.name for node in tagged]
+    wrapper_name = tagged[0].name
+    keys = set(str(tagged[0].get('dr_preview_parameter')).split(','))
+    assert 'TestGain' in keys and 'dr_roughness_scale' in keys, keys
+    gain = lambda mat: compiler.control_input(mat.node_tree.nodes[wrapper_name], 'TestGain')
     mesh = bpy.data.meshes.new('Private control mesh')
     mesh.materials.append(material)
     objects = [bpy.data.objects.new(name, mesh) for name in ('Control original', 'Control copy')]
@@ -136,17 +145,10 @@ def check_controls(module):
         assert original != copy and original != material
         module.Shared.operators._isolate_material_controls(objects[0])
         assert objects[0].material_slots[0].material == original
-        copy.node_tree.nodes[values['TestGain'].name].outputs[0].default_value = 3.
-        assert values['TestGain'].outputs[0].default_value == 1.
-        assert original.node_tree.nodes[values['TestGain'].name].outputs[0].default_value == 1.
-        assert copy.node_tree.nodes['DR.Material'].node_tree == material.node_tree.nodes['DR.Material'].node_tree
-        def world_x(node):
-            x = 0.
-            while node is not None:
-                x += node.location.x; node = node.parent
-            return x
-        # Column layout (graph_layout): control values sit in a column left of the material wrapper.
-        assert all(world_x(node) < world_x(material.node_tree.nodes['DR.Material']) for node in values.values())
+        gain(copy).default_value = 3.
+        assert gain(material).default_value == 1.
+        assert gain(original).default_value == 1.
+        assert copy.node_tree.nodes[wrapper_name].node_tree == material.node_tree.nodes[wrapper_name].node_tree
         with patch.object(module.Lighting.lighting_looks, 'apply_lighting_look',
                           side_effect=AssertionError('lighting selection changed scene')):
             module.Lighting.lighting_looks.on_lighting_scenario_update(bpy.context.scene, bpy.context)
@@ -155,7 +157,7 @@ def check_controls(module):
                          bpy.app.handlers.frame_change_post, bpy.app.handlers.render_pre):
             assert not any(getattr(handler, '__module__', '') == props.__name__ for handler in handlers)
     finally:
-        group = material.node_tree.nodes['DR.Material'].node_tree
+        group = material.node_tree.nodes[wrapper_name].node_tree
         for obj in objects:
             bpy.data.objects.remove(obj, do_unlink=True)
         bpy.data.meshes.remove(mesh)

@@ -170,6 +170,19 @@ def parse_material(raw, package, provenance=(), *, strict_identity=False, expect
         target='scalars' if 'ScalarParameter' in typ else 'colors' if 'VectorParameter' in typ else 'textures' if 'TextureSampleParameter' in typ or 'TextureObjectParameter' in typ else 'switches' if 'StaticSwitchParameter' in typ else None
         default=ep.get('DefaultValue',ep.get('Texture'))
         if target and default is not None and name not in result[target]: result[target][name]=kinds[target][1](default)
+    # Root masters with hardcoded TextureSamples (M_SplineThicken) have no texture parameters;
+    # their maps are named in TextureStreamingData and pathed in ReferencedTextures. The
+    # channel suffix (CR, NXM) is the key, matching the legacy raw_record fallback.
+    if item.get('Type')=='Material' and not result['textures']:
+        referenced={}
+        for ref in list(cached.get('ReferencedTextures') or [])+list(p.get('ReferencedTextures') or []):
+            path=ref.get('ObjectPath') if isinstance(ref,Mapping) else ref
+            if isinstance(path,str) and path not in ('','None'): referenced.setdefault(object_name(path).split('.')[0].casefold(),ref)
+        for stream in p.get('TextureStreamingData') or []:
+            tex=str(stream.get('TextureName') or '') if isinstance(stream,Mapping) else ''
+            code=tex.rsplit('_',1)[-1].upper()
+            ref=referenced.get(tex.casefold())
+            if tex and ref is not None and re.fullmatch(r'[CDNROMAESXHGT]{1,4}',code): result['textures'].setdefault(code,_texture_ref(ref,mount_aliases))
     overrides=base_property_overrides(p.get('BasePropertyOverrides'))
     for native,key in (('BlendMode','blend'),('OpacityMaskClipValue','cutoff'),('TwoSided','two_sided'),('bTwoSided','two_sided'),('DitherOpacityMask','dither_opacity_mask')):
         if native in overrides: result['settings'][key]=overrides[native]
@@ -185,9 +198,13 @@ def merge_records(parent,child):
     remap=child.settings.get('_parent_layer_index_remap',())
     if remap and (parent.scopes or child.scopes): raise NotImplementedError('Scoped parent-layer remap requires explicit native mapping semantics: '+repr(tuple(remap)))
     values={k:{**getattr(parent,k),**getattr(child,k)} for k in ('scalars','colors','textures','switches','settings')}
+    values['textures']=dict(parent.textures)
+    values['textures'].update({name:value for name,value in child.textures.items() if value not in (None,'')})
     scopes={key:{kind:dict(values) for kind,values in scoped.items()} for key,scoped in parent.scopes.items()}
     for key,scoped in child.scopes.items():
-        for kind,parameters in scoped.items(): scopes.setdefault(key,{}).setdefault(kind,{}).update(parameters)
+        for kind,parameters in scoped.items():
+            inherited=scopes.setdefault(key,{}).setdefault(kind,{})
+            inherited.update({name:value for name,value in parameters.items() if kind!='textures' or value not in (None,'')})
     return MaterialRecord(child.package,parent.master or parent.package,scopes=scopes,provenance=parent.provenance+child.provenance,**values)
 
 

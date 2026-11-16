@@ -160,9 +160,13 @@ def neutral_image(group: str):
     img = bpy.data.images.get(name)
     if img is None:
         img = bpy.data.images.new(name, 1, 1, alpha=True, float_buffer=False, is_data=True)
-        img.pixels[:] = rgba
         img.colorspace_settings.name = "Non-Color"
-        img.pack()
+    # A generated image is rebuilt from generated_color when a blend loads; pixels written
+    # in memory are lost, and the default black turns the flat-normal stand-ins into
+    # sideways normals (black spots wherever a null decal or normal slice is gated in).
+    if img.source == "GENERATED" and tuple(round(c, 3) for c in img.generated_color) != rgba:
+        img.generated_color = rgba
+        img.reload()
     return img
 
 

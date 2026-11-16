@@ -14,6 +14,20 @@ import os
 import bpy
 
 from ..Shared.materials.rebuild import get_index, infer_export_root, texture_objects
+from ..Shared.materials import material_audit
+
+
+def _audit_failure(obj, src, line, exc=None):
+    """A whole-object rebuild failure still leaves one audit record per slot material and the object."""
+    import traceback
+    error = line if exc is None else line + "\n" + "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    for slot in obj.material_slots:
+        if slot.material is not None:
+            material_audit.audit_material(slot.material, {}, obj, error=error)
+    material_audit.audit_object(obj, material_audit.mesh_meta_for(obj, src))
+    print(f"Arc Raiders surface rebuild {obj.name}: {line}")
+    return line
+
 
 def texture_environment_object(obj, psk_path: str) -> str:
     """Rebuild slot materials. Returns a verification string, never a silent success.
@@ -37,17 +51,18 @@ def texture_environment_object(obj, psk_path: str) -> str:
     try:
         root = str(infer_export_root(src))
     except Exception as exc:
-        return f"FAIL export root: {exc}"
+        return _audit_failure(obj, src, f"FAIL export root: {exc}", exc)
     if not root or not os.path.isdir(root):
-        return f"FAIL export root not a directory: {root}"
+        return _audit_failure(obj, src, f"FAIL export root not a directory: {root}")
     try:
         index = get_index(root)
-        reports = texture_objects([obj], index, "", src, False, preserve_material=_preserve_native_material) or []
+        reports = texture_objects([obj], index, "", src, False, preserve_material=_preserve_native_material, audit=True) or []
     except Exception as exc:
-        return f"FAIL surface rebuild: {exc}"
+        return _audit_failure(obj, src, f"FAIL surface rebuild: {exc}", exc)
     errors = [r for r in reports if r.get("error")]
     _fix_beacon_slots(obj, src)
     check = verify_surface_materials(obj)
+    material_audit.audit_object(obj, material_audit.mesh_meta_for(obj, src))
     families = ",".join(sorted({r.get("family") or "?" for r in reports if r.get("family")}))
     detail = (
         f"{check['rebuilt']}/{check['slots']} rebuilt"
@@ -75,6 +90,17 @@ def _mi_package(mat) -> str:
     return path[at:].rsplit(".", 1)[0] if at >= 0 and path.casefold().endswith(".json") else ""
 
 
+REBUILD_FALLBACK_SKIP = frozenset({None, "engine_default", "character_preview"})
+
+
+def rebuilds_slot(family, legacy_family, families) -> bool:
+    """Rebuild a slot the rebuild library classifies into ``families``, or one the legacy chain left on the
+    catch-all ``simple`` graph (which samples only basename textures and drops authored NA/mask maps)."""
+    if family in families:
+        return True
+    return legacy_family == "simple" and family not in REBUILD_FALLBACK_SKIP
+
+
 def rebuild_surface_families(obj, psk_path: str, families) -> list:
     """Rebuild only the slots materials.rebuild classifies into ``families``; every other slot keeps its graph.
 
@@ -99,14 +125,16 @@ def rebuild_surface_families(obj, psk_path: str, families) -> list:
             family = lib.load(package)["family"] if package else None
         except Exception:
             family = None
-        if family in families:
+        if rebuilds_slot(family, str(mat.get("arc_mi_family") or "") or None, families):
             mat["arc_package"] = package
             return None
-        return {"object": obj.name, "slot": slot_index, "material": mat.name, "family": "kept",
+        # The kept slot keeps its routed family, so the audit stamp below never renames it.
+        return {"object": obj.name, "slot": slot_index, "material": mat.name,
+                "family": str(mat.get("arc_mi_family") or "") or None,
                 "preserved_native_graph": True, "missing_textures": [], "warnings": []}
 
-    reports = texture_objects([obj], index, "", src, False, preserve_material=keep_other_families) or []
-    rebuilt = [r for r in reports if r.get("family") in families or r.get("error")]
+    reports = texture_objects([obj], index, "", src, False, preserve_material=keep_other_families, audit=True) or []
+    rebuilt = [r for r in reports if not r.get("preserved_native_graph") or r.get("error")]
     for report in rebuilt:
         print(f"Arc Raiders surface families {obj.name}[{report.get('slot')}]: "
               f"{report.get('family') or 'error'} {str(report.get('error') or '')[:120]}")

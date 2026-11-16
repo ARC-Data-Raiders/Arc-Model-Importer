@@ -15,6 +15,7 @@ from mathutils import Vector
 
 from .. import utils
 from .. import textures
+from .material_audit import record_swallowed as _record_swallowed
 from ...Outfit_Accessories import palette_calibration
 from ...Outfit_Accessories.properties import BODY_ALBEDO, BODY_NORMAL
 
@@ -1040,15 +1041,18 @@ def _assign_shared_mi_to_object(
         return False
     try:
         obj.material_slots[slot_index].material = mat
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('map_stage2._assign_shared_mi_to_object', _exc)
         try:
             obj.data.materials[slot_index] = mat
-        except Exception:
+        except Exception as _exc:
+            _record_swallowed('map_stage2._assign_shared_mi_to_object', _exc)
             return False
     try:
         obj["arc_materials_pending"] = 0
         obj["arc_mi_inferred"] = mi_stem
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('map_stage2._assign_shared_mi_to_object', _exc)
         pass
     return True
 
@@ -1311,7 +1315,8 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
         if preferred:
             try:
                 obj["arc_preferred_mi"] = preferred
-            except Exception:
+            except Exception as _exc:
+                _record_swallowed('map_stage2._setup_map_material_from_slots', _exc)
                 pass
     # Drop leaked preferred stems that are not water/decal single-slot overrides
     # (e.g. PropTrim/Vent atlas stamped onto every StaticMeshActor SRC).
@@ -1319,10 +1324,12 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
         try:
             if obj.get("arc_preferred_mi"):
                 del obj["arc_preferred_mi"]
-        except Exception:
+        except Exception as _exc:
+            _record_swallowed('map_stage2._setup_map_material_from_slots', _exc)
             try:
                 obj["arc_preferred_mi"] = ""
-            except Exception:
+            except Exception as _exc:
+                _record_swallowed('map_stage2._setup_map_material_from_slots', _exc)
                 pass
         preferred = ""
 
@@ -1362,7 +1369,8 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
                     if len(real_slots) <= 1:
                         return 1
                     fixed = 1
-                except Exception:
+                except Exception as _exc:
+                    _record_swallowed('map_stage2._setup_map_material_from_slots', _exc)
                     pass
 
     if slots:
@@ -1405,7 +1413,8 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
                     _SHARED_MI_MATERIALS.pop(_norm_path_key(mi_path), None)
                     try:
                         cur.name = f"{cur.name}_stale_decal_mask"
-                    except Exception:
+                    except Exception as _exc:
+                        _record_swallowed('map_stage2._setup_map_material_from_slots', _exc)
                         pass
                     # fall through to rebuild
                 elif fam == FAMILY_DECAL:
@@ -1414,7 +1423,8 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
                         expected = classify_mi_family(
                             mi_probe, mi_stem.lower(), (slot_name or mi_stem).lower(),
                         )
-                    except Exception:
+                    except Exception as _exc:
+                        _record_swallowed('map_stage2._setup_map_material_from_slots', _exc)
                         expected = fam
                     if expected == FAMILY_DECAL:
                         fixed += 1
@@ -1424,28 +1434,32 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
                     _SHARED_MI_MATERIALS.pop(_norm_path_key(mi_path), None)
                     try:
                         cur.name = f"{cur.name}_stale_trim"
-                    except Exception:
+                    except Exception as _exc:
+                        _record_swallowed('map_stage2._setup_map_material_from_slots', _exc)
                         pass
                     # fall through to rebuild
                 elif _needs_env_props_rebuild(cur, mi_path):
                     _SHARED_MI_MATERIALS.pop(_norm_path_key(mi_path), None)
                     try:
                         cur.name = f"{cur.name}_stale_env_props"
-                    except Exception:
+                    except Exception as _exc:
+                        _record_swallowed('map_stage2._setup_map_material_from_slots', _exc)
                         pass
                     # fall through to rebuild
                 elif _needs_proptrim_or_glass_rebuild(cur, mi_path, mi_stem):
                     _SHARED_MI_MATERIALS.pop(_norm_path_key(mi_path), None)
                     try:
                         cur.name = f"{cur.name}_stale_proptrim"
-                    except Exception:
+                    except Exception as _exc:
+                        _record_swallowed('map_stage2._setup_map_material_from_slots', _exc)
                         pass
                     # fall through to rebuild
                 elif _needs_water_setup_rebuild(cur, mi_path):
                     _SHARED_MI_MATERIALS.pop(_norm_path_key(mi_path), None)
                     try:
                         cur.name = f"{cur.name}_stale_water"
-                    except Exception:
+                    except Exception as _exc:
+                        _record_swallowed('map_stage2._setup_map_material_from_slots', _exc)
                         pass
                     # fall through to rebuild
                 else:
@@ -1457,7 +1471,8 @@ def _setup_map_material_from_slots(obj, psk_path: str) -> int:
                     try:
                         base_n = re.sub(r"(_force_rebuild)+$", "", cur.name or "")
                         cur.name = f"{base_n}_force_rebuild"
-                    except Exception:
+                    except Exception as _exc:
+                        _record_swallowed('map_stage2._setup_map_material_from_slots', _exc)
                         pass
             mat = _get_or_build_shared_mi_material(
                 mi_stem, mi_path, psk_path, (slot_name or mi_stem).lower(),
@@ -1491,7 +1506,8 @@ def _prefer_trimmap_active_slot(obj) -> None:
         if fam == FAMILY_TRIMMAP or "trimmap" in stem or stem.endswith("_c1") or "_c1" in stem:
             try:
                 obj.active_material_index = i
-            except Exception:
+            except Exception as _exc:
+                _record_swallowed('map_stage2._prefer_trimmap_active_slot', _exc)
                 pass
             return
 
@@ -1510,7 +1526,8 @@ def setup_map_material(obj, psk_path: str) -> int:
     # Ensure Use UV1 posters bind UV1 (PSK EXTRAUV0 → UV1) before Stage 2 setup.
     try:
         utils.normalize_object_ue_uv_layers(obj)
-    except Exception:
+    except Exception as _exc:
+        _record_swallowed('map_stage2.setup_map_material', _exc)
         pass
 
     fixed = _setup_map_material_from_slots(obj, psk_path)
@@ -2203,4 +2220,3 @@ def _rewire_material_world_tiling(mat, meters_per_tile: float) -> bool:
         links.new(vec_out, tex.inputs["Vector"])
         changed = True
     return changed
-

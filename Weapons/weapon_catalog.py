@@ -62,13 +62,36 @@ def invalidate_enum_caches() -> None:
     _SKIN_ENUM_CACHE["items"] = None
 
 
-def _catalog_display_label(entry: dict) -> str:
-    """Match outfit importer style: ``Flavour(CodeName)``."""
-    name = str(entry.get("name") or "").strip()
-    stem = str(entry.get("stem") or "").strip()
-    if name and stem and name.lower().replace("_", "") != stem.lower().replace("_", ""):
-        return f"{name}({stem})"
-    return name or stem or "?"
+def _clean_items(entries):
+    """(key, label, tip) with display names only; the file stem goes in the tooltip.
+    A stem is added to the label only when two entries share a display name."""
+    rows = []
+    for entry in entries:
+        key = str(entry.get("key") or "").strip()
+        if key:
+            rows.append((key, str(entry.get("name") or "").strip(), str(entry.get("stem") or "").strip(), entry))
+    seen = {}
+    for _key, name, _stem, _entry in rows:
+        seen[name.lower()] = seen.get(name.lower(), 0) + 1
+    items = []
+    for key, name, stem, entry in rows:
+        label = name or stem or "?"
+        if name and stem and seen.get(name.lower(), 0) > 1:
+            label = f"{name} ({stem})"
+        tip = str(entry.get("tooltip") or name or stem)
+        if stem and stem not in tip:
+            tip = f"{tip}. File: {stem}" if tip else f"File: {stem}"
+        items.append((key, label, tip[:512]))
+    return items
+
+
+def display_label(key: str) -> str:
+    """Clean display name for a weapon key (stream A search picker)."""
+    k = (key or "").strip()
+    for item in weapon_enum_items():
+        if item[0] == k:
+            return item[1]
+    return ""
 
 
 def weapon_enum_items(_self=None, _context=None):
@@ -78,14 +101,8 @@ def weapon_enum_items(_self=None, _context=None):
     items: list[tuple[str, str, str]] = [
         ("NONE", "Select Weapon...", ""),
     ]
-    for entry in weapons():
-        key = str(entry.get("key") or "").strip()
-        if not key:
-            continue
-        label = _catalog_display_label(entry)
-        tip = str(entry.get("tooltip") or label)[:512]
-        # Identifier must stay ASCII RNA-safe; label includes ST display + stem.
-        items.append((key, label, tip))
+    # Identifier must stay ASCII RNA-safe; label is the display name only.
+    items.extend(_clean_items(weapons()))
     _WEAPON_ENUM_ITEMS = items
     return _WEAPON_ENUM_ITEMS
 
@@ -99,15 +116,7 @@ def mod_enum_items(mod_type: str):
     items: list[tuple[str, str, str]] = [
         ("NONE", f"Select {mt}...", ""),
     ]
-    for entry in mods():
-        if (entry.get("mod_type") or "Other") != mt:
-            continue
-        key = str(entry.get("key") or "").strip()
-        if not key:
-            continue
-        label = _catalog_display_label(entry)
-        tip = str(entry.get("tooltip") or label)[:512]
-        items.append((key, label, tip))
+    items.extend(_clean_items(e for e in mods() if (e.get("mod_type") or "Other") == mt))
     if len(items) == 1:
         # Distinct identifier — duplicate "NONE" identifiers confuse Blender RNA.
         items.append(("NONE_EMPTY", f"(no {mt} mods)", ""))

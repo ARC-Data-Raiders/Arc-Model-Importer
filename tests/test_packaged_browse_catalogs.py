@@ -24,7 +24,14 @@ sys.modules[utils.__name__] = utils
 
 
 def load_module(name):
-    spec = importlib.util.spec_from_file_location(PACKAGE + "." + name, ROOT / (name + ".py"))
+    parts = name.split("/")
+    for depth in range(1, len(parts)):
+        sub = PACKAGE + "." + ".".join(parts[:depth])
+        if sub not in sys.modules:
+            pkg = types.ModuleType(sub)
+            pkg.__path__ = [str(ROOT.joinpath(*parts[:depth]))]
+            sys.modules[sub] = pkg
+    spec = importlib.util.spec_from_file_location(PACKAGE + "." + ".".join(parts), ROOT / (name + ".py"))
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -32,8 +39,8 @@ def load_module(name):
 
 
 fmdex = load_module("fmdex")
-animation = load_module("animation_catalog")
-niagara = load_module("niagara_catalog")
+animation = load_module("Animations/animation_catalog")
+niagara = load_module("Niagara/niagara")
 
 
 class PackagedBrowsingTests(unittest.TestCase):

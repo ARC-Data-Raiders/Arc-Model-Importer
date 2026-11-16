@@ -418,7 +418,8 @@ def _mix_rgba(nodes, links, *, label, location, factor_sock, color_a, color_b):
 
 def ensure_weapon_texturer_node_group():
     """Build WeaponTexturer v3: ID-zone Base Color tints + per-channel paintjob pattern."""
-    existing = utils.find_node_group(_WEAPON_TEXTURER)
+    from .native.shared_helpers import find_group
+    existing = find_group(_WEAPON_TEXTURER, bpy)
     if _weapon_texturer_is_current(existing):
         return existing
 
@@ -1200,23 +1201,6 @@ def _setup_weapon_main_material(mat, mi_path: str, psk_path: str):
     links.new(group.outputs["Normal Color Out"], nm_node.inputs["Color"])
     links.new(nm_node.outputs["Normal"], principled.inputs["Normal"])
 
-    # Leftover textures (EXX etc.) stay visible for inspection
-    handled = {node.image.filepath for node in nodes if hasattr(node, "image") and node.image}
-    row_u = Y_EXTRA
-    for param, (fpath, img) in tex_lookup.items():
-        if fpath in handled:
-            continue
-        pl = str(param).lower()
-        # Applied below via _apply_mi_paintjob_pattern; skip duplicate image nodes.
-        if "paintjob" in pl and "pattern" in pl:
-            continue
-        node = nodes.new("ShaderNodeTexImage")
-        node.image = img
-        node.label = param
-        node.interpolation = "Cubic"
-        node.location = (COL_TEX - 400, row_u)
-        row_u -= 320
-
     # Optional EXX still applied after group for emissive/soot when present
     _, ex_img = _find_flat_tex(tex_lookup, "EX", "EXX", "ex", "exx")
     if not ex_img:
@@ -1290,7 +1274,7 @@ def setup_weapon_material(obj, psk_path: str, skin_json: str = "") -> int:
     Returns the number of Blender slots successfully wired.
     """
     from .classify import FAMILY_WEAPON, classify_mi_family
-    from .dispatch import _get_or_build_shared_mi_material
+    from .dispatch import _get_or_build_shared_mi_material, mark_placeholder
 
     skin_path = ""
     if skin_json and skin_json not in ("NONE", "none"):
@@ -1339,6 +1323,7 @@ def setup_weapon_material(obj, psk_path: str, skin_json: str = "") -> int:
 
         if not mi_path:
             print(f"Arc Asset Importer: MI JSON not found for slot '{slot_name}' ({mi_stem})")
+            mark_placeholder(target_slot.material)
             continue
 
         use_path = mi_path
@@ -1360,6 +1345,7 @@ def setup_weapon_material(obj, psk_path: str, skin_json: str = "") -> int:
                 "Arc Asset Importer: Failed to set up material for slot "
                 f"'{slot_name}' (index {idx}, MI '{use_stem}', path '{use_path}')"
             )
+            mark_placeholder(target_slot.material)
             continue
         target_slot.material = mat
         if skin_path and use_path == skin_path:
@@ -1407,4 +1393,3 @@ def _fallback_weapon_folder_mi(psk_path: str, skin_path: str = "") -> str:
         if os.path.isfile(path):
             return path
     return ""
-

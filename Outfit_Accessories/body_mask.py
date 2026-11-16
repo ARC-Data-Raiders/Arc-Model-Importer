@@ -245,6 +245,9 @@ def _region_values(path):
     data = _load_json(path)
     if isinstance(data, dict) and 'Parameters' in data:
         values = (data.get('Parameters') or {}).get('Colors') or {}
+    elif isinstance(data, dict) and isinstance(data.get('Colors'), dict):
+        # Flat FModel material dump (Textures/Colors/Scalars at the top level).
+        values = data['Colors']
     else:
         entry = utils.first_ue_export(data, 'MaterialInstanceConstant') or {}
         values = {parameter.get('ParameterInfo', {}).get('Name'): parameter.get('ParameterValue')

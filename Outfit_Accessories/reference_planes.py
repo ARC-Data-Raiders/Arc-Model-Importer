@@ -567,6 +567,8 @@ def create_image_plane(
     width_m = height_m * _image_aspect(image, bounds)
     mesh = bpy.data.meshes.new(name + "_Mesh")
     plane = bpy.data.objects.new(name, mesh)
+    # Reference cards are viewport guides; keep them out of renders by default.
+    plane.hide_render = True
     _set_plane_geometry(plane, width_m / scale.x, height_m / scale.z, bounds,
                         facing_y, artwork_rotation_deg=angle)
     plane.matrix_world = _card_matrix(location, scale)

@@ -29,7 +29,7 @@ def rebuild_csv_outfit_map(csv_path=None):
     """Rebuild the Model Folder Name -> Item/UI Folder Name mapping."""
     if csv_path is None:
         try:
-            csv_path = get_outfit_csv_path(bpy.context)
+            csv_path = resolve_outfit_csv_path(bpy.context)
         except Exception:
             return
     rows = load_outfit_csv(csv_path)
@@ -46,7 +46,7 @@ def rebuild_csv_outfit_map(csv_path=None):
 # ---------------------------------------------------------------------------
 
 BODY_VARIANTS = [
-    ('NONE',          '— No Body Skin —',  ''),
+    ('NONE',          'Outfit Default',  'Keep the body skin the outfit comes with'),
     ('female_white',  'White Female',       'T_Body_Female_C / T_Body_Female_N'),
     ('male_white',    'White Male',         'T_Body_Male_C / T_Body_Male_N'),
     ('female_dark',   'Black Female',       'T_Female_Color_Dark / T_Body_Female_N'),
@@ -320,6 +320,52 @@ def _browse_outfit_set(self, value):
 def _on_selected_outfit_changed(self, context):
     if not _OUTFIT_SELECTION_UPDATING:
         ensure_outfit_selection(self, context)
+        _request_selected_colorways(self)
+
+
+# Colorway names per outfit key, scanned once when the outfit is selected (not per redraw).
+_COLORWAY_NAMES_BY_OUTFIT = {}
+_COLORWAY_PENDING_SCENE = None
+
+
+def _request_selected_colorways(scene):
+    global _COLORWAY_PENDING_SCENE
+    _COLORWAY_PENDING_SCENE = scene
+    if not bpy.app.timers.is_registered(_prepare_selected_colorways):
+        bpy.app.timers.register(_prepare_selected_colorways, first_interval=0.15)
+
+
+def _prepare_selected_colorways():
+    global _COLORWAY_PENDING_SCENE
+    scene, _COLORWAY_PENDING_SCENE = _COLORWAY_PENDING_SCENE, None
+    if scene is not None:
+        try:
+            _scan_selected_colorways(scene)
+        except ReferenceError:
+            pass
+    return None
+
+
+def _scan_selected_colorways(scene, context=None):
+    """Fill the Colorway menu for the chosen outfit without waiting for Import Outfit."""
+    key = str(getattr(scene, 'arc_selected_outfit', '') or '')
+    if not key or key in _COLORWAY_NAMES_BY_OUTFIT:
+        return
+    names = []
+    try:
+        from ..Shared import importing, utils
+        root = utils.get_pioneer_root()
+        if root:
+            ctx = context if getattr(context, 'scene', None) is not None else SimpleNamespace(scene=scene)
+            rows = importing.load_outfit_csv(importing.get_outfit_csv_path(ctx))
+            row = importing.find_outfit_row(rows, key)
+            for name, _path in importing.colorways_for_outfit_row(root, row, allow_extract=False) if row else ():
+                name = str(name or '')
+                if name and name not in names:
+                    names.append(name)
+    except Exception:
+        names = []
+    _COLORWAY_NAMES_BY_OUTFIT[key] = names
 
 
 def ensure_outfit_selection(scene, context=None):
@@ -374,13 +420,19 @@ def _load_outfit_defaults(_unused):
 def register_outfit_defaults():
     # Saved-scene defaults are repaired lazily by the selector/property actions.
     unregister_outfit_defaults()
+    if not bpy.app.timers.is_registered(_refresh_outfit_csv_state):
+        bpy.app.timers.register(_refresh_outfit_csv_state, first_interval=0.01)
 
 
 def unregister_outfit_defaults():
+    global _COLORWAY_PENDING_SCENE
+    _COLORWAY_PENDING_SCENE = None
     while _load_outfit_defaults in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_load_outfit_defaults)
     if bpy.app.timers.is_registered(_initialize_outfit_defaults):
         bpy.app.timers.unregister(_initialize_outfit_defaults)
+    if bpy.app.timers.is_registered(_prepare_selected_colorways):
+        bpy.app.timers.unregister(_prepare_selected_colorways)
 
 
 def _tag_search_redraw(_self, context):
@@ -424,29 +476,145 @@ _OUTFIT_ENUM_CACHE = {"key": None, "items": None}
 # Panel draws call this per redraw; re-stat the CSV at most once per interval.
 _CSV_STAT_INTERVAL_S = 1.0
 _CSV_STAT_MEMO = {}
+_CSV_ROWS_MEMO = {}
 
 
-def outfit_csv_state(context):
-    """(csv_path, mtime) for the scene's outfit CSV, re-checked at most once per second."""
-    from ..Shared.importing import get_outfit_csv_path, default_outfit_csv_path
+def resolve_outfit_csv_path(context) -> str:
+    """Scene CSV when it exists, else the add-on preference CSV, else the bundled default."""
+    from ..Shared import prefs
+    scene = getattr(context, "scene", None)
+    custom = getattr(scene, "arc_outfit_csv_path", "") if scene is not None else ""
+    if custom:
+        abspath = bpy.path.abspath(custom)
+        if os.path.isfile(abspath):
+            prefs.remember("outfit_csv_path", abspath)
+            return abspath
+    pref = prefs.get("outfit_csv_path", "")
+    if pref:
+        pref = bpy.path.abspath(pref)
+        if os.path.isfile(pref):
+            return pref
+    return get_outfit_csv_path(context) if scene is not None else ""
 
-    scene = getattr(context, 'scene', None)
-    custom = getattr(scene, "arc_outfit_csv_path", "") if scene is not None else None
-    now = time.monotonic()
-    memo = _CSV_STAT_MEMO.get(custom)
-    if memo is not None and now - memo[2] < _CSV_STAT_INTERVAL_S:
-        return memo[0], memo[1]
-    csv_path = get_outfit_csv_path(context) if scene is not None else default_outfit_csv_path()
+
+def _refresh_outfit_csv_state():
+    context = bpy.context
+    scene = getattr(context, "scene", None)
+    if scene is None:
+        return None
+    custom = getattr(scene, "arc_outfit_csv_path", "")
+    csv_path = resolve_outfit_csv_path(context)
     try:
         mtime = os.path.getmtime(csv_path) if csv_path else 0.0
     except OSError:
         mtime = 0.0
-    _CSV_STAT_MEMO[custom] = (csv_path, mtime, now)
-    return csv_path, mtime
+    _CSV_ROWS_MEMO[csv_path] = load_outfit_csv(csv_path)
+    _CSV_STAT_MEMO[custom] = (csv_path, mtime, time.monotonic())
+    make_outfit_selector_items(scene, context)
+    _tag_search_redraw(scene, context)
+    return None
+
+
+def outfit_csv_state(context):
+    """Return cached CSV state and schedule filesystem checks outside drawing."""
+    scene = getattr(context, 'scene', None)
+    custom = getattr(scene, "arc_outfit_csv_path", "") if scene is not None else None
+    now = time.monotonic()
+    memo = _CSV_STAT_MEMO.get(custom)
+    if memo is None or now - memo[2] >= _CSV_STAT_INTERVAL_S:
+        if not bpy.app.timers.is_registered(_refresh_outfit_csv_state):
+            bpy.app.timers.register(_refresh_outfit_csv_state, first_interval=0.01)
+    return (memo[0], memo[1]) if memo is not None else ("", 0.0)
 
 
 def outfit_csv_path_cached(context) -> str:
     return outfit_csv_state(context)[0]
+
+
+_PART_MODE_ITEMS = (
+    ('NEW', "New Character", "Import the part on its own"),
+    ('ADD', "Add to Character", "Add the part to the selected character, or import it on its own when none is selected"),
+    ('REPLACE', "Replace Part", "Swap the same part on the selected character"),
+)
+
+
+_PART_MODE_INDEX = {key: i for i, (key, _name, _desc) in enumerate(_PART_MODE_ITEMS)}
+
+
+def _get_part_mode(self):
+    # Until the user picks a mode, a scene with no character opens on New Character.
+    stored = self.get("arc_part_mode")
+    if stored is not None:
+        return int(stored)
+    from ..Shared import ui_targets
+    return _PART_MODE_INDEX[ui_targets.default_part_mode(self, has_armatures=len(bpy.data.armatures) > 0)]
+
+
+def _set_part_mode(self, value):
+    self["arc_part_mode"] = int(value)
+
+
+def _part_mode(scene):
+    try:
+        return str(scene.arc_part_mode or 'ADD')
+    except Exception:
+        return 'ADD'
+
+
+def _get_attach_to_outfit(self):
+    return _part_mode(self) == 'ADD'
+
+
+def _set_attach_to_outfit(self, value):
+    if value:
+        self.arc_part_mode = 'ADD'
+    elif _part_mode(self) == 'ADD':
+        self.arc_part_mode = 'NEW'
+
+
+def _get_replace_selected(self):
+    return _part_mode(self) == 'REPLACE'
+
+
+def _set_replace_selected(self, value):
+    if value:
+        self.arc_part_mode = 'REPLACE'
+    elif _part_mode(self) == 'REPLACE':
+        self.arc_part_mode = 'ADD'
+
+
+_COLORWAY_ITEMS_CACHE = {"key": None, "items": None}
+
+
+def make_outfit_colorway_items(self, context):
+    """Default first, then the colorways scanned for the chosen outfit.
+
+    No IO: reads the names scanned when the outfit was selected plus the in-memory
+    ``arc_outfit_selections`` collection, which Import Outfit fills.
+    """
+    names = []
+    try:
+        selected = str(getattr(self, "arc_selected_outfit", "") or "")
+        names.extend(_COLORWAY_NAMES_BY_OUTFIT.get(selected, ()))
+    except Exception:
+        names = []
+    try:
+        for sel in self.arc_outfit_selections:
+            name = str(sel.preset_name or "")
+            if name and name not in names:
+                names.append(name)
+    except Exception:
+        pass
+    key = tuple(names)
+    cache = _COLORWAY_ITEMS_CACHE
+    if cache["key"] != key or cache["items"] is None:
+        items = [("DEFAULT", "Default", "Keep the outfit's own colors")]
+        for index, name in enumerate(names[:200]):
+            items.append((name, name, f"Import with the {name} colorway"))
+        cache["key"] = key
+        # Blender needs the item strings kept alive while the enum is in use.
+        cache["items"] = items
+    return cache["items"]
 
 
 def make_outfit_selector_items(self, context):
@@ -459,17 +627,17 @@ def make_outfit_selector_items(self, context):
     if cached["key"] == cache_key and cached["items"]:
         return cached["items"]
 
-    rows = load_outfit_csv(csv_path)
+    rows = _CSV_ROWS_MEMO.get(csv_path, ())
+    from .outfit_catalog import is_outfit_option
     items = []
     unnamed = []
     for row in rows:
-        st = row.get("ST", "")
-        if st and not st.upper().startswith("ID_PLAYERSKIN_"):
+        if not is_outfit_option(row):
             continue
         key = outfit_row_key(row)
         label = outfit_display_label(row)
-        if row.get("Pak Status") == "no cooked mesh" or not (row.get("Item/UI Folder Name") or row.get("Model Folder Name")):
-            label += " (no cooked mesh)"
+        if row.get("Pak Status") == "no cooked mesh" or not (row.get("Item/UI Folder Name") or row.get("Model Folder Name") or row.get("Pak Mesh Paths")):
+            label += " (mesh unavailable)"
         if "unnamed" in label.lower():
             unnamed.append((key, label, label))
         else:
@@ -698,6 +866,8 @@ _SHARED_SCENE_PROPS = (
     "arc_color_benchmark_id",
     "arc_appearance_attach_to_outfit",
     "arc_appearance_replace_selected",
+    "arc_part_mode",
+    "arc_outfit_colorway",
     "arc_appearance_body_skin",
     "arc_appearance_head",
     "arc_appearance_hair",
@@ -803,6 +973,8 @@ _UI_CRITICAL_SCENE_PROPS = (
     "arc_color_benchmark_id",
     "arc_appearance_attach_to_outfit",
     "arc_appearance_replace_selected",
+    "arc_part_mode",
+    "arc_outfit_colorway",
     "arc_appearance_body_skin",
     "arc_appearance_head",
     "arc_appearance_hair",
@@ -890,12 +1062,45 @@ _MAP_ONLY_SCENE_PROPS = (
 )
 
 
-def ensure_scene_properties() -> bool:
+# Set True after a full check passes; cleared by register/unregister and load_post.
+_SCENE_PROPS_VERIFIED = False
+
+
+def _scene_props_need_repair() -> bool:
+    if any(not hasattr(bpy.types.Scene, n) for n in _UI_CRITICAL_SCENE_PROPS):
+        return True
+    return (
+        _scene_collection_fixed_type_id("arc_psk_entries") != "ArcOutfitsPSKEntry"
+        or _scene_collection_fixed_type_id("arc_outfit_selections") != "ArcOutfitsSelection"
+    )
+
+
+def _deferred_scene_props_repair():
+    ensure_scene_properties(repair=True)
+    return None
+
+
+def ensure_scene_properties(*, repair: bool = False) -> bool:
     """Re-register Scene props if another add-on line wiped them. Returns True if ready.
 
     Must stay cheap: the N-panel calls this on every redraw. Do not re-assign RNA
     properties here — that fires update callbacks and can tag_redraw VIEW_3D in a loop.
+    Without ``repair`` (draw-time callers) it never registers: a missing prop returns
+    False and schedules one repair on a timer, outside the draw callback.
     """
+    global _SCENE_PROPS_VERIFIED
+    if _SCENE_PROPS_VERIFIED and hasattr(bpy.types.Scene, "arc_outfit_search"):
+        return True
+    if not repair:
+        if not _scene_props_need_repair():
+            _SCENE_PROPS_VERIFIED = True
+            return True
+        try:
+            if not bpy.app.timers.is_registered(_deferred_scene_props_repair):
+                bpy.app.timers.register(_deferred_scene_props_repair, first_interval=0.0)
+        except Exception:
+            pass
+        return False
     missing = [n for n in _UI_CRITICAL_SCENE_PROPS if not hasattr(bpy.types.Scene, n)]
     # Collection props can exist but point at a recycled Operator RNA id after reload.
     collections_broken = (
@@ -922,13 +1127,35 @@ def ensure_scene_properties() -> bool:
     ):
         print("Arc Raiders: Scene collection props still corrupted after ensure")
         return False
+    _SCENE_PROPS_VERIFIED = True
     return True
+
+
+@persistent
+def _ensure_props_after_load(_unused):
+    global _SCENE_PROPS_VERIFIED
+    _SCENE_PROPS_VERIFIED = False
+    try:
+        ensure_scene_properties(repair=True)
+    except Exception as exc:
+        print(f"Arc Raiders: ensure props after load failed: {exc}")
+
+
+def _drop_load_handlers():
+    """Remove this handler, including copies left by a reloaded module object."""
+    handlers = bpy.app.handlers.load_post
+    for fn in list(handlers):
+        if fn is _ensure_props_after_load or (
+            getattr(fn, "__name__", "") == "_ensure_props_after_load"
+            and getattr(fn, "__module__", "") == __name__
+        ):
+            handlers.remove(fn)
 
 
 def _register_mask_debug_color_n():
     bpy.types.Scene.arc_mask_debug_color_n = IntProperty(
         name="Debug Color N",
-        description="",
+        description="Number of color zones shown by the debug overlay",
         default=6,
         min=1,
         max=8,
@@ -995,10 +1222,16 @@ def _update_backpack_choice(self, context):
     self.arc_appearance_backpack_colorway = 'BASE'
 
 
+def _update_browser_multiple(self, context):
+    from . import icon_browser
+    icon_browser.on_multiple_changed(context)
+
+
 def register_staged_import_props():
     """WindowManager props that the staged outfit import writes and the panel reads."""
     wm_type = bpy.types.WindowManager
     specs = {
+        "arc_browser_multiple": BoolProperty(name="Select / Import Multiple", default=False, update=_update_browser_multiple),
         "arc_staged_active": BoolProperty(default=False),
         "arc_staged_stage": StringProperty(default=""),
         "arc_staged_index": IntProperty(default=0),
@@ -1029,7 +1262,7 @@ def unregister_staged_import_props():
     wm_type = bpy.types.WindowManager
     for name in ("arc_staged_active", "arc_staged_stage", "arc_staged_index",
                  "arc_staged_total", "arc_staged_label", "arc_staged_cancel",
-                 "arc_confirm_show_parts",
+                 "arc_confirm_show_parts", "arc_browser_multiple",
                  *(f"arc_add_all_{key.lower()}" for key in ADD_ALL_KEYS)):
         if hasattr(wm_type, name):
             try:
@@ -1038,14 +1271,122 @@ def unregister_staged_import_props():
                 pass
 
 
+# Tooltips for properties declared with an empty description.
+_TOOLTIPS = {
+    "arc_part_mode": "What a part import does: start a new character, add to the selected character, or replace the same part on it",
+    "arc_outfit_colorway": "Colorway used by Import Outfit. Default keeps the outfit's own colors",
+    "arc_import_source": "Where assets are read from: the installed game, or files already exported with FModel",
+    "arc_pak_dir": "Arc Raiders game folder (the Steam install that contains the Paks folder)",
+    "arc_pioneer_root": "Folder that holds an FModel export of the game content",
+    "arc_usmap_path": "Game mappings file (.usmap) used to read the game files. The bundled file is used when this is empty",
+    "arc_outfit_csv_path": "Outfit catalog (.csv) that lists every outfit. The bundled catalog is used when this is empty",
+    "arc_outfit_search": "Type part of an outfit name to filter the list",
+    "arc_appearance_attach_to_outfit": "Parent a new part to the selected outfit so it follows that character",
+    "arc_appearance_replace_selected": "Remove the selected part of the same type before the new part is added",
+    "arc_appearance_body_skin": "Skin tone used for the body and head",
+    "arc_appearance_head": "Head to add to the character",
+    "arc_appearance_hair": "Hairstyle to add. Bald adds no hair",
+    "arc_appearance_facial_hair": "Facial hair to add. Bald adds no facial hair",
+    "arc_appearance_hair_color": "Hair color. Original Color keeps the color that ships with the hairstyle",
+    "arc_appearance_facial_hair_color": "Facial hair color. Original Color keeps the color that ships with the style",
+    "arc_appearance_eyelash_copy_hair_color": "Give the eyelashes the same color as the hair",
+    "arc_appearance_backpack": "Backpack to add to the character",
+    "arc_appearance_backpack_colorway": "Color variant of the chosen backpack",
+    "arc_appearance_attachment": "Backpack attachment to add",
+    "arc_appearance_charm": "Backpack charm to add",
+    "arc_appearance_raider_tool": "Raider tool to add",
+    "arc_include_reference": "Also add the in-game card image of the outfit as a reference plane",
+    "arc_import_slot_offset": "Place each new import beside the previous one instead of on top of it",
+    "arc_import_slot_spacing": "Distance between imports along X",
+    "arc_import_slot_row_spacing": "Distance between rows of imports along Y",
+    "arc_inherit_shape_key": "Copy the body shape of the outfit to parts added to it",
+    "arc_ns_search": "Type part of an effect name to filter the list",
+    "arc_ns_lut_only": "List only effects that have baked curve data, which import with correct motion",
+    "arc_ns_bake_curves": "Bake the effect's curves into the imported node setup",
+    "arc_ns_json_path": "Effect description file (.json) to import instead of a catalog entry",
+    "arc_ns_catalog_root": "Folder that holds the effect catalog",
+    "arc_ns_asset_root": "Folder that holds the meshes and textures used by effects",
+    "arc_placement_listen_port": "TCP port on which Blender waits for FModel",
+    "arc_auto_listen": "Start waiting for FModel when a file is opened",
+    "arc_weapon_key": "Weapon to import",
+    "arc_weapon_mod_muzzle": "Muzzle attachment to add to the selected weapon",
+    "arc_weapon_mod_stock": "Stock to add to the selected weapon",
+    "arc_weapon_mod_magazine": "Magazine to add to the selected weapon",
+    "arc_weapon_mod_underbarrel": "Underbarrel attachment to add to the selected weapon",
+    "arc_weapon_skin": "Color variant to apply to the selected weapon",
+    "arc_pose_preset": "Ready-made pose for the selected character rig",
+    "arc_anim_search": "Type part of an animation name to filter the list",
+    "arc_anim_kind_filter": "Show only animations of this kind",
+    "arc_anim_spawn_notifies": "Also add the props and effects that the animation triggers in the game",
+    "arc_anim_replace_action": "Remove the action applied before, so that only the new animation stays on the rig",
+    "arc_animation_cache": "Folder with animation files to use instead of the game install",
+    "arc_lighting_map": "Game map whose lighting is recreated",
+    "arc_lighting_scenario": "Time of day or weather condition of the chosen map",
+    "arc_lighting_apply_lut": "Apply the game's color grade to the render",
+    "arc_lighting_apply_hdri": "Use the game's sky as world lighting",
+    "arc_lighting_apply_sun": "Add a sun lamp that matches the sky",
+    "arc_lighting_apply_clouds": "Add the game's cloud layer to the sky",
+    "arc_lighting_apply_bloom": "Add the game's glow around bright areas",
+    "arc_lighting_apply_vignette": "Darken the image corners as the game does",
+    "arc_lighting_apply_local_exposure": "Apply the game's local contrast adjustment",
+    "arc_lighting_apply_fog": "Add a fog volume around the scene",
+    "arc_lighting_exposure_mode": "How scene brightness is chosen",
+    "arc_lighting_meter_ev": "Scene brightness in EV100 used for manual exposure",
+    "arc_lighting_exposure_comp": "Exposure compensation in stops",
+    "arc_lighting_hdri_strength": "Brightness of the sky lighting",
+    "arc_lighting_cloud_time": "Moves the clouds along their path",
+    "arc_lighting_override": "Pick the color grade and clouds by hand instead of from the scenario",
+    "arc_lighting_look": "Color grade to use when the override is on",
+    "arc_lighting_lut_intensity": "Strength of the color grade",
+    "arc_lighting_hdri": "Cloud set to use when the override is on",
+    "arc_lighting_lut_strength": "Strength of the color grade",
+    "arc_lighting_hdri_rotation_z": "Turns the sky and clouds around the vertical axis",
+    "arc_lighting_hdri_flip_x": "Mirrors the sky and clouds left to right",
+    "arc_lighting_look_applied": "What the last lighting apply set up",
+    "arc_lighting_fog_size_x": "Fog volume size along X",
+    "arc_lighting_fog_size_y": "Fog volume size along Y",
+    "arc_lighting_fog_size_z": "Fog volume size along Z",
+    "arc_mask_debug_source": "Mask texture shown by the debug overlay",
+    "arc_mask_debug_mode": "What the debug overlay shows",
+    "arc_mask_debug_grid_scale": "Size of the debug grid",
+    "arc_mask_debug_show_colormask": "Show the color mask in the overlay",
+    "arc_mask_debug_show_numbers": "Show the zone numbers in the overlay",
+    "arc_mask_debug_overlay_opacity": "How strongly the debug overlay covers the model",
+    "arc_mask_debug_opacity": "How strongly the debug overlay covers the model (older setting)",
+    "arc_mask_debug_colormask_opacity": "How strongly the color mask shows in the overlay",
+    "arc_mask_debug_numbers_opacity": "How strongly the zone numbers show in the overlay",
+    "arc_selected_outfit": "Outfit chosen in the list",
+    "arc_selected_outfit_browse": "Pick an outfit from the full list",
+    "arc_ns_selected": "Effect chosen in the list",
+    "arc_selected_anim": "Animation chosen in the list",
+    "arc_ns_play_ticks": "Number of simulation steps run for the preview. More steps take longer",
+    "arc_ns_play_cache_dir": "Folder where simulated effect frames are saved",
+    "arc_ns_play_shim": "Optional helper library file for the effect simulator",
+    "arc_ns_play_vector_fields": "Optional force field file that pushes the particles",
+    "arc_ns_play_collision": "Let particles bounce off scene objects. Slower to simulate",
+    "arc_ns_play_at_cursor": "Place the previewed effect at the 3D cursor",
+}
+
+
 def register():
     for cls in classes:
         _safe_register_class(cls)
     register_staged_import_props()
 
+    def _fill_tooltip(name, prop):
+        tip = _TOOLTIPS.get(name)
+        if tip:
+            try:
+                # Fill only an empty tooltip; an explicit description wins.
+                if not prop.keywords.get("description"):
+                    prop.keywords["description"] = tip
+            except AttributeError:
+                pass
+
     def _assign_if_free(name, prop):
         if hasattr(bpy.types.Scene, name):
             return
+        _fill_tooltip(name, prop)
         setattr(bpy.types.Scene, name, prop)
 
     def _assign_outfit_selector(name, prop):
@@ -1056,6 +1397,7 @@ def register():
         # Older Map Importer builds may have registered these shared properties
         # first. Outfits owns their callbacks and stable enum IDs; underlying
         # Scene ID properties (including the selected ST key) are retained.
+        _fill_tooltip(name, prop)
         if hasattr(bpy.types.Scene, name):
             delattr(bpy.types.Scene, name)
         setattr(bpy.types.Scene, name, prop)
@@ -1074,8 +1416,8 @@ def register():
         "arc_import_source",
         EnumProperty(
             name="Import Source",
-            items=[('PAK', 'From Pak/Steam Install', ""),
-                   ('FILES', 'From FModel Extract/Files', "")],
+            items=[('PAK', 'Game Install', "Read assets straight from the installed game"),
+                   ('FILES', 'FModel Export', "Read assets from a folder exported with FModel")],
             default='PAK',
         ),
     )
@@ -1118,19 +1460,40 @@ def register():
         except Exception:
             pass
     _assign_if_free(
+        "arc_part_mode",
+        EnumProperty(
+            name="Part Mode",
+            description="",
+            items=_PART_MODE_ITEMS,
+            get=_get_part_mode,
+            set=_set_part_mode,
+        ),
+    )
+    _assign_if_free(
+        "arc_outfit_colorway",
+        EnumProperty(
+            name="Colorway",
+            description="",
+            items=make_outfit_colorway_items,
+        ),
+    )
+    # Older blends and the old sidebar still read these; both now mirror arc_part_mode.
+    _assign_if_free(
         "arc_appearance_attach_to_outfit",
         BoolProperty(
-            name="Add to Selected Outfit",
+            name="Add to Character",
             description="",
-            default=False,
+            get=_get_attach_to_outfit,
+            set=_set_attach_to_outfit,
         ),
     )
     _assign_if_free(
         "arc_appearance_replace_selected",
         BoolProperty(
-            name="Replace Selected",
+            name="Replace Part",
             description="",
-            default=False,
+            get=_get_replace_selected,
+            set=_set_replace_selected,
         ),
     )
     _assign_if_free(
@@ -1221,7 +1584,7 @@ def register():
     _assign_if_free(
         "arc_appearance_attachment",
         EnumProperty(
-            name="Attachment",
+            name="Backpack Attachment",
             description="",
             items=_appearance.make_attachment_enum_items,
         ),
@@ -1338,6 +1701,8 @@ def register():
         name='NS Search',
         description="",
         default="",
+        options={'TEXTEDIT_UPDATE'},
+        update=_tag_search_redraw,
     )
     )
     _assign_if_free(
@@ -1463,13 +1828,13 @@ def register():
         )
         bpy.types.Scene.arc_placement_map = EnumProperty(
             name="Map",
-            description="",
+            description="Game map whose objects are placed in the scene",
             items=_map_placement.make_map_enum_items,
             update=_map_placement._on_placement_map_changed,
         )
         bpy.types.Scene.arc_placement_csv = StringProperty(
             name="Placement CSV",
-            description="",
+            description="Exported list of object positions for the map (.csv)",
             default="",
             subtype='FILE_PATH',
         )
@@ -1931,6 +2296,7 @@ def register():
         "arc_last_applied_anim_armature",
         StringProperty(
         name="Last Animation Armature",
+        description="Rig that received the last applied animation",
         default="",
     )
     )
@@ -2179,6 +2545,7 @@ def register():
         default=2000.0,
         min=1.0,
         soft_max=8000.0,
+        unit="LENGTH",
     )
     )
     _assign_if_free(
@@ -2189,6 +2556,7 @@ def register():
         default=2000.0,
         min=1.0,
         soft_max=8000.0,
+        unit="LENGTH",
     )
     )
     _assign_if_free(
@@ -2199,6 +2567,7 @@ def register():
         default=500.0,
         min=1.0,
         soft_max=4000.0,
+        unit="LENGTH",
     )
     )
 
@@ -2233,9 +2602,23 @@ def register():
 
 
     register_outfit_defaults()
+    global _SCENE_PROPS_VERIFIED
+    _SCENE_PROPS_VERIFIED = False
+    _drop_load_handlers()
+    bpy.app.handlers.load_post.append(_ensure_props_after_load)
 
 
 def unregister():
+    global _SCENE_PROPS_VERIFIED
+    _SCENE_PROPS_VERIFIED = False
+    _drop_load_handlers()
+    if bpy.app.timers.is_registered(_deferred_scene_props_repair):
+        bpy.app.timers.unregister(_deferred_scene_props_repair)
+    if bpy.app.timers.is_registered(_refresh_outfit_csv_state):
+        bpy.app.timers.unregister(_refresh_outfit_csv_state)
+    _CSV_STAT_MEMO.clear()
+    _CSV_ROWS_MEMO.clear()
+    _OUTFIT_ENUM_CACHE.update(key=None, items=None)
     unregister_outfit_defaults()
     unregister_staged_import_props()
     from . import addon_line as _addon_line

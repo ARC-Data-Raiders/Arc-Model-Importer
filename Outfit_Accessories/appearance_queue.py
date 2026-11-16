@@ -19,7 +19,7 @@ PARTS = {
     'HAIR': ('Hair', 'Hair', 'arc_appearance_hair'),
     'FACIAL_HAIR': ('FacialHair', 'Facial Hair', 'arc_appearance_facial_hair'),
     'BACKPACK': ('Backpack', 'Backpacks', 'arc_appearance_backpack'),
-    'ATTACHMENT': ('Attachment', 'Attachments', 'arc_appearance_attachment'),
+    'ATTACHMENT': ('Attachment', 'Backpack Attachments','arc_appearance_attachment'),
     'CHARM': ('Charm', 'Charms', 'arc_appearance_charm'),
     'RAIDER_TOOL': ('RaiderTool', 'Raider Tools', 'arc_appearance_raider_tool'),
 }
@@ -200,7 +200,7 @@ def _prepare_batch(owner, batch):
         return owner._executor.submit(_run_export, raw['command'])
     mapping = pak_extract.resolve_usmap(scene)
     if not mapping:
-        raise RuntimeError('Select a usmap in Settings')
+        raise RuntimeError('The game mappings file is missing. Reinstall the add-on')
     out = pak_extract.cache_dir()
     commands = [metadata["command"]] if metadata else []
     if paths:
@@ -252,7 +252,7 @@ def _import_one(owner, job):
     scene = owner._scene
     before = set(bpy.data.objects)
     overrides = {job['prop']: job['id'], 'arc_import_slot_offset': True,
-                 'arc_appearance_attach_to_outfit': False, 'arc_appearance_replace_selected': False,
+                 'arc_part_mode': 'NEW',
                  'arc_include_reference': owner._reference, 'arc_appearance_hair_color': owner._hair_color}
     if job['part'] == 'BACKPACK':
         wanted = getattr(owner, '_backpack_colorway', 'BASE')
@@ -273,6 +273,12 @@ def _import_one(owner, job):
             if job['role'] in {'Body', 'Head', 'Hair', 'FacialHair', 'Backpack', 'Attachment', 'Charm', 'RaiderTool'}:
                 operators._maybe_import_references(bpy.context, objects, roles={job['role']})
             owner._view_layer.update()
+        try:
+            from ..Shared import ui_targets
+            ui_targets.stamp(objects, ui_targets.new_import_id(), kind=ui_targets.role_for_kind(job['role']),
+                             label=job['label'])
+        except Exception:
+            pass
         return {'slot': slot, 'meshes': count, 'objects': [obj.name for obj in objects], 'messages': messages}
     except Exception:
         # Standalone imports never reuse existing objects. Roll back only this
@@ -295,13 +301,26 @@ class ARC_OUTFITS_OT_AddAllAppearance(Operator):
 
     @classmethod
     def poll(cls, context):
-        return _ACTIVE is None
+        if _ACTIVE is not None:
+            return False
+        from ..Shared import ui_targets
+        if ui_targets.job_active() is not None:
+            cls.poll_message_set(ui_targets.job_busy_message() or 'Another import is running')
+            return False
+        return True
+
+    def invoke(self, context, event):
+        label = PARTS[self.part][1].lower()
+        return context.window_manager.invoke_confirm(
+            self, event, title="Add every %s in the list?" % label,
+            message="Imports the whole list in batches of four. This can take several minutes. Cancel Add All stops it.",
+            confirm_text="Add All", icon="QUESTION")
 
     def execute(self, context):
         global _ACTIVE
         from ..Shared import utils, pak_extract; from . import appearance
         if not utils.get_pioneer_root() and not pak_extract.configured_dir(context.scene):
-            self.report({'ERROR'}, 'Set PioneerGame Folder or Paks Folder in Settings')
+            self.report({'ERROR'}, 'Choose the Arc Raiders game folder first')
             return {'CANCELLED'}
         try:
             jobs, skipped = catalog_jobs(self.part, context.scene)
@@ -329,6 +348,12 @@ class ARC_OUTFITS_OT_AddAllAppearance(Operator):
             if not appearance.resolve_hair_color_path(self._hair_color, context.scene):
                 self.report({'ERROR'}, 'Selected hair color could not be loaded')
                 return {'CANCELLED'}
+        from ..Shared import ui_lists, ui_targets
+        if not ui_targets.job_begin('appearance', 'All ' + PARTS[self.part][1], len(jobs),
+                                    'arc_outfits.cancel_appearance_queue'):
+            self.report({'ERROR'}, ui_targets.job_busy_message() or 'Another import is running')
+            return {'CANCELLED'}
+        self._snapshot = ui_lists.snapshot()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='ArcAppearanceExtract')
         self._queue = BatchQueue(jobs, lambda batch: _prepare_batch(self, batch),
                                  lambda job: _import_one(self, job), lambda batch, value: _finalize_batch(self, batch, value))
@@ -349,6 +374,12 @@ class ARC_OUTFITS_OT_AddAllAppearance(Operator):
     def _redraw(self):
         queue = self._queue
         self._wm.progress_update(len(queue.records))
+        try:
+            from ..Shared import ui_targets
+            last = queue.records[-1]['label'] if queue.records else ''
+            ui_targets.job_step(len(queue.records), last)
+        except Exception:
+            pass
         for area in self._window.screen.areas if self._window else ():
             if area.type == 'VIEW_3D':
                 area.tag_redraw()
@@ -399,6 +430,22 @@ class ARC_OUTFITS_OT_AddAllAppearance(Operator):
         except (ReferenceError, RuntimeError):
             pass
         _ACTIVE = None
+        try:
+            from ..Shared import ui_lists, ui_targets
+            lines = [f"Failed: {r.get('id')}: {r.get('error', '')}" for r in records if not r['ok']]
+            if self._queue.cancel_requested:
+                lines.append('Cancelled before the end')
+            if error:
+                lines.append(f'Error: {error}')
+            # Catalog entries skipped at planning stay "skipped"; queued jobs never run are "left".
+            ui_targets.job_end(success, len(records) - success, len(self._skipped or ()), lines,
+                               status='failed' if error else ('cancelled' if self._queue.cancel_requested else 'completed'),
+                               left=max(0, len(self._queue.jobs) - len(records)))
+            snap = getattr(self, '_snapshot', None)
+            if snap is not None:
+                ui_lists.record_import('All ' + PARTS[self.part][1], snap)
+        except Exception:
+            pass
         self._redraw()
         message = f'Imported {success}/{len(self._queue.jobs)} {PARTS[self.part][1].lower()}'
         if report['failed']:

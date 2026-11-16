@@ -88,8 +88,10 @@ def build_face_tree(tree, record):
         g.put(node.inputs["Color"], value)
         return node.outputs[index]
     cavity = I("Base Cavity")
+    g.stage = "Skin Base"
     mask = channel(I("Blue Map"), 2)
-    geometry = g.node("ShaderNodeNewGeometry", "Native face view and vertex normal")
+    g.stage = "View Vectors"
+    geometry =g.node("ShaderNodeNewGeometry", "Native face view and vertex normal")
     actor = g.node("ShaderNodeVectorTransform", "Actor origin local to world")
     actor.vector_type = "POINT"
     actor.convert_from, actor.convert_to = "OBJECT", "WORLD"
@@ -98,6 +100,7 @@ def build_face_tree(tree, record):
     radial = g.vector("NORMALIZE", g.vector("SUBTRACT", geometry.outputs["Position"], center))
     radial_dot = g.clamp(g.vector("DOT_PRODUCT", radial, geometry.outputs["Incoming"]))
     vertex_dot = g.clamp(g.vector("DOT_PRODUCT", geometry.outputs["Normal"], geometry.outputs["Incoming"]))
+    g.stage = "Ears and Fresnel"
     def safe_power(value, exponent):
         # Native log/exp guards base<=0 and returns0, including exponent0.
         positive = g.math("GREATER_THAN", value, 0)
@@ -111,10 +114,12 @@ def build_face_tree(tree, record):
     face_fresnel = g.math("ADD", g.math("MULTIPLY", radial_mask, g.math("SUBTRACT", 1, vertex_fresnel)), ear,
                           "Native actor radial and ear fresnel")
     extra_response = g.math("MULTIPLY", channel(I("Blue Map"), 0), face_fresnel, "Native masked face surface response")
+    g.stage = "Skin Base"
     micro_cavity = g.math("MAXIMUM", g.math("SUBTRACT", 1, mask), I("Micro Cavity"))
     cavity_factor = g.math("ADD", 1, g.math("MULTIPLY", g.math("SUBTRACT", cavity, 1), I("Cavity Color Intensity")))
     micro_factor = g.math("ADD", 1, g.math("MULTIPLY", g.math("SUBTRACT", micro_cavity, 1), I("MicroCavity Color Intensity")))
     color = g.vlerp(I("Cavity Color"), I("Face Albedo"), g.math("MULTIPLY", cavity_factor, micro_factor), "Cavity colour")
+    g.stage = "Zone Roughness"
     zone_rough = g.lerp(I("Zone_Roughness"), 1, channel(I("Zone Masks"), 1))
     rough = g.math("MINIMUM", channel(I("Normal 1"), 2), zone_rough)
     rough = g.math("MINIMUM", rough, g.math("MAXIMUM", g.math("SUBTRACT", 1, I("Lip Roughness")), mask))
@@ -122,16 +127,20 @@ def build_face_tree(tree, record):
     rough = g.math("ADD", g.math("MULTIPLY", rough, I("RoughnessMultiplier")),
                    g.math("MULTIPLY", g.math("SUBTRACT", 1, cavity), I("Cavity Roughness")))
     rough = g.math("ADD", rough, g.math("MULTIPLY", g.math("SUBTRACT", 1, micro_cavity), I("Micro Cavity Roughness")))
+    g.stage = "Lips"
     spec = g.lerp(I("LipSpecular"), I("Specular"), mask)
     for value, amount in ((cavity, I("Specular Cavity Amount")), (micro_cavity, I("Specular MicroCavity Amount"))):
         spec = g.math("MULTIPLY", spec, g.math("ADD", 1, g.math("MULTIPLY", g.math("SUBTRACT", value, 1), amount)))
     spec = g.math("ADD", spec, extra_response, "Native face fresnel specular")
+    g.stage = "Micro Normal"
     normal = g.vlerp(g.decode_rg(I("Normal 1")), (0, 0, 1), I("NormalFlatness"))
     micro = g.decode_rg(I("Micro Normal"))
     mx, my, mz = g.split(micro)
     micro = g.combine(g.math("MULTIPLY", mx, I("MicroNormal_Intensity")),
                       g.math("MULTIPLY", my, I("MicroNormal_Intensity")), mz)
-    normal = g.rnm(normal, g.vlerp((0, 0, 1), micro, mask))
+    micro = g.vlerp((0, 0, 1), micro, mask)
+    g.stage = "Hair Coverage"
+    normal = g.rnm(normal, micro)
     if record.get("switches", {}).get("UseHair", True):
         for label, normal_input, coverage, amount, root, tip, rough_name, spec_name in (
             ("Scalp", "Normal 2", "Hair Coverage", "Hair Mask Amount", "HairCap Root Color", "HairCap Tip Color", "Hair Roughness", "Hair Specular"),
@@ -142,12 +151,14 @@ def build_face_tree(tree, record):
             rough = g.lerp(rough, I(rough_name), factor, label + " roughness coverage")
             spec = g.lerp(spec, I(spec_name), factor, label + " specular coverage")
             normal = g.vlerp(normal, g.decode_rg(I(normal_input)), factor, label + " normal coverage")
+    g.stage = "Clamp and Fade"
     normal = g.vector("NORMALIZE", normal)
     color = g.vector("MINIMUM", g.vector("MAXIMUM", color, (0, 0, 0)), (1, 1, 1))
     rough, spec = g.clamp(rough), g.clamp(spec)
     fade = g.clamp(g.math("MULTIPLY", I("Neck Fade"), I("FadeAmount")))
     alpha = g.clamp(g.math("ADD", g.math("MULTIPLY", g.math("FLOOR", g.math("ADD", I("Neck Fade"), I("s"))),
                                        g.math("SUBTRACT", 1, fade)), fade))
+    g.stage = "Surface Output"
     p = g.node("ShaderNodeBsdfPrincipled", "Recovered skin surface")
     unsupported_sss = []
     for name, value in sss.items():
@@ -173,6 +184,13 @@ def build_face_tree(tree, record):
     tree["arc_face_native_revision"] = "static-v1"
     tree["arc_face_parameter_sources"] = json.dumps(record["sources"])
     tree["arc_face_unresolved_parent"] = record.get("unresolved_parent", "")
+    g.arrange(origin=(0.0, 0.0), title="Face response")
+    # Builder done: fold each stage into its own group (no node refs held past this point).
+    from . import graph_layout
+    try:
+        graph_layout.finalize_tree(tree, collapse=True, force=True)
+    except Exception as exc:  # layout must never break a face import
+        print("[character_face] stage grouping skipped on %s: %s" % (tree.name, exc))
     return tree
 
 
@@ -215,7 +233,7 @@ def wire_face_textures(nodes, links, group, record, *, obj=None, source_path="")
         coords = uv.outputs[0]
         if parameter == "Micro Normal":
             coords = g.vector("SCALE", coords, g.value(record["scalars"].get("Tile_Size", 20), "Tile_Size"))
-        tex = g.texture(image, coords, parameter)
+        tex = g.texture(image, coords, parameter, albedo=not data)
         if parameter == "Neck Fade":
             sep = g.node("ShaderNodeSeparateColor", "Neck fade R")
             links.new(tex.outputs["Color"], sep.inputs["Color"])
@@ -232,6 +250,7 @@ def wire_face_textures(nodes, links, group, record, *, obj=None, source_path="")
             sep = g.node("ShaderNodeSeparateColor", "Micro cavity B")
             links.new(tex.outputs["Color"], sep.inputs["Color"])
             links.new(sep.outputs[2], group.inputs["Micro Cavity"])
+    g.arrange(title="Face textures")
     return missing
 
 

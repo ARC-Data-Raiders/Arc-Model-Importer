@@ -302,7 +302,13 @@ def sync_scene(scene=None):
     result['normal_meshes'] = 0
     for obj in scene.objects:
         if obj.type == 'MESH' and obj.data.get('arc_native_normal_targets'):
-            result['normal_meshes'] += int(uemodel_import.apply_uemodel_morph_normals(obj))
+            # One mesh with a stale normal capture (topology edited after import) must
+            # not abort every later import's material pass; skip it and say why.
+            try:
+                result['normal_meshes'] += int(uemodel_import.apply_uemodel_morph_normals(obj))
+            except ValueError as exc:
+                result.setdefault('normal_skipped', []).append(obj.name)
+                print(f"Arc Asset Importer: morph normals skipped on {obj.name}: {exc}")
     result['head_wrap'] = head_wrap.sync_scene(scene, enabled=enabled)
     result['body_masks'] = body_mask.sync_body_masks(scene)
     _SIGNATURES[scene.as_pointer()] = _scene_signature(scene)

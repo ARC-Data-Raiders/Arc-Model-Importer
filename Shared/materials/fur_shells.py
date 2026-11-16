@@ -40,13 +40,13 @@ def profile(path, seen=None):
     with open(path,encoding='utf8') as fh: data=json.load(fh)
     entry=utils.first_ue_export(data,'MaterialInstanceConstant') or utils.first_ue_export(data,'Material') or {}
     props=entry.get('Properties') or {}
-    parent=(props.get('Parent') or {}).get('ObjectPath','')
+    parent=textures._material_ref_path(props.get('Parent'))
     kind=''
     if parent:
         leaf=parent.rsplit('/',1)[-1].split('.')[0]
         kind={'M_FurShells':'shells','M_FurLOD':'lod'}.get(leaf,'')
     flat=data if isinstance(data,dict) else {}
-    params=flat.get('Parameters') or {}
+    params=flat.get('Parameters') or (flat if 'Type' not in flat and 'Exports' not in flat else {})
     state=(params.get('Properties') or {}).get('StateId') or props.get('StateId')
     kind=kind or STATE_IDS.get(str(state or '').upper(),'')
     inherited={}
@@ -63,12 +63,12 @@ def profile(path, seen=None):
             value=item.get('ParameterValue')
             if not name: continue
             if key=='colors': value=tuple(float(value.get(c,1)) for c in 'RGBA')
-            if key=='textures': value=value.get('ObjectPath','')
+            if key=='textures': value=textures._material_ref_path(value)
             result[key][name]=value
     for key,pkey in [('scalars','Scalars'),('colors','Colors')]:
         for name,value in (params.get(pkey) or {}).items():
             result[key][name]=tuple(float(value.get(c,1)) for c in 'RGBA') if key=='colors' else float(value)
-    result['textures'].update(flat.get('Textures') or {})
+    result['textures'].update({name:textures._material_ref_path(value) for name,value in (flat.get('Textures') or {}).items()})
     bpo=base_property_overrides(props.get('BasePropertyOverrides') or (params.get('Properties') or {}).get('BasePropertyOverrides'),snapshot=True)
     result['clip']=float(bpo.get('OpacityMaskClipValue',.3333))
     result['two_sided']=bool(bpo.get('TwoSided',False))
@@ -104,7 +104,7 @@ class _Graph:
         space='Non-Color' if data and not textures.authored_srgb_sidecar(path) else 'sRGB'
         if image.colorspace_settings.name!=space and image.users:image=image.copy()
         image.colorspace_settings.name=space
-        n=self.nodes.new('ShaderNodeTexImage');n.image=image;n.label=label;n.interpolation='Linear';n.extension='REPEAT'
+        n=self.nodes.new('ShaderNodeTexImage');n.image=image;n.label=label;n.interpolation='Linear' if data else 'Cubic';n.extension='REPEAT'
         x,y,_=self.split(uv);self.put(n.inputs['Vector'],self.combine(x,self.m('SUBTRACT',1,y)))
         s=self.nodes.new('ShaderNodeSeparateColor');self.links.new(n.outputs['Color'],s.inputs['Color'])
         return {'color':n.outputs['Color'],'r':s.outputs['Red'],'g':s.outputs['Green']}
@@ -115,6 +115,8 @@ def setup_material(mat, mi_path, source='', obj=None):
     """Build a verified native family. Return False for a different master."""
     p=profile(mi_path)
     if not p:return False
+    from .fur_controls import material_overrides, color_control, value_control
+    saved=material_overrides(mat)
     mat.use_nodes=True;mat.node_tree.nodes.clear();g=_Graph(mat,mi_path);s=p['scalars'];c=p['colors'];t=p['textures'];shells=p['kind']=='shells'
     uv=g.nodes.new('ShaderNodeUVMap');uv.uv_map='UV0';uv.label='Authored shell UV0'
     ux,by,_=g.split(uv.outputs[0]);uy=g.m('SUBTRACT',1,by,'Original Unreal V')
@@ -127,16 +129,20 @@ def setup_material(mat, mi_path, source='', obj=None):
     flow=g.sample(t['Flowmap'],g.v('SCALE',base,s['FlowmapTiling']),'Native Flowmap')
     flowx=g.m('MULTIPLY',flow['r'],index) if shells else flow['r']
     flowy=g.m('MULTIPLY',flow['g'],index) if shells else flow['g']
-    flowvec=g.combine(g.m('MULTIPLY',g.m('SUBTRACT',g.m('MULTIPLY',flowx,2),1),s['FlowmapStrength']),g.m('MULTIPLY',g.m('SUBTRACT',g.m('MULTIPLY',flowy,2),1),s['FlowmapStrength']))
+    # Shells preshaders (PS CCBBCFB458 cb2[5].z, cb2[6].y/z, cb2[11].x) scale percent params by 0.01
+    # and remap Roughness to (R-0.5)*2. LOD keeps raw values: its preshaders are unverified.
+    pct=.01 if shells else 1.
+    flowstrength=s['FlowmapStrength']*pct
+    flowvec=g.combine(g.m('MULTIPLY',g.m('SUBTRACT',g.m('MULTIPLY',flowx,2),1),flowstrength),g.m('MULTIPLY',g.m('SUBTRACT',g.m('MULTIPLY',flowy,2),1),flowstrength))
     drift=flowvec
     if shells:
         source_pos=g.nodes.new('ShaderNodeAttribute');source_pos.attribute_name=SOURCE_POSITION;source_pos.label='Native component position (cm)'
         px,_,pz=g.split(source_pos.outputs['Vector'])
         phase=g.m('MULTIPLY',uy,s['ShellTimeOffset'],'Frozen native time 0, shell phase')
-        winduv=g.v('SCALE',g.combine(g.m('ADD',phase,g.m('MULTIPLY',px,s['WindMaskTiling'])),g.m('ADD',phase,g.m('MULTIPLY',pz,s['WindMaskTiling']))),3.5525550842285156)
+        winduv=g.v('SCALE',g.combine(g.m('ADD',phase,g.m('MULTIPLY',px,s['WindMaskTiling']*pct)),g.m('ADD',phase,g.m('MULTIPLY',pz,s['WindMaskTiling']*pct))),3.5525550842285156)
         wind=g.sample(t['WindMask'],winduv,'Native WindMask (time 0)')
         noise=g.sample('/Game/Pioneer/MaterialLibrary/Character/CustomMaterials/Textures/T_UV_Noise_M',g.combine(ux,uy),'Native UV noise texture (time 0)')
-        amount=g.m('MULTIPLY',wind['r'],s['WindStrength'])
+        amount=g.m('MULTIPLY',wind['r'],s['WindStrength']*pct)
         windvec=g.combine(g.m('MULTIPLY',g.m('SUBTRACT',g.m('MULTIPLY',noise['r'],2),1),amount),g.m('MULTIPLY',g.m('SUBTRACT',g.m('MULTIPLY',noise['g'],2),1),amount))
         drift=g.v('ADD',flowvec,windvec)
     samplebase=g.v('ADD',base,drift)
@@ -150,11 +156,12 @@ def setup_material(mat, mi_path, source='', obj=None):
     fresnel=g.sat(g.m('DIVIDE',g.m('SUBTRACT',facing,s['Fresnel']),1-s['Fresnel']))
     rim=g.v('ADD',g.v('SCALE',g.color(c['SheenColor']),gradient),g.v('SCALE',g.color(c['FresnelColor']),fresnel))
     factor=g.m('ADD',g.m('SUBTRACT',1,green),g.sat(g.m('DIVIDE',index,s['ShellCount']+1))) if shells else g.sat(mask)
-    tint=g.lerp_color(g.color(c['RootColor']),g.color(c['TipColor']),factor)
-    albedo=g.v('MULTIPLY',g.v('MULTIPLY',color,g.color(c['ColorTint'])),tint)
+    tint=g.lerp_color(color_control(g,'Root Color',c['RootColor'],saved),color_control(g,'Tip Color',c['TipColor'],saved),factor)
+    albedo=g.v('MULTIPLY',g.v('MULTIPLY',color,color_control(g,'Color Tint',c['ColorTint'],saved)),tint)
     rimscale=g.m('MULTIPLY',g.m('MULTIPLY',uy,.2),mask) if shells else mask
     albedo=g.clamp_color(g.v('ADD',albedo,g.v('SCALE',rim,rimscale)))
-    rough=g.sat(g.m('ADD',g.m('SUBTRACT',1,g.m('MULTIPLY',gradient,mask)),s['Roughness']))
+    rough=g.sat(g.m('ADD',g.m('SUBTRACT',1,g.m('MULTIPLY',gradient,mask)),(s['Roughness']-.5)*2 if shells else s['Roughness']))
+    rough=g.sat(g.m('ADD',rough,value_control(g,'Roughness Offset',0.,saved)))
     denom=g.m('MULTIPLY',index,s['AlphaCutoff'])
     numerator=g.m('MULTIPLY',mask,g.sat(g.m('ADD',green,1-s['MaskAlphaCutoff']))) if shells else mask
     ratio=g.m('DIVIDE',numerator,g.m('MAXIMUM',denom,1e-8))
@@ -233,6 +240,8 @@ def reconcile_geometry(obj,source=''):
             n=group.nodes;l=group.links;inp=n.new('NodeGroupInput');out=n.new('NodeGroupOutput');attr=n.new('GeometryNodeInputNamedAttribute');attr.data_type='FLOAT_VECTOR';attr.inputs['Name'].default_value=OFFSET
             setpos=n.new('GeometryNodeSetPosition');l.new(inp.outputs['Geometry'],setpos.inputs['Geometry']);l.new(attr.outputs['Attribute'],setpos.inputs['Offset']);l.new(setpos.outputs['Geometry'],out.inputs['Geometry'])
             mod=obj.modifiers.new(MODIFIER,'NODES');mod.node_group=group
+        from .fur_controls import ensure_length_control
+        ensure_length_control(mod)
         old=obj.modifiers.get('ArcFurSubdiv')
         if old and (old.type=='SUBSURF' or old.type=='NODES' and old.node_group and old.node_group.name.startswith('ArcFurSubdivGN')):obj.modifiers.remove(old)
         armature=next((m for m in obj.modifiers if m.type=='ARMATURE'),None)

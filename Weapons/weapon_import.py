@@ -176,6 +176,17 @@ def set_assembly_wear(root,level=None,wear=None):
         if obj.type=='MESH':obj[WEAR_PROPERTY]=value;obj.update_tag()
     return value
 
+def _take_plain_name(mat,name):
+    """The mesh import leaves a placeholder material under the MI name, so ours became .001.
+    Hand the placeholder's users to ours, drop it and take the plain name."""
+    if mat.name==name:return
+    old=bpy.data.materials.get(name)
+    if old is not None:
+        if old.library is not None or any(str(k).startswith('arc_') for k in old.keys()):return
+        if old.node_tree is not None and len(old.node_tree.nodes)>4:return
+        old.user_remap(mat);bpy.data.materials.remove(old)
+    mat.name=name
+
 def _material(obj,path,overrides,skin='',cache=None):
     from ..Shared.materials import weapon_surface
     roots=assets.pioneer_roots(bpy.context.scene,source_path=path)
@@ -200,6 +211,7 @@ def _material(obj,path,overrides,skin='',cache=None):
                 from ..Shared.materials.rebuild.assets import infer_export_root, invalidate_index
                 bpy.data.materials.remove(mat);invalidate_index(infer_export_root(str(mi)))
                 mat=bpy.data.materials.new(mi.stem);weapon_surface.setup(mat,str(mi),str(path),obj=obj)
+            _take_plain_name(mat,mi.stem)
             cache[key]=mat
         obj.material_slots[i].link='OBJECT';obj.material_slots[i].material=mat
     from ..Shared.materials import weapon_fur
@@ -258,8 +270,27 @@ def _skin_visual(scene,entry,roots,skin):
     if not path:raise FileNotFoundError('Skin visual metadata unavailable: '+choice['label'])
     return choice,Path(path)
 
+def _stamp_weapon(root,entry):
+    """Tag the assembly as one import for the scene inventory and target resolver."""
+    try:
+        from ..Shared import ui_targets
+    except Exception:
+        return
+    ui_targets.stamp([root,*root.children_recursive],ui_targets.new_import_id(),'weapon',str(entry.get('name') or root.name))
+
 def import_weapon(context,entry,variant='OFF',*,skin=None,tier=None,location=None):
+    """Synchronous import (scripts, rebuild, headless): drains ``iter_import_weapon``."""
+    gen=iter_import_weapon(context,entry,variant,skin=skin,tier=tier,location=location)
+    while True:
+        try:next(gen)
+        except StopIteration as stop:return stop.value
+
+def iter_import_weapon(context,entry,variant='OFF',*,skin=None,tier=None,location=None):
+    """Step generator: yields (stage, index, total, label) between stages, returns the root.
+
+    Closing it at a yield (Esc in the staged run) removes the objects it created."""
     from ..Outfit_Accessories import import_layout
+    yield ('extract',0,0,entry['name'])
     scene=context.scene;roots=assets.pioneer_roots(scene)
     if not str(getattr(scene,'arc_pioneer_root','') or '').strip():
         from ..Shared import pak_extract
@@ -316,7 +347,9 @@ def import_weapon(context,entry,variant='OFF',*,skin=None,tier=None,location=Non
         x,y=import_layout.slot_world_xy(slot,scene);root.location=(x,y,0) if location is None else location
         # Build the requested mock pose and placement anchor before importing any gun geometry.
         anchor=positions.apply(root,getattr(scene,'arc_weapon_position','HORIZONTAL'))
-        path=mesh_file(plan['base'],roots);objects=_import_mesh(path,context);members=set(objects)
+        path=mesh_file(plan['base'],roots)
+        yield ('mesh',0,0,Path(path).name)
+        objects=_import_mesh(path,context);members=set(objects)
         main=next((o for o in objects if o.type=='ARMATURE'),None)
         if not main:raise ValueError('Weapon import has no skeleton for attachment sockets')
         main['arc_source_mesh']=str(path)
@@ -328,12 +361,16 @@ def import_weapon(context,entry,variant='OFF',*,skin=None,tier=None,location=Non
         objects,path=_static_look(objects,main,plan,roots,context,root,path)
         cache={}
         skin_ref=str(skin_path) if skin_path else ''
-        for obj in objects:
-            if obj.type=='MESH':_material(obj,path,plan['overrides'],skin_ref,cache)
+        meshes=[o for o in objects if o.type=='MESH']
+        for i,obj in enumerate(meshes,1):
+            yield ('material',i,len(meshes),obj.name)
+            _material(obj,path,plan['overrides'],skin_ref,cache)
         positions.align_grip(root,anchor)
-        for part in plan['parts']:
+        parts=plan['parts']
+        for i,part in enumerate(parts,1):
             ref=assets.mesh_reference(part)
             if not ref:continue
+            yield ('attach',i,len(parts),Path(ref).name)
             path=mesh_file(ref,roots);part_objects=_import_mesh(path,context)
             # An authored None socket is component space; an empty one is the root bone.
             socket=part.get('AttachmentSocket')
@@ -341,17 +378,24 @@ def import_weapon(context,entry,variant='OFF',*,skin=None,tier=None,location=Non
             for obj in part_objects:
                 obj['arc_weapon_owner']=root.name;obj['arc_weapon_part_tags']=','.join(sorted(assets.tags(part)))
                 if part.get('arc_mod_slot'):obj['arc_weapon_default_mod']=assets.slot_kind(part['arc_mod_slot'])
-                if obj.type=='MESH':_material(obj,path,plan['overrides'],skin_ref,cache)
+            for obj in part_objects:
+                if obj.type!='MESH':continue
+                # Mesh import and material build are separate UI slices.
+                yield ('attach',i,len(parts),Path(ref).name)
+                _material(obj,path,plan['overrides'],skin_ref,cache)
+        yield ('finish',0,0,root.name)
         set_assembly_wear(root,level)
         _bind_groups(list(root.children_recursive),main)
         for obj in context.selected_objects:obj.select_set(False)
         root.select_set(True);context.view_layer.objects.active=root
         main['arc_model_type']='weapon';root['arc_weapon_armature']=main.name
         scene.arc_last_weapon_armature=main.name;scene.arc_weapon_last_assembly=root.name
+        _stamp_weapon(root,entry)
         scene['arc_weapon_last_report']=json.dumps({'weapon':entry['name'],'variant':variant,'skin':root['arc_weapon_skin'],'skin_composition':plan.get('skin_composition',''),'tier':TIER_LABELS[max(0,min(3,level))],'wear':root['arc_weapon_wear'],'parts':len(plan['parts']),'default_mods':plan.get('default_mods',[]),'slot':slot,'materials':len(cache)})
         context.view_layer.update()
         return root
-    except Exception:
+    except BaseException:
+        # BaseException: a closed generator (cancel) raises GeneratorExit here.
         if context.object and context.object.mode!='OBJECT':bpy.ops.object.mode_set(mode='OBJECT')
         for obj in set(bpy.data.objects)-existing:bpy.data.objects.remove(obj,do_unlink=True)
         for obj in selection:
@@ -375,12 +419,29 @@ def _default_mods(scene,entry,variant,roots):
         tried.update(missing);_extract_missing(scene,missing);roots=assets.pioneer_roots(scene)
     return assets.default_mods(entry,variant,current(roots))[0],roots
 
-def selected_import(operator,context):
+def selected_entry(context):
+    """(entry, variant) for the sidebar selection, or (None, 'OFF')."""
     entry=catalog.weapon_by_key(getattr(context.scene,'arc_weapon_key','NONE'))
-    if not entry:operator.report({'ERROR'},'Select a weapon first');return {'CANCELLED'}
+    if not entry:return None,'OFF'
     variant=getattr(context.scene,'arc_weapon_ascended','OFF') or 'OFF'
     # A stale enum from another gun is the Off choice until the user selects again.
     if variant!='OFF' and variant not in {v['id'] for v in assets.variants(entry,assets.pioneer_roots(context.scene))}:variant='OFF'
+    return entry,variant
+
+def job_busy_message():
+    """Text when another import job runs (D5), else ''."""
+    try:
+        from ..Shared import ui_targets
+        if ui_targets.job_active():return ui_targets.job_busy_message() or 'Another import is running'
+    except Exception:
+        pass
+    return ''
+
+def selected_import(operator,context):
+    busy=job_busy_message()
+    if busy:operator.report({'WARNING'},busy);return {'CANCELLED'}
+    entry,variant=selected_entry(context)
+    if not entry:operator.report({'ERROR'},'Select a weapon first');return {'CANCELLED'}
     try:root=import_weapon(context,entry,variant)
     except Exception as exc:operator.report({'ERROR'},str(exc));return {'CANCELLED'}
     operator.report({'INFO'},'Imported '+root.name);return {'FINISHED'}
@@ -391,7 +452,7 @@ def import_mod(operator,context):
     if not prop:operator.report({'ERROR'},'Unsupported mod type');return {'CANCELLED'}
     entry=catalog.mod_by_key(getattr(context.scene,prop,'NONE'))
     roots=positions.roots_for_selection(context)
-    if not entry or not roots:operator.report({'ERROR'},'Select a mod and an imported weapon assembly');return {'CANCELLED'}
+    if not entry or not roots:operator.report({'ERROR'},'Select an attachment and an imported weapon first');return {'CANCELLED'}
     owner=roots[0];main=next((o for o in owner.children_recursive if o.get('arc_weapon_main')),None)
     source_roots=assets.pioneer_roots(context.scene)
     folder=next((r/'Items/WeaponMod'/entry['stem'] for r in source_roots if (r/'Items/WeaponMod'/entry['stem']).is_dir()),None)
@@ -497,6 +558,6 @@ def apply_skin(operator,context):
 
 def apply_tier(operator,context,level):
     owners=positions.roots_for_selection(context)
-    if not owners:operator.report({'ERROR'},'Select an imported weapon assembly');return {'CANCELLED'}
+    if not owners:operator.report({'ERROR'},'Select an imported weapon first');return {'CANCELLED'}
     for owner in owners:set_assembly_wear(owner,level)
-    operator.report({'INFO'},'Tier '+TIER_LABELS[max(0,min(3,int(level)))]+' on '+str(len(owners))+' weapon(s)');return {'FINISHED'}
+    operator.report({'INFO'},'Tier '+TIER_LABELS[max(0,min(3,int(level)))]+' on '+owners[0].name);return {'FINISHED'}

@@ -156,7 +156,7 @@ def _authored_eye_material(mi_path: str, uv_name: str = "", *, allow_missing=Fal
             image = image.copy()
             image.colorspace_settings.name = wanted_space
         image.alpha_mode = "CHANNEL_PACKED"
-        result = node("ShaderNodeTexImage", label); result.image = image; result.interpolation = "Linear"
+        result = node("ShaderNodeTexImage", label); result.image = image; result.interpolation = "Linear" if non_color else "Cubic"
         links.new(coordinates, result.inputs["Vector"])
         return result
     uv = node("ShaderNodeUVMap", "Authored UV0"); uv.uv_map = uv_name
